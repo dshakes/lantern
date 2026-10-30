@@ -58,3 +58,32 @@ test("REGRESSION: command words inside a sentence must NOT fire a command", () =
     assert.equal(r, null, `"${input}" must NOT fire a command (got ${JSON.stringify(r)})`);
   }
 });
+
+test("pal invocation + slash forms fire; legacy lantern forms still fire (ADR 0032)", () => {
+  const cases: Array<[string, string]> = [
+    ["pal, pause for 2h", "mute"],
+    ["hey pal, status", "status"],
+    ["pal: on", "unmute"],
+    ["/pal status", "status"],
+    ["/pal ping", "ping"],
+    ["lantern, pause for 2h", "mute"],
+    ["hey lantern status", "status"],
+    ["/lantern status", "status"],
+  ];
+  for (const [input, action] of cases) {
+    assert.equal(parseNLCommand(input)?.action, action, `"${input}" should be ${action}`);
+  }
+});
+
+test("pal without punctuation is conversation, not an invocation", () => {
+  for (const s of ["pal on", "pal off", "hey pal stop", "pal on the way"]) {
+    assert.equal(parseNLCommand(s), null, `"${s}" must reach the assistant, not fire a command`);
+  }
+});
+
+test("voice wake word accepts pal and legacy lantern", async () => {
+  const { parseVoiceCommand } = await import("./voice-commands.ts");
+  assert.equal(parseVoiceCommand("Pal, pause for two hours.")?.action, "mute");
+  assert.equal(parseVoiceCommand("Hey Lantern, status")?.action, "status");
+  assert.equal(parseVoiceCommand("palace tour tomorrow"), null);
+});

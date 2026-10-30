@@ -5,7 +5,7 @@
 //
 // Sibling of mac-usage.ts (Mac knowledgeC.db slice). Where mac-usage distills
 // macOS foreground app-usage, this distills the iPhone activity stream that the
-// owner's iOS Shortcuts automations POST into ~/.lantern/device-signals.jsonl.
+// owner's iOS Shortcuts automations POST into ~/.pal/device-signals.jsonl.
 // Both feed ONE short, human "what you've been doing" line into the OWNER's own
 // self-chat assistant context.
 //
@@ -26,7 +26,7 @@
 // and is injected, so this logic is unit-testable with mock lines and no fs.
 
 // ─── Signal shape ────────────────────────────────────────────────────────────
-// One line of ~/.lantern/device-signals.jsonl, written by the control-plane
+// One line of ~/.pal/device-signals.jsonl, written by the control-plane
 // /v1/signals route from an iPhone Shortcuts automation POST.
 //
 // SHARED CONTRACT (the receiver writes these; the bridge reads them):

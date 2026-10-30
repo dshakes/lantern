@@ -17,8 +17,8 @@
 // Voice rendering:
 //   - Default: inline TwiML <Say> with Polly voices (free, included).
 //   - Optional: ElevenLabs voice clone (B8) — OFF by default, gated
-//     behind LANTERN_VOICE_CLONE=1 AND LANTERN_ELEVENLABS_API_KEY AND
-//     LANTERN_ELEVENLABS_VOICE_ID (see resolveVoiceCloneConfig). When
+//     behind PAL_VOICE_CLONE=1 AND PAL_ELEVENLABS_API_KEY AND
+//     PAL_ELEVENLABS_VOICE_ID (see resolveVoiceCloneConfig). When
 //     the gate is open the orchestrator renders the spoken text via the
 //     ElevenLabs API, the bridge hosts the MP3 at a public URL, and
 //     TwiML uses <Play>url</Play> instead of <Say>. On ANY error it
@@ -42,7 +42,7 @@ export interface OrchestratorDeps {
   // from the Twilio connector config.
   twilioFromNumber: string;
   // E.164 of the owner's personal phone (the second leg for
-  // conference). Pulled from LANTERN_OWNER_PHONE.
+  // conference). Pulled from PAL_OWNER_PHONE.
   ownerPhone?: string;
   // Maps a name ("Madhu", "mom") to an E.164 phone. The bridge
   // implements this with its profile + contact-name cache. Returns
@@ -68,7 +68,7 @@ export interface OrchestratorDeps {
   // twilioFromNumber when unset. The SMS heads-up + owner leg still use
   // the Twilio number (only Twilio DIDs can send SMS / be conference hosts).
   callerId?: string;
-  // Owner display name for the heads-up SMS copy (from LANTERN_OWNER_NAME).
+  // Owner display name for the heads-up SMS copy (from PAL_OWNER_NAME).
   ownerName?: string;
   // When true, text the recipient a one-line heads-up right before dialing
   // a CONFERENCE (a known human), so they recognize the incoming call.
@@ -316,8 +316,8 @@ async function addParticipant(
 // ─────────────────────────────────────────────────────
 // ElevenLabs voice rendering helper.
 //
-// When the bridge has LANTERN_ELEVENLABS_API_KEY (legacy:
-// LANTERN_ELEVENLABS_KEY) + LANTERN_ELEVENLABS_VOICE_ID set,
+// When the bridge has PAL_ELEVENLABS_API_KEY (legacy:
+// PAL_ELEVENLABS_KEY) + PAL_ELEVENLABS_VOICE_ID set,
 // renderTextWithElevenLabs(text) → returns an MP3 buffer.
 // The bridge is responsible for hosting that buffer at a public URL
 // Twilio can fetch from (via Cloudflare Tunnel, ngrok, or Twilio Assets).
@@ -363,8 +363,8 @@ export async function renderTextWithElevenLabs(
 export interface SynthesizeSpeechDeps {
   // Persist the MP3 bytes (keyed by `cacheKey`) and return the public
   // URL Twilio will fetch. The bridge owns hosting (e.g. writes to
-  // ~/.lantern/voice-cache/<key>.mp3 and returns
-  // <LANTERN_VOICE_CACHE_PUBLIC_URL>/voice-cache/<key>.mp3). May return
+  // ~/.pal/voice-cache/<key>.mp3 and returns
+  // <PAL_VOICE_CACHE_PUBLIC_URL>/voice-cache/<key>.mp3). May return
   // null/throw — treated as "fall back to Polly".
   hostAudio: (cacheKey: string, mp3: Buffer) => Promise<string | null>;
   logger?: Pick<Logger, "info" | "warn">;

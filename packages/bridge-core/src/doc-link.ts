@@ -5,7 +5,7 @@
 
 export interface StageLinkOptions {
   controlPlaneUrl: string; // e.g. http://127.0.0.1:8080
-  serviceToken?: string; // LANTERN_GRPC_SERVICE_TOKEN
+  serviceToken?: string; // PAL_GRPC_SERVICE_TOKEN
   filename: string;
   content: Uint8Array; // raw file bytes — streamed, not base64 (no 33% bloat)
   ttlSeconds?: number; // default 3600 (server caps at 3600)
@@ -23,7 +23,12 @@ export async function stageDownloadLink(o: StageLinkOptions): Promise<{ url: str
     "X-TTL-Seconds": String(o.ttlSeconds ?? 3600),
     "Content-Length": String(o.content.byteLength),
   };
-  if (o.serviceToken) headers["x-lantern-service-token"] = o.serviceToken;
+  // Both names (ADR 0032): x-pal-* for an upgraded control plane, the legacy
+  // x-lantern-* so a control plane not yet redeployed still authenticates us.
+  if (o.serviceToken) {
+    headers["x-pal-service-token"] = o.serviceToken;
+    headers["x-lantern-service-token"] = o.serviceToken;
+  }
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), o.timeoutMs ?? 15000);
   try {
@@ -36,7 +41,7 @@ export async function stageDownloadLink(o: StageLinkOptions): Promise<{ url: str
     if (!res.ok) return null;
     const j = (await res.json()) as { url?: string; expiresAt?: number };
     if (!j.url) return null;
-    // Guard against a dead link: if LANTERN_PUBLIC_BASE_URL isn't set on the
+    // Guard against a dead link: if PAL_PUBLIC_BASE_URL isn't set on the
     // control-plane, the staged URL is a loopback/private host the contact can't
     // reach. Refuse rather than text someone a useless link.
     if (/\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(j.url)) {

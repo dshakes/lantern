@@ -1,5 +1,5 @@
-// lantern-imessage-bridge — macOS-only service that bridges iMessage
-// into the Lantern agent runtime.
+// pal-imessage-bridge — macOS-only service that bridges iMessage
+// into PAL Runtime.
 //
 // Exposes the same HTTP + WS surface as whatsapp-bridge so the
 // dashboard can render both with shared components.
@@ -23,26 +23,26 @@
 //   GET    /ws?tenantId=…                        — live updates
 //
 // Auth: same shared-token pattern as WhatsApp bridge. Set
-// LANTERN_IMESSAGE_BRIDGE_TOKEN; dashboard sends Authorization: Bearer.
+// PAL_IMESSAGE_BRIDGE_TOKEN; dashboard sends Authorization: Bearer.
 
 // Load a local .env (gitignored) BEFORE anything reads process.env, so
-// owner-only settings like LANTERN_IMESSAGE_OWNER_HANDLE survive every
+// owner-only settings like PAL_IMESSAGE_OWNER_HANDLE survive every
 // restart whether launched from a Terminal (make run-imessage-bridge)
 // or launchd — without baking PII into the repo. Node 20.12+/21.7+
 // native loader; no dependency. Looks next to the service dir first,
-// then ~/.lantern/imessage.env as a fallback.
+// then ~/.pal/imessage.env as a fallback.
 // FIRST import: mirrors PAL_X <-> LANTERN_X before any module reads the env (ADR 0032).
-import { bridgeEnv } from "@lantern/bridge-core/env-compat";
+import { bridgeEnv } from "@pal/bridge-core/env-compat";
 import { existsSync as _existsSync } from "node:fs";
 import { join as _join, dirname as _dirname } from "node:path";
 import { fileURLToPath as _fileURLToPath } from "node:url";
-import { homedir as _homedir } from "node:os";
+import { palStateDir } from "@pal/bridge-core/state-dir";
 {
   const _here = _dirname(_fileURLToPath(import.meta.url));
   const _candidates = [
     _join(_here, "..", ".env"),
     _join(process.cwd(), ".env"),
-    _join(_homedir(), ".lantern", "imessage.env"),
+    _join(palStateDir(), "imessage.env"),
   ];
   for (const _p of _candidates) {
     if (_existsSync(_p)) {
@@ -69,8 +69,8 @@ import { dirname } from "path";
 
 import { IMessageSession } from "./session.js";
 import { searchMailIndex, readMailBody } from "./mail-reader.js";
-import { initAuth } from "@lantern/bridge-core/auth";
-import { buildLabel } from "@lantern/bridge-core/build-info";
+import { initAuth } from "@pal/bridge-core/auth";
+import { buildLabel } from "@pal/bridge-core/build-info";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -280,13 +280,13 @@ app.post("/session/:tenantId/send-doc", async (req, res) => {
 // On iMessage you can message yourself, so this is the same path as
 // send() but the "to" is the bridge owner's primary handle. The
 // control-plane uses this to deliver Morning Brief / inbox-concierge
-// summaries. Owner handle is set via LANTERN_IMESSAGE_OWNER_HANDLE.
+// summaries. Owner handle is set via PAL_IMESSAGE_OWNER_HANDLE.
 app.post("/session/:tenantId/send-self", async (req, res) => {
   const s = sessions.get(req.params.tenantId);
   if (!s || !s.isReady()) { res.status(400).json({ error: "not ready" }); return; }
   const ownerHandle = process.env.PAL_IMESSAGE_OWNER_HANDLE;
   if (!ownerHandle) {
-    res.status(400).json({ error: "LANTERN_IMESSAGE_OWNER_HANDLE not configured on the bridge host" });
+    res.status(400).json({ error: "PAL_IMESSAGE_OWNER_HANDLE not configured on the bridge host" });
     return;
   }
   const { message } = req.body as { message?: unknown };
@@ -333,7 +333,7 @@ app.post("/session/:tenantId/contacts/search", async (req, res) => {
 //
 // Exposes the per-session PersonalDocs instance so the control-plane's
 // LLM tools (`search_personal_files`, `read_personal_file`) can drive
-// it. Path-restricted (LANTERN_PERSONAL_DOCS_ROOTS), audit-logged in the
+// it. Path-restricted (PAL_PERSONAL_DOCS_ROOTS), audit-logged in the
 // PersonalDocs class, and reachable only via loopback (bind=127.0.0.1)
 // + bridge token (mounted under /session/* middleware). Replaces the
 // old regex pre-deciders — the LLM now picks WHEN to search instead of
@@ -575,7 +575,7 @@ wss.on("connection", (ws, req) => {
 
 // On macOS, auto-start the session for the default tenant so the
 // bridge is immediately useful without manual /start POSTs. Set
-// LANTERN_IMESSAGE_AUTOSTART=0 to disable (e.g. for a multi-tenant
+// PAL_IMESSAGE_AUTOSTART=0 to disable (e.g. for a multi-tenant
 // prod host that expects explicit /start per tenant).
 const DEFAULT_TENANT =
   process.env.PAL_TENANT_ID ||
@@ -584,7 +584,7 @@ const DEFAULT_TENANT =
 const AUTOSTART = (process.env.PAL_IMESSAGE_AUTOSTART ?? "1") !== "0";
 
 server.listen(PORT, BIND, async () => {
-  logger.info({ port: PORT, bind: BIND, build: buildLabel(), platform: process.platform }, "lantern-imessage-bridge listening");
+  logger.info({ port: PORT, bind: BIND, build: buildLabel(), platform: process.platform }, "pal-imessage-bridge listening");
   if (process.platform !== "darwin") {
     logger.warn("not running on macOS — /session/* routes will return 501");
     return;

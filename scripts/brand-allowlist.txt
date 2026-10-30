@@ -35,6 +35,19 @@ postgres(ql)?://lantern:lantern@[^/\s"']*/lantern\b # dev DB user/password/name
 # --- checkout path: compose project, plists and worktrees derive from it
 /workspace/lantern\b # owner's checkout dir
 
+# --- bridges (packages/bridge-core, services/{imessage,whatsapp}-bridge, evals): live owner state + legacy input
+path:^packages/bridge-core/src/(env-compat|state-dir)(\.test)?\.ts$ # PAL_/LANTERN_ env mirror and the ~/.pal -> ~/.lantern state-dir fallback name the legacy forms
+path:^packages/bridge-core/src/bot-self(\.test)?\.ts$ # echo registry: lantern-era bot lines stay registered forever (late iCloud echoes)
+scope:^packages/bridge-core/src/(nl|voice)-commands(\.test)?\.ts$ (?i)lantern # legacy "lantern," / "/lantern" owner commands are still accepted
+scope:^services/(imessage|whatsapp)-bridge/src/session\.ts$ /lantern\b # legacy /lantern slash commands are still accepted
+scope:^(packages/bridge-core|services/(imessage|whatsapp)-bridge|evals)/ \bprocess\.env\.LANTERN_[A-Z0-9_]+ # PAL_-first legacy env fallback (env-read-check form)
+scope:^(services/(imessage|whatsapp)-bridge/src/index\.ts|packages/bridge-core/src/[a-z-]+\.ts)$ \bLANTERN_(X\b|/) # env-compat bootstrap notes name the legacy prefix
+scope:^packages/bridge-core/src/doc-link(\.test)?\.ts$ \bx-lantern-(service-token\b|\*) # dual-sent until every control plane accepts x-pal-service-token
+scope:^(packages/bridge-core|services/(imessage|whatsapp)-bridge)/src/ (label: "lantern"|EMAIL_LABEL = "lantern"|\blantern(-self)? label\b) # owner's existing Gmail label; renaming splits their mail filing
+scope:^services/whatsapp-bridge/src/session\.ts$ browser: \["Lantern" # Baileys device name of the live paired WhatsApp session
+scope:^services/whatsapp-bridge/src/session\.ts$ /tmp/lantern-whatsapp-bridge\.log # launchd StandardOutPath in the owner's installed plist
+scope:^(packages/bridge-core|services/whatsapp-bridge|evals)/ (admin@lantern\.dev|password: "lantern"|PASSWORD \|\| "lantern"|/ lantern\)) # seeded dev admin login (persisted in the users table)
+scope:^packages/bridge-core/src/device-signals(\.test)?\.ts$ \bLantern-(Status-Available|Parked)\b # names of the owner's existing iOS Shortcuts
 # --- infra (PR rename/pal-10-infra): names owned by service code, persisted data or customer clusters
 scope:^infra/helm/ \.Values\.\w+\.env\.LANTERN_\w+ # legacy values keys still honored as a fallback behind PAL_* (tests/legacy-env-keys.sh)
 scope:^infra/ LANTERN_\* names, so existing overrides keep working # compat banner: the binaries still accept the legacy env names
@@ -89,3 +102,22 @@ scope:^scripts/regression\.sh ^[^#]*"label":"lantern" # API label sent to the ma
 scope:^(scripts|\.github)/ postgres(ql)?://lantern:|/lantern\?sslmode|%lantern\b|/lantern\?|\(lantern/(lantern)?\)|`lantern` DB|"password":"lantern"|\$\{_PASSWORD:-lantern\}|\blantern\b(?=\$\{RST\}) # dev DB URL/user/password forms (owner's live dev DB name is allowlisted above)
 scope:^scripts/introspect/PROMPT\.md -Users-shakes-workspace-lantern # Claude Code memory dir derived from the checkout path
 lantern-egress-proxy # app label selector of the data-plane egress proxy: Deployment selectors are immutable, kept for in-place upgrades
+
+# --- SDKs + CLI (PR rename/pal-9-sdk-cli)
+scope:^packages/sdk-(ts|python)/ \bLantern(Client|ApiError|Error|GrpcError|StepError|LlmError|LlmJsonError|ToolError|MemoryError|ConnectorError|TimeoutError|CancelledError|ValidationError|Runtime|Agent|Sandbox|RuntimeClient)\b # deprecated public aliases so existing user code keeps compiling
+path:^packages/sdk-python/lantern/__init__\.py$ # the deprecated `import lantern` shim
+path:^packages/sdk-python/tests/test_compat\.py$ # proves the legacy import paths still work
+\blantern\.(web|python|fs|browser)\b # built-in tool ids sent to the runtime sidecar
+\blantern\.(runtime|modelrouter|memory|tools)\.v1\b # gRPC service paths of the runtime sidecar (renamed with lantern.v1)
+(?i)\bx-lantern-(truncated|route-strategy|tenant-id|run-id)\b # legacy wire headers, read/sent alongside x-pal-*
+\blantern-runner\b # legacy console-script alias of pal-runner
+scope:^packages/cli/ \blantern-demo\b # docker compose project that owns existing demo volumes
+\blantern-guide\b # server-side onboarding template id
+scope:^packages/cli/ legacyBinaryName = "lantern"|cmd/lantern|~/\.lantern\b|"\.lantern"|`lantern`|install_symlink "pal" => "lantern" # legacy binary name / config dir, kept as aliases
+path:^packages/cli/cmd/lantern/main\.go$ # legacy-named main package (go install ./cmd/lantern)
+scope:^packages/cli/internal/cli/infra\.go (lantern_data_plane|lantern-data-plane|lantern-dp|-n lantern\b) # terraform state address, cluster/release/namespace of existing installs
+scope:^packages/cli/internal/cli/dev\.go "LANTERN_API_URL= # child env written under both names
+\blanternAppRoleExists\b|\bLanternAppRoleExists\b # JSON field of the control-plane health payload
+scope:^packages/sdk-go/ ^package lantern$|Package lantern|\blantern\.[A-Z]\w*|`lantern\.X` # Go package clause, renamed with the module path
+scope:^Formula/ "lantern"|`lantern`|bin/"lantern" # Homebrew legacy symlink
+scope:^examples/ \blantern/(demos|examples|deploy-guardian|base|harness|web-scraper-harness)\b # image refs / GitHub status context persisted in users' branch protection

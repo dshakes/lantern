@@ -1,6 +1,6 @@
 // Read-only reader for macOS knowledgeC.db app-usage — the I/O side of the
 // Mac app-usage signal (the pure parsing/summarization lives in
-// @lantern/bridge-core/mac-usage).
+// @pal/bridge-core/mac-usage).
 //
 // macOS records foreground app usage in a CoreDuet store at
 //   ~/Library/Application Support/Knowledge/knowledgeC.db
@@ -12,13 +12,13 @@
 //
 // PRIVACY / SAFETY (HARD RULES — see mac-usage.ts header):
 //   * OFF by default. The bridge only constructs + ticks this reader when
-//     LANTERN_MAC_USAGE=on. This module does nothing on its own.
+//     PAL_MAC_USAGE=on. This module does nothing on its own.
 //   * FAILS CLOSED. Any failure — no Full Disk Access (the bridge process has
 //     FDA in prod; YOUR dev shell may not), missing DB, schema drift, lock —
 //     is caught and turned into an EMPTY result + a single debug log. It NEVER
 //     throws and NEVER crashes the bridge.
 //   * SUMMARIES ONLY. This returns the distilled UsageSummary, not raw rows.
-//     The caller persists only the small rolling cache (~/.lantern/mac-usage.json).
+//     The caller persists only the small rolling cache (~/.pal/mac-usage.json).
 //
 // The knowledgeC.db file is frequently WAL-locked by the live CoreDuet daemon,
 // so — like other macOS-DB readers — we copy it (plus any -wal/-shm sidecars)
@@ -35,7 +35,7 @@ import {
   unixMsToMacAbsolute,
   type UsageRow,
   type UsageSummary,
-} from "@lantern/bridge-core/mac-usage";
+} from "@pal/bridge-core/mac-usage";
 
 /** Default knowledgeC.db location for the current user. */
 export function defaultKnowledgeDbPath(): string {
@@ -79,7 +79,7 @@ export function readMacUsageSummary(logger: Logger, opts: ReadUsageOpts = {}): U
   try {
     // Copy the DB (+ WAL/SHM sidecars) to a private temp dir and open the COPY
     // read-only, so a live CoreDuet write-lock can't make us fail or block.
-    tmpDir = mkdtempSync(join(tmpdir(), "lantern-knowledge-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "pal-knowledge-"));
     const tmpDb = join(tmpDir, "knowledgeC.db");
     copyFileSync(dbPath, tmpDb);
     for (const ext of ["-wal", "-shm"]) {

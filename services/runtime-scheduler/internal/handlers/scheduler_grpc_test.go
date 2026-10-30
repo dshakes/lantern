@@ -15,6 +15,7 @@ import (
 	"github.com/dshakes/lantern/services/runtime-scheduler/internal/cluster"
 	"github.com/dshakes/lantern/services/runtime-scheduler/internal/dialer"
 	"github.com/dshakes/lantern/services/runtime-scheduler/internal/handlers"
+	"github.com/dshakes/lantern/services/runtime-scheduler/internal/metrics"
 	"github.com/dshakes/lantern/services/runtime-scheduler/internal/middleware"
 	"github.com/dshakes/lantern/services/runtime-scheduler/internal/placement"
 	"github.com/dshakes/lantern/services/runtime-scheduler/internal/scoring"
@@ -343,4 +344,36 @@ func TestSchedule_SpawnResponseStampsMeasurement(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("spawn response measurement was never stamped onto the stored VM")
+}
+
+// SLO instrumentation (ADR 0041): a Schedule call records exactly one latency
+// observation under its result label.
+func TestSchedule_RecordsDurationHistogram(t *testing.T) {
+	store := cluster.NewInMemoryStore()
+	addNode(store, "n1", 8000, 16<<30)
+	svc := newService(store, okDialer{})
+	m := metrics.New()
+	svc.Metrics = m
+
+	if _, err := svc.Schedule(ctxWithTenant("t1"), scheduleReq("sha256:abc", "")); err != nil {
+		t.Fatalf("Schedule: %v", err)
+	}
+	// No tenant in ctx -> error path.
+	if _, err := svc.Schedule(context.Background(), scheduleReq("sha256:abc", "")); err == nil {
+		t.Fatal("expected error without tenant")
+	}
+
+	got := map[string]uint64{}
+	fams, _ := m.Prometheus().Gather()
+	for _, f := range fams {
+		if f.GetName() != "lantern_scheduler_schedule_duration_seconds" {
+			continue
+		}
+		for _, mm := range f.GetMetric() {
+			got[mm.GetLabel()[0].GetValue()] = mm.GetHistogram().GetSampleCount()
+		}
+	}
+	if got["ok"] != 1 || got["error"] != 1 {
+		t.Fatalf("duration samples = %v, want ok=1 error=1", got)
+	}
 }

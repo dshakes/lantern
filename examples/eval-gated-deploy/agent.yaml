@@ -1,4 +1,4 @@
-# Eval-gated deploy: the version on main. `lantern deploy` reads this file.
+# Eval-gated deploy: the version on main. `pal deploy` reads this file.
 # The two candidates under candidates/ are PR changes to it: one regresses the
 # pinned "standard-delivery" case, one passes.
 name: shipping-assistant

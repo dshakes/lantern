@@ -14,7 +14,7 @@ Reviews GitHub pull requests and posts inline comments with suggestions, then su
 ## How to run
 
 ```bash
-lantern run code-reviewer --input '{"repo": "acme/backend", "prNumber": 42, "focus": ["security", "performance"]}'
+pal run code-reviewer --input '{"repo": "acme/backend", "prNumber": 42, "focus": ["security", "performance"]}'
 ```
 
 ## Example input

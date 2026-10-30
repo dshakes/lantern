@@ -145,6 +145,7 @@ spec:
             # Prod/staging refuse to start on the stub scheduler (CheckSchedulerAddr).
             - name: PAL_SCHEDULER_GRPC_ADDR
               value: "{{ include "pal.fullname" . }}-runtime-scheduler:{{ .Values.runtimeScheduler.service.grpcPort }}"
+            {{- include "pal.regionEnv" . | nindent 12 }}
             {{- with .Values.controlPlane.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

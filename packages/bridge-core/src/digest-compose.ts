@@ -5,7 +5,7 @@
 //   Det.:  deterministic prioritized template (always available as fallback).
 //
 // The LLM path is used when opts.llmCompose is provided AND
-// LANTERN_DIGEST_NARRATIVE !== "0" (default ON). Any error → deterministic.
+// PAL_DIGEST_NARRATIVE !== "0" (default ON). Any error → deterministic.
 //
 // ponytail: pure functions; no I/O; deterministic path is the guarantee.
 
@@ -213,7 +213,7 @@ function buildUserPrompt(data: DigestData): string {
 /**
  * Compose a narrative morning brief for the owner.
  *
- * When `opts.llmCompose` is provided and `LANTERN_DIGEST_NARRATIVE !== "0"`,
+ * When `opts.llmCompose` is provided and `PAL_DIGEST_NARRATIVE !== "0"`,
  * tries the LLM path first; falls back to deterministic on null / error.
  * The deterministic path is always correct and available.
  */

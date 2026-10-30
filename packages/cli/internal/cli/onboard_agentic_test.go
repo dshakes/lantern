@@ -1,6 +1,6 @@
 package cli
 
-// Agentic `lantern onboard`: goal prompt → generate-spec → confirm → create →
+// Agentic `pal onboard`: goal prompt → generate-spec → confirm → create →
 // first run with the spec's own first input. Interactive (TTY) and CI
 // (--yes / non-TTY) paths, plus decline and the quickstart floor.
 
@@ -27,7 +27,7 @@ type agenticRecorder struct {
 
 func newAgenticServer(t *testing.T, rec *agenticRecorder) *httptest.Server {
 	t.Helper()
-	// Never touch the real ~/.lantern/credentials.json.
+	// Never touch the real credentials.json (~/.pal or legacy ~/.lantern).
 	t.Setenv("HOME", t.TempDir())
 	mux := http.NewServeMux()
 	registerHealthOK(mux)

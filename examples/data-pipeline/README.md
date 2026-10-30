@@ -16,19 +16,19 @@ Scheduled weekly data pipeline that pulls from HubSpot, Stripe, and Google Analy
 Normally triggered automatically every Monday at 9am. To run manually:
 
 ```bash
-lantern run data-pipeline
+pal run data-pipeline
 ```
 
 With a custom date range:
 
 ```bash
-lantern run data-pipeline --input '{"dateRange": {"start": "2026-03-30", "end": "2026-04-06"}}'
+pal run data-pipeline --input '{"dateRange": {"start": "2026-03-30", "end": "2026-04-06"}}'
 ```
 
 Dry run without distribution:
 
 ```bash
-lantern run data-pipeline --input '{"skipDistribution": true}'
+pal run data-pipeline --input '{"skipDistribution": true}'
 ```
 
 ## Example input

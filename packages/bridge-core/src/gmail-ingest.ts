@@ -14,7 +14,7 @@
 //     mailbox behind the tenant's Gmail connector) and the bridge routes every
 //     surface to owner self-chat.
 //   * State (last-seen high-water mark + a bounded dedup set of message ids) is
-//     persisted to ~/.lantern/gmail-poll-state.json (mode 0600) so a restart
+//     persisted to ~/.pal/gmail-poll-state.json (mode 0600) so a restart
 //     never re-processes — and never double-surfaces — an email.
 //   * It NEVER mutates the mailbox. list_recent is read-only.
 //
@@ -22,8 +22,8 @@
 // I/O isolated behind injected hooks so unit tests run with a mock connector and
 // a tmp state file (no live Gmail).
 
+import { palStateDir } from "./state-dir.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 // One normalized email message, flattened from the connector's `list_recent`
@@ -58,7 +58,7 @@ export interface GmailPollState {
 const SEEN_CAP = 1000;
 
 export function gmailPollStatePath(): string {
-  return process.env.PAL_GMAIL_POLL_STATE || join(homedir(), ".lantern", "gmail-poll-state.json");
+  return process.env.PAL_GMAIL_POLL_STATE || join(palStateDir(), "gmail-poll-state.json");
 }
 
 export function loadPollState(path = gmailPollStatePath()): GmailPollState {

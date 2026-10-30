@@ -13,18 +13,18 @@
 //!   - Raw Gmail / personal-docs content is DELIBERATELY NOT auto-loaded
 //!     here. Those are private and would leak if surfaced in a reply to
 //!     someone else. The owner can paste a hand-written summary ("I'm
-//!     mid-launch on Lantern") but the system never scrapes mailboxes
+//!     mid-launch on PAL") but the system never scrapes mailboxes
 //!     into outbound replies. Owner's OWN queries (self-chat) use the
 //!     personal-docs pipeline, which is separately gated to the owner.
 //!
-//! File location: $LANTERN_OWNER_PROFILE, else ~/.lantern/owner-profile.md.
+//! File location: $PAL_OWNER_PROFILE, else ~/.pal/owner-profile.md.
 //! Hot-reloaded with a short TTL so edits take effect without a restart.
 
 // Mirror LANTERN_X -> PAL_X before this module's top-level env reads, for any
 // entrypoint that did not import env-compat first (ADR 0032).
 import "./env-compat.js";
+import { palStateDir } from "./state-dir.js";
 import { readFileSync, existsSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Logger } from "pino";
 import { canonicalHandle } from "./canonical-handle.js";
@@ -132,7 +132,7 @@ export function parseNowLine(line: string): NowItem | null {
 
 const RELOAD_TTL_MS = 30_000;
 
-// Whether LANTERN_OWNER_TIMEZONE was explicitly provided by the operator at
+// Whether PAL_OWNER_TIMEZONE was explicitly provided by the operator at
 // process start. Captured ONCE at import, before any profile load mutates the
 // env. When true, the profile NEVER overrides the explicit env. When false,
 // the store mirrors the profile-derived timezone into the env so every
@@ -152,7 +152,7 @@ export class OwnerProfileStore {
     this.path =
       path ||
       process.env.PAL_OWNER_PROFILE ||
-      join(homedir(), ".lantern", "owner-profile.md");
+      join(palStateDir(), "owner-profile.md");
   }
 
   /** Absolute path on disk. Exposed so auto-updaters can write
@@ -825,7 +825,7 @@ export function parseProfile(raw: string): OwnerProfile {
     facts: hasFacts ? facts : undefined,
     nativity: nativityLines.join(" ").trim(),
     // Location line wins; fall back to nativity. The bridge prefers an
-    // explicit LANTERN_OWNER_TIMEZONE env over this (see timezone() getter).
+    // explicit PAL_OWNER_TIMEZONE env over this (see timezone() getter).
     timezone:
       parseTimezone(myWorldLines.join(" ")) ||
       parseTimezone(nativityLines.join(" ")),
@@ -836,7 +836,7 @@ export function parseProfile(raw: string): OwnerProfile {
 }
 
 /** A starter template written to the profile path on first run if none
- *  exists and the owner runs `lantern profile init` (or the bridge logs
+ *  exists and the owner runs `pal profile init` (or the bridge logs
  *  the hint). Exported so the CLI / setup docs can reuse it. */
 export const OWNER_PROFILE_TEMPLATE = `# Owner profile
 

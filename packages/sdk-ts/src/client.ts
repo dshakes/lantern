@@ -71,18 +71,18 @@ const messageErrorSchema = z.object({
   error: z.string(),
 });
 
-export interface LanternClientConfig {
+export interface PalClientConfig {
   baseUrl?: string;
   /** Alias for baseUrl (matches the README's casing). Either works. */
   baseURL?: string;
   apiKey?: string;
 }
 
-export class LanternClient {
+export class PalClient {
   private readonly baseUrl: string;
   private readonly apiKey: string;
 
-  constructor(config: LanternClientConfig = {}) {
+  constructor(config: PalClientConfig = {}) {
     this.baseUrl = config.baseUrl ?? config.baseURL ?? palEnv("API_URL") ?? "https://api.lantern.run";
     this.apiKey = config.apiKey ?? palEnv("API_KEY") ?? "";
   }
@@ -103,7 +103,7 @@ export class LanternClient {
         });
         if (!res.ok) {
           const body = await res.text().catch(() => "");
-          throw new LanternApiError(res.status, body);
+          throw new PalApiError(res.status, body);
         }
         if (res.status === 204) return undefined as T;
         return res.json() as Promise<T>;
@@ -111,7 +111,7 @@ export class LanternClient {
       {
         // 429/503 only — never 4xx auth/validation, never other 5xx.
         shouldRetry: (err) =>
-          (err instanceof LanternApiError && (err.status === 429 || err.status === 503)) || isNetworkError(err),
+          (err instanceof PalApiError && (err.status === 429 || err.status === 503)) || isNetworkError(err),
       },
     );
   }
@@ -196,8 +196,8 @@ export class LanternClient {
       const res = await fetch(`${this.baseUrl}/v1/runtime/vms/${encodeURIComponent(id)}/files/content${this.qs({ path })}`, {
         headers: this.headers(),
       });
-      if (!res.ok) throw new LanternApiError(res.status, await res.text().catch(() => ""));
-      return { content: await res.text(), truncated: res.headers.get("X-Lantern-Truncated") === "true" };
+      if (!res.ok) throw new PalApiError(res.status, await res.text().catch(() => ""));
+      return { content: await res.text(), truncated: (res.headers.get("X-Pal-Truncated") ?? res.headers.get("X-Lantern-Truncated")) === "true" };
     },
 
     /** Create or overwrite a UTF-8 text file (≤ 1 MiB; 413 above). */
@@ -219,7 +219,7 @@ export class LanternClient {
       body: JSON.stringify(params),
     });
     if (!res.ok) {
-      throw new LanternApiError(res.status, await res.text().catch(() => ""));
+      throw new PalApiError(res.status, await res.text().catch(() => ""));
     }
     for await (const { event, data } of this.rawSSEWithEvent(res)) {
       let json: unknown;
@@ -471,7 +471,7 @@ export class LanternClient {
   };
 
   readonly evalRuns = {
-    /** Returns HTTP 422 (thrown as LanternApiError) if regressed vs. the
+    /** Returns HTTP 422 (thrown as PalApiError) if regressed vs. the
      *  branch baseline. */
     record: (params: {
       suiteId: string;
@@ -652,7 +652,7 @@ export class LanternClient {
     });
     if (!sseRes.ok) {
       const body = await sseRes.text().catch(() => "");
-      throw new LanternApiError(sseRes.status, body);
+      throw new PalApiError(sseRes.status, body);
     }
 
     // Post the message to trigger the turn.
@@ -718,7 +718,7 @@ export class LanternClient {
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      throw new LanternApiError(res.status, body);
+      throw new PalApiError(res.status, body);
     }
 
     yield* this.parseSSE(res);
@@ -731,7 +731,7 @@ export class LanternClient {
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      throw new LanternApiError(res.status, body);
+      throw new PalApiError(res.status, body);
     }
 
     yield* this.parseSSE(res);
@@ -760,7 +760,7 @@ export class LanternClient {
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      throw new LanternApiError(res.status, body);
+      throw new PalApiError(res.status, body);
     }
 
     for await (const data of this.rawSSELines(res)) {
@@ -848,13 +848,13 @@ export class LanternClient {
   }
 }
 
-export class LanternApiError extends Error {
+export class PalApiError extends Error {
   constructor(
     public readonly status: number,
     public readonly body: string,
   ) {
-    super(`Lantern API error ${status}: ${body.slice(0, 200)}`);
-    this.name = "LanternApiError";
+    super(`PAL API error ${status}: ${body.slice(0, 200)}`);
+    this.name = "PalApiError";
   }
 }
 

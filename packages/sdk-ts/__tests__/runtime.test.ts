@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { LanternApiError, LanternClient, MessageStreamError } from "../src/client.js";
+import { PalApiError, PalClient, MessageStreamError } from "../src/client.js";
 import type { ExecStreamEvent } from "../src/types.js";
 
-const client = new LanternClient({ baseUrl: "http://x", apiKey: "k" });
+const client = new PalClient({ baseUrl: "http://x", apiKey: "k" });
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -36,7 +36,7 @@ describe("runtime pause/resume/fork", () => {
     expect(f.mock.calls[0][1].method).toBe("POST");
   });
 
-  it("resume surfaces 402 and 409 as LanternApiError without retry", async () => {
+  it("resume surfaces 402 and 409 as PalApiError without retry", async () => {
     for (const status of [402, 409]) {
       const f = vi.fn().mockResolvedValue(new Response("nope", { status }));
       vi.stubGlobal("fetch", f);
@@ -70,16 +70,16 @@ describe("runtime files", () => {
   });
 
   it("readFile returns raw text and the truncation header", async () => {
-    const f = vi.fn().mockResolvedValue(new Response("héllo", { status: 200, headers: { "X-Lantern-Truncated": "true" } }));
+    const f = vi.fn().mockResolvedValue(new Response("héllo", { status: 200, headers: { "X-Pal-Truncated": "true" } }));
     vi.stubGlobal("fetch", f);
     const r = await client.runtime.readFile("vm1", "dir/a.txt");
     expect(f.mock.calls[0][0]).toBe("http://x/v1/runtime/vms/vm1/files/content?path=dir%2Fa.txt");
     expect(r).toEqual({ content: "héllo", truncated: true });
   });
 
-  it("readFile throws LanternApiError on 404", async () => {
+  it("readFile throws PalApiError on 404", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("nope", { status: 404 })));
-    await expect(client.runtime.readFile("vm1", "x")).rejects.toBeInstanceOf(LanternApiError);
+    await expect(client.runtime.readFile("vm1", "x")).rejects.toBeInstanceOf(PalApiError);
   });
 
   it("writeFile PUTs the raw body as text/plain", async () => {
@@ -118,9 +118,9 @@ describe("runtime.execStream", () => {
     await expect(collect(client.runtime.execStream("vm1", { command: "ls" }))).rejects.toBeInstanceOf(MessageStreamError);
   });
 
-  it("throws LanternApiError on non-2xx", async () => {
+  it("throws PalApiError on non-2xx", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("conflict", { status: 409 })));
-    await expect(collect(client.runtime.execStream("vm1", { command: "ls" }))).rejects.toBeInstanceOf(LanternApiError);
+    await expect(collect(client.runtime.execStream("vm1", { command: "ls" }))).rejects.toBeInstanceOf(PalApiError);
   });
 });
 

@@ -22,7 +22,7 @@ support for live migration).
 ```bash
 docker build -t lantern/demos/stateful-research:latest examples/headless-agents/03-stateful-research
 
-lantern run examples/headless-agents/03-stateful-research/agent.yaml \
+pal run examples/headless-agents/03-stateful-research/agent.yaml \
   --input '{"topic": "Firecracker snapshots", "max_steps": 10}' \
   --follow
 

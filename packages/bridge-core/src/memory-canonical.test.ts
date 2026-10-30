@@ -15,7 +15,7 @@ import { EpisodicMemory } from "./episodic-memory.ts";
 import { SocialGraph } from "./social-graph.ts";
 
 function tmpFile(name: string): string {
-  const dir = mkdtempSync(join(tmpdir(), "lantern-mem-"));
+  const dir = mkdtempSync(join(tmpdir(), "pal-mem-"));
   return join(dir, name);
 }
 

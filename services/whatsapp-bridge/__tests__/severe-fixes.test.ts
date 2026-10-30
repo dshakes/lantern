@@ -21,7 +21,7 @@ let tmpRoot: string;
 let prevCwd: string;
 
 beforeEach(() => {
-  tmpRoot = mkdtempSync(join(tmpdir(), "lantern-bridge-fixes-"));
+  tmpRoot = mkdtempSync(join(tmpdir(), "pal-bridge-fixes-"));
   prevCwd = process.cwd();
   process.chdir(tmpRoot);
 });
@@ -163,7 +163,7 @@ describe("shouldAutoReplyToInbound — unified live/history gate", () => {
   });
 
   // Group replies are OFF by default (owner, 2026-08-24); the monitoring and
-  // wish rules below only apply once LANTERN_GROUP_REPLIES=1 re-enables them.
+  // wish rules below only apply once PAL_GROUP_REPLIES=1 re-enables them.
   it("group replies are off by default, even for a monitored, targeted group", () => {
     delete process.env.PAL_GROUP_REPLIES;
     const sess = makeSession();

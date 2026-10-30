@@ -1,10 +1,10 @@
 {
-  "name": "@lantern/example-whatsapp-assistant",
+  "name": "@pal-runtime/example-whatsapp-assistant",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "dependencies": {
-    "@lantern/sdk": "workspace:*",
+    "@pal-runtime/sdk": "workspace:*",
     "zod": "^3.24.0"
   }
 }

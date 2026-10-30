@@ -12,6 +12,9 @@
 #   e2e         integration-test.sh, jailed, EXPECT_VENDSECRET=1, timing table
 #   broker-e2e  broker-e2e.sh (ADR 0026 broker egress mode)
 #   measurement-e2e  measurement-e2e.sh (ADR 0031 software measurement, jailed)
+#   runtime     long-running Firecracker runtime-manager for `dev` (ADR 0045):
+#               listens on :52054 in the VM (Lima forwards it to the Mac's
+#               localhost:52054) and self-registers with the host scheduler
 #   down        stop the VM
 #   clean       drop the VM's build caches (cargo clean + the cached image)
 #
@@ -237,6 +240,30 @@ guest_measurement_e2e() {
   [ "${rc}" -eq 0 ] || die "measurement-e2e.sh failed (exit ${rc})"
 }
 
+# Design-time runtime for `dev` (ADR 0045). Foreground; Ctrl-C stops it.
+# DEV ONLY: plaintext gRPC and no service token (the manager's dev defaults);
+# LANTERN_ENV is never set here. Jailed exactly like guest_e2e. :52054, not
+# :50054, so it never blocks `make lima-e2e` nor collides with a host manager.
+guest_runtime() {
+  guest_image
+  build_manager
+  sudo mkdir -p /srv/jailer /var/lib/lantern/snapshots
+  local port="${LISTEN_PORT:-52054}"
+  wait_port_free "${port}"
+  log "runtime-manager (firecracker, jailed) on :${port} -> Mac localhost:${port}; registering with http://host.lima.internal:8085"
+  log "on the Mac: pal dev (or make run-scheduler + PAL_SCHEDULER_GRPC_ADDR=localhost:50055 make run-api)"
+  exec sudo env \
+    RUNTIME_BACKEND=firecracker LANTERN_RUNTIME_BACKEND=firecracker \
+    LISTEN_ADDR="0.0.0.0:${port}" LOG_LEVEL="${LOG_LEVEL:-info}" \
+    FC_KERNEL_PATH="${IMG}/vmlinux" FC_ROOTFS_PATH="${IMG}/rootfs.ext4" \
+    FIRECRACKER_JAILER_PATH="$(command -v jailer)" FIRECRACKER_JAILER_UID=123 \
+    FIRECRACKER_JAILER_GID=100 FIRECRACKER_CHROOT_BASE=/srv/jailer \
+    SCHEDULER_URL="${SCHEDULER_URL:-http://host.lima.internal:8085}" \
+    NODE_NAME="lima-${VM}" NODE_ADVERTISE_ADDR="localhost:${port}" \
+    NODE_REGION=local NODE_ZONE=lima \
+    "${MANAGER_BIN}"
+}
+
 guest_clean() {
   guest_env
   if [ -d "${TARGET}" ]; then
@@ -257,6 +284,7 @@ if [ "${cmd}" = "_in" ]; then
     e2e)        guest_e2e ;;
     broker-e2e) guest_broker_e2e ;;
     measurement-e2e) guest_measurement_e2e ;;
+    runtime)    guest_runtime ;;
     clean)      guest_clean ;;
     *)          die "unknown guest command: ${2:-}" ;;
   esac
@@ -265,7 +293,7 @@ fi
 
 case "${cmd}" in
   up)                     host_up ;;
-  image|e2e|broker-e2e|measurement-e2e|clean) host_preflight; require_running; in_vm "${cmd}" ;;
+  image|e2e|broker-e2e|measurement-e2e|runtime|clean) host_preflight; require_running; in_vm "${cmd}" ;;
   down)                   command -v limactl >/dev/null || die "limactl not found"; limactl stop "${VM}" ;;
-  *) die "usage: $0 up|image|e2e|broker-e2e|measurement-e2e|down|clean" ;;
+  *) die "usage: $0 up|image|e2e|broker-e2e|measurement-e2e|runtime|down|clean" ;;
 esac

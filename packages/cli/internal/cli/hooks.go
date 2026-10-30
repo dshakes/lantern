@@ -1,6 +1,6 @@
 package cli
 
-// hooks.go — `lantern hooks …`: inbound webhook triggers (ADR 0028). A trigger
+// hooks.go — `pal hooks …`: inbound webhook triggers (ADR 0028). A trigger
 // binds a public POST /v1/hooks/{id} to an agent; GitHub/Sentry/PagerDuty (or
 // any HMAC-signing sender) deliver there and each verified delivery starts a run.
 

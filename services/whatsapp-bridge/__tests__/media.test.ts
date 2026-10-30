@@ -7,7 +7,7 @@
 //    we mock the entire `baileys` module so the bridge never actually tries to
 //    connect to WhatsApp.
 //  - Voice / image paths both hit authedFetch (network). We mock
-//    `@lantern/bridge-core/auth` so authedFetch is intercepted via
+//    `@pal/bridge-core/auth` so authedFetch is intercepted via
 //    globalThis.fetch (same pattern as attention.test.ts).
 //
 // We do NOT test the real OpenAI/Whisper path — that path is marked as a
@@ -35,8 +35,8 @@ vi.mock("baileys", async () => {
 
 // auth mock: redirect authedFetch to globalThis.fetch so tests can intercept
 // with their own stub (same pattern as attention.test.ts).
-vi.mock("@lantern/bridge-core/auth", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@lantern/bridge-core/auth")>();
+vi.mock("@pal/bridge-core/auth", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@pal/bridge-core/auth")>();
   return {
     ...actual,
     authEnabled: () => true,
@@ -46,7 +46,7 @@ vi.mock("@lantern/bridge-core/auth", async (importOriginal) => {
 
 // language mock: keep the bridge-core dependency minimal — just return a
 // harmless no-op lang hint and never flag a transcript as garbled.
-vi.mock("@lantern/bridge-core/language", async () => {
+vi.mock("@pal/bridge-core/language", async () => {
   return {
     voiceTranscriptionLangHint: () => ({ iso: "te", prompt: "", lang: "te" as const }),
     looksGarbledTranscript: () => false,

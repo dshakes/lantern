@@ -244,3 +244,11 @@ secrets:
   # superuser bypasses RLS, which would leave enforcement silently off).
   appDbPassword: ""
 
+# -- SLO alerting + dashboard (ADR 0041). Requires the prometheus-operator CRDs
+# and a Grafana dashboard sidecar. Add monitoring.alerts.ruleLabels to match
+# your Prometheus ruleSelector (e.g. release: kube-prometheus-stack).
+monitoring:
+  alerts:
+    enabled: true
+  dashboards:
+    enabled: true

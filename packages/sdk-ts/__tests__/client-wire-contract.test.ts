@@ -4,7 +4,7 @@
 // agent). Locks the body field names against drift.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { LanternClient } from "../src/client.js";
+import { PalClient } from "../src/client.js";
 
 describe("runs.create wire contract", () => {
   const realFetch = globalThis.fetch;
@@ -23,7 +23,7 @@ describe("runs.create wire contract", () => {
   });
 
   it("sends agentName (camelCase), never agent_name", async () => {
-    const client = new LanternClient({ apiKey: "k", baseUrl: "http://localhost:9" });
+    const client = new PalClient({ apiKey: "k", baseUrl: "http://localhost:9" });
     await client.runs.create({ agent: "support-triage", input: { q: "hi" } });
 
     const mock = globalThis.fetch as ReturnType<typeof vi.fn>;

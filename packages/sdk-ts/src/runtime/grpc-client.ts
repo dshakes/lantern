@@ -1,5 +1,5 @@
 /**
- * gRPC client for the Lantern runtime sidecar.
+ * gRPC client for the PAL runtime sidecar.
  *
  * Inside a Firecracker microVM the agent process communicates with a
  * co-located sidecar over localhost:50055. The sidecar proxies all
@@ -10,7 +10,7 @@
  * run's tenant/run/step metadata.
  */
 
-import { LanternGrpcError } from "./errors.js";
+import { PalGrpcError } from "./errors.js";
 import { traced } from "./tracing.js";
 
 // ---------------------------------------------------------------------------
@@ -395,7 +395,7 @@ export class Http2GrpcTransport implements GrpcTransport {
 
   async unary<TReq, TRes>(service: string, method: string, request: TReq): Promise<TRes> {
     if (this.closed) {
-      throw new LanternGrpcError(1, "Transport is closed");
+      throw new PalGrpcError(1, "Transport is closed");
     }
 
     const path = `/${service}/${method}`;
@@ -414,7 +414,7 @@ export class Http2GrpcTransport implements GrpcTransport {
       const errBody = await response.text().catch(() => "");
       const grpcStatus = parseInt(response.headers.get("grpc-status") ?? "2", 10);
       const grpcMessage = response.headers.get("grpc-message") ?? errBody;
-      throw new LanternGrpcError(grpcStatus, grpcMessage, errBody);
+      throw new PalGrpcError(grpcStatus, grpcMessage, errBody);
     }
 
     const text = await response.text();
@@ -425,7 +425,7 @@ export class Http2GrpcTransport implements GrpcTransport {
     try {
       return JSON.parse(text) as TRes;
     } catch {
-      throw new LanternGrpcError(13, `Failed to parse gRPC response as JSON: ${text.slice(0, 200)}`);
+      throw new PalGrpcError(13, `Failed to parse gRPC response as JSON: ${text.slice(0, 200)}`);
     }
   }
 
@@ -435,7 +435,7 @@ export class Http2GrpcTransport implements GrpcTransport {
     request: TReq,
   ): AsyncIterable<TChunk> {
     if (this.closed) {
-      throw new LanternGrpcError(1, "Transport is closed");
+      throw new PalGrpcError(1, "Transport is closed");
     }
 
     const path = `/${service}/${method}`;
@@ -455,7 +455,7 @@ export class Http2GrpcTransport implements GrpcTransport {
       const errBody = await response.text().catch(() => "");
       const grpcStatus = parseInt(response.headers.get("grpc-status") ?? "2", 10);
       const grpcMessage = response.headers.get("grpc-message") ?? errBody;
-      throw new LanternGrpcError(grpcStatus, grpcMessage, errBody);
+      throw new PalGrpcError(grpcStatus, grpcMessage, errBody);
     }
 
     const reader = response.body?.getReader();
@@ -481,7 +481,7 @@ export class Http2GrpcTransport implements GrpcTransport {
           try {
             yield JSON.parse(trimmed) as TChunk;
           } catch {
-            throw new LanternGrpcError(13, `Failed to parse streaming chunk: ${trimmed.slice(0, 200)}`);
+            throw new PalGrpcError(13, `Failed to parse streaming chunk: ${trimmed.slice(0, 200)}`);
           }
         }
       }
@@ -491,7 +491,7 @@ export class Http2GrpcTransport implements GrpcTransport {
         try {
           yield JSON.parse(buffer.trim()) as TChunk;
         } catch {
-          throw new LanternGrpcError(13, `Failed to parse final streaming chunk: ${buffer.slice(0, 200)}`);
+          throw new PalGrpcError(13, `Failed to parse final streaming chunk: ${buffer.slice(0, 200)}`);
         }
       }
     } finally {
@@ -511,7 +511,7 @@ export class Http2GrpcTransport implements GrpcTransport {
 const SIDECAR_SERVICE = "lantern.runtime.v1.RuntimeSidecar";
 
 /**
- * High-level, fully-typed client for the Lantern runtime sidecar.
+ * High-level, fully-typed client for the PAL runtime sidecar.
  *
  * Every public method is traced with OTel and maps directly to a
  * sidecar gRPC method. The client does not hold mutable state beyond

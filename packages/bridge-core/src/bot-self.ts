@@ -89,6 +89,22 @@ const BOT_SELF_PREFIXES: string[] = [
   "📊 *lantern morning report",
   "📊 *lantern",
   "📊 lantern",
+  // Lantern→PAL rename (ADR 0032): the bot now emits "pal" headers. The
+  // "lantern" entries above stay forever — those rows are still in chat
+  // history and iCloud can echo them back hours later.
+  "🟢 *pal",                 // "🟢 *pal iMessage*", "🟢 *pal WhatsApp*", "🟢 *pal is connected*"
+  "🟢 pal",
+  "🔴 *pal",                 // "🔴 *pal WhatsApp offline 12m*", "🔴 *pal alert: …"
+  "🔴 pal",
+  "📊 *pal morning report",
+  "📊 *pal",
+  "📊 pal",
+  "🤖 *pal",                 // WA "/pal" help + status replies
+  "🤖 *lantern",             // …and their pre-rename form
+  "⚠️ *pal alert",           // WA conflict / unlinked / error pages
+  "⚠️ *lantern alert",
+  "🚪 *pal alert",
+  "🚪 *lantern alert",
   "🚨 kill switch",
   "🚨 ",
   "⏸ paused contacts",
@@ -140,13 +156,13 @@ const BOT_SELF_PREFIXES: string[] = [
   "📍 got it",               // presence/status acks ("📍 got it — you're …")
   "🟡 medium-confidence",    // medium-confidence reply heads-up
 
-  // ── Concierge edge (LANTERN_CONCIERGE=on) ──
+  // ── Concierge edge (PAL_CONCIERGE=on) ──
   // Task-capture ack + commitment nudges. Keep in sync with
   // CONCIERGE_SELF_PREFIXES in commitments-edge.ts.
   "📝 tracking:",    // "📝 tracking: Apply for naturalization"
   "📌 ",             // "📌 Apply for naturalization (from Manu) — reply: …"
 
-  // ── Proactive loops (LANTERN_COMMUTE=on / LANTERN_ENERGY=on / LANTERN_HEALTH=on / LANTERN_FOCUS=on) ──
+  // ── Proactive loops (PAL_COMMUTE=on / PAL_ENERGY=on / PAL_HEALTH=on / PAL_FOCUS=on) ──
   // Keep in sync with PROACTIVE_LOOP_SELF_PREFIXES in proactive-loops.ts.
   "🚗 driving",      // "🚗 driving — N things when you stop: …"
   "🅿️ parked",       // "🅿️ parked — still on your list: …" / "🅿️ parked — all clear."
@@ -175,7 +191,7 @@ const BOT_SELF_PREFIXES: string[] = [
   "🧾 ",                     // receipt ("🧾 Amazon $35.99 — order confirmed.")
   "✈️ ",                     // travel ("✈️ travel update …")
 
-  // ── Mac-file doc-ingest ack (LANTERN_DOC_INGEST=on) ──
+  // ── Mac-file doc-ingest ack (PAL_DOC_INGEST=on) ──
   // Keep in sync with DOC_INGEST_SELF_PREFIX in doc-ingest.ts.
   "📄 filed",          // "📄 filed N health docs"
 
