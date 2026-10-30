@@ -622,6 +622,12 @@ func main() {
 	// onboarding agent's run explanation.
 	handlers.NewOnboardingHandler(srv, authHandler, llmProxyHandler).RegisterRoutes(httpMux)
 	handlers.NewPalOnboardingHandler(srv, authHandler, llmProxyHandler).RegisterRoutes(httpMux)
+	// The onboarding agent (ADR 0051): a multi-turn conversation whose server
+	// tools call back into this same mux, so every tool is a real endpoint
+	// with its own auth, scopes and validation.
+	onboardingAgent := handlers.NewOnboardingAgentHandler(srv, authHandler, llmProxyHandler)
+	onboardingAgent.RegisterRoutes(httpMux)
+	onboardingAgent.SetDispatcher(httpMux)
 
 	// LLM provider settings endpoints.
 	httpMux.HandleFunc("POST /v1/settings/llm-providers", authHandler.WithScope(handlers.ScopeSettingsWrite, llmProxyHandler.SaveLlmProvider))

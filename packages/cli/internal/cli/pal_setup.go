@@ -216,6 +216,7 @@ type palSetupConfig struct {
 	out         io.Writer
 	http        *http.Client
 	pollEvery   time.Duration
+	steps       bool // --steps: the step wizard instead of the conversation
 }
 
 func (c *palSetupConfig) interactive() bool {
@@ -260,7 +261,7 @@ func envFirst(keys ...string) string {
 }
 
 func newPalSetupCommand() *cobra.Command {
-	var yes, apply bool
+	var yes, apply, steps bool
 	cmd := &cobra.Command{
 		Use:   "setup",
 		Short: "Set up pal: connect channels, learn your voice, set trust, capture your people",
@@ -268,6 +269,12 @@ func newPalSetupCommand() *cobra.Command {
 Resumes where you left off (state is kept server-side). Each step advances only
 on a real result: a live bridge check, a saved setting read back, your explicit
 confirmation. Consent is never given non-interactively.
+
+On a terminal this is a conversation with pal's setup agent (the same agent as
+the dashboard): talk in your own words; it checks your channels, learns your
+voice (only with your opt-in), proposes trust settings and captures your people,
+asking you to confirm each. --steps keeps the step-by-step wizard; if the agent
+can't reach the model, the wizard takes over and says so.
 
 --apply writes what you set up into this Mac's bridge config: your confirmed
 facts and people into the owner profile, and quiet hours + voice learning into
@@ -283,12 +290,14 @@ bridge.env. Both files are backed up first.`,
 				imURL:   envFirst("PAL_IMESSAGE_BRIDGE_URL", "NEXT_PUBLIC_PAL_IMESSAGE_BRIDGE_URL"),
 				imToken: envFirst("PAL_IMESSAGE_BRIDGE_TOKEN"),
 				dashURL: envFirst("PAL_DASHBOARD_URL"),
+				steps:   steps,
 			}
 			return runPalSetup(cfg)
 		},
 	}
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Never prompt: report where setup stands (and apply with --apply) without changing consent")
 	cmd.Flags().BoolVar(&apply, "apply", false, "Write the setup (profile, quiet hours, voice) into this Mac's bridge config")
+	cmd.Flags().BoolVar(&steps, "steps", false, "Use the step-by-step wizard instead of the conversation with pal's setup agent")
 	return cmd
 }
 
@@ -431,6 +440,24 @@ func runPalSetup(cfg *palSetupConfig) error {
 	}
 	if cfg.apply {
 		return palApply(cfg, client, &doc)
+	}
+
+	if cfg.interactive() && !cfg.steps {
+		reader := cfg.reader
+		if reader == nil {
+			reader = termReader{}
+		}
+		err := runOnboardingChat(&chatSession{
+			product: "pal", client: client, restURL: cfg.restURL, token: token,
+			reader: reader, out: cfg.out, pal: cfg, tenant: tenant, ownerFirst: ownerFirst,
+		})
+		if !errors.Is(err, errChatFallback) {
+			return err
+		}
+		cfg.printf("Continuing step by step.\n")
+		if err := client.Call(http.MethodGet, "/v1/pal/onboarding", nil, &doc); err != nil {
+			return fmt.Errorf("setup: read progress: %w", err)
+		}
 	}
 
 	var report palChannelReport
@@ -706,6 +733,12 @@ func palStepTrust(cfg *palSetupConfig, client *internal.RESTClient, doc *palDoc)
 	if !cfg.yesNo("   Understood, save these?", true) {
 		return errors.New("setup: stopped at trust — run `pal setup` to resume")
 	}
+	return palSaveTrust(client, doc, modes, quietStart, quietEnd)
+}
+
+// palSaveTrust writes every mode, reads them back, and only then records trust
+// as saved (a 2xx per PUT is not enough on its own).
+func palSaveTrust(client *internal.RESTClient, doc *palDoc, modes map[string]string, quietStart, quietEnd *int) error {
 	for _, k := range palLifeEventKinds {
 		if err := client.Call(http.MethodPut, "/v1/life-events/prefs", map[string]string{"kind": k, "mode": modes[k]}, nil); err != nil {
 			return fmt.Errorf("setup: save %s: %w", k, err)

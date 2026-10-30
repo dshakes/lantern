@@ -37,10 +37,13 @@ pal demo --down      # stop and delete all demo data
 
 ## onboard
 
-First-run wizard: health check, sign-in, provider key (with a real test call), then the agentic part. It asks what you want the agent to do, the control plane designs it, you confirm, and the first run streams live. With `--yes` or a non-terminal stdin it never prompts (CI). Flags: `--provider` (`openai`|`anthropic`), `--api-key`, `--description`. See [Quickstart](/docs/start/quickstart/).
+First run. On a terminal it is a conversation with PAL's onboarding agent (the same one as the dashboard): say what you want, and it gets a working key (typed at a hidden prompt, never into the chat), designs the agent, creates it on your go-ahead and runs it. `--steps` uses the step-by-step wizard instead (health, sign-in, key test, design, confirm, streamed first run); it also takes over, labelled, when the agent can't reach the model. With `--yes` or a non-terminal stdin it never prompts (CI). Flags: `--provider` (`openai`|`anthropic`), `--api-key`, `--description`, `--steps`. See [Quickstart](/docs/start/quickstart/).
+
+`pal setup` (pal, the personal agent) works the same way: a conversation by default, `--steps` for the wizard, and consent only ever from your own keypress.
 
 ```bash
-pal onboard                 # interactive
+pal onboard                 # conversation
+pal onboard --steps         # step-by-step wizard
 pal onboard --yes --provider anthropic --api-key "$KEY" \
   --description "Triage support tickets"   # CI
 ```

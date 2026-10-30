@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-30
 - Scope: control-plane (`/v1/pal/onboarding`), dashboard (`/pal/onboarding`), CLI (`pal setup`), bridge wrapper script
+- Extended by: ADR 0051 — the flow is now driven by a conversation with an onboarding agent; the steps, gates and endpoints below are unchanged and are the guard rails that agent calls through. The step UI described here is the labelled fallback (`?mode=steps`, `pal setup --steps`).
 
 ## Context
 
