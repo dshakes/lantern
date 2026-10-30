@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# seed-data.sh -- Seed a running Lantern environment with sample data.
+# seed-data.sh -- Seed a running PAL Runtime environment with sample data.
 #
 # Inserts a test tenant, three agents with versions, and sample runs in
 # various states directly into Postgres. Designed to be idempotent -- safe

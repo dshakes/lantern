@@ -234,10 +234,10 @@ jobs:
         if: steps.kvm.outputs.present == 'true'
         env:
           # Set BOTH names: the manager reads RUNTIME_BACKEND today; the task's
-          # LANTERN_RUNTIME_BACKEND is set too so the contract is future-proof
+          # PAL_RUNTIME_BACKEND is set too so the contract is future-proof
           # if/when the config is renamed.
           RUNTIME_BACKEND: firecracker
-          LANTERN_RUNTIME_BACKEND: firecracker
+          PAL_RUNTIME_BACKEND: firecracker
         run: |
           set -euo pipefail
           # Same reason as the image build: the script would `cargo build` the
@@ -268,7 +268,7 @@ jobs:
           fi
 
           # Firecracker + loop devices + TAP setup need root.
-          sudo --preserve-env=FC_KERNEL_PATH,FC_ROOTFS_PATH,RUNTIME_BACKEND,LANTERN_RUNTIME_BACKEND \
+          sudo --preserve-env=FC_KERNEL_PATH,FC_ROOTFS_PATH,RUNTIME_BACKEND,PAL_RUNTIME_BACKEND \
             MANAGER_BIN="$MANAGER_BIN" EXPECT_VENDSECRET=1 \
             FIRECRACKER_JAILER_PATH="${JAILER_BIN}" \
             FIRECRACKER_JAILER_UID="123" \

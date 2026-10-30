@@ -1,4 +1,4 @@
-# Lantern — postgres_exporter custom queries
+# PAL Runtime — postgres_exporter custom queries
 #
 # These turn REAL control-plane tables into Prometheus gauges so we can alert on
 # data-plane connectivity and cron health WITHOUT waiting for in-app
@@ -10,12 +10,12 @@
 # `queries.yaml` key on the prometheus-postgres-exporter Helm chart). Point the
 # exporter at the SAME Postgres the control-plane uses (read-only role is fine —
 # both queries are pure SELECTs). The exporter MUST be scraped under the job
-# name `lantern-postgres-exporter` to match infra/monitoring/prometheus/alerts.yml.
+# name `pal-postgres-exporter` to match infra/monitoring/prometheus/alerts.yml.
 #
 # Standard metrics (pg_stat_database_numbackends, pg_settings_max_connections,
 # pg_up) come from the exporter's built-ins and need nothing here.
 
-lantern_data_plane:
+pal_data_plane:
   # One row per registered data plane, with seconds since its last heartbeat.
   # Drives DataPlaneHeartbeatStale. Heartbeat cadence is ~30s, so > 120s = stale.
   query: |
@@ -44,7 +44,7 @@ lantern_data_plane:
         usage: "GAUGE"
         description: "Seconds since data_planes.last_heartbeat for this plane"
 
-lantern_schedules:
+pal_schedules:
   # Count of enabled schedules whose next_fire_at is overdue beyond a 60s grace.
   # Drives CronScheduleOverdue. Healthy ticker keeps this at 0.
   query: |

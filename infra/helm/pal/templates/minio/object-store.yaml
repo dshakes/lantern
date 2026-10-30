@@ -1,0 +1,126 @@
+{{- if .Values.minio.enabled }}
+{{- /*
+First-party S3-compatible store for dev/kind/eval: SeaweedFS (the Bitnami and MinIO
+images this chart used to depend on are no longer pullable). One identity, built from
+minio.auth.rootUser + secrets.minioPassword, so the services keep using the same
+credentials. Production uses managed S3: externalS3.*.
+*/}}
+{{- $fn := include "pal.fullname" . }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $fn }}-minio-config
+  labels:
+    {{- include "pal.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  s3.json: |
+    {"identities":[{"name":"pal","credentials":[{"accessKey":{{ .Values.minio.auth.rootUser | toJson }},"secretKey":{{ .Values.secrets.minioPassword | toJson }}}],"actions":["Admin","Read","Write","List","Tagging"]}]}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $fn }}-minio
+  labels:
+    {{- include "pal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: object-store
+spec:
+  serviceName: {{ $fn }}-minio
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/name: minio
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/name: minio
+        app.kubernetes.io/component: object-store
+        app.kubernetes.io/part-of: pal
+    spec:
+      containers:
+        - name: s3
+          image: "{{ .Values.minio.image.repository }}:{{ .Values.minio.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          args: [server, -dir=/data, -s3, -s3.config=/etc/pal/s3.json]
+          ports:
+            - {name: s3, containerPort: 8333}
+          readinessProbe:
+            tcpSocket: {port: s3}
+            periodSeconds: 5
+            failureThreshold: 12
+          resources:
+            {{- toYaml .Values.minio.resources | nindent 12 }}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: config, mountPath: /etc/pal, readOnly: true}
+      volumes:
+        - name: config
+          secret:
+            secretName: {{ $fn }}-minio-config
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with .Values.minio.persistence.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.minio.persistence.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fn }}-minio
+  labels:
+    {{- include "pal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: object-store
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/name: minio
+  ports:
+    - {name: s3, port: 9000, targetPort: s3}
+{{- if .Values.minio.defaultBuckets }}
+---
+# Creates the buckets the services expect (idempotent). Runs after install/upgrade.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $fn }}-s3-init
+  labels:
+    {{- include "pal.componentLabels" (dict "root" . "component" "s3-init") | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        {{- include "pal.componentLabels" (dict "root" . "component" "s3-init") | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: init
+          image: {{ .Values.backup.uploaderImage | quote }}
+          env:
+            - {name: AWS_DEFAULT_REGION, value: us-east-1}
+            - name: AWS_ACCESS_KEY_ID
+              value: {{ .Values.minio.auth.rootUser | quote }}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef: {name: {{ $fn }}-secrets, key: minio-password}
+          command:
+            - sh
+            - -ec
+            - |
+              for b in {{ .Values.minio.defaultBuckets | replace "," " " }}; do
+                aws --endpoint-url http://{{ $fn }}-minio:9000 s3api head-bucket --bucket "$b" 2>/dev/null \
+                  || aws --endpoint-url http://{{ $fn }}-minio:9000 s3 mb "s3://$b"
+              done
+{{- end }}
+{{- end }}
