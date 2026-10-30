@@ -80,6 +80,17 @@ func TestRLSGuardDecision(t *testing.T) {
 			wantFatal:  false,
 			wantMsgHas: "PAL_RLS_ENFORCE",
 		},
+		// Explicit opt-out wins even when the password IS set: rlsEnforceActive
+		// returns false when PAL_RLS_ENFORCE=0 regardless of appPwd, so the guard
+		// must emit the same WARN (not silently succeed) to match the activation logic.
+		{
+			name:       "prod_explicit_opt_out_with_pwd",
+			isProd:     true,
+			rlsEnforce: "0",
+			appPwd:     "s3cr3t",
+			wantFatal:  false,
+			wantMsgHas: "PAL_RLS_ENFORCE",
+		},
 
 		// --- dev cases (advisory only, never fatal) ---
 		{

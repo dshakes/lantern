@@ -1022,14 +1022,15 @@ func main() {
 //   - dev: advisory only; no fatal.
 func rlsGuardDecision(isProd bool, rlsEnforce, appPwd string) (fatal bool, message string) {
 	if isProd {
-		if appPwd != "" {
-			// Password configured → RLS will be enforced (implicit secure default).
-			return false, ""
-		}
-		// No app password: check for explicit opt-out.
 		v := strings.ToLower(strings.TrimSpace(rlsEnforce))
+		// Explicit opt-out always warns in prod, regardless of appPwd.
+		// This mirrors rlsEnforceActive: explicit "0" beats the password-implicit path.
 		if v == "0" || v == "false" || v == "off" {
-			return false, "PAL_RLS_ENFORCE=0 in production without PAL_APP_DB_PASSWORD — RLS tenant isolation is DISABLED; this should only be set during initial cluster migration"
+			return false, "PAL_RLS_ENFORCE=0 in production — RLS tenant isolation is DISABLED; this should only be set during initial cluster migration (PAL_APP_DB_PASSWORD is ignored when enforcement is explicitly off)"
+		}
+		if appPwd != "" {
+			// Password configured + no explicit disable → RLS ON (implicit secure default).
+			return false, ""
 		}
 		return true, "PAL_APP_DB_PASSWORD is unset in production — set PAL_APP_DB_PASSWORD (and optionally PAL_RLS_ENFORCE=1) to enforce RLS; or set PAL_RLS_ENFORCE=0 to acknowledge operating without tenant isolation (not recommended)"
 	}
