@@ -624,7 +624,8 @@ func main() {
 	httpMux.HandleFunc("POST /v1/life-events/{id}/undo", authHandler.WithScope(handlers.ScopeWrite, lifeEventHandler.UndoLifeEvent))
 	httpMux.HandleFunc("POST /v1/life-events/{id}/dismiss", authHandler.WithScope(handlers.ScopeWrite, lifeEventHandler.DismissLifeEvent))
 	handlers.NewTriggerHandler(srv, authHandler, restHandler).RegisterRoutes(httpMux)
-	handlers.NewBatchHandler(srv, authHandler, restHandler).RegisterRoutes(httpMux)
+	batchHandler := handlers.NewBatchHandler(srv, authHandler, restHandler)
+	batchHandler.RegisterRoutes(httpMux)
 
 	// Concierge agent commitment tracker.
 	httpMux.HandleFunc("POST /v1/commitments", authHandler.WithScope(handlers.ScopeWrite, commitmentHandler.CreateCommitment))
@@ -927,6 +928,11 @@ func main() {
 	// LANTERN_RECOVERY_INTERVAL (default 30s). Non-blocking; first sweep
 	// fires 2s after the HTTP server starts so /readyz serves first.
 	handlers.RunRecoveryLoop(ctx, restHandler, logger, 0)
+
+	// Batch crash-recovery: finalizes batches stuck in 'running' after a
+	// process restart. Fires 15s after startup (after the run-level sweep has
+	// a chance to complete orphaned child runs), then every 30s.
+	handlers.RunBatchRecoveryLoop(ctx, batchHandler, logger)
 
 	// Peer-service health sweep (LANTERN_HEALTH_SWEEP_INTERVAL, default 60s).
 	// Probes configured peer services via TCP dial; alerts the owner on

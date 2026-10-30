@@ -351,6 +351,13 @@ func (h *RESTHandler) fireCallbackForRun(ctx context.Context, pool *pgxpool.Pool
 
 // deliverCallbackWithRetry claims the side effect (idempotency) and retries
 // delivery with capped exponential backoff.
+//
+// The SSRF-safe HTTP client is built ONCE before the retry loop. This means:
+//   - DNS resolution happens once (a transient DNS failure is non-retryable —
+//     the URL is undeliverable until the next invocation via re-drive).
+//   - Subsequent retry attempts re-use the pinned IP, so they only fail on
+//     actual network/HTTP errors; those ARE tagged "retryable" by
+//     deliverCallbackVia and will be retried.
 func (h *RESTHandler) deliverCallbackWithRetry(
 	ctx context.Context,
 	pool *pgxpool.Pool,
@@ -361,8 +368,7 @@ func (h *RESTHandler) deliverCallbackWithRetry(
 	if callbackURL == "" {
 		return
 	}
-	// Structural + scheme check (fast, no DNS). The per-delivery client checks
-	// the resolved IP at dial time for DNS-rebinding safety.
+	// Structural + scheme check (fast, no DNS).
 	if err := checkSSRF(callbackURL); err != nil {
 		log.Warn("callback URL blocked (SSRF pre-check)", zap.String("run_id", runID), zap.Error(err))
 		return
@@ -375,6 +381,16 @@ func (h *RESTHandler) deliverCallbackWithRetry(
 			zap.String("run_id", runID), zap.Error(claimErr))
 	} else if !claimed {
 		log.Info("callback: already delivered (idempotent skip)", zap.String("run_id", runID))
+		return
+	}
+
+	// Build the SSRF-safe pinned client once — resolves DNS, checks every IP,
+	// pins the first safe address, and blocks redirects. A failure here means
+	// the URL is permanently undeliverable; don't waste retries on it.
+	client, clientErr := newCallbackHTTPClient(callbackURL)
+	if clientErr != nil {
+		log.Warn("callback: SSRF-safe client build failed (giving up)",
+			zap.String("run_id", runID), zap.Error(clientErr))
 		return
 	}
 
@@ -392,15 +408,20 @@ func (h *RESTHandler) deliverCallbackWithRetry(
 			case <-time.After(delay):
 			}
 		}
-		if err := deliverCallback(ctx, payload, tenantID, callbackURL); err != nil {
+		// Use deliverCallbackVia with the pinned client. Network errors and 5xx
+		// are returned as "retryable"-tagged errors; 2xx/4xx/signing errors are
+		// final. This avoids the bug where deliverCallback re-resolves DNS on
+		// every retry attempt, causing transient DNS failures to look like
+		// permanent SSRF blocks rather than retryable transient errors.
+		if err := deliverCallbackVia(ctx, client, payload, tenantID, callbackURL); err != nil {
 			lastErr = err
 			log.Warn("callback delivery attempt failed",
 				zap.String("run_id", runID),
 				zap.Int("attempt", attempt+1),
 				zap.Error(err),
 			)
-			// Only retry transient failures (network errors, 5xx). Anything else
-			// (SSRF, signing, marshal) is non-retryable.
+			// Only retry transient failures tagged "retryable" (network errors, 5xx).
+			// Signing/marshal errors are permanent.
 			if strings.Contains(err.Error(), "retryable") {
 				continue
 			}

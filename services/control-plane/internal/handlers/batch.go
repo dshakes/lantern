@@ -38,8 +38,27 @@ const (
 	// PAL_BATCH_MAX_ITEMS (or LANTERN_BATCH_MAX_ITEMS) is not set.
 	batchDefaultMaxItems = 1000
 
+	// batchDefaultConcurrency caps the number of child runs that run in
+	// parallel when the caller does not specify a concurrency limit. An
+	// unlimited default (old behaviour) would spawn up to 1,000 goroutines
+	// each polling Postgres every 2 s, exhausting the 20-connection default
+	// pool. 20 matches the pool size so the batch never starves other traffic.
+	batchDefaultConcurrency = 20
+
 	// batchResultsPageSize is the default / max page size for GET /results.
 	batchResultsPageSize = 100
+
+	// batchRecoveryInterval is how often the batch recovery sweep runs.
+	batchRecoveryInterval = 30 * time.Second
+
+	// batchRecoveryMinAge is the minimum batch age before it is considered
+	// "stuck". Newly-created batches (status='running') are normal; we only
+	// recover batches whose goroutines must have died in a crash.
+	batchRecoveryMinAge = 2 * time.Minute
+
+	// batchRecoverySweepLimit caps how many stuck batches are processed per
+	// sweep to bound single-tick latency.
+	batchRecoverySweepLimit = 50
 )
 
 // BatchHandler serves the /v1/batches/* routes.
@@ -242,8 +261,11 @@ func (h *BatchHandler) GetBatchResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pagination: offset by last-seen createdAt.
-	after := r.URL.Query().Get("after") // ISO timestamp of the last item in prev page
+	// Pagination: stable compound cursor (created_at, id) to avoid skipping
+	// rows when multiple runs have the same created_at second.
+	// ?after=<RFC3339Nano timestamp>&afterId=<uuid>
+	after := r.URL.Query().Get("after")
+	afterID := r.URL.Query().Get("afterId")
 
 	results := make([]batchResultItem, 0)
 	err = db.WithTenantConn(ctx, h.srv.TenantPool(), tenantID, func(tx pgx.Tx) error {
@@ -257,11 +279,18 @@ func (h *BatchHandler) GetBatchResults(w http.ResponseWriter, r *http.Request) {
 		      FROM runs r
 		      WHERE r.tenant_id = $1 AND r.batch_id = $2`
 		args := []any{tenantID, id}
-		if after != "" {
+		if after != "" && afterID != "" {
+			// Compound cursor: items strictly after (created_at, id).
+			// This handles ties at the same microsecond without re-fetching
+			// the last record on the next page.
+			q += ` AND (r.created_at > $3 OR (r.created_at = $3 AND r.id::text > $4))`
+			args = append(args, after, afterID)
+		} else if after != "" {
+			// Legacy single-field cursor: callers that only pass ?after= still work.
 			q += ` AND r.created_at > $3`
 			args = append(args, after)
 		}
-		q += ` ORDER BY r.created_at ASC LIMIT ` + fmt.Sprint(batchResultsPageSize)
+		q += ` ORDER BY r.created_at ASC, r.id ASC LIMIT ` + fmt.Sprint(batchResultsPageSize)
 		rows, e := tx.Query(ctx, q, args...)
 		if e != nil {
 			return fmt.Errorf("batch results query: %w", e)
@@ -274,7 +303,9 @@ func (h *BatchHandler) GetBatchResults(w http.ResponseWriter, r *http.Request) {
 				&item.CostUSD, &item.TokensIn, &item.TokensOut, &createdAt); e != nil {
 				return fmt.Errorf("batch results scan: %w", e)
 			}
-			item.CreatedAt = createdAt.UTC().Format(time.RFC3339)
+			// RFC3339Nano preserves microsecond precision; RFC3339 drops sub-seconds,
+			// causing the compound cursor to re-fetch the last row of the previous page.
+			item.CreatedAt = createdAt.UTC().Format(time.RFC3339Nano)
 			results = append(results, item)
 		}
 		return rows.Err()
@@ -285,13 +316,16 @@ func (h *BatchHandler) GetBatchResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var nextAfter string
+	var nextAfter, nextAfterID string
 	if len(results) == batchResultsPageSize {
-		nextAfter = results[len(results)-1].CreatedAt
+		last := results[len(results)-1]
+		nextAfter = last.CreatedAt
+		nextAfterID = last.RunID
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"results":   results,
-		"nextAfter": nextAfter,
+		"results":     results,
+		"nextAfter":   nextAfter,
+		"nextAfterId": nextAfterID,
 	})
 }
 
@@ -419,7 +453,7 @@ func (h *BatchHandler) dispatchBatch(batchID, tenantID string, body createBatchR
 
 	concurrency := body.Concurrency
 	if concurrency <= 0 {
-		concurrency = len(body.Items) // unlimited — all at once
+		concurrency = batchDefaultConcurrency
 	}
 
 	sem := make(chan struct{}, concurrency)
@@ -498,6 +532,9 @@ func (h *BatchHandler) dispatchBatch(batchID, tenantID string, body createBatchR
 
 // spawnBatchRun creates one child run and links it to the batch. Returns the
 // run ID on success, "" on failure.
+//
+// item.IdempotencyKey is forwarded as the Idempotency-Key header on the
+// in-process CreateRun call so per-item replay dedup works (ADR 0033).
 func (h *BatchHandler) spawnBatchRun(ctx context.Context, batchID, tenantID, agentName string, item batchItem, log *zap.Logger) string {
 	inputJSON, _ := json.Marshal(map[string]any{
 		"agentName": agentName,
@@ -512,6 +549,12 @@ func (h *BatchHandler) spawnBatchRun(ctx context.Context, batchID, tenantID, age
 	if err != nil {
 		log.Warn("spawnBatchRun: build request failed", zap.Error(err))
 		return ""
+	}
+	// Per-item idempotency: if the caller supplied a key for this item, forward
+	// it so a crash-replay of dispatchBatch returns the existing run instead of
+	// creating a duplicate (ADR 0033 §per-item-dedup).
+	if item.IdempotencyKey != "" {
+		req.Header.Set("Idempotency-Key", item.IdempotencyKey)
 	}
 	rec := httptest.NewRecorder()
 	h.rest.CreateRun(rec, req)
@@ -594,6 +637,204 @@ func (h *BatchHandler) incrementBatchCounter(ctx context.Context, tenantID, batc
 			zap.String("batch_id", batchID), zap.String("col", counterCol), zap.Error(err))
 	}
 }
+
+// ---------- crash recovery ----------
+
+// RunBatchRecoveryLoop runs recoverStuckBatches on a periodic ticker until
+// ctx is cancelled. It fires after a short startup delay so the run-level
+// recovery sweep (RunRecoveryLoop) can complete its first pass first — once
+// orphaned child runs are re-driven and reach terminal status, the batch
+// recovery tick can finalize the parent batch.
+//
+// Called from main.go alongside RunRecoveryLoop.
+func RunBatchRecoveryLoop(ctx context.Context, h *BatchHandler, log *zap.Logger) {
+	if h == nil || h.srv == nil || h.srv.Pool == nil {
+		return
+	}
+	go func() {
+		// Delay enough for the run-level recovery sweep to fire first (it also
+		// has a 2 s startup delay; we add 10 s on top so child runs are likely
+		// terminal by the time we scan for stuck batches).
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(15 * time.Second):
+		}
+
+		ticker := time.NewTicker(batchRecoveryInterval)
+		defer ticker.Stop()
+
+		for {
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Error("batch recovery sweep panicked — recovered, continuing",
+							zap.Any("panic", r))
+					}
+				}()
+				h.recoverStuckBatches(ctx, log)
+			}()
+
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+}
+
+// recoverStuckBatches finds batches stuck in status='running' (their dispatch
+// goroutines died in a crash) and finalizes them by reading ground-truth run
+// states from the database.
+//
+// If some child runs are still in progress (e.g., the run-level recovery sweep
+// hasn't completed them yet), the batch is skipped and will be picked up on the
+// next tick.
+func (h *BatchHandler) recoverStuckBatches(ctx context.Context, log *zap.Logger) {
+	// rls-exempt: cross-tenant scan; batch recovery is a system process with
+	// no request-scoped tenant. The query touches only the batches table and
+	// does not expose cross-tenant data — it returns IDs that are then
+	// processed individually.
+	rows, err := h.srv.Pool.Query(ctx, `
+		SELECT id, tenant_id, COALESCE(callback_url, '')
+		FROM batches
+		WHERE status = 'running' AND created_at < now() - $1::interval
+		LIMIT $2
+	`, batchRecoveryMinAge.String(), batchRecoverySweepLimit)
+	if err != nil {
+		log.Error("batch recovery: query failed", zap.Error(err))
+		return
+	}
+	defer rows.Close()
+
+	type stuckBatch struct {
+		id, tenantID, callbackURL string
+	}
+	var stuck []stuckBatch
+	for rows.Next() {
+		var b stuckBatch
+		if err := rows.Scan(&b.id, &b.tenantID, &b.callbackURL); err != nil {
+			log.Warn("batch recovery: scan failed", zap.Error(err))
+			continue
+		}
+		stuck = append(stuck, b)
+	}
+	if err := rows.Err(); err != nil {
+		log.Error("batch recovery: rows iteration failed", zap.Error(err))
+		return
+	}
+	rows.Close()
+
+	if len(stuck) == 0 {
+		return
+	}
+	log.Info("batch recovery: found stuck batches", zap.Int("count", len(stuck)))
+
+	for _, b := range stuck {
+		h.recoverOneBatch(ctx, b.id, b.tenantID, b.callbackURL, log)
+	}
+}
+
+// recoverOneBatch finalizes a single stuck batch by reading ground-truth run
+// states. If child runs are still pending/running, it skips and defers to the
+// next tick (the run-level recovery sweep will complete them).
+func (h *BatchHandler) recoverOneBatch(ctx context.Context, batchID, tenantID, callbackURL string, log *zap.Logger) {
+	log = log.With(zap.String("batch_id", batchID), zap.String("tenant_id", tenantID))
+
+	// Count child runs by terminal vs non-terminal state.
+	var pendingOrRunning, succeeded, failed, cancelled int
+	var costUSD float64
+	// rls-exempt: batch keyed by id; cross-tenant access for the recovery worker.
+	err := h.srv.Pool.QueryRow(ctx, `
+		SELECT
+		    COUNT(*) FILTER (WHERE status NOT IN ('succeeded','failed','cancelled')) AS pending_or_running,
+		    COUNT(*) FILTER (WHERE status = 'succeeded')                            AS succeeded,
+		    COUNT(*) FILTER (WHERE status = 'failed')                               AS failed,
+		    COUNT(*) FILTER (WHERE status = 'cancelled')                            AS cancelled,
+		    COALESCE(SUM(cost_usd) FILTER (WHERE status IN ('succeeded','failed','cancelled')), 0) AS cost_usd
+		FROM runs WHERE batch_id = $1 AND tenant_id = $2
+	`, batchID, tenantID).Scan(&pendingOrRunning, &succeeded, &failed, &cancelled, &costUSD)
+	if err != nil {
+		log.Warn("batch recovery: run count query failed", zap.Error(err))
+		return
+	}
+
+	if pendingOrRunning > 0 {
+		// Some child runs are still in progress. The run-level recovery sweep
+		// will pick them up; we'll finalize the batch on a future tick.
+		log.Info("batch recovery: skipping — child runs still in progress",
+			zap.Int("pending_or_running", pendingOrRunning))
+		return
+	}
+
+	// All child runs are terminal. Determine batch-level outcome.
+	batchStatus := "succeeded"
+	if failed > 0 {
+		batchStatus = "failed"
+	} else if cancelled > 0 {
+		batchStatus = "cancelled"
+	}
+
+	// Overwrite the now-stale counter columns from ground truth and mark terminal.
+	// The WHERE guard prevents clobbering a concurrent CancelBatch that already
+	// transitioned the batch.
+	// rls-exempt: recovery worker; keyed by id.
+	tag, execErr := h.srv.Pool.Exec(ctx, `
+		UPDATE batches SET
+		    status          = $2,
+		    succeeded_count = $3,
+		    failed_count    = $4,
+		    cancelled_count = $5,
+		    running_count   = 0,
+		    pending_count   = 0,
+		    cost_usd        = $6,
+		    finished_at     = now()
+		WHERE id = $1 AND status NOT IN ('succeeded','failed','cancelled')
+	`, batchID, batchStatus, succeeded, failed, cancelled, costUSD)
+	if execErr != nil {
+		log.Error("batch recovery: finalize update failed", zap.Error(execErr))
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		// Another replica won the race or CancelBatch already finalized it.
+		log.Info("batch recovery: batch already terminal (race with another replica or cancel)")
+		return
+	}
+
+	log.Info("batch recovery: finalized stuck batch",
+		zap.String("status", batchStatus),
+		zap.Int("succeeded", succeeded), zap.Int("failed", failed), zap.Int("cancelled", cancelled))
+
+	// Batch-level callback — read from DB if not passed (callback_url may be
+	// non-empty on the batches row even when the initial SELECT returned "").
+	if callbackURL == "" {
+		// rls-exempt: keyed by id.
+		_ = h.srv.Pool.QueryRow(ctx,
+			`SELECT COALESCE(callback_url, '') FROM batches WHERE id = $1`, batchID,
+		).Scan(&callbackURL)
+	}
+	if callbackURL == "" {
+		return
+	}
+	payload := callbackPayload{
+		RunID:   batchID,
+		Status:  batchStatus,
+		CostUSD: costUSD,
+	}
+	idemKey := idempotencyKey(batchID, "batch_callback", 1)
+	claimed, claimErr := claimSideEffect(ctx, h.srv.Pool, idemKey, batchID, tenantID, "batch_callback")
+	if claimErr != nil {
+		log.Warn("batch recovery: callback claim failed", zap.Error(claimErr))
+	} else if !claimed {
+		return // already delivered by a prior recovery or finalizeBatch
+	}
+	if err := deliverCallback(ctx, payload, tenantID, callbackURL); err != nil {
+		log.Warn("batch recovery: callback delivery failed", zap.Error(err))
+	}
+}
+
+// ---------- finalize ----------
 
 // finalizeBatch marks the batch terminal when all child runs are done.
 // It does not overwrite an already-cancelled status (CancelBatch may have raced
