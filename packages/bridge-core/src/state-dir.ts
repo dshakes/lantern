@@ -17,7 +17,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 export function palStateDir(): string {
-  const explicit = process.env.PAL_STATE_DIR || process.env.PAL_STATE_DIR;
+  const explicit = process.env.PAL_STATE_DIR;
   if (explicit) return explicit;
   const pal = join(homedir(), ".pal");
   return existsSync(pal) ? pal : join(homedir(), ".pal");

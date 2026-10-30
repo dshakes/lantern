@@ -24,13 +24,11 @@ Or use in a session (interactive multi-turn)::
     asyncio.run(main())
 """
 
-from pal import agent, step, step_map, step_sleep
+from pal import agent, step, step_map
 from pal.types import (
     AgentContext,
-    GuardrailConfig,
     MemoryConfig,
     RetryPolicy,
-    SessionConfig,
 )
 
 
@@ -107,6 +105,7 @@ async def email_triage(input: dict, ctx: AgentContext) -> dict:
 
     drafts: list[dict] = []
     if action_required:
+
         async def draft_reply(email: dict, index: int) -> dict:
             reply_text = await ctx.llm.complete(
                 prompt=(
@@ -137,8 +136,7 @@ async def email_triage(input: dict, ctx: AgentContext) -> dict:
 
     # ---- Step 4: Store context in memory for future sessions ----
     summary_text = "\n".join(
-        f"- [{e.get('priority', '?')}] {e.get('one_line_summary', e.get('subject', ''))}"
-        for e in classified
+        f"- [{e.get('priority', '?')}] {e.get('one_line_summary', e.get('subject', ''))}" for e in classified
     )
 
     await step(

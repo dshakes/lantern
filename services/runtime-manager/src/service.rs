@@ -582,19 +582,15 @@ pub const CALLER_PAL_KEYS: [&str; 4] = [
     "PAL_RESUME",
 ];
 
-/// Whether a caller may set this env key. EVERY `PAL_*` key is dropped
-/// (ADR 0032): nothing upstream stamps or replaces identity under the `PAL_`
-/// name yet, so a `PAL_` twin of even a legitimate caller key
-/// (`PAL_AGENT_INSTANCE_TOKEN`) would be caller-chosen and, once the harness
-/// prefers `PAL_`, authenticate VendSecret. Relax only when the writers flip
-/// (rename plan step 4) and the control plane stamps both names.
+/// Whether a caller may set this env key: anything outside the `PAL_`
+/// namespace, or one of [`CALLER_PAL_KEYS`].
 fn caller_env_key_allowed(key: &str) -> bool {
-    !key.starts_with("PAL_") && (!key.starts_with("PAL_") || CALLER_PAL_KEYS.contains(&key))
+    !key.starts_with("PAL_") || CALLER_PAL_KEYS.contains(&key)
 }
 
 /// Make a request's env safe to hand to the harness: drop caller-supplied
-/// `PAL_*` keys outside [`CALLER_PAL_KEYS`] and EVERY `PAL_*` key
-/// (see [`caller_env_key_allowed`]; names logged, never values), THEN stamp
+/// `PAL_*` keys outside [`CALLER_PAL_KEYS`] (see [`caller_env_key_allowed`];
+/// names logged, never values), THEN stamp
 /// the manager-owned values — its own `PAL_ENV` and
 /// the identity taken from the request's authenticated typed fields
 /// (`PAL_TENANT_ID`, `PAL_AGENT_VERSION_ID`). Sanitize-then-inject, so
@@ -622,7 +618,7 @@ fn own_workload_env(
         tracing::warn!(
             target: "pal_audit",
             keys = ?dropped,
-            "dropped caller-supplied PAL_*/PAL_* env keys: harness config is manager-owned"
+            "dropped caller-supplied PAL_* env keys: harness config is manager-owned"
         );
     }
     if let Some(v) = manager_pal_env.filter(|v| !v.is_empty()) {
@@ -4338,29 +4334,6 @@ mod tests {
         assert_eq!(c.pal_env, "prod");
         assert!(!c.env.contains_key("PAL_ENV"));
 
-        // ADR 0032: every caller PAL_ key is dropped — even the twin of a
-        // legitimate caller key, which nothing upstream stamps or replaces.
-        let mut env: HashMap<String, String> = [
-            ("PAL_ENV", "dev"),
-            ("PAL_EGRESS_FAIL_CLOSED", "0"),
-            ("PAL_WORKLOAD_UID", "0"),
-            ("PAL_TENANT_ID", "forged"),
-            ("PAL_AGENT_VERSION_ID", "forged"),
-            ("PAL_", "x"),
-            ("PAL_AGENT_INSTANCE_ID", "inst-1"),
-            ("PAL_AGENT_INSTANCE_TOKEN", "caller-chosen"),
-            ("PAL_TRACE_PARENT", "00-abc-def-01"),
-            ("PAL_RESUME", "1"),
-            ("PAL_RESUME", "1"),
-        ]
-        .into_iter()
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect();
-        own_workload_env(&mut env, None, "t1", "");
-        let mut keys: Vec<&str> = env.keys().map(String::as_str).collect();
-        keys.sort();
-        assert_eq!(keys, ["PAL_RESUME", "PAL_TENANT_ID"]);
-
         // A dev manager (no PAL_ENV) never inherits the caller's value.
         let mut env: HashMap<String, String> =
             [("PAL_ENV".to_string(), "prod-ish".to_string())].into();
@@ -4383,8 +4356,7 @@ mod tests {
             make_spawn_request_with_handle("t", "r", "vm-0f1e2d3c-4b5a-4968-8776-6554433221aa");
         let spec = req.spec.as_mut().unwrap();
         spec.env.insert("PAL_ENV".into(), "dev".into());
-        spec.env
-            .insert("PAL_EGRESS_FAIL_CLOSED".into(), "0".into());
+        spec.env.insert("PAL_EGRESS_FAIL_CLOSED".into(), "0".into());
         spec.env
             .insert("PAL_AGENT_INSTANCE_ID".into(), "inst".into());
         svc.spawn(Request::new(req)).await.expect("spawn");
@@ -6230,16 +6202,11 @@ mod tests {
         );
         assert_eq!(
             m,
-            std::path::Path::new(
-                "/srv/jailer/firecracker/vm-1/root/run/pal/snapshots/vm-1/mem"
-            )
+            std::path::Path::new("/srv/jailer/firecracker/vm-1/root/run/pal/snapshots/vm-1/mem")
         );
         // Anything else: the conventional bare layout.
         let (v, m) = snapshot_artifact_paths("stub://", "h-2");
-        assert_eq!(
-            v,
-            std::path::Path::new("/run/pal/snapshots/h-2/snapshot")
-        );
+        assert_eq!(v, std::path::Path::new("/run/pal/snapshots/h-2/snapshot"));
         assert_eq!(m, std::path::Path::new("/run/pal/snapshots/h-2/mem"));
     }
 

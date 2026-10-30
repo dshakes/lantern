@@ -3,11 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
-	"path/filepath"
-	"strings"
-
 )
 
 // Main runs the CLI and returns the process exit code.

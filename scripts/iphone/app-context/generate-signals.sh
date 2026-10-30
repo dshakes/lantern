@@ -22,11 +22,11 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 TEMPLATE="$HERE/_signal-template.shortcut"
-OUT_DIR="${PAL_SHORTCUT_OUT:-${PAL_SHORTCUT_OUT:-$HOME/Desktop}}"
+OUT_DIR="${PAL_SHORTCUT_OUT:-$HOME/Desktop}"
 PLIST="$HOME/Library/LaunchAgents/dev.pal.api.plist"
 
 # --- resolve token ---------------------------------------------------------
-TOKEN="${PAL_SIGNAL_TOKEN:-${PAL_SIGNAL_TOKEN:-}}"
+TOKEN="${PAL_SIGNAL_TOKEN:-}"
 if [ -z "$TOKEN" ] && [ -f "$PLIST" ]; then
   TOKEN="$(/usr/libexec/PlistBuddy -c 'Print :EnvironmentVariables:PAL_SIGNAL_TOKEN' "$PLIST" 2>/dev/null || true)"
 fi

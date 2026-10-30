@@ -229,8 +229,7 @@ impl Dispatcher {
     ) -> Result<String, AppError> {
         let agent_name = self.agent_name.as_deref().ok_or_else(|| {
             AppError::Internal(
-                "PAL_AGENT_NAME is not set — cannot create run without an agent name"
-                    .to_string(),
+                "PAL_AGENT_NAME is not set — cannot create run without an agent name".to_string(),
             )
         })?;
 

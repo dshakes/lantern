@@ -98,7 +98,7 @@ pub enum SecretResolverError {
 
 /// Development / CI resolver.
 ///
-/// Reads `PAL_SECRET_<key>`, else `PAL_SECRET_<key>` (ADR 0032), from the
+/// Reads `PAL_SECRET_<key>` from the
 /// process environment, where `<key>` is the URI with every non-alphanumeric
 /// byte replaced by `_`.  Example:
 ///
@@ -127,11 +127,9 @@ impl EnvSecretResolver {
             .collect()
     }
 
-    /// The secret for `uri` from `get` (an env lookup): `PAL_SECRET_<slug>`
-    /// wins over `PAL_SECRET_<slug>`, same as every other PAL/PAL pair.
+    /// The secret for `uri` from `get` (an env lookup of `PAL_SECRET_<slug>`).
     fn lookup(uri: &str, get: impl Fn(&str) -> Option<String>) -> Option<String> {
-        let slug = Self::slug(uri);
-        get(&format!("PAL_SECRET_{slug}")).or_else(|| get(&format!("PAL_SECRET_{slug}")))
+        get(&Self::env_key(uri))
     }
 }
 
@@ -628,9 +626,7 @@ mod tests {
     #[tokio::test]
     async fn hashmap_resolver_missing_returns_not_found() {
         let r = HashMapSecretResolver::new(HashMap::new());
-        let err = r
-            .resolve("pal.secret://tenant/t1/key/MISSING", None)
-            .await;
+        let err = r.resolve("pal.secret://tenant/t1/key/MISSING", None).await;
         assert!(matches!(err, Err(SecretResolverError::NotFound { .. })));
     }
 
@@ -644,13 +640,10 @@ mod tests {
         assert!(!key.contains('.'), "dots must be replaced");
     }
 
-    /// ADR 0032: the dev resolver honours `PAL_SECRET_*` like
-    /// `PAL_SECRET_*`, PAL first.
     #[test]
-    fn env_lookup_reads_pal_then_pal() {
+    fn env_lookup_reads_pal_secret_key() {
         let uri = "pal.secret://tenant/t1/key/OPENAI_API_KEY";
-        let legacy = EnvSecretResolver::env_key(uri);
-        let pal = legacy.replacen("PAL_", "PAL_", 1);
+        let pal = EnvSecretResolver::env_key(uri);
         let get = |pairs: &[(&str, &str)]| {
             let env: HashMap<String, String> = pairs
                 .iter()
@@ -659,8 +652,7 @@ mod tests {
             EnvSecretResolver::lookup(uri, |k| env.get(k).cloned())
         };
         assert_eq!(get(&[(&pal, "p")]).as_deref(), Some("p"));
-        assert_eq!(get(&[(&legacy, "l")]).as_deref(), Some("l"));
-        assert_eq!(get(&[(&legacy, "l"), (&pal, "p")]).as_deref(), Some("p"));
+        assert_eq!(get(&[("OTHER", "x")]), None);
         assert_eq!(get(&[]), None);
     }
 

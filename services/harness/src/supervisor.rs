@@ -97,8 +97,7 @@ pub fn apply_workload_identity(cmd: &mut Command, id: Option<WorkloadIdentity>) 
 }
 
 /// `PAL_*` keys a workload child may see: identity/locator values the
-/// workload SDK reads, none of them secret. Each is also accepted, and
-/// emitted, as `PAL_*` (ADR 0032).
+/// workload SDK reads, none of them secret.
 const WORKLOAD_VISIBLE_PAL_KEYS: [&str; 14] = [
     // Crash re-drive marker: the agent skips steps already in the journal (09-agent-runtime.md).
     "PAL_RESUME",
@@ -130,48 +129,30 @@ const WORKLOAD_VISIBLE_PAL_KEYS: [&str; 14] = [
 /// ponytail: namespace rule, so a user env key that itself starts with
 /// `PAL_` is withheld too. Track declared keys explicitly if a spec ever
 /// needs one.
-///
-/// `PAL_*` is the same namespace under its new name (ADR 0032): withheld
-/// exactly like `PAL_*`, and `PAL_X` is visible iff `PAL_X` is.
 fn workload_may_see(key: &str) -> bool {
-    match key.strip_prefix("PAL_") {
-        Some(rest) => WORKLOAD_VISIBLE_PAL_KEYS.contains(&format!("PAL_{rest}").as_str()),
-        None => !key.starts_with("PAL_") || WORKLOAD_VISIBLE_PAL_KEYS.contains(&key),
-    }
+    !key.starts_with("PAL_") || WORKLOAD_VISIBLE_PAL_KEYS.contains(&key)
 }
 
-/// Filter an environment down to what a workload child may inherit. Each
-/// visible harness-namespace key is emitted under BOTH names, so old and new
-/// workload SDKs read the same value. If the harness env has both and they
-/// differ, `PAL_X` wins whichever arrives first. Output order: pass-through
-/// keys in input order, then the harness pairs sorted by suffix, each as
-/// `PAL_X` then `PAL_X`.
+/// Filter an environment down to what a workload child may inherit.
+/// Output order: pass-through keys in input order, then the visible
+/// harness-namespace keys sorted by name.
 fn workload_env_from(
     vars: impl Iterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
 ) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
-    use std::collections::btree_map::{BTreeMap, Entry};
+    use std::collections::BTreeMap;
     let mut out = Vec::new();
     let mut ns: BTreeMap<String, std::ffi::OsString> = BTreeMap::new();
     for (k, v) in vars {
         let Some(key) = k.to_str().filter(|key| workload_may_see(key)) else {
             continue;
         };
-        if let Some(rest) = key.strip_prefix("PAL_") {
-            // PAL_ always overwrites an earlier PAL_ twin...
-            ns.insert(rest.to_owned(), v);
-        } else if let Some(rest) = key.strip_prefix("PAL_") {
-            // ...and PAL_ never overwrites an earlier PAL_ one.
-            if let Entry::Vacant(e) = ns.entry(rest.to_owned()) {
-                e.insert(v);
-            }
+        if key.starts_with("PAL_") {
+            ns.insert(key.to_owned(), v);
         } else {
             out.push((k, v));
         }
     }
-    for (rest, v) in ns {
-        out.push((format!("PAL_{rest}").into(), v.clone()));
-        out.push((format!("PAL_{rest}").into(), v));
-    }
+    out.extend(ns.into_iter().map(|(k, v)| (k.into(), v)));
     out
 }
 
@@ -426,9 +407,8 @@ mod tests {
             .collect()
     }
 
-    /// ADR 0032: `PAL_*` is the harness's own namespace too. Its secrets
-    /// (exec token, agent-instance token, TLS paths, declared secret URIs)
-    /// must be withheld from the workload exactly like their `PAL_*` twins.
+    /// The harness's own config (exec token, agent-instance token, TLS
+    /// paths, declared secret URIs) is withheld from the workload.
     #[test]
     fn workload_never_sees_pal_harness_config() {
         let env = env_map(&[
@@ -438,40 +418,31 @@ mod tests {
             ("PAL_DECLARED_SECRETS", "[]"),
             ("PAL_EGRESS_FAIL_CLOSED", "0"),
             ("PAL_", "x"),
-            ("PAL_HARNESS_EXEC_TOKEN", "secret"),
             ("PATH", "/bin"),
         ]);
         assert_eq!(env.keys().collect::<Vec<_>>(), vec!["PATH"]);
     }
 
-    /// The 14 visible keys are accepted under either name and reach the
-    /// workload under BOTH, PAL winning on a conflict.
+    /// The 14 visible keys reach the workload unchanged.
     #[test]
-    fn visible_keys_are_dual_emitted() {
+    fn visible_keys_pass_through() {
         let env = env_map(&[
             ("PAL_RUN_ID", "r1"),
             ("PAL_VM_ID", "vm1"),
-            ("PAL_TENANT_ID", "old"),
-            ("PAL_TENANT_ID", "new"),
+            ("PAL_TENANT_ID", "t1"),
             ("PAL_WORKSPACE", "/w"),
-            ("PAL_WORKSPACE", "/legacy"),
         ]);
         for (k, v) in [
             ("PAL_RUN_ID", "r1"),
-            ("PAL_RUN_ID", "r1"),
             ("PAL_VM_ID", "vm1"),
-            ("PAL_VM_ID", "vm1"),
-            ("PAL_TENANT_ID", "new"),
-            ("PAL_TENANT_ID", "new"),
-            ("PAL_WORKSPACE", "/w"),
+            ("PAL_TENANT_ID", "t1"),
             ("PAL_WORKSPACE", "/w"),
         ] {
             assert_eq!(env.get(k).map(String::as_str), Some(v), "{k}");
         }
-        assert_eq!(env.len(), 8);
+        assert_eq!(env.len(), 4);
         for key in WORKLOAD_VISIBLE_PAL_KEYS {
-            let pal = format!("PAL_{}", key.strip_prefix("PAL_").unwrap());
-            assert!(workload_may_see(key) && workload_may_see(&pal), "{key}");
+            assert!(workload_may_see(key), "{key}");
         }
     }
 

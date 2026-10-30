@@ -19,8 +19,8 @@ if [ -z "$TS" ]; then
   else echo "tailscale CLI not found (install Tailscale + sign in)"; exit 1; fi
 fi
 
-API_PORT="${PAL_API_PORT:-${PAL_API_PORT:-8080}}"
-DASH_PORT="${PAL_DASHBOARD_PORT:-${PAL_DASHBOARD_PORT:-3001}}"
+API_PORT="${PAL_API_PORT:-8080}"
+DASH_PORT="${PAL_DASHBOARD_PORT:-3001}"
 
 echo "Resetting serve config..."
 "$TS" serve reset

@@ -103,8 +103,8 @@ func (w *WebhookDeliverer) Deliver(ctx context.Context, n *Notification) (*Deliv
 
 	success := resp.StatusCode >= 200 && resp.StatusCode < 300
 	result := &DeliveryResult{
-		Success:    success,
-		StatusCode: resp.StatusCode,
+		Success:     success,
+		StatusCode:  resp.StatusCode,
 		AttemptedAt: time.Now(),
 	}
 

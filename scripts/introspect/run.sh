@@ -12,13 +12,13 @@ REPO="/Users/shakes/workspace/pal"
 CLAUDE="/Users/shakes/.nvm/versions/node/v22.18.0/bin/claude"
 NODE_BIN="/Users/shakes/.nvm/versions/node/v22.18.0/bin"
 STATE_DIR="$HOME/.pal/introspect"
-MODEL="${PAL_INTROSPECT_MODEL:-${PAL_INTROSPECT_MODEL:-sonnet}}"
+MODEL="${PAL_INTROSPECT_MODEL:-sonnet}"
 # 45 min hard cap. Was 25, which two consecutive real runs on 2026-08-17 blew
 # through: each spent its whole budget on genuine log analysis (97 shell calls)
 # and was SIGTERMed mid-audit. Raised, but the cap is NOT the real fix — the
 # prompt now writes its report early (section 0) so a capped run still leaves
 # evidence. Runs 4x/day, so 45 min is still a small slice of the day.
-MAX_SECONDS="${PAL_INTROSPECT_MAX_SECONDS:-${PAL_INTROSPECT_MAX_SECONDS:-2700}}"
+MAX_SECONDS="${PAL_INTROSPECT_MAX_SECONDS:-2700}"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 RUNLOG="$STATE_DIR/run-$TS.log"
 
@@ -84,7 +84,7 @@ if ! git merge --ff-only origin/master --quiet 2>>"$RUNLOG"; then
   notify "skipped (master diverged)"; exit 0
 fi
 
-log "starting introspection (model=$MODEL, cap=${MAX_SECONDS}s, dryrun=${PAL_INTROSPECT_DRYRUN:-${PAL_INTROSPECT_DRYRUN:-0}})"
+log "starting introspection (model=$MODEL, cap=${MAX_SECONDS}s, dryrun=${PAL_INTROSPECT_DRYRUN:-0})"
 BEFORE="$(git rev-parse HEAD)"
 
 # DRY-RUN valve: set PAL_INTROSPECT_DRYRUN=1 to review the cadence's judgment
@@ -97,7 +97,7 @@ BEFORE="$(git rev-parse HEAD)"
 # loop looked alive in launchctl and logged "introspection done", but the audit
 # never actually executed. Do not "simplify" this back.
 DRYRUN_SYS=()
-if [ "${PAL_INTROSPECT_DRYRUN:-${PAL_INTROSPECT_DRYRUN:-0}}" = "1" ]; then
+if [ "${PAL_INTROSPECT_DRYRUN:-0}" = "1" ]; then
   DRYRUN_SYS=(--append-system-prompt "DRY RUN: do NOT edit, commit, or push anything. Only write the report file with what you WOULD have fixed.")
 fi
 

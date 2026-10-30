@@ -51,9 +51,7 @@ impl AppError {
             }
             AppError::BadRequest(_) => "https://pal.run/errors/bad-request",
             AppError::NotFound(_) => "https://pal.run/errors/not-found",
-            AppError::AdapterNotConfigured(_) => {
-                "https://pal.run/errors/adapter-not-configured"
-            }
+            AppError::AdapterNotConfigured(_) => "https://pal.run/errors/adapter-not-configured",
             AppError::Upstream(_) => "https://pal.run/errors/upstream",
             AppError::Internal(_) => "https://pal.run/errors/internal",
         }

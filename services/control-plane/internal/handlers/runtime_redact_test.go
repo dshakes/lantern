@@ -18,7 +18,7 @@ func specWithToken() map[string]any {
 		"env": map[string]any{
 			"PAL_AGENT_INSTANCE_ID":    "ai-123",
 			"PAL_AGENT_INSTANCE_TOKEN": fakeToken,
-			"MY_APP_SETTING":               "keep-me",
+			"MY_APP_SETTING":           "keep-me",
 		},
 	}
 }
@@ -93,36 +93,18 @@ func TestRedactSpecSecrets_NoEnvIsUntouched(t *testing.T) {
 	}
 }
 
-// ADR 0032: the PAL_ name of the token is a credential too.
-func TestRedactSpecSecrets_RedactsPALTokenName(t *testing.T) {
-	in := map[string]any{"env": map[string]any{
-		"PAL_AGENT_INSTANCE_TOKEN": fakeToken,
-		"PAL_AGENT_INSTANCE_ID":    "ai-1",
-	}}
-	env := redactSpecSecrets(in)["env"].(map[string]any)
-	if env["PAL_AGENT_INSTANCE_TOKEN"] != redactedValue {
-		t.Fatalf("PAL_ token must be redacted, got %v", env["PAL_AGENT_INSTANCE_TOKEN"])
-	}
-	if env["PAL_AGENT_INSTANCE_ID"] != "ai-1" {
-		t.Fatalf("instance id is not a credential, got %v", env["PAL_AGENT_INSTANCE_ID"])
-	}
-}
-
-// ADR 0032: a caller-supplied identity under either name never survives the
-// stamp; only the PAL_ names are written until the writers flip.
-func TestStampAgentIdentity_ReplacesBothNames(t *testing.T) {
+// A caller-supplied identity never survives the stamp.
+func TestStampAgentIdentity_ReplacesCallerIdentity(t *testing.T) {
 	env := map[string]any{
 		"PAL_AGENT_INSTANCE_ID":    "forged",
 		"PAL_AGENT_INSTANCE_TOKEN": "forged",
-		"PAL_AGENT_INSTANCE_ID":        "forged",
-		"PAL_AGENT_INSTANCE_TOKEN":     "forged",
-		"MY_APP_SETTING":               "keep-me",
+		"MY_APP_SETTING":           "keep-me",
 	}
 	stampAgentIdentity(env, "ai-real", "tok-real")
 	want := map[string]any{
 		"PAL_AGENT_INSTANCE_ID":    "ai-real",
 		"PAL_AGENT_INSTANCE_TOKEN": "tok-real",
-		"MY_APP_SETTING":               "keep-me",
+		"MY_APP_SETTING":           "keep-me",
 	}
 	if len(env) != len(want) {
 		t.Fatalf("env = %v, want %v", env, want)

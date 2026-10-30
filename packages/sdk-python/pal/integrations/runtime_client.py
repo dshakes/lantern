@@ -8,12 +8,11 @@ four runtime endpoints the sandbox integration needs.
 
 from __future__ import annotations
 
+import os
 import time
 from typing import Any
 
 import httpx
-
-import os
 
 from ..errors import PalApiError
 
@@ -115,5 +114,3 @@ class PalRuntimeClient:
             if time.monotonic() >= deadline:
                 raise TimeoutError(f"vm {vm_id} not running after {timeout}s (state={state!r})")
             time.sleep(poll_interval)
-
-

@@ -132,10 +132,10 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 // healthzResponse is what /healthz returns.  Extra fields are added over time;
 // we decode only what the doctor cares about.
 type healthzResponse struct {
-	Status               string `json:"status"`
-	LLMMode              string `json:"llmMode"`
-	RLSEnforce           bool   `json:"rlsEnforce"`
-	AppPoolActive        bool   `json:"appPoolActive"`
+	Status           string `json:"status"`
+	LLMMode          string `json:"llmMode"`
+	RLSEnforce       bool   `json:"rlsEnforce"`
+	AppPoolActive    bool   `json:"appPoolActive"`
 	PalAppRoleExists bool   `json:"palAppRoleExists"`
 }
 

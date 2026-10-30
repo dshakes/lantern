@@ -167,5 +167,3 @@ class PalSandbox(BaseSandbox):
             except Exception:
                 results.append(FileDownloadResponse(path=path, content=None, error=FILE_NOT_FOUND))
         return results
-
-

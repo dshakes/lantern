@@ -19,20 +19,20 @@ function bridgeConfig(channel: Channel): { url: string; token: string } {
   if (channel === "imessage") {
     return {
       url: (
-        (process.env.PAL_IMESSAGE_BRIDGE_URL || process.env.PAL_IMESSAGE_BRIDGE_URL) ||
+        process.env.PAL_IMESSAGE_BRIDGE_URL ||
         (process.env.NEXT_PUBLIC_PAL_IMESSAGE_BRIDGE_URL || process.env.NEXT_PUBLIC_PAL_IMESSAGE_BRIDGE_URL) ||
         "http://localhost:3200"
       ).replace(/\/$/, ""),
-      token: (process.env.PAL_IMESSAGE_BRIDGE_TOKEN || process.env.PAL_IMESSAGE_BRIDGE_TOKEN) || "",
+      token: process.env.PAL_IMESSAGE_BRIDGE_TOKEN || "",
     };
   }
   return {
     url: (
-      (process.env.PAL_BRIDGE_URL || process.env.PAL_BRIDGE_URL) ||
+      process.env.PAL_BRIDGE_URL ||
       (process.env.NEXT_PUBLIC_PAL_BRIDGE_URL || process.env.NEXT_PUBLIC_PAL_BRIDGE_URL) ||
       "http://localhost:3100"
     ).replace(/\/$/, ""),
-    token: (process.env.PAL_BRIDGE_TOKEN || process.env.PAL_BRIDGE_TOKEN) || "",
+    token: process.env.PAL_BRIDGE_TOKEN || "",
   };
 }
 

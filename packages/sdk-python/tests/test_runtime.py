@@ -60,7 +60,13 @@ async def test_resume_errors(status: int):
 
 
 async def test_fork_body_and_partial_failure():
-    t = _T(body={"sourceVmId": "vm1", "snapshotId": "s", "forks": [{"vmId": "a", "state": "running"}, {"vmId": "b", "state": "failed", "error": "boom"}]})
+    t = _T(
+        body={
+            "sourceVmId": "vm1",
+            "snapshotId": "s",
+            "forks": [{"vmId": "a", "state": "running"}, {"vmId": "b", "state": "failed", "error": "boom"}],
+        }
+    )
     r = await _client(t).runtime.fork("vm1", count=2)
     assert json.loads(t.requests[-1].content) == {"count": 2}
     assert r.forks[1].error == "boom"

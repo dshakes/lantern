@@ -32,6 +32,7 @@ class GrpcToolClient(ToolClientBase):
         if self._channel is None:
             try:
                 import grpc.aio  # type: ignore[import-untyped]
+
                 self._channel = grpc.aio.insecure_channel(self._endpoint)
             except ImportError:
                 raise PalError("grpcio is required for production tool calls")

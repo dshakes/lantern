@@ -957,7 +957,7 @@ func TestResolveSecrets_MixedRefs_PartialResolution(t *testing.T) {
 	refs := []string{
 		"pal.secret/llm/anthropic",        // exists
 		"pal.secret/llm/no-such-provider", // does not exist
-		"not-a-valid-ref",                     // bad format
+		"not-a-valid-ref",                 // bad format
 	}
 	w := doResolve(h, testRuntimeSecretToken, resolveSecretsRequest{
 		TenantID: tenantID,

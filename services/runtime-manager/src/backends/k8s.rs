@@ -2240,8 +2240,7 @@ mod tests {
         );
         let msg = err.to_string();
         assert!(
-            msg.contains("PAL_ALLOW_RUNC_STANDARD")
-                || msg.contains("PAL_RUNTIMECLASS_GVISOR"),
+            msg.contains("PAL_ALLOW_RUNC_STANDARD") || msg.contains("PAL_RUNTIMECLASS_GVISOR"),
             "error must name the relevant config vars: {msg}"
         );
     }

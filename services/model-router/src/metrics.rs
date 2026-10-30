@@ -133,12 +133,8 @@ mod tests {
         .await;
         let out = String::from_utf8(render()).unwrap();
         assert!(out.contains(r#"pal_model_router_requests_total{method="t",outcome="ok"} 1"#));
-        assert!(
-            out.contains(r#"pal_model_router_requests_total{method="t",outcome="error"} 1"#)
-        );
-        assert!(
-            out.contains(r#"pal_model_router_requests_total{method="t",outcome="client"} 1"#)
-        );
+        assert!(out.contains(r#"pal_model_router_requests_total{method="t",outcome="error"} 1"#));
+        assert!(out.contains(r#"pal_model_router_requests_total{method="t",outcome="client"} 1"#));
         assert!(out.contains("pal_model_router_request_duration_seconds_bucket"));
     }
 }

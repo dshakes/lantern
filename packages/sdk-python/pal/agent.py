@@ -27,7 +27,6 @@ from pal.types import (
     AgentConfig,
     AgentContext,
     Capability,
-    IsolationClass,
     IsolationConfig,
     MemoryConfig,
     ResourceLimits,
@@ -39,14 +38,13 @@ _NAME_RE = re.compile(r"^[a-z0-9-]{1,63}$")
 
 def _validate_name(name: str) -> None:
     if not _NAME_RE.match(name):
-        raise PalValidationError(
-            f'Agent name must match [a-z0-9-]{{1,63}}, got: "{name}"'
-        )
+        raise PalValidationError(f'Agent name must match [a-z0-9-]{{1,63}}, got: "{name}"')
 
 
 # ---------------------------------------------------------------------------
 # Registered agent — the object returned by the @agent decorator
 # ---------------------------------------------------------------------------
+
 
 class RegisteredAgent:
     """Wrapper around a user-defined agent function plus its config.
@@ -93,6 +91,7 @@ def list_agents() -> list[RegisteredAgent]:
 # ---------------------------------------------------------------------------
 # @agent decorator
 # ---------------------------------------------------------------------------
+
 
 def agent(
     name: str,
@@ -173,6 +172,7 @@ def agent(
 # Class-based agent (Google ADK style)
 # ---------------------------------------------------------------------------
 
+
 class PalAgent:
     """Base class for class-based agent definitions.
 
@@ -232,5 +232,3 @@ class PalAgent:
 
     async def init(self) -> None:
         """Optional init hook called once before the first run."""
-
-

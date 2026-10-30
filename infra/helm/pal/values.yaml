@@ -355,7 +355,7 @@ monitoring:
   slos:
     control-plane-api-availability:
       service: control-plane
-      job: (pal|pal)-control-plane
+      job: pal-control-plane
       objective: 0.999
       minEventsPerHour: 0
       expectTraffic: true
@@ -367,7 +367,7 @@ monitoring:
         sum(rate(http_server_request_duration_seconds_count{__J__,pal_traffic="api"}[__W__]))
     control-plane-api-latency:
       service: control-plane
-      job: (pal|pal)-control-plane
+      job: pal-control-plane
       objective: 0.99
       minEventsPerHour: 0
       expectTraffic: true
@@ -379,7 +379,7 @@ monitoring:
         sum(rate(http_server_request_duration_seconds_count{__J__,pal_traffic="api"}[__W__]))
     run-success:
       service: control-plane
-      job: (pal|pal)-control-plane
+      job: pal-control-plane
       objective: 0.98
       minEventsPerHour: 10
       expectTraffic: false
@@ -391,7 +391,7 @@ monitoring:
         sum(rate(pal_run_total{__J__}[__W__]))
     scheduling-availability:
       service: runtime-scheduler
-      job: (pal|pal)-runtime-scheduler
+      job: pal-runtime-scheduler
       objective: 0.995
       minEventsPerHour: 10
       expectTraffic: false
@@ -403,7 +403,7 @@ monitoring:
         sum(rate(pal_scheduler_schedule_total{__J__,result=~"ok|error"}[__W__]))
     scheduling-latency:
       service: runtime-scheduler
-      job: (pal|pal)-runtime-scheduler
+      job: pal-runtime-scheduler
       objective: 0.99
       minEventsPerHour: 10
       expectTraffic: false
@@ -415,7 +415,7 @@ monitoring:
         sum(rate(pal_scheduler_schedule_duration_seconds_count{__J__,result="ok"}[__W__]))
     model-router-errors:
       service: model-router
-      job: (pal|pal)-model-router
+      job: pal-model-router
       objective: 0.995
       minEventsPerHour: 20
       expectTraffic: false
@@ -427,7 +427,7 @@ monitoring:
         sum(rate(pal_model_router_requests_total{__J__,outcome=~"ok|error"}[__W__]))
     microvm-spawn-availability:
       service: runtime-manager
-      job: (pal|pal)-runtime-manager
+      job: pal-runtime-manager
       objective: 0.995
       minEventsPerHour: 10
       expectTraffic: false
@@ -439,7 +439,7 @@ monitoring:
         sum(rate(pal_manager_spawn_duration_seconds_count{__J__}[__W__]))
     microvm-cold-boot-latency:
       service: runtime-manager
-      job: (pal|pal)-runtime-manager
+      job: pal-runtime-manager
       objective: 0.95
       minEventsPerHour: 10
       expectTraffic: false
@@ -451,7 +451,7 @@ monitoring:
         sum(rate(pal_manager_spawn_duration_seconds_count{__J__,kind="cold",outcome="ok"}[__W__]))
     microvm-restore-latency:
       service: runtime-manager
-      job: (pal|pal)-runtime-manager
+      job: pal-runtime-manager
       objective: 0.99
       minEventsPerHour: 10
       expectTraffic: false
@@ -463,7 +463,7 @@ monitoring:
         sum(rate(pal_manager_spawn_duration_seconds_count{__J__,kind="restore",outcome="ok"}[__W__]))
     egress-broker-errors:
       service: runtime-manager
-      job: (pal|pal)-runtime-manager
+      job: pal-runtime-manager
       objective: 0.995
       minEventsPerHour: 50
       expectTraffic: false

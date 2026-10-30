@@ -21,7 +21,6 @@ from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 
-
 SECRETS_DIR = Path("/run/pal/secrets")
 PROXY = "http://127.0.0.1:3128"
 

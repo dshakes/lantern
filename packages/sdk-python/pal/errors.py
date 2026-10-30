@@ -45,5 +45,3 @@ class PalTimeoutError(PalError):
 
 class PalValidationError(PalError):
     """Raised when input validation fails."""
-
-

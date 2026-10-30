@@ -68,7 +68,7 @@
       },
       "targets": [
         {
-          "expr": "up{job=~\"(pal|pal)-control-plane\"}",
+          "expr": "up{job=~\"pal-control-plane\"}",
           "refId": "A",
           "legendFormat": "control-plane",
           "datasource": {
@@ -121,7 +121,7 @@
       },
       "targets": [
         {
-          "expr": "up{job=~\"(pal|pal)-gateway\"}",
+          "expr": "up{job=~\"pal-gateway\"}",
           "refId": "A",
           "legendFormat": "gateway",
           "datasource": {
@@ -174,7 +174,7 @@
       },
       "targets": [
         {
-          "expr": "up{job=~\"(pal|pal)-model-router\"}",
+          "expr": "up{job=~\"pal-model-router\"}",
           "refId": "A",
           "legendFormat": "model-router",
           "datasource": {
@@ -227,7 +227,7 @@
       },
       "targets": [
         {
-          "expr": "probe_success{job=~\"(pal|pal)-control-plane-readyz\"}",
+          "expr": "probe_success{job=~\"pal-control-plane-readyz\"}",
           "refId": "A",
           "legendFormat": "readyz",
           "datasource": {
@@ -496,7 +496,7 @@
       },
       "targets": [
         {
-          "expr": "sum(pg_stat_database_numbackends{job=~\"(pal|pal)-postgres-exporter\"}) / max(pg_settings_max_connections{job=~\"(pal|pal)-postgres-exporter\"})",
+          "expr": "sum(pg_stat_database_numbackends{job=~\"pal-postgres-exporter\"}) / max(pg_settings_max_connections{job=~\"pal-postgres-exporter\"})",
           "refId": "A",
           "legendFormat": "connection saturation",
           "datasource": {

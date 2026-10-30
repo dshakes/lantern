@@ -14,8 +14,8 @@ import time
 def main() -> int:
     # Standard PAL envelope: tenant + run identifiers come from env,
     # set by the harness based on the AgentSpec the scheduler bound.
-    run_id = os.environ.get("PAL_RUN_ID") or os.environ.get("PAL_RUN_ID", "unknown")
-    vm_id = os.environ.get("PAL_VM_ID") or os.environ.get("PAL_VM_ID", "unknown")
+    run_id = os.environ.get("PAL_RUN_ID", "unknown")
+    vm_id = os.environ.get("PAL_VM_ID", "unknown")
 
     raw = sys.stdin.read().strip()
     try:

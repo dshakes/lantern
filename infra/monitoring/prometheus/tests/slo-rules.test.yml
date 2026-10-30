@@ -138,10 +138,10 @@ tests:
           - exp_labels: {severity: warning, slo: control-plane-api-availability, service: control-plane}
             exp_annotations:
               summary: "control-plane-api-availability: SLI has no data for 30m"
-              description: "The SLI for control-plane-api-availability produced no series for 30m, so the burn alerts above cannot fire. Check the scrape target and the `job` label ((pal|pal)-control-plane); a silent SLO is worse than a red one."
+              description: "The SLI for control-plane-api-availability produced no series for 30m, so the burn alerts above cannot fire. Check the scrape target and the `job` label (pal-control-plane); a silent SLO is worse than a red one."
               runbook_url: "https://github.com/dshakes/pal/blob/master/docs/runbooks/slo-control-plane-api.md"
           - exp_labels: {severity: warning, slo: control-plane-api-latency, service: control-plane}
             exp_annotations:
               summary: "control-plane-api-latency: SLI has no data for 30m"
-              description: "The SLI for control-plane-api-latency produced no series for 30m, so the burn alerts above cannot fire. Check the scrape target and the `job` label ((pal|pal)-control-plane); a silent SLO is worse than a red one."
+              description: "The SLI for control-plane-api-latency produced no series for 30m, so the burn alerts above cannot fire. Check the scrape target and the `job` label (pal-control-plane); a silent SLO is worse than a red one."
               runbook_url: "https://github.com/dshakes/pal/blob/master/docs/runbooks/slo-control-plane-api.md"

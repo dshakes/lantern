@@ -226,8 +226,8 @@ impl SnapshotStore {
     /// `S3_ENDPOINT` + `S3_BUCKET` + `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`
     /// for the optional S3 tier.  Missing S3 env vars → local-only.
     pub fn from_env() -> Self {
-        let root = std::env::var("SNAPSHOT_DIR")
-            .unwrap_or_else(|_| "/var/lib/pal/snapshots".to_string());
+        let root =
+            std::env::var("SNAPSHOT_DIR").unwrap_or_else(|_| "/var/lib/pal/snapshots".to_string());
 
         let s3_endpoint = std::env::var("S3_ENDPOINT").unwrap_or_default();
         let s3_bucket = std::env::var("S3_BUCKET").unwrap_or_default();

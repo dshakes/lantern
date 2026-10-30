@@ -16,8 +16,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -25,6 +23,9 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"

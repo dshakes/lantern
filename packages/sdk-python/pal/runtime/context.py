@@ -3,21 +3,20 @@
 from __future__ import annotations
 
 import logging
-import sys
-from typing import Any, Awaitable, Callable
-
 import os
+import sys
+from typing import Any
+
 from pal.types import (
     AgentContext,
-    AskOptions,
     CostTracker,
     Logger,
-    NotifyOptions,
 )
 
 # ---------------------------------------------------------------------------
 # Dev-mode logger that writes to stderr
 # ---------------------------------------------------------------------------
+
 
 class DevLogger(Logger):
     """Logger implementation for local dev mode (writes to stderr)."""
@@ -26,10 +25,12 @@ class DevLogger(Logger):
         self._logger = logging.getLogger(f"pal.{agent_name}")
         if not self._logger.handlers:
             handler = logging.StreamHandler(sys.stderr)
-            handler.setFormatter(logging.Formatter(
-                "[%(asctime)s] %(levelname)s %(name)s: %(message)s",
-                datefmt="%H:%M:%S",
-            ))
+            handler.setFormatter(
+                logging.Formatter(
+                    "[%(asctime)s] %(levelname)s %(name)s: %(message)s",
+                    datefmt="%H:%M:%S",
+                )
+            )
             self._logger.addHandler(handler)
             self._logger.setLevel(logging.DEBUG)
 
@@ -50,6 +51,7 @@ class DevLogger(Logger):
 # Dev-mode cost tracker (noop)
 # ---------------------------------------------------------------------------
 
+
 class DevCostTracker(CostTracker):
     def __init__(self) -> None:
         self._tokens_in = 0
@@ -68,6 +70,7 @@ class DevCostTracker(CostTracker):
 # ---------------------------------------------------------------------------
 # Context builders
 # ---------------------------------------------------------------------------
+
 
 def build_dev_context(
     *,

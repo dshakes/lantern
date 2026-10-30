@@ -419,13 +419,6 @@ func withIdentity(spec *palv1.AgentSpec, ident *palv1.ForkIdentity) *palv1.Agent
 	if out.Env == nil {
 		out.Env = map[string]string{}
 	}
-	delete(out.Env, envAgentInstanceID)
-	delete(out.Env, envAgentInstanceToken)
-	// ADR 0032: the source's identity must not survive under its PAL_ name
-	// either — a fork would inherit the source's token once the harness
-	// prefers PAL_. Only the PAL_ names are written until writers flip.
-	delete(out.Env, "PAL_AGENT_INSTANCE_ID")
-	delete(out.Env, "PAL_AGENT_INSTANCE_TOKEN")
 	out.Env[envAgentInstanceID] = ident.GetAgentInstanceId()
 	out.Env[envAgentInstanceToken] = ident.GetAgentInstanceToken()
 	return out

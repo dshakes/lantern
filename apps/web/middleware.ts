@@ -7,7 +7,7 @@ const PUBLIC_PATHS = ["/login", "/onboarding", "/api", "/auth", "/kiosk"];
 // public URL is the next.config rewrite target. Falls back to local dev.
 function controlPlaneBaseUrl(): string {
   return (
-    (process.env.PAL_API_URL ?? process.env.PAL_API_URL) ??
+    process.env.PAL_API_URL ??
     process.env.NEXT_PUBLIC_API_URL ??
     "http://localhost:8080"
   );

@@ -87,8 +87,8 @@ func writeErr(w http.ResponseWriter, code int, msg string) {
 type scheduleBody struct {
 	Spec            *palv1.AgentSpec     `json:"spec"`
 	Hint            *palv1.PlacementHint `json:"hint,omitempty"`
-	ColdStartBudget string                   `json:"cold_start_budget,omitempty"` // e.g. "10s"
-	ReserveOnly     bool                     `json:"reserve_only,omitempty"`
+	ColdStartBudget string               `json:"cold_start_budget,omitempty"` // e.g. "10s"
+	ReserveOnly     bool                 `json:"reserve_only,omitempty"`
 }
 
 // POST /v1/schedule

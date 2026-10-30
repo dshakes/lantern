@@ -6,20 +6,18 @@ import (
 	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
 )
 
-// ADR 0032: a fork never inherits the source VM's identity under either name.
-func TestWithIdentity_ReplacesBothNames(t *testing.T) {
+// A fork never inherits the source VM's identity.
+func TestWithIdentity_ReplacesSourceIdentity(t *testing.T) {
 	spec := &palv1.AgentSpec{Env: map[string]string{
 		"PAL_AGENT_INSTANCE_ID":    "src-id",
 		"PAL_AGENT_INSTANCE_TOKEN": "src-tok",
-		"PAL_AGENT_INSTANCE_ID":        "src-id",
-		"PAL_AGENT_INSTANCE_TOKEN":     "src-tok",
-		"KEEP":                         "1",
+		"KEEP":                     "1",
 	}}
 	out := withIdentity(spec, &palv1.ForkIdentity{AgentInstanceId: "fork-id", AgentInstanceToken: "fork-tok"})
 	want := map[string]string{
 		"PAL_AGENT_INSTANCE_ID":    "fork-id",
 		"PAL_AGENT_INSTANCE_TOKEN": "fork-tok",
-		"KEEP":                         "1",
+		"KEEP":                     "1",
 	}
 	if len(out.Env) != len(want) {
 		t.Fatalf("env = %v, want %v", out.Env, want)

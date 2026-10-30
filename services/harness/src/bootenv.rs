@@ -103,11 +103,7 @@ pub const CALLER_PAL_KEYS: [&str; 4] = [
 
 /// `pal.env.PAL_*` boot-args the MANAGER itself emits (not caller env;
 /// the manager strips caller `PAL_*` keys before building boot-args).
-const MANAGER_CMDLINE_KEYS: [&str; 3] = [
-    "PAL_MANAGER_ADDR",
-    "PAL_WORKLOAD_UID",
-    "PAL_ENV",
-];
+const MANAGER_CMDLINE_KEYS: [&str; 3] = ["PAL_MANAGER_ADDR", "PAL_WORKLOAD_UID", "PAL_ENV"];
 
 /// Identity keys the MANAGER stamps into the free-form env from the request's
 /// authenticated typed fields, after stripping any caller-supplied value
@@ -117,17 +113,12 @@ const MANAGER_CMDLINE_KEYS: [&str; 3] = [
 /// workload SDK.
 const MANAGER_IDENTITY_KEYS: [&str; 2] = ["PAL_TENANT_ID", "PAL_AGENT_VERSION_ID"];
 
-/// Whether a free-form env key may be applied: anything outside the
-/// `PAL_`/`PAL_` namespaces, an allowlisted caller key, or a
-/// manager-stamped identity key. EVERY `PAL_*` key is dropped (ADR 0032):
-/// nothing upstream stamps or replaces `PAL_` identity yet, so even the twin
-/// of a legitimate caller key (`PAL_AGENT_INSTANCE_TOKEN`) is caller-chosen.
-/// Relax only when the writers flip (rename plan step 4).
+/// Whether a free-form env key may be applied: anything outside the `PAL_`
+/// namespace, an allowlisted caller key, or a manager-stamped identity key.
 fn caller_key_allowed(key: &str) -> bool {
     !key.starts_with("PAL_")
-        && (!key.starts_with("PAL_")
-            || CALLER_PAL_KEYS.contains(&key)
-            || MANAGER_IDENTITY_KEYS.contains(&key))
+        || CALLER_PAL_KEYS.contains(&key)
+        || MANAGER_IDENTITY_KEYS.contains(&key)
 }
 
 /// `spawn.json` `network` — this VM's /30 (manager = `host_ip`).
@@ -201,7 +192,7 @@ pub fn contract_env_pairs(c: &SpawnContract) -> serde_json::Result<Vec<(String, 
     }
     if !dropped.is_empty() {
         // Names only — values may be sensitive.
-        tracing::warn!(keys = ?dropped, "bootenv: ignored PAL_*/PAL_* keys in spawn.json env (harness config is manager-owned)");
+        tracing::warn!(keys = ?dropped, "bootenv: ignored PAL_* keys in spawn.json env (harness config is manager-owned)");
     }
     Ok(pairs)
 }
@@ -346,10 +337,7 @@ pub fn bootstrap() -> anyhow::Result<()> {
     // boot-args too, which are not hydrated yet: on Firecracker that is where
     // PAL_ENV arrives.
     let cmdline = std::fs::read_to_string(CMDLINE_PATH).ok();
-    let prod = boot_is_prod(
-        std::env::var("PAL_ENV").ok().as_deref(),
-        cmdline.as_deref(),
-    );
+    let prod = boot_is_prod(std::env::var("PAL_ENV").ok().as_deref(), cmdline.as_deref());
     let contract = resolve_spawn_contract(spawn, prod)?;
     hydrate_env_from_cmdline(contract);
     assemble_declared_secrets();
@@ -851,14 +839,8 @@ mod tests {
         };
         assert_eq!(lookup("PAL_VM_ID"), "vm-123");
         assert_eq!(lookup("PAL_RUN_ID"), "run-9");
-        assert_eq!(
-            lookup("PAL_VM_TLS_CERT"),
-            "/run/pal/certs/vm-123/tls.crt"
-        );
-        assert_eq!(
-            lookup("PAL_VM_TLS_KEY"),
-            "/run/pal/certs/vm-123/tls.key"
-        );
+        assert_eq!(lookup("PAL_VM_TLS_CERT"), "/run/pal/certs/vm-123/tls.crt");
+        assert_eq!(lookup("PAL_VM_TLS_KEY"), "/run/pal/certs/vm-123/tls.key");
         assert_eq!(
             lookup("PAL_MANAGER_TLS_CA"),
             "/run/pal/certs/manager-ca.crt"
@@ -906,10 +888,7 @@ mod tests {
             get("PAL_WORKLOAD_ARGV").as_deref(),
             Some(r#"["python","main.py"]"#)
         );
-        assert_eq!(
-            get("PAL_WORKLOAD_CMD").as_deref(),
-            Some("python main.py")
-        );
+        assert_eq!(get("PAL_WORKLOAD_CMD").as_deref(), Some("python main.py"));
         assert_eq!(get("K").as_deref(), Some("V"));
         assert_eq!(get("PAL_WORKLOAD_UID").as_deref(), Some("1000"));
         assert_eq!(get("PAL_WORKLOAD_GID").as_deref(), Some("1001"));
@@ -972,9 +951,8 @@ mod tests {
     #[test]
     fn typed_contract_fields_beat_free_form_env() {
         // A user-supplied `env` entry must not override the manager's uid.
-        let c =
-            parse_spawn_contract(br#"{"env":{"PAL_WORKLOAD_UID":"0"},"workload_uid":1000}"#)
-                .expect("valid");
+        let c = parse_spawn_contract(br#"{"env":{"PAL_WORKLOAD_UID":"0"},"workload_uid":1000}"#)
+            .expect("valid");
         let pairs = contract_env_pairs(&c).expect("encodable");
         let uids: Vec<&str> = pairs
             .iter()
@@ -983,28 +961,6 @@ mod tests {
             .collect();
         // One entry per key (hydration keeps the first value it sees).
         assert_eq!(uids, vec!["1000"]);
-    }
-
-    /// ADR 0032: every caller `PAL_*` key is dropped — harness config,
-    /// forged identity, and even the twin of a legitimate caller key, which
-    /// nothing upstream stamps or replaces under the `PAL_` name.
-    #[test]
-    fn caller_pal_keys_are_all_dropped() {
-        let c = parse_spawn_contract(
-            br#"{"env":{
-                "PAL_WORKLOAD_UID":"0","PAL_ENV":"dev","PAL_EGRESS_FAIL_CLOSED":"0",
-                "PAL_HARNESS_EXEC_TOKEN":"forged","PAL_TENANT_ID":"other-tenant",
-                "PAL_RESUME":"1","PAL_TRACE_PARENT":"00-abc-def-01",
-                "PAL_AGENT_INSTANCE_ID":"i","PAL_AGENT_INSTANCE_TOKEN":"caller-chosen",
-                "PAL_RESUME":"1",
-                "PAL_TENANT_ID":"t1","KEEP":"1"
-            }}"#,
-        )
-        .expect("valid");
-        let pairs = contract_env_pairs(&c).expect("encodable");
-        let mut keys: Vec<&str> = pairs.iter().map(|(k, _)| k.as_str()).collect();
-        keys.sort_unstable();
-        assert_eq!(keys, vec!["KEEP", "PAL_RESUME", "PAL_TENANT_ID"]);
     }
 
     #[test]
@@ -1104,8 +1060,7 @@ mod tests {
     /// a malformed spawn.json fatal even though boot-args are hydrated later.
     #[test]
     fn prod_from_boot_args_makes_malformed_contract_fatal() {
-        let cmd =
-            |env: &str| format!("console=ttyS0 pal.vm_id=v pal.env.PAL_ENV={env}");
+        let cmd = |env: &str| format!("console=ttyS0 pal.vm_id=v pal.env.PAL_ENV={env}");
         assert!(boot_is_prod(None, Some(&cmd("prod"))));
         assert!(boot_is_prod(None, Some(&cmd("Staging"))));
         assert!(!boot_is_prod(None, Some(&cmd("dev"))));

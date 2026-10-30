@@ -10,7 +10,6 @@ import os
 from enum import StrEnum
 
 
-
 class RuntimeMode(StrEnum):
     PRODUCTION = "production"
     DEV = "dev"

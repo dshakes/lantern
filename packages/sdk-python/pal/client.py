@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import random
 from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
 
-import os
 from pal.errors import PalApiError
 from pal.types import (
     AgentInfo,
@@ -1459,5 +1459,3 @@ class RehearseResponse:
         self.cases = cases
         self.count = count
         self.reason = reason
-
-

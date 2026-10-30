@@ -129,12 +129,16 @@ mod tests {
         egress_decision(Some("port not in allowlist"));
         egress_decision(Some("upstream connect failed"));
         let out = String::from_utf8(render()).unwrap();
-        assert!(out.contains(
-            r#"pal_manager_spawn_duration_seconds_count{kind="restore",outcome="ok"} "#
-        ));
-        assert!(out.contains(
-            r#"pal_manager_spawn_duration_seconds_count{kind="cold",outcome="error"} "#
-        ));
+        assert!(
+            out.contains(
+                r#"pal_manager_spawn_duration_seconds_count{kind="restore",outcome="ok"} "#
+            )
+        );
+        assert!(
+            out.contains(
+                r#"pal_manager_spawn_duration_seconds_count{kind="cold",outcome="error"} "#
+            )
+        );
         // The SLO rules select these exact bucket labels (le="5" cold, le="2" restore).
         for le in ["2", "5"] {
             assert!(out.contains(&format!(

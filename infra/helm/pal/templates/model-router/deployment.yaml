@@ -45,7 +45,7 @@ spec:
             # (callers present it as x-pal-service-token). Without
             # PAL_ENV the service assumes dev and accepts unauthenticated calls.
             - name: PAL_ENV
-              value: {{ .Values.modelRouter.env.PAL_ENV | default .Values.modelRouter.env.PAL_ENV | default "production" | quote }}
+              value: {{ .Values.modelRouter.env.PAL_ENV | default "production" | quote }}
             - name: PAL_GRPC_SERVICE_TOKEN
               valueFrom:
                 secretKeyRef:

@@ -59,7 +59,7 @@ function safeEqual(a: string, b: string): boolean {
 
 /** True iff the request carries the correct server-side signal token. */
 function authorized(req: NextRequest): boolean {
-  const expected = (process.env.PAL_SIGNAL_TOKEN || process.env.PAL_SIGNAL_TOKEN);
+  const expected = process.env.PAL_SIGNAL_TOKEN;
   // Fail closed: no token configured server-side → reject everything.
   if (!expected) return false;
   // Legacy x-pal-signal-token is what already-installed iPhone Shortcuts send.

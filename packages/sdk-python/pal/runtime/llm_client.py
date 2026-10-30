@@ -8,11 +8,11 @@ multi-tenant isolation.
 from __future__ import annotations
 
 import json
-import os
 from typing import Any, AsyncIterator
 
 from pal.errors import PalLlmError
-from pal.types import Capability, LlmClient as LlmClientBase, Message
+from pal.types import Capability
+from pal.types import LlmClient as LlmClientBase
 
 
 class GrpcLlmClient(LlmClientBase):
@@ -31,11 +31,11 @@ class GrpcLlmClient(LlmClientBase):
         if self._channel is None:
             try:
                 import grpc.aio  # type: ignore[import-untyped]
+
                 self._channel = grpc.aio.insecure_channel(self._endpoint)
             except ImportError:
                 raise PalLlmError(
-                    "grpcio is required for production runtime LLM calls. "
-                    "Install with: pip install grpcio"
+                    "grpcio is required for production runtime LLM calls. Install with: pip install grpcio"
                 )
         return self._channel
 
@@ -141,9 +141,7 @@ class GrpcLlmClient(LlmClientBase):
                 ) from exc
             raise
 
-    async def embed(
-        self, texts: list[str], capability: Capability | None = None
-    ) -> list[list[float]]:
+    async def embed(self, texts: list[str], capability: Capability | None = None) -> list[list[float]]:
         """Generate embeddings via the model router."""
         channel = await self._ensure_channel()
 
@@ -193,19 +191,13 @@ class GrpcLlmClient(LlmClientBase):
             request["messages"] = [{"role": "user", "content": kwargs["prompt"]}]
         elif "messages" in kwargs:
             messages = kwargs["messages"]
-            request["messages"] = [
-                m.model_dump() if hasattr(m, "model_dump") else m
-                for m in messages
-            ]
+            request["messages"] = [m.model_dump() if hasattr(m, "model_dump") else m for m in messages]
 
         for key in ("capability", "optimize", "max_tokens", "temperature", "stop", "no_cache", "response_format"):
             if key in kwargs and kwargs[key] is not None:
                 request[key] = kwargs[key]
 
         if "tools" in kwargs and kwargs["tools"]:
-            request["tools"] = [
-                t.model_dump() if hasattr(t, "model_dump") else t
-                for t in kwargs["tools"]
-            ]
+            request["tools"] = [t.model_dump() if hasattr(t, "model_dump") else t for t in kwargs["tools"]]
 
         return request

@@ -155,7 +155,7 @@ type fakeExecStream struct {
 }
 
 func (f *fakeExecStream) Send(r *palv1.ExecRequest) error { f.sent = r; return nil }
-func (f *fakeExecStream) CloseSend() error                    { return nil }
+func (f *fakeExecStream) CloseSend() error                { return nil }
 func (f *fakeExecStream) Recv() (*palv1.ExecResponse, error) {
 	if len(f.frames) == 0 {
 		return nil, io.EOF

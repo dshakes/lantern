@@ -1942,22 +1942,13 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 const redactedValue = "[redacted]"
 
 // secretSpecEnvKeys are env keys whose values are credentials, never config.
-// Both names of the token (ADR 0032): a caller-supplied PAL_ twin is dropped
-// at the stamp site, but rows written before that, or by another writer, must
-// not serve it either.
 var secretSpecEnvKeys = []string{
-	"PAL_AGENT_INSTANCE_TOKEN",
 	"PAL_AGENT_INSTANCE_TOKEN",
 }
 
 // stampAgentIdentity sets the VM's agent identity in a spawn env, replacing
-// anything the caller supplied under EITHER name (ADR 0032). Only the
-// PAL_ names are written until the writers flip (rename plan step 4); a
-// caller-chosen PAL_ twin is deleted, never forwarded, because once the
-// harness prefers PAL_ it would authenticate VendSecret with it.
+// anything the caller supplied.
 func stampAgentIdentity(env map[string]any, instanceID, instanceToken string) {
-	delete(env, "PAL_AGENT_INSTANCE_ID")
-	delete(env, "PAL_AGENT_INSTANCE_TOKEN")
 	env["PAL_AGENT_INSTANCE_ID"] = instanceID
 	env["PAL_AGENT_INSTANCE_TOKEN"] = instanceToken
 }

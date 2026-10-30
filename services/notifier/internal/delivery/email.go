@@ -15,14 +15,14 @@ import (
 
 // EmailDeliverer delivers notifications via SMTP or Resend API.
 type EmailDeliverer struct {
-	smtpHost string
-	smtpPort string
-	smtpUser string
-	smtpPass string
-	fromAddr string
+	smtpHost  string
+	smtpPort  string
+	smtpUser  string
+	smtpPass  string
+	fromAddr  string
 	resendKey string
-	client   *http.Client
-	logger   *zap.Logger
+	client    *http.Client
+	logger    *zap.Logger
 }
 
 // NewEmailDeliverer creates a new EmailDeliverer, using Resend if API key is set,

@@ -33,7 +33,7 @@ fi
 # NEXT_PUBLIC_API_URL (Tailscale) — a slow/unreachable remote validation "fails
 # closed" and bounces /agents → /login forever (blank screen redirect loop).
 # PAL_API_URL (PAL_API_URL still accepted) wins over NEXT_PUBLIC_API_URL in controlPlaneBaseUrl().
-export PAL_API_URL="${PAL_API_URL:-${PAL_API_URL:-http://localhost:8080}}"
+export PAL_API_URL="${PAL_API_URL:-http://localhost:8080}"
 
 # Wait up to 60s for the API so we don't flash "API offline" during boot.
 for i in {1..30}; do

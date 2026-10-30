@@ -482,8 +482,7 @@ mod tests {
 
     #[test]
     fn cgroup_v2_path_extracted() {
-        let contents =
-            "12:blkio:/system.slice\n0::/system.slice/pal-harness.service\n1:cpu:/\n";
+        let contents = "12:blkio:/system.slice\n0::/system.slice/pal-harness.service\n1:cpu:/\n";
         assert_eq!(
             parse_cgroup_v2_path(contents),
             Some("/system.slice/pal-harness.service".to_string())

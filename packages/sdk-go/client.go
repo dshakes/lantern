@@ -55,8 +55,8 @@ func WithMaxRetries(n int) Option { return func(c *Client) { c.maxAttempts = n }
 // New constructs a Client.
 func New(opts ...Option) *Client {
 	c := &Client{
-		baseURL:     getenv("PAL_API_URL", getenv("PAL_API_URL", DefaultBaseURL)), // PAL_ wins (ADR 0032); inline, no palenv dep: a replace breaks go get for SDK users,
-		apiKey:      getenv("PAL_API_KEY", os.Getenv("PAL_API_KEY")),
+		baseURL:     getenv("PAL_API_URL", DefaultBaseURL), // PAL_ wins (ADR 0032); inline, no palenv dep: a replace breaks go get for SDK users,
+		apiKey:      os.Getenv("PAL_API_KEY"),
 		http:        &http.Client{Timeout: 60 * time.Second},
 		maxAttempts: 3,
 	}

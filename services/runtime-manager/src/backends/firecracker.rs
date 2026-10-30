@@ -70,8 +70,6 @@ pub const SPAWN_CONTRACT_FILE: &str = "spawn.json";
 /// Harness env var for the workload uid (secrets-socket peer auth). The
 /// manager owns this value; a caller-supplied one is dropped.
 pub const ENV_WORKLOAD_UID: &str = "PAL_WORKLOAD_UID";
-/// The same key under the PAL name (ADR 0032). Never caller-set either.
-const ENV_WORKLOAD_UID_PAL: &str = "PAL_WORKLOAD_UID";
 /// The guest's environment class. Manager-owned: `schedule`/`restore` replace
 /// any caller value with the manager's own before a backend sees the request.
 pub const ENV_PAL_ENV: &str = "PAL_ENV";
@@ -169,9 +167,7 @@ impl SpawnContract {
             env: req
                 .env
                 .iter()
-                .filter(|(k, _)| {
-                    ![ENV_WORKLOAD_UID, ENV_WORKLOAD_UID_PAL, ENV_PAL_ENV].contains(&k.as_str())
-                })
+                .filter(|(k, _)| ![ENV_WORKLOAD_UID, ENV_PAL_ENV].contains(&k.as_str()))
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
             // Injection specs never go to the guest: it has no use for them,
@@ -3250,8 +3246,8 @@ impl FirecrackerBackend {
 
         let kernel_image_path =
             std::env::var("FC_KERNEL_PATH").unwrap_or_else(|_| "/opt/pal/vmlinux".to_string());
-        let rootfs_path = std::env::var("FC_ROOTFS_PATH")
-            .unwrap_or_else(|_| "/opt/pal/rootfs.ext4".to_string());
+        let rootfs_path =
+            std::env::var("FC_ROOTFS_PATH").unwrap_or_else(|_| "/opt/pal/rootfs.ext4".to_string());
         let bridge_name = std::env::var("FC_BRIDGE").ok().filter(|s| !s.is_empty());
         let binary_path = probe.firecracker_binary_path;
         let jailer = JailerConfig::from_env();
@@ -4676,8 +4672,7 @@ mod tests {
                 req.env.insert(format!("K{i}"), format!("v{i}"));
             }
             req.env.insert("MODE".into(), mode.into());
-            req.env
-                .insert("PAL_AGENT_INSTANCE_ID".into(), inst.into());
+            req.env.insert("PAL_AGENT_INSTANCE_ID".into(), inst.into());
             req.env
                 .insert("PAL_AGENT_INSTANCE_TOKEN".into(), tok.into());
             let cfg = VmConfig::from_schedule_in_mode(&req, k, r, EgressMode::Guest).unwrap();
@@ -5436,8 +5431,7 @@ mod tests {
         let mut req = minimal_schedule_req();
         req.env
             .insert("PAL_TENANT_ID".to_string(), "t-999".to_string());
-        req.env
-            .insert("PAL_ENV".to_string(), "staging".to_string());
+        req.env.insert("PAL_ENV".to_string(), "staging".to_string());
         let args = build_boot_args(
             "vm-1",
             "run-1",
@@ -5465,7 +5459,6 @@ mod tests {
             r#"spaces and "quotes" 'single' {"json":[1,2]} = ok"#.into(),
         );
         req.env.insert(ENV_WORKLOAD_UID.into(), "0".into()); // caller forgery
-        req.env.insert(ENV_WORKLOAD_UID_PAL.into(), "0".into()); // same, PAL name (ADR 0032)
         req.egress_rules = vec![EgressRule {
             pattern: "*.openai.com".into(),
             http_methods: vec!["POST".into()],
@@ -5486,10 +5479,6 @@ mod tests {
         assert!(
             !c.env.contains_key(ENV_WORKLOAD_UID),
             "caller uid must be dropped"
-        );
-        assert!(
-            !c.env.contains_key(ENV_WORKLOAD_UID_PAL),
-            "caller PAL_ uid must be dropped"
         );
         assert_eq!((c.workload_uid, c.workload_gid), (1000, 1001));
 
@@ -5544,10 +5533,7 @@ mod tests {
             &req,
             4242,
         );
-        assert!(
-            args.contains("pal.env.PAL_WORKLOAD_UID=4242"),
-            "{args}"
-        );
+        assert!(args.contains("pal.env.PAL_WORKLOAD_UID=4242"), "{args}");
         assert!(!args.contains("PAL_WORKLOAD_UID=0"), "{args}");
         assert!(!args.contains("PAL_WORKLOAD_UID"), "{args}");
     }
@@ -5585,10 +5571,8 @@ mod tests {
     #[test]
     fn boot_args_sanitizes_spaces_in_env_values() {
         let mut req = minimal_schedule_req();
-        req.env.insert(
-            "PAL_ENV".to_string(),
-            "dev\u{a0}x\tpal.vm_id=y".to_string(),
-        );
+        req.env
+            .insert("PAL_ENV".to_string(), "dev\u{a0}x\tpal.vm_id=y".to_string());
         let args = build_boot_args(
             "vm-1",
             "run-1",
@@ -6104,11 +6088,7 @@ mod tests {
             "/srv/jailer/firecracker/vm-1/root/run/firecracker.socket"
         );
         assert_eq!(
-            j.host_path(
-                "/usr/bin/firecracker",
-                "vm-1",
-                "/run/pal/vsock/vm-1.sock"
-            ),
+            j.host_path("/usr/bin/firecracker", "vm-1", "/run/pal/vsock/vm-1.sock"),
             "/srv/jailer/firecracker/vm-1/root/run/pal/vsock/vm-1.sock"
         );
 
@@ -6124,10 +6104,7 @@ mod tests {
     #[test]
     fn jail_artifact_path_maps_to_root_basename() {
         assert_eq!(jail_artifact_path("/opt/pal/vmlinux"), "/vmlinux");
-        assert_eq!(
-            jail_artifact_path("/opt/pal/rootfs.ext4"),
-            "/rootfs.ext4"
-        );
+        assert_eq!(jail_artifact_path("/opt/pal/rootfs.ext4"), "/rootfs.ext4");
         assert_eq!(
             jail_artifact_path("/run/pal/certs/vm-1/certs.img"),
             "/certs.img"

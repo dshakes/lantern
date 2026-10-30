@@ -63,7 +63,7 @@ def research_step(state: dict, topic: str) -> dict:
 def main() -> int:
     signal.signal(signal.SIGUSR1, handle_snapshot)
 
-    restore_hint = os.environ.get("PAL_RESTORE_HINT") or os.environ.get("PAL_RESTORE_HINT", "")
+    restore_hint = os.environ.get("PAL_RESTORE_HINT", "")
     state = load_state()
 
     if restore_hint:

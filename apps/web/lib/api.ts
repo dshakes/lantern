@@ -476,7 +476,7 @@ class PalAPI {
         "http://localhost:8080";
     } else {
       this.baseUrl =
-        (process.env.PAL_API_URL ?? process.env.PAL_API_URL) ??
+        process.env.PAL_API_URL ??
         process.env.NEXT_PUBLIC_API_URL ??
         "http://localhost:8080";
     }

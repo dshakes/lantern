@@ -12,8 +12,8 @@ on:
 
 env:
   # Legacy PAL_* repo vars/secrets still work as a fallback (ADR 0032).
-  PAL_API_URL: ${{ vars.PAL_API_URL || vars.PAL_API_URL }}          # e.g. https://api.example.com
-  PAL_API_KEY: ${{ secrets.PAL_API_KEY || secrets.PAL_API_KEY }}    # scopes: agents:write, runs:execute, runs:write
+  PAL_API_URL: ${{ vars.PAL_API_URL }}          # e.g. https://api.example.com
+  PAL_API_KEY: ${{ secrets.PAL_API_KEY }}    # scopes: agents:write, runs:execute, runs:write
 
 jobs:
   eval:
