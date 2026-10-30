@@ -13,7 +13,6 @@ const { title, description, path = '' } = Astro.props;
 const links = [
   { href: 'pal/', label: 'pal' },
   { href: 'runtime/', label: 'Runtime' },
-  { href: 'compare/', label: 'Compare' },
   { href: 'about/', label: 'About' },
   { href: 'docs/', label: 'Docs' },
 ];
@@ -28,7 +27,8 @@ const canonical = SITE + path;
   <meta name="description" content={description} />
   <link rel="canonical" href={canonical} />
   <link rel="icon" href={u('favicon.svg')} type="image/svg+xml" />
-  <meta name="theme-color" content="#0b0c0f" />
+  <meta name="theme-color" content="#0b0c0f" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#fafaf8" media="(prefers-color-scheme: light)" />
   <meta property="og:type" content="website" />
   <meta property="og:title" content={title} />
   <meta property="og:description" content={description} />
@@ -44,6 +44,7 @@ const canonical = SITE + path;
       try { t = localStorage.getItem('starlight-theme') || ''; } catch {}
       if (t !== 'light' && t !== 'dark') t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
       document.documentElement.dataset.theme = t;
+      document.documentElement.classList.add('js');
     })();
   </script>
 </head>
@@ -83,7 +84,7 @@ const canonical = SITE + path;
         <div><h2>Learn</h2><ul><li><a href={u('docs/')}>Docs</a></li><li><a href={u('docs/start/quickstart/')}>Quickstart</a></li><li><a href={u('about/')}>About</a></li></ul></div>
         <div><h2>Project</h2><ul><li><a href={GH}>GitHub</a></li><li><a href={`${GH}/blob/master/CONTRIBUTING.md`}>Contributing</a></li><li><a href={`${GH}/blob/master/LICENSE`}>Apache-2.0</a></li></ul></div>
       </div>
-      <p class="fine">Open source under Apache-2.0. The CLI and packages are still named <code>lantern</code> while the rename lands.</p>
+      <p class="fine">Open source under Apache-2.0. The CLI, packages and env vars keep their old names (<code>lantern</code>, <code>LANTERN_*</code>) until the rename lands.</p>
     </div>
   </footer>
   <script is:inline>
@@ -92,6 +93,13 @@ const canonical = SITE + path;
       document.documentElement.dataset.theme = next;
       try { localStorage.setItem('starlight-theme', next); } catch {}
     });
+    // Scroll reveals. Without JS (no .js class) or with reduced motion, everything is simply visible.
+    if ('IntersectionObserver' in window && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      const io = new IntersectionObserver((es) => { for (const e of es) if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } }, { rootMargin: '0px 0px -8% 0px', threshold: 0.08 });
+      document.querySelectorAll('[data-reveal]').forEach((el) => io.observe(el));
+    } else document.querySelectorAll('[data-reveal]').forEach((el) => el.classList.add('in'));
+    // Close the mobile drawer after picking a link.
+    document.querySelectorAll('.menu-panel a').forEach((a) => a.addEventListener('click', () => a.closest('details')?.removeAttribute('open')));
     for (const b of document.querySelectorAll('[data-copy]')) {
       b.addEventListener('click', async () => {
         try { await navigator.clipboard.writeText(b.getAttribute('data-copy')); b.textContent = 'Copied'; setTimeout(() => (b.textContent = 'Copy'), 1600); } catch {}

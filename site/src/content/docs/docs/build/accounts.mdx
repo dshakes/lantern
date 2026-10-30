@@ -1,6 +1,10 @@
 ---
 title: Accounts and sign-up
 description: Gated sign-up, email verification, password reset, data export and workspace deletion.
+glance:
+  what: "Gated sign-up, email verification, password reset, data export and workspace deletion, all served by the control plane on :8080."
+  why: "Public sign-up lets anyone create tenants with their own budget and microVM quota, so production starts closed and you open it deliberately."
+  how: "Read the Sign-up modes section, then follow the Try it curl walkthrough to register, verify and log in."
 sidebar:
   order: 10
 ---
@@ -13,12 +17,12 @@ Public sign-up on a self-hosted deployment means anyone can create tenants, each
 
 ## Sign-up modes
 
-`LANTERN_SIGNUP_MODE` controls `POST /auth/signup`. Unset, it is `closed` when `LANTERN_ENV` is `prod`, `production` or `staging`, and `open` otherwise. Any other value stops the server at startup.
+`PAL_SIGNUP_MODE` controls `POST /auth/signup`. Unset, it is `closed` when `PAL_ENV` is `prod`, `production` or `staging`, and `open` otherwise. Any other value stops the server at startup.
 
 | Mode | Behaviour |
 | --- | --- |
 | `closed` | Every sign-up gets `403 {"error":"sign-up is closed"}`. Default in prod. |
-| `invite` | Needs an `inviteCode` bound to the email, else `403`. Requires `LANTERN_SIGNUP_INVITE_SECRET`. |
+| `invite` | Needs an `inviteCode` bound to the email, else `403`. Requires `PAL_SIGNUP_INVITE_SECRET`. |
 | `open` | Anyone, subject to the rate limit and captcha. Default in dev. |
 
 ## Sign-up, verify, login
@@ -82,14 +86,14 @@ Stateless and email-bound: `<expiryUnix>.<hex HMAC-SHA256(secret, lower(email) +
 
 ```bash
 EXP=$(( $(date +%s) + 7*86400 )); EMAIL=new.user@example.com
-echo "$EXP.$(printf '%s|%s' "$EMAIL" "$EXP" | openssl dgst -sha256 -hmac "$LANTERN_SIGNUP_INVITE_SECRET" -r | cut -d' ' -f1)"
+echo "$EXP.$(printf '%s|%s' "$EMAIL" "$EXP" | openssl dgst -sha256 -hmac "$PAL_SIGNUP_INVITE_SECRET" -r | cut -d' ' -f1)"
 ```
 
 The invitee sends it as `inviteCode` in the sign-up body. A missing, expired, malformed or wrong-email code gets `403 a valid invite code is required to sign up`.
 
 ## Captcha
 
-Cloudflare Turnstile, verified server-side against `siteverify` with the caller IP. Required when `LANTERN_TURNSTILE_SECRET` is set, and always required for `open` sign-up in prod. Closed deployments never call Turnstile (the mode check runs first). The client sends the widget token as `captchaToken`.
+Cloudflare Turnstile, verified server-side against `siteverify` with the caller IP. Required when `PAL_TURNSTILE_SECRET` is set, and always required for `open` sign-up in prod. Closed deployments never call Turnstile (the mode check runs first). The client sends the widget token as `captchaToken`.
 
 - No token: `400 captcha is required`.
 - Token rejected: `403 captcha verification failed`.
@@ -100,7 +104,7 @@ The dashboard renders the widget on the sign-up form when `NEXT_PUBLIC_TURNSTILE
 
 ## Rate limits
 
-Fixed-window counters in Redis, keyed by client IP (and email where noted). The IP is the TCP peer; `X-Forwarded-For` is honored only when the peer is inside `LANTERN_TRUSTED_PROXIES`. If Redis is absent or errors, the limiter fails open so an outage cannot lock owners out. Exceeding a limit returns `429`.
+Fixed-window counters in Redis, keyed by client IP (and email where noted). The IP is the TCP peer; `X-Forwarded-For` is honored only when the peer is inside `PAL_TRUSTED_PROXIES`. If Redis is absent or errors, the limiter fails open so an outage cannot lock owners out. Exceeding a limit returns `429`.
 
 | Endpoint | Limit | Key |
 | --- | --- | --- |
@@ -142,23 +146,23 @@ The API has no confirmation parameter; the safeguard is in the dashboard. **Sett
 
 ## Mailer
 
-Verification and reset mail go through one of three drivers, chosen by `LANTERN_MAILER` (default `log`). Mail is plain text and sent in the background with a 30 second limit; a failed send is logged, not returned to the caller.
+Verification and reset mail go through one of three drivers, chosen by `PAL_MAILER` (default `log`). Mail is plain text and sent in the background with a 30 second limit; a failed send is logged, not returned to the caller.
 
 | Driver | Behaviour |
 | --- | --- |
 | `log` | Delivers nothing. Dev logs recipient, subject *and body* (the link). Prod logs recipient and subject only, so tokens never reach prod logs. |
-| `smtp` | Standard-library SMTP to `LANTERN_SMTP_ADDR`, upgraded with STARTTLS when offered. Credentials are refused over an unencrypted connection to a non-localhost server. |
-| `http` | POSTs JSON `{from,to,subject,text}` to `LANTERN_MAIL_HTTP_URL` with `Authorization: Bearer LANTERN_MAIL_HTTP_TOKEN` (the shape of Resend's `/emails` API). 15 second timeout; a non-2xx response is an error. |
+| `smtp` | Standard-library SMTP to `PAL_SMTP_ADDR`, upgraded with STARTTLS when offered. Credentials are refused over an unencrypted connection to a non-localhost server. |
+| `http` | POSTs JSON `{from,to,subject,text}` to `PAL_MAIL_HTTP_URL` with `Authorization: Bearer PAL_MAIL_HTTP_TOKEN` (the shape of Resend's `/emails` API). 15 second timeout; a non-2xx response is an error. |
 
 ## Startup checks
 
 The control plane refuses to start when:
 
-- `LANTERN_SIGNUP_MODE` is not `open`, `invite` or `closed`.
-- `invite` mode is set without `LANTERN_SIGNUP_INVITE_SECRET`.
-- `LANTERN_MAILER` is unknown, or `smtp`/`http` lacks its address/URL.
-- In prod, `open` mode has no `LANTERN_TURNSTILE_SECRET`.
-- In prod, mode is `open` or `invite` with `LANTERN_MAILER=log`: new users could never receive their verification link.
+- `PAL_SIGNUP_MODE` is not `open`, `invite` or `closed`.
+- `invite` mode is set without `PAL_SIGNUP_INVITE_SECRET`.
+- `PAL_MAILER` is unknown, or `smtp`/`http` lacks its address/URL.
+- In prod, `open` mode has no `PAL_TURNSTILE_SECRET`.
+- In prod, mode is `open` or `invite` with `PAL_MAILER=log`: new users could never receive their verification link.
 
 ## Endpoint reference
 
@@ -202,17 +206,17 @@ Same request, responses and limits as resend; sends a reset link instead.
 
 ### `GET /v1/tenants/{id}/export` and `DELETE /v1/tenants/{id}`
 
-Bearer owner JWT. See [Data export](#data-export) and [Workspace deletion](#workspace-deletion). Both routes also pass the `admin` scope annotation, which blocks when `LANTERN_AUTHZ_ENFORCE=1` (on in production: a key without the scope gets `403`); either way API keys are not owners, so they get `403`.
+Bearer owner JWT. See [Data export](#data-export) and [Workspace deletion](#workspace-deletion). Both routes also pass the `admin` scope annotation, which blocks when `PAL_AUTHZ_ENFORCE=1` (on in production: a key without the scope gets `403`); either way API keys are not owners, so they get `403`.
 
 ## Free-tier caps
 
-Every new workspace, whether created by password sign-up or the first Google login, starts with a hard-fail daily spend cap and a sandbox quota so a new account cannot run up cost. The cap is the tenant-wide budget (the same row `PUT /v1/budgets/tenant` edits, see [Budgets](/lantern/docs/build/budgets/)) and the quota is the same one `PUT /v1/runtime/quota` edits, so an owner can raise or remove either. Existing workspaces and the seeded dev workspace are never touched. Set a variable to `off` to skip that cap.
+Every new workspace, whether created by password sign-up or the first Google login, starts with a hard-fail daily spend cap and a sandbox quota so a new account cannot run up cost. The cap is the tenant-wide budget (the same row `PUT /v1/budgets/tenant` edits, see [Budgets](/docs/build/budgets/)) and the quota is the same one `PUT /v1/runtime/quota` edits, so an owner can raise or remove either. Existing workspaces and the seeded dev workspace are never touched. Set a variable to `off` to skip that cap.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `LANTERN_FREE_TIER_COST_USD_PER_DAY` | `2.00` | Tenant-wide LLM spend per day (hard fail, HTTP 402). |
-| `LANTERN_FREE_TIER_MAX_VMS` | `2` | Concurrent sandbox VMs. Compute hours (4/day) and egress (1 GB/day) are fixed. |
-| `LANTERN_FREE_TIER_RUNTIME_COST_USD_PER_DAY` | `1.00` | Sandbox spend per day. |
+| `PAL_FREE_TIER_COST_USD_PER_DAY` | `2.00` | Tenant-wide LLM spend per day (hard fail, HTTP 402). |
+| `PAL_FREE_TIER_MAX_VMS` | `2` | Concurrent sandbox VMs. Compute hours (4/day) and egress (1 GB/day) are fixed. |
+| `PAL_FREE_TIER_RUNTIME_COST_USD_PER_DAY` | `1.00` | Sandbox spend per day. |
 
 ## Running agents before you verify
 
@@ -222,23 +226,23 @@ Where verification is required (production), `POST /v1/runs` from an unverified 
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `LANTERN_ENV` | unset (dev) | `prod`/`production`/`staging` turns on closed-by-default sign-up, email verification and the startup checks. |
-| `LANTERN_SIGNUP_MODE` | `closed` in prod, `open` in dev | `open`, `invite` or `closed`. |
-| `LANTERN_SIGNUP_INVITE_SECRET` | none | HMAC key for invite codes. Required for `invite` mode. |
-| `LANTERN_TURNSTILE_SECRET` | none | Turnstile secret. Setting it requires a captcha on every sign-up; required for `open` in prod. |
+| `PAL_ENV` | unset (dev) | `prod`/`production`/`staging` turns on closed-by-default sign-up, email verification and the startup checks. |
+| `PAL_SIGNUP_MODE` | `closed` in prod, `open` in dev | `open`, `invite` or `closed`. |
+| `PAL_SIGNUP_INVITE_SECRET` | none | HMAC key for invite codes. Required for `invite` mode. |
+| `PAL_TURNSTILE_SECRET` | none | Turnstile secret. Setting it requires a captcha on every sign-up; required for `open` in prod. |
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | none | Dashboard build-time site key; renders the widget. |
-| `LANTERN_MAILER` | `log` | `log`, `smtp` or `http`. |
-| `LANTERN_MAIL_FROM` | `Lantern <no-reply@localhost>` | From address for `smtp` and `http`. |
-| `LANTERN_SMTP_ADDR` | none | `host:port`. Required for `smtp`. |
-| `LANTERN_SMTP_USER`, `LANTERN_SMTP_PASSWORD` | none | SMTP credentials (PLAIN auth). |
-| `LANTERN_MAIL_HTTP_URL` | none | Endpoint for the `http` driver. Required for it. |
-| `LANTERN_MAIL_HTTP_TOKEN` | none | Bearer token for the `http` driver. |
+| `PAL_MAILER` | `log` | `log`, `smtp` or `http`. |
+| `PAL_MAIL_FROM` | `Lantern <no-reply@localhost>` | From address for `smtp` and `http`. |
+| `PAL_SMTP_ADDR` | none | `host:port`. Required for `smtp`. |
+| `PAL_SMTP_USER`, `PAL_SMTP_PASSWORD` | none | SMTP credentials (PLAIN auth). |
+| `PAL_MAIL_HTTP_URL` | none | Endpoint for the `http` driver. Required for it. |
+| `PAL_MAIL_HTTP_TOKEN` | none | Bearer token for the `http` driver. |
 | `OAUTH_DASHBOARD_URL` | `http://localhost:3001` | Base URL used in emailed verify/reset links. |
-| `LANTERN_TRUSTED_PROXIES` | empty | CIDRs whose `X-Forwarded-For` is trusted for rate-limit keys. |
+| `PAL_TRUSTED_PROXIES` | empty | CIDRs whose `X-Forwarded-For` is trusted for rate-limit keys. |
 
 ## Limits
 
-- Invite codes cannot be listed or revoked; to cancel one, rotate `LANTERN_SIGNUP_INVITE_SECRET` (which invalidates all of them).
+- Invite codes cannot be listed or revoked; to cancel one, rotate `PAL_SIGNUP_INVITE_SECRET` (which invalidates all of them).
 - Rate limiting needs Redis; without it only the captcha and sign-up mode protect `/auth/*`.
 
-See also [Security](/lantern/docs/runtime/security/) and the [API reference](/lantern/docs/reference/api/).
+See also [Security](/docs/runtime/security/) and the [API reference](/docs/reference/api/).
