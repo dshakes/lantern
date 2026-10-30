@@ -48,6 +48,11 @@ RUST_SERVICES="${RUST_SERVICES:-gateway model-router runtime-manager surface-gat
 BRIDGE_DIRS="${BRIDGE_DIRS:-services/whatsapp-bridge services/imessage-bridge}"
 DASHBOARD_DIR="${DASHBOARD_DIR:-apps/web}"
 COMPOSE_FILE="${COMPOSE_FILE:-infra/docker/docker-compose.yml}"
+# golang-migrate source embedded in the control-plane binary. Up() fails with
+# "no migration found for version N" when the DB is AHEAD of this directory, so
+# a checkout whose newest migration < the DB's schema_migrations.version cannot
+# start the API.
+MIGRATIONS_DIR="${MIGRATIONS_DIR:-services/control-plane/internal/db/migrations}"
 
 # in-repo runtime state (gitignored). Backed up; never rewritten by the cutover.
 REPO_STATE_PATHS="${REPO_STATE_PATHS:-services/whatsapp-bridge/bridge_state services/imessage-bridge/bridge_state services/whatsapp-bridge/auth_sessions}"

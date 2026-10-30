@@ -79,6 +79,8 @@ ALTER TABLE agents FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON agents USING (tenant_id = current_setting('app.tenant_id', true)) WITH CHECK (tenant_id = current_setting('app.tenant_id', true));
 GRANT SELECT, INSERT, UPDATE ON agents, runs TO lantern_app_test;
 GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO lantern_app_test;
+CREATE TABLE schema_migrations (version bigint NOT NULL PRIMARY KEY, dirty boolean NOT NULL);
+INSERT INTO schema_migrations VALUES (2, false);
 SQL
 echo "  created roles lantern_test (superuser), lantern_app_test and database cutover_test"
 
@@ -121,6 +123,10 @@ echo 'const BRIDGE_TOKEN = process.env.LANTERN_BRIDGE_TOKEN || "";' > services/w
 printf 'bridge_state/\nauth_sessions/\nnode_modules/\n' > services/whatsapp-bridge/.gitignore
 printf 'bridge_state/\nnode_modules/\n' > services/imessage-bridge/.gitignore
 echo '{}' > apps/web/package.json
+mkdir -p services/control-plane/internal/db/migrations
+echo 'select 1;' > services/control-plane/internal/db/migrations/0001_baseline.up.sql
+echo 'select 2;' > services/control-plane/internal/db/migrations/0002_second.up.sql
+echo '// imessage session' > services/imessage-bridge/src/session.ts
 git add -A && git commit -qm "old: lantern names" && OLD_SHA="$(git rev-parse HEAD)"
 # release commit: what the zero-lantern code ships
 for s in api dashboard whatsapp-bridge imessage-bridge infra; do
@@ -132,12 +138,13 @@ plutil -replace EnvironmentVariables.DATABASE_URL -string 'postgres://pal_test:n
 echo 'export const dir = join(homedir(), ".pal");' > packages/bridge-core/src/state-dir.ts
 echo 'cfg.ConnConfig.User = os.Getenv("PAL_APP_DB_ROLE")' > services/control-plane/cmd/server/main.go
 echo 'const BRIDGE_TOKEN = process.env.PAL_BRIDGE_TOKEN || "";' > services/whatsapp-bridge/src/index.ts
+echo 'select 3;' > services/control-plane/internal/db/migrations/0003_third.up.sql
 git add -A && git commit -qm "release: pal names" && REL="$(git rev-parse HEAD)"
 git push -q "$SB/remote/pal.git" master
 git reset -q --hard "$OLD_SHA"                          # the live checkout is stale
 git remote add origin "$SB/remote/lantern.git"          # …and still points at the pre-rename URL
 git fetch -q origin
-echo '// owner hotfix, not committed' >> services/whatsapp-bridge/src/index.ts   # tracked + dirty
+echo '// owner hotfix, not committed' >> services/imessage-bridge/src/session.ts   # tracked + dirty (like the live session.ts)
 echo scratch > notes.txt                                                          # untracked
 mkdir -p services/whatsapp-bridge/bridge_state/t1 services/imessage-bridge/bridge_state "services/whatsapp-bridge/auth_sessions/$STUB_TENANT"
 head -c 2048 /dev/urandom > "services/whatsapp-bridge/auth_sessions/$STUB_TENANT/creds.json"
@@ -266,7 +273,7 @@ check "verify --old exits 0" test "$rc" = 0
 snap "$SB/S1"; check "after rollback: byte-identical to the start (S0 == S1)" same_snap "$SB/S0" "$SB/S1"
 [[ -s "$SB/last.diff" ]] && sed 's/^/      /' "$SB/last.diff" | head -30
 check "post-cutover DB kept aside, not dropped" bash -c "echo \"select 1 from pg_database where datname like 'cutover_test_postcutover_%'\" | $REAL_DOCKER exec -i $PG_CONTAINER psql -XAt -U lantern_test -d postgres | grep -q 1"
-check "owner's stashed change re-applied" grep -q 'owner hotfix' "$REPO_DIR/services/whatsapp-bridge/src/index.ts"
+check "owner's stashed change re-applied" grep -q 'owner hotfix' "$REPO_DIR/services/imessage-bridge/src/session.ts"
 
 # ------------------------------------------------------------------ 7. failure injection
 inject() {  # inject NAME ENV=VAL
@@ -283,6 +290,51 @@ inject() {  # inject NAME ENV=VAL
 inject after-state-move PAL_CUTOVER_FAIL_AT=state-move
 inject after-db         PAL_CUTOVER_FAIL_AT=db
 inject build-failure    STUB_BUILD_FAIL="npm run build"
+
+# ------------------------------------------------------------------ 8. schema ahead of the old code
+setver() { echo "UPDATE schema_migrations SET version=$1, dirty=false;" | "$REAL_DOCKER" exec -i "$PG_CONTAINER" psql -Xq -U lantern_test -d cutover_test; }
+say "8a. DB schema v3 > old code's newest migration (2): plan must refuse until the owner picks"
+setver 3; snap "$SB/S3"; sleep 1
+"$CUT" plan > "$SB/plan-v3.out" 2>&1; rc=$?
+grep -E 'schema v|ROLL|rollback target' "$SB/plan-v3.out" | cut -c12-260 | sed 's/^/    /'
+check "[v3] plan fails without a choice" test "$rc" != 0
+check "[v3] plan names the rollback target and both remedies" grep -q 'PAL_CUTOVER_ROLLBACK_REF=.*PAL_CUTOVER_ROLL_FORWARD_ONLY=1' "$SB/plan-v3.out"
+check "[v3] plan warns the CURRENT API cannot restart" grep -q 'cannot even RESTART' "$SB/plan-v3.out"
+PAL_CUTOVER_ROLL_FORWARD_ONLY=1 "$CUT" plan > "$SB/plan-v3-rfo.out" 2>&1; rc=$?
+check "[v3] plan passes once roll-forward-only is acknowledged" test "$rc" = 0
+
+say "8b. DB schema v4 > the RELEASE's newest migration (3): the release itself cannot start"
+setver 4
+PAL_CUTOVER_ROLL_FORWARD_ONLY=1 "$CUT" plan > "$SB/plan-v4.out" 2>&1; rc=$?
+grep -E 'release: ' "$SB/plan-v4.out" | cut -c12-220 | sed 's/^/    /'
+check "[v4] plan fails: release cannot start" bash -c "[ $rc != 0 ] && grep -q 'release: cutover_test is at schema v4' '$SB/plan-v4.out'"
+setver 3
+
+say "8c. v3 + PAL_CUTOVER_ROLLBACK_REF=release: apply → rollback restores everything but keeps startable code"
+sleep 1
+PAL_CUTOVER_ROLLBACK_REF="$REL" "$CUT" apply > "$SB/apply-v3.out" 2>&1; rc=$?
+check "[v3/ref] apply exits 0" test "$rc" = 0
+PAL_CUTOVER_ROLLBACK_REF="$REL" "$CUT" rollback > "$SB/rollback-v3.out" 2>&1; rc=$?
+grep -E 'rollback target|schema v|HEAD at' "$SB/rollback-v3.out" | cut -c12-200 | sed 's/^/    /'
+check "[v3/ref] rollback exits 0" test "$rc" = 0
+check "[v3/ref] checkout left at the release (startable) commit" test "$(git -C "$REPO_DIR" rev-parse HEAD)" = "$REL"
+"$CUT" verify --old > "$SB/verify-v3.out" 2>&1; rc=$?
+check "[v3/ref] verify --old passes (schema check included)" bash -c "[ $rc = 0 ] && grep -q 'running checkout: cutover_test schema v3' '$SB/verify-v3.out'"
+snap "$SB/S3r"
+check "[v3/ref] state, plists, launchd, DB identical (git differs by design)" bash -c "diff <(sed '/^## git$/,/^## db$/d' '$SB/S3') <(sed '/^## git$/,/^## db$/d' '$SB/S3r') > '$SB/last.diff'"
+git -C "$REPO_DIR" reset -q --keep "$OLD_SHA"   # back to the stale commit for the next case
+
+say "8d. v3 + roll-forward-only: rollback must REPORT that the old code cannot start"
+sleep 1
+PAL_CUTOVER_ROLL_FORWARD_ONLY=1 "$CUT" apply > "$SB/apply-v3b.out" 2>&1; rc=$?
+check "[v3/rfo] apply exits 0" test "$rc" = 0
+"$CUT" rollback > "$SB/rollback-v3b.out" 2>&1; rc=$?
+grep -E 'FAIL' "$SB/rollback-v3b.out" | cut -c12-230 | sed 's/^/    /'
+check "[v3/rfo] rollback exits non-zero" test "$rc" != 0
+check "[v3/rfo] rollback names the unstartable checkout" grep -q 'rollback checkout: cutover_test is at schema v3' "$SB/rollback-v3b.out"
+"$CUT" verify --old > "$SB/verify-v3b.out" 2>&1; rc=$?
+check "[v3/rfo] verify --old fails on the schema check" bash -c "[ $rc != 0 ] && grep -q 'FAIL  running checkout' '$SB/verify-v3b.out'"
+setver 2
 
 say "RESULT: $PASS passed, $FAILS failed"
 echo "launchctl/docker/build calls recorded: $(wc -l < "$STUB_STATE/calls.log" | tr -d ' ')"

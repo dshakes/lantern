@@ -18,6 +18,9 @@
 #   PAL_CUTOVER_STASH=1          stash tracked local changes in the checkout instead of refusing
 #   PAL_CUTOVER_FAIL_AT=<step>   inject a failure right after <step> (tests)
 #   PAL_CUTOVER_AUTO_ROLLBACK=0  on a failed step, stop and leave things for inspection
+#   PAL_CUTOVER_ROLLBACK_REF=<ref>  commit rollback checks out instead of the pre-cutover HEAD
+#                                (needed when the DB schema is ahead of the pre-cutover code)
+#   PAL_CUTOVER_ROLL_FORWARD_ONLY=1  acknowledge that the rollback target cannot start the API
 #   PAL_CUTOVER_BACKUP_ROOT      where ~/pal-cutover-backup-<ts>/ is created (default $HOME)
 #
 # PRIVACY: this script never prints a secret value or file contents. Env files
@@ -39,6 +42,9 @@ FAIL_AT="${PAL_CUTOVER_FAIL_AT:-}"
 AUTO_ROLLBACK="${PAL_CUTOVER_AUTO_ROLLBACK:-1}"
 STASH="${PAL_CUTOVER_STASH:-0}"
 BACKUP_ROOT="${PAL_CUTOVER_BACKUP_ROOT:-$HOME}"
+ROLLBACK_REF="${PAL_CUTOVER_ROLLBACK_REF:-}"
+ROLL_FORWARD_ONLY="${PAL_CUTOVER_ROLL_FORWARD_ONLY:-0}"
+RB_SHA=""
 LA_DIR="$HOME/Library/LaunchAgents"
 UIDN="$(id -u)"
 TS="$(date +%Y%m%d%H%M%S)"
@@ -140,6 +146,29 @@ db_plain_sha() {  # schema+data checksum; \restrict lines carry a random per-run
   [[ -n "$DB_SHA_CACHE" && "${DB_SHA_CACHE%% *}" == "$2" ]] && { echo "${DB_SHA_CACHE#* }"; return; }
   docker exec "$DB_CONTAINER" pg_dump -U "$1" -Fp "$2" 2>/dev/null | grep -vE '^\\(un)?restrict ' | shasum -a 256 | awk '{print $1}'
 }
+# ---- schema version vs. embedded migrations
+max_migration() {  # newest NNNN_*.up.sql embedded at REF ("" if none)
+  git -C "$REPO_DIR" ls-tree --name-only "$1" "$MIGRATIONS_DIR/" 2>/dev/null \
+    | sed -nE 's#.*/0*([0-9]+)_[^/]*\.up\.sql$#\1#p' | sort -n | tail -1
+}
+db_schema_version() {  # "<version> <dirty>" or "" when there is no schema_migrations table
+  pg1 "$1" "$2" "select version||' '||dirty from schema_migrations limit 1" 2>/dev/null
+}
+startable() {  # startable LABEL REF USER DB [soft] — can REF's API boot against this DB?
+  local label="$1" ref="$2" v d m
+  read -r v d <<< "$(db_schema_version "$3" "$4")"
+  m="$(max_migration "$ref")"
+  if [[ -z "$v" ]]; then ok "$label: no schema_migrations table in $4 — nothing to compare"; return 0; fi
+  if [[ "$d" == t* ]]; then bad "$label: $4 schema_migrations is DIRTY at v$v — a migration failed half-way; fix it before starting anything"; return 1; fi
+  if [[ -z "$m" ]]; then warn "$label: ${ref:0:9} embeds no migrations under $MIGRATIONS_DIR"; return 0; fi
+  if (( v > m )); then
+    if [[ "${5:-}" == soft ]]; then warn "$label: $4 is at schema v$v but ${ref:0:9} embeds migrations only up to $m — that code cannot start the API (golang-migrate: no migration found for version $v)"
+    else bad "$label: $4 is at schema v$v but ${ref:0:9} embeds migrations only up to $m — the API will NOT start (golang-migrate Up(): no migration found for version $v). Remedy: start a commit that embeds >= v$v (the release, or PAL_CUTOVER_ROLLBACK_REF for rollback)"; fi
+    return 1
+  fi
+  ok "$label: $4 schema v$v <= ${ref:0:9}'s newest migration $m"
+}
+
 db_renaming() { [[ "$DB_OLD_NAME" != "$DB_NEW_NAME" || "$DB_OLD_USER" != "$DB_NEW_USER" || "$DB_OLD_APP_ROLE" != "$DB_NEW_APP_ROLE" ]]; }
 
 # ------------------------------------------------------------------ files
@@ -285,9 +314,28 @@ for k in d["values_with_old_state_path"]: print("PATHREF",k)' | while read -r ki
 
   # --- does the release actually expect the contract's names?
   readiness
+  schema_checks "$head"
   [[ -d "$WA_CREDS_OLD" ]] && ok "WhatsApp creds at $WA_CREDS_OLD ($(find "$WA_CREDS_OLD" -type f | wc -l | tr -d ' ') files)" || warn "no WhatsApp creds at $WA_CREDS_OLD (QR pairing will be needed)"
   if [[ "$WA_CREDS_OLD" != "$WA_CREDS_NEW" && -e "$WA_CREDS_NEW" ]]; then bad "WhatsApp creds target $WA_CREDS_NEW already exists"; fi
   for f in $REPO_STATE_PATHS; do [[ -e "$REPO_DIR/$f" ]] || warn "repo state path missing: $f"; done
+}
+
+schema_checks() {  # schema_checks OLD_HEAD — the release must boot; so must whatever rollback restarts
+  hdr "schema version vs. embedded migrations"
+  db_exists "$DB_OLD_USER" "$DB_OLD_NAME" 2>/dev/null || { warn "cannot read $DB_OLD_NAME schema version"; return; }
+  startable "release" "$REL_SHA" "$DB_OLD_USER" "$DB_OLD_NAME"
+  startable "current checkout (what is running now)" "$1" "$DB_OLD_USER" "$DB_OLD_NAME" soft \
+    || log "  .     the live API cannot even RESTART on its current commit — do not kickstart it before the cutover"
+  if [[ -n "$ROLLBACK_REF" ]]; then
+    RB_SHA="$(git -C "$REPO_DIR" rev-parse --verify -q "$ROLLBACK_REF^{commit}")" || { bad "PAL_CUTOVER_ROLLBACK_REF=$ROLLBACK_REF does not resolve"; return; }
+  else RB_SHA="$1"; fi
+  if ! startable "rollback target" "$RB_SHA" "$DB_OLD_USER" "$DB_OLD_NAME" soft; then
+    if [[ "$ROLL_FORWARD_ONLY" == 1 ]]; then
+      warn "ROLL-FORWARD ONLY acknowledged (PAL_CUTOVER_ROLL_FORWARD_ONLY=1): rollback restores names/state/DB but the API will not start on ${RB_SHA:0:9}"
+    else
+      bad "rollback target ${RB_SHA:0:9} cannot start the API against this DB. Choose one: PAL_CUTOVER_ROLLBACK_REF=${REL_SHA:0:12} (rollback restores names, state, plists and DB but keeps the release code) or PAL_CUTOVER_ROLL_FORWARD_ONLY=1 (accept that rollback leaves the API down)"
+    fi
+  fi
 }
 
 readiness() {
@@ -419,6 +467,7 @@ step_backup() {
     echo "OLD_BRANCH=$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD)"
     echo "OLD_REMOTE=$(git -C "$REPO_DIR" remote get-url origin)"
     echo "REL_SHA=$REL_SHA"
+    echo "ROLLBACK_SHA=${RB_SHA:-$(git -C "$REPO_DIR" rev-parse HEAD)}"
   } > "$BK/git.env"
   git -C "$REPO_DIR" diff HEAD > "$BK/worktree.patch"
   git -C "$REPO_DIR" status --porcelain > "$BK/git-status.txt"
@@ -671,6 +720,8 @@ health() {  # health old|new
   hdr "health ($side side: $S_PREFIX.*)"
   [[ "$DRY" == 1 ]] && { would "API /healthz, dashboard 200, bridge /health ×2, WhatsApp connected + creds, iMessage chat.db open, LIVENESS lines, signal endpoint"; return 0; }
   local f0=$FAILED
+  if [[ "$side" == old ]]; then startable "running checkout" "$(git -C "$REPO_DIR" rev-parse HEAD)" "$DB_OLD_USER" "$DB_OLD_NAME"
+  else startable "running checkout" "$(git -C "$REPO_DIR" rev-parse HEAD)" "$DB_NEW_USER" "$DB_NEW_NAME"; fi
   # every job that had a pid before must have one again; one-shot jobs only need to be loaded
   while read -r l prepid; do
     [[ -n "$l" ]] || continue
@@ -832,7 +883,10 @@ cmd_rollback() {
     if diff -u "$bkd/pre.snapshot" "$aside/post.snapshot" > "$aside/snapshot.diff"; then ok "snapshot IDENTICAL to pre-cutover (state, plists, repo state, git, DB checksum, role verifiers)"
     else warn "snapshot differs from pre-cutover — see $aside/snapshot.diff (expected only if the new stack ran long enough to write repo state)"; fi
   fi
-  # 7. start the old side
+  # 7. can the checkout we are about to start boot against this DB?
+  hdr "schema version vs. the rollback checkout"
+  startable "rollback checkout" "$(git -C "$REPO_DIR" rev-parse HEAD)" "$DB_OLD_USER" "$DB_OLD_NAME" \
+    || log "  .     the old agents are started anyway (state is restored); the API will crash-loop until a startable commit is checked out"
   hdr "start $OLD_LABEL_PREFIX.* agents"
   start_side "$OLD_LABEL_PREFIX"
   health old
@@ -880,18 +934,20 @@ rollback_db() {
 }
 
 rollback_git() {
-  local bkd="$1" OLD_HEAD="" OLD_BRANCH="" OLD_REMOTE="" STASH_SHA=""
+  local bkd="$1" OLD_HEAD="" OLD_BRANCH="" OLD_REMOTE="" STASH_SHA="" ROLLBACK_SHA="" target
   hdr "checkout rollback"
   # shellcheck disable=SC1090,SC1091
   . "$bkd/git.env"
+  target="${ROLLBACK_SHA:-$OLD_HEAD}"
+  [[ "$target" != "$OLD_HEAD" ]] && warn "rollback target is ${target:0:9}, not the pre-cutover ${OLD_HEAD:0:9} (DB schema is ahead of the old code)"
   git -C "$REPO_DIR" remote set-url origin "$OLD_REMOTE"
   if [[ "$OLD_BRANCH" != HEAD ]]; then
-    git -C "$REPO_DIR" checkout -q "$OLD_BRANCH" && git -C "$REPO_DIR" reset -q --keep "$OLD_HEAD" || return 1
+    git -C "$REPO_DIR" checkout -q "$OLD_BRANCH" && git -C "$REPO_DIR" reset -q --keep "$target" || return 1
   else
-    git -C "$REPO_DIR" checkout -q --detach "$OLD_HEAD" || return 1
+    git -C "$REPO_DIR" checkout -q --detach "$target" || return 1
   fi
-  if [[ -n "$STASH_SHA" ]]; then git -C "$REPO_DIR" stash apply -q "$STASH_SHA" && ok "re-applied stashed changes (stash kept)" || return 1; fi
-  [[ "$(git -C "$REPO_DIR" rev-parse HEAD)" == "$OLD_HEAD" ]] && ok "HEAD back at ${OLD_HEAD:0:9} on $OLD_BRANCH" || return 1
+  if [[ -n "$STASH_SHA" ]]; then git -C "$REPO_DIR" stash apply -q "$STASH_SHA" && ok "re-applied stashed changes (stash kept)" || { bad "stash did not apply cleanly on ${target:0:9} — it is still in 'git stash list'"; }; fi
+  [[ "$(git -C "$REPO_DIR" rev-parse HEAD)" == "$target" ]] && ok "HEAD at ${target:0:9} on $OLD_BRANCH" || return 1
   build_tree rollback
 }
 

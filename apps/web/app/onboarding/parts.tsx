@@ -96,14 +96,14 @@ export function ProgressRail({ current, blocked }: { current: Step; blocked: boo
 
 // ---- Conversation ----------------------------------------------------------
 
-export function AgentMessage({ children, busy }: { children: ReactNode; busy?: boolean }) {
+export function AgentMessage({ children, busy, mark = "L" }: { children: ReactNode; busy?: boolean; mark?: string }) {
   return (
     <div className="flex gap-3">
       <span
         aria-hidden
         className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-pal-400 text-xs font-bold text-on-flame"
       >
-        L
+        {mark}
       </span>
       <div className="min-w-0 flex-1 space-y-3 pt-1 text-sm leading-relaxed text-zinc-200">
         <span className="sr-only">PAL guide:</span>
@@ -157,7 +157,7 @@ export function FixCard({
   secondary,
   busy,
 }: {
-  failure: FixSuggestion;
+  failure: Pick<FixSuggestion, "summary" | "detail"> & { fix: { label: string } };
   onFix: () => void;
   secondary?: ReactNode;
   busy?: boolean;

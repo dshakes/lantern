@@ -1153,7 +1153,7 @@ function SandboxResult({
           <p className="font-medium text-zinc-50">Sandbox unavailable on this stack</p>
           <p className="mt-1 text-zinc-400">{display.reason}</p>
           <p className="mt-1 text-zinc-400">
-            Nothing ran. Run <span className={ui.mono}>lantern doctor</span> to see what the runtime needs (scheduler,
+            Nothing ran. Run <span className={ui.mono}>pal doctor</span> to see what the runtime needs (scheduler,
             runtime manager, KVM).
           </p>
         </Notice>
