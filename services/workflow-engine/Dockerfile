@@ -5,6 +5,7 @@ WORKDIR /app
 # (Build context is the repo root — see infra/docker/docker-compose.yml.)
 COPY gen/go/ /app/gen/go/
 COPY packages/palenv/ /app/packages/palenv/
+COPY packages/grpctls/ /app/packages/grpctls/
 
 # Copy the workflow-engine service source.
 COPY services/workflow-engine/ /app/services/workflow-engine/

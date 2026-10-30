@@ -10,8 +10,6 @@ package dialer
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"os"
 	"strings"
@@ -24,6 +22,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	"github.com/dshakes/lantern/packages/grpctls"
 )
 
 // IsProd reports whether the scheduler is running in a production-like
@@ -64,46 +63,30 @@ func CheckManagerDialer(isProd bool, defaultAddr, dialerOverride string) (fatal 
 }
 
 // ManagerTransportCreds resolves the transport credentials for dialing a
-// runtime-manager. The manager forces mTLS in prod (it verifies client certs
-// against its CA), so:
-//
-//   - PAL_RUNTIME_MANAGER_TLS_CA set → TLS, verifying the manager against
-//     that CA; PAL_RUNTIME_MANAGER_TLS_CERT/KEY (both or neither) add the
-//     client certificate.
-//   - unset in dev → insecure (plaintext), so `make dev` works.
-//   - unset in prod, client cert missing in prod, half-set cert/key, or an
-//     unreadable file → error. The caller treats it as fatal at startup.
+// runtime-manager (PAL_RUNTIME_MANAGER_TLS_CA/_CERT/_KEY). The manager forces
+// mTLS in prod, so unset-in-prod, a missing client cert in prod, a half-set
+// cert/key or an unreadable file is an error the caller treats as fatal.
+// Policy lives in packages/grpctls (ADR 0043); no PAL_GRPC_INSECURE escape.
 func ManagerTransportCreds(isProd bool) (credentials.TransportCredentials, error) {
-	caPath := strings.TrimSpace(os.Getenv("PAL_RUNTIME_MANAGER_TLS_CA"))
-	certPath := strings.TrimSpace(os.Getenv("PAL_RUNTIME_MANAGER_TLS_CERT"))
-	keyPath := strings.TrimSpace(os.Getenv("PAL_RUNTIME_MANAGER_TLS_KEY"))
-	if (certPath == "") != (keyPath == "") {
-		return nil, fmt.Errorf("runtime-manager client TLS is half-configured: set BOTH PAL_RUNTIME_MANAGER_TLS_CERT and PAL_RUNTIME_MANAGER_TLS_KEY (or neither)")
+	cfg, err := grpctls.ClientConfig(grpctls.FromEnv(grpctls.ManagerPrefix), isProd, false)
+	if err != nil {
+		return nil, err
 	}
-	if caPath == "" {
-		if isProd {
-			return nil, fmt.Errorf("PAL_RUNTIME_MANAGER_TLS_CA is unset — the runtime-manager requires mTLS in production; set PAL_RUNTIME_MANAGER_TLS_CA plus PAL_RUNTIME_MANAGER_TLS_CERT/KEY (client cert signed by the manager CA)")
-		}
+	if cfg == nil {
 		return insecure.NewCredentials(), nil
 	}
-	if isProd && certPath == "" {
-		return nil, fmt.Errorf("PAL_RUNTIME_MANAGER_TLS_CERT/KEY are unset — the runtime-manager verifies client certificates in production; set both")
-	}
-	caPEM, err := os.ReadFile(caPath)
-	if err != nil {
-		return nil, fmt.Errorf("read PAL_RUNTIME_MANAGER_TLS_CA %s: %w", caPath, err)
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(caPEM) {
-		return nil, fmt.Errorf("PAL_RUNTIME_MANAGER_TLS_CA %s contains no PEM certificates", caPath)
-	}
-	cfg := &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
-	if certPath != "" {
-		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
-		if err != nil {
-			return nil, fmt.Errorf("load runtime-manager client cert/key (%s, %s): %w", certPath, keyPath, err)
-		}
-		cfg.Certificates = []tls.Certificate{cert}
+	return credentials.NewTLS(cfg), nil
+}
+
+// ServerTransportCreds serves the scheduler gRPC port (:50055) with mTLS on
+// the service mesh (PAL_GRPC_TLS_*; client cert required, peer SPIFFE ID
+// checked against PAL_GRPC_TLS_ALLOWED_PEERS). nil means plaintext: dev, or
+// prod with PAL_GRPC_INSECURE=1. Prod without either is an error.
+func ServerTransportCreds(isProd bool) (credentials.TransportCredentials, error) {
+	cfg, err := grpctls.ServerConfig(grpctls.FromEnv(grpctls.ServicePrefix), isProd,
+		grpctls.InsecureOverride(), grpctls.AllowedPeersFromEnv(), false)
+	if err != nil || cfg == nil {
+		return nil, err
 	}
 	return credentials.NewTLS(cfg), nil
 }

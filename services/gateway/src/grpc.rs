@@ -417,34 +417,46 @@ pub struct ControlPlaneClient {
 impl ControlPlaneClient {
     /// Connect to the control-plane gRPC server.
     ///
-    /// `tls_ca_path` is the path to a PEM CA bundle for verifying the
-    /// server's certificate.  When `None` (the default) the channel is
-    /// plaintext — the current production topology until the Go server side
-    /// is also updated to serve TLS (paired follow-up).  When `Some`, the
-    /// channel is upgraded to TLS using the supplied CA.  This is opt-in and
-    /// NOT fail-closed; a misconfigured CA path returns an error rather than
-    /// silently falling back to plaintext.
-    pub async fn connect(addr: &str, tls_ca_path: Option<&str>) -> anyhow::Result<Self> {
-        let endpoint = tonic::transport::Endpoint::from_shared(addr.to_string())?;
-
-        let channel = if let Some(ca_path) = tls_ca_path {
-            use std::fs;
-            use tonic::transport::{Certificate, ClientTlsConfig};
-
-            let pem = fs::read(ca_path).map_err(|e| {
-                anyhow::anyhow!("cannot read PAL_CONTROL_PLANE_TLS_CA {ca_path:?}: {e}")
-            })?;
-            let cert = Certificate::from_pem(pem);
-            let tls = ClientTlsConfig::new().ca_certificate(cert);
-            tracing::info!(addr, ca = ca_path, "control-plane channel: TLS enabled");
-            endpoint.tls_config(tls)?.connect_lazy()
+    /// Transport (ADR 0043):
+    ///   - `PAL_GRPC_TLS_CA/_CERT/_KEY` set → mTLS: the server is verified
+    ///     against the pinned service CA and the gateway presents its own
+    ///     service identity (the control-plane demands it in mTLS mode).
+    ///   - else `legacy_ca` (`PAL_CONTROL_PLANE_TLS_CA`) → server-auth-only TLS
+    ///     against a control-plane on legacy server-only TLS (WARN in prod).
+    ///   - else plaintext in dev; in prod an error unless `PAL_GRPC_INSECURE=1`.
+    ///
+    /// The URI scheme follows the TLS decision, so an `http://` address can
+    /// never silently downgrade a configured TLS channel.
+    pub async fn connect(addr: &str, legacy_ca: Option<&str>) -> anyhow::Result<Self> {
+        let is_prod = pal_grpc_tls::is_prod();
+        let mut files = pal_grpc_tls::Files::from_env();
+        let tls = if files == pal_grpc_tls::Files::default() && legacy_ca.is_some() {
+            files.ca = legacy_ca.map(String::from);
+            if is_prod {
+                tracing::warn!(
+                    "control-plane channel: server-only TLS (legacy PAL_CONTROL_PLANE_TLS_CA) — set \
+                     PAL_GRPC_TLS_CA/_CERT/_KEY for mTLS (ADR 0043)"
+                );
+            }
+            pal_grpc_tls::client_tls(&files, false, false)?
         } else {
-            tracing::info!(
-                addr,
-                "control-plane channel: plaintext (set PAL_CONTROL_PLANE_TLS_CA to enable TLS)"
-            );
-            endpoint.connect_lazy()
+            pal_grpc_tls::client_tls(&files, is_prod, pal_grpc_tls::insecure_override())?
         };
+        match (&tls, files.cert.is_some()) {
+            (Some(_), true) => tracing::info!(addr, "control-plane channel: mTLS"),
+            (Some(_), false) => {
+                tracing::info!(addr, "control-plane channel: TLS (server auth only)")
+            }
+            (None, _) if is_prod => tracing::warn!(
+                addr,
+                "SECURITY: PAL_GRPC_INSECURE=1 — control-plane channel is PLAINTEXT in production"
+            ),
+            (None, _) => tracing::info!(
+                addr,
+                "control-plane channel: plaintext (set PAL_GRPC_TLS_CA/_CERT/_KEY for mTLS)"
+            ),
+        }
+        let channel = pal_grpc_tls::endpoint(addr, tls)?.connect_lazy();
 
         let service_token = pal_env::var("PAL_GRPC_SERVICE_TOKEN").unwrap_or_default();
         if service_token.is_empty() {

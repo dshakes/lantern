@@ -82,8 +82,8 @@ func NewTriggerHandler(srv *server.Server, auth *AuthHandler, rest *RESTHandler)
 // RegisterRoutes wires the trigger routes onto mux.
 func (h *TriggerHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/agents/{name}/triggers", h.auth.WithScope(ScopeAgentsWrite, h.CreateTrigger))
-	mux.HandleFunc("GET /v1/agents/{name}/triggers", h.ListTriggers)
-	mux.HandleFunc("GET /v1/triggers/{id}", h.GetTrigger)
+	mux.HandleFunc("GET /v1/agents/{name}/triggers", h.auth.WithScope(ScopeAgentsRead, h.ListTriggers))
+	mux.HandleFunc("GET /v1/triggers/{id}", h.auth.WithScope(ScopeAgentsRead, h.GetTrigger))
 	mux.HandleFunc("PATCH /v1/triggers/{id}", h.auth.WithScope(ScopeAgentsWrite, h.UpdateTrigger))
 	mux.HandleFunc("DELETE /v1/triggers/{id}", h.auth.WithScope(ScopeAgentsWrite, h.DeleteTrigger))
 	// Public: authenticated by the per-trigger signature, not a token.
