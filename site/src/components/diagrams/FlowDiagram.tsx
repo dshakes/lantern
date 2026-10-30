@@ -33,6 +33,9 @@ export type FlowDef = {
 };
 
 const NW = 150, NH = 54, TICK_MS = 2400;
+/** Condense text that would overflow its box (estimated per-char width). */
+const fitText = (t: string, cw: number, w: number) =>
+  t.length * cw > w - 14 ? { textLength: w - 14, lengthAdjust: "spacingAndGlyphs" as const } : {};
 const ek = (e: FEdge) => `${e.from}>${e.to}`;
 const reduced = () => typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -158,7 +161,7 @@ export function FlowDiagram({ def, autoplay = true }: { def: FlowDef; autoplay?:
             {def.frames?.map((f) => (
               <g key={f.label} aria-hidden="true">
                 <rect className={`fr-${f.kind ?? "zone"}`} x={f.x} y={f.y} width={f.w} height={f.h} rx={f.kind === "wall" ? 20 : 16} />
-                <text className={`fr-label${f.kind === "wall" ? " wall" : ""}`} x={f.x + 14} y={f.kind === "wall" ? f.y + f.h - 10 : f.y + 18}>{f.label}</text>
+                <text className={`fr-label${f.kind === "wall" ? " wall" : ""}`} x={f.x + 14} y={f.y + f.h - 10}>{f.label}</text>
               </g>
             ))}
             {def.edges.map((e) => {
@@ -167,13 +170,16 @@ export function FlowDiagram({ def, autoplay = true }: { def: FlowDef; autoplay?:
               const d = toPath(pts);
               const [lx, ly] = along(pts, e.at ?? 0.5);
               const on = litEdges.has(ek(e));
+              // ponytail: label width estimated at 6.4px/char; a label that won't fit its edge is left to the step text and the panel.
+              const len = pts.slice(1).reduce((t, p, i) => t + Math.hypot(p[0] - pts[i][0], p[1] - pts[i][1]), 0);
+              const showLabel = !!e.label && e.label.length * 6.4 + 16 < len;
               const deny = on && denyEdge === ek(e);
               return (
                 <g key={ek(e) + (e.label ?? "")} aria-hidden="true"
                   className={`ix-edge${e.kind ? ` k-${e.kind}` : ""}${e.dashed ? " dashed" : ""}${on ? " on flow" : ""}${deny ? " k-deny" : ""}${anyLit && !on ? " ix-dim" : ""}`}>
                   <path id={`${uid}-${ek(e)}`} d={d} markerEnd={`url(#${uid}-a)`} markerStart={e.bidi ? `url(#${uid}-a)` : undefined} />
                   {on && motion && <circle className="ix-dot" r={4}><animateMotion dur="1.4s" repeatCount="indefinite" path={d} /></circle>}
-                  {e.label && <text x={lx} y={ly - 6} textAnchor="middle">{e.label}</text>}
+                  {showLabel && <text x={lx} y={ly - 6} textAnchor="middle">{e.label}</text>}
                 </g>
               );
             })}
@@ -185,8 +191,8 @@ export function FlowDiagram({ def, autoplay = true }: { def: FlowDef; autoplay?:
                   aria-label={`${n.label}${n.sub ? `, ${n.sub}` : ""}${n.detail ? `. ${n.detail}` : ""}`} {...press(n.id)}>
                   <rect className="ring" x={n.x - 4} y={n.y - 4} width={n.w + 8} height={n.h + 8} rx={13} />
                   <rect className="box" x={n.x} y={n.y} width={n.w} height={n.h} rx={10} />
-                  <text className="t1" x={n.x + n.w / 2} y={n.sub ? n.y + n.h / 2 - 3 : n.y + n.h / 2 + 5} textAnchor="middle">{n.label}</text>
-                  {n.sub && <text className="t2" x={n.x + n.w / 2} y={n.y + n.h / 2 + 14} textAnchor="middle">{n.sub}</text>}
+                  <text className="t1" x={n.x + n.w / 2} y={n.sub ? n.y + n.h / 2 - 3 : n.y + n.h / 2 + 5} textAnchor="middle" {...fitText(n.label, 7.3, n.w)}>{n.label}</text>
+                  {n.sub && <text className="t2" x={n.x + n.w / 2} y={n.y + n.h / 2 + 14} textAnchor="middle" {...fitText(n.sub, 6, n.w)}>{n.sub}</text>}
                 </g>
               );
             })}

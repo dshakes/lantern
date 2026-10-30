@@ -13,7 +13,7 @@ const redirects = Object.fromEntries(Object.entries({
   '/docs/accounts': '/docs/build/accounts/',
   '/docs/agents': '/docs/build/agents/',
   '/docs/api': '/docs/reference/api/',
-  '/docs/architecture': '/docs/runtime/architecture/',
+  '/docs/architecture': '/docs/architecture/overview/',
   '/docs/budgets': '/docs/build/budgets/',
   '/docs/cli': '/docs/reference/cli/',
   '/docs/connectors': '/docs/build/connectors/',

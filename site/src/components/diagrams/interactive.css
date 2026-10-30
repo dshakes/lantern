@@ -259,3 +259,4 @@
   .bd-verdict { padding-left: 0; }
 }
 @media (prefers-reduced-motion: reduce) { .bd * { animation: none !important; } }
+.ix-flow .ix-dim { opacity: 0.42; }
