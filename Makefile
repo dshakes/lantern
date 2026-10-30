@@ -104,7 +104,7 @@ autostart-uninstall: ## Remove all PAL Runtime LaunchAgents
 	@bash scripts/launchd/install.sh --uninstall
 
 autostart-status: ## Show currently-loaded PAL Runtime LaunchAgents + recent log lines
-	@launchctl list | grep -iE "dev\.(pal|pal)" || echo "(no PAL launchagents loaded — run 'make autostart-install')"
+	@launchctl list | grep -iE "dev\.pal" || echo "(no PAL launchagents loaded — run 'make autostart-install')"
 	@echo ""
 	@for s in infra api dashboard whatsapp-bridge imessage-bridge; do \
 		echo "—— $$s last 3 lines ——"; \
