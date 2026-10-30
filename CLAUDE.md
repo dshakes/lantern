@@ -250,9 +250,9 @@ Migrations live in `services/control-plane/internal/db/migrate.go` (idempotent `
 | `run_receipts`          | Ed25519-signed verifiable execution receipts (HMAC-SHA256 legacy/dev fallback)                                                                                                                  | `run_id` (PK), `tenant_id`, `signature`, `payload` (JSONB), `issued_at`                                                      |
 | `run_feedback`          | Per-run RLHF reactions                                                                                                                                                                           | `run_id`, `tenant_id`, `score` (1-5), `comment`, `preferred_output`, `source`                                                |
 
-Row-Level Security now covers **all tenant-scoped tables** (migration `0003_rls_all_tenant_tables`), not just `agents`/`runs`. Each gets `ENABLE` + `FORCE ROW LEVEL SECURITY` and a `tenant_isolation` policy with BOTH `USING` and `WITH CHECK` = `tenant_id::text = current_setting('app.tenant_id', true)`. The policies are inert until `PAL_RLS_ENFORCE=1` (the privileged `lantern` superuser pool bypasses RLS; `lantern_app` is subject to it). Use `Server.WithTenant(ctx, fn)` for tenant-scoped queries — it sets the `app.tenant_id` GUC so RLS admits the read/write. The exempt set (no single `tenant_id` or intentionally cross-tenant): `tenants`, `agent_versions`, `journal_events`, `run_locks`, `marketplace_agents`, `mcp_servers`, `marketplace_invocations`. `TestRLSEnforcement_AllTenantTables` is a permanent catalog gate-test: adding a new tenant table without RLS (or without an explicit exemption) fails it. See ADR 0011.
+Row-Level Security now covers **all tenant-scoped tables** (migration `0003_rls_all_tenant_tables`), not just `agents`/`runs`. Each gets `ENABLE` + `FORCE ROW LEVEL SECURITY` and a `tenant_isolation` policy with BOTH `USING` and `WITH CHECK` = `tenant_id::text = current_setting('app.tenant_id', true)`. The policies are inert until RLS enforcement is active — see ADR 0042 for the secure-default rules: in production `PAL_APP_DB_PASSWORD` being set implicitly activates RLS (no flag needed); without it the server is FATAL at startup unless `PAL_RLS_ENFORCE=0` is set (acknowledged opt-out with WARN). The privileged `lantern` superuser pool bypasses RLS; `lantern_app` is subject to it. Use `Server.WithTenant(ctx, fn)` for tenant-scoped queries — it sets the `app.tenant_id` GUC so RLS admits the read/write. The exempt set (no single `tenant_id` or intentionally cross-tenant): `tenants`, `agent_versions`, `journal_events`, `run_locks`, `marketplace_agents`, `mcp_servers`, `marketplace_invocations`. `TestRLSEnforcement_AllTenantTables` is a permanent catalog gate-test: adding a new tenant table without RLS (or without an explicit exemption) fails it. See ADR 0011.
 
-**Handler cutover to `WithTenant` is staged by group.** The reusable enforcement-on test harness is `internal/handlers/rls_integration_test.go` — `newEnforcedServer(t)` builds a `Server` whose `TenantPool()` connects as the non-superuser `lantern_app` role over its own DSN, so RLS is *genuinely* enforced (not GUC-simulated like `internal/db/rls_test.go`). Every cutover batch reuses this harness to prove (a) same-tenant reads/writes still return rows and (b) cross-tenant is blocked. **Cut over:** sessions (P1.1) · connectors (P1.1b batch 1) · and the **P1.1b remainder, now complete**: identity/people/memory (`identity.go`, `memory_ingest.go`) · voice/runtime (`voice.go`, `runtime.go`, `runtime_report.go`, `runtime_secrets.go`) · evals/experiments/budgets (`evals.go`, `experiments.go`, `budgets.go`, `forecaster.go`) · surfaces/schedules/deployments/api_keys (`surfaces.go`, `schedules.go`, `deployments.go`, `api_keys.go`, `dataplane.go`) · whatsapp/feedback/receipts/takeover (`whatsapp_personal.go`, `feedback.go`, `receipts.go`, `takeover.go`, `rehearse.go`, `marketplace*.go`). Proven by the `RLS`-prefixed tests in `internal/handlers/*_rls_test.go`. **0 non-exempt tenant-scoped `srv.Pool.<method>` sites remain in those files** — each remaining `srv.Pool` call there carries a `// rls-exempt: <reason>` (auth/trust-boundary resolution, public marketplace/receipt-verify reads, RLS-exempt child tables like `journal_events`, background sweeps with no request tenant). Shared helpers that take a raw `*Pool` and self-scope by `tenant_id` (`CheckBudget`/`RecordUsage`/`AdjustUsageCost`, `compareToBaseline`, `PickVariant`/`promoteAgentVersion`, `executeConnectorAction`) stay on `Pool` by design. **The final batch (the last 12 files) is now CUTOVER COMPLETE:** `auth.go`, `gdpr.go`, `recovery.go`, `a2a.go`, `rest.go` (run executor + workflow interpreter), `runs.go`, `run_events.go`, `templates.go`, `mcp_registry.go`, `slack_command.go`, `jarvis.go`, `llm_proxy.go`. **The count of non-exempt tenant-scoped `srv.Pool.<method>` sites across the ENTIRE `internal/handlers` package is now 0** — every remaining `srv.Pool` site carries a `// rls-exempt: <reason>` (pre-auth tenant resolution in `auth.go`/`slack_command.go`; admin/system purge in `gdpr.go`; background recovery sweep; public `is_public`-gated A2A discovery/invoke; the detached inline run executor in `rest.go` whose `runs` writes are keyed by an already-authorized run id and whose safety-net writes use a tenant-less `context.Background()`; `resolveProviderKey`/`providerAvailable` in `llm_proxy.go` self-scoped by an explicit `tenant_id` arg deep in the LLM failover loop; global catalog `mcp_servers`; and RLS-exempt child tables `journal_events`/`run_locks`). Proven by `RLSRuns_*` (runs CRUD) + `RLSMCPAttachments_*` plus the full suite green and `go test -race ./internal/handlers/ -run RLS` clean. **`PAL_RLS_ENFORCE=1` is now safe to flip per-env** (set `PAL_APP_DB_PASSWORD` and run `ALTER ROLE lantern_app PASSWORD '<strong>'` first). Run a batch's tests with `DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable` (the harness sets the `lantern_app` password itself via `ALTER ROLE`).
+**Handler cutover to `WithTenant` is staged by group.** The reusable enforcement-on test harness is `internal/handlers/rls_integration_test.go` — `newEnforcedServer(t)` builds a `Server` whose `TenantPool()` connects as the non-superuser `lantern_app` role over its own DSN, so RLS is *genuinely* enforced (not GUC-simulated like `internal/db/rls_test.go`). Every cutover batch reuses this harness to prove (a) same-tenant reads/writes still return rows and (b) cross-tenant is blocked. **Cut over:** sessions (P1.1) · connectors (P1.1b batch 1) · and the **P1.1b remainder, now complete**: identity/people/memory (`identity.go`, `memory_ingest.go`) · voice/runtime (`voice.go`, `runtime.go`, `runtime_report.go`, `runtime_secrets.go`) · evals/experiments/budgets (`evals.go`, `experiments.go`, `budgets.go`, `forecaster.go`) · surfaces/schedules/deployments/api_keys (`surfaces.go`, `schedules.go`, `deployments.go`, `api_keys.go`, `dataplane.go`) · whatsapp/feedback/receipts/takeover (`whatsapp_personal.go`, `feedback.go`, `receipts.go`, `takeover.go`, `rehearse.go`, `marketplace*.go`). Proven by the `RLS`-prefixed tests in `internal/handlers/*_rls_test.go`. **0 non-exempt tenant-scoped `srv.Pool.<method>` sites remain in those files** — each remaining `srv.Pool` call there carries a `// rls-exempt: <reason>` (auth/trust-boundary resolution, public marketplace/receipt-verify reads, RLS-exempt child tables like `journal_events`, background sweeps with no request tenant). Shared helpers that take a raw `*Pool` and self-scope by `tenant_id` (`CheckBudget`/`RecordUsage`/`AdjustUsageCost`, `compareToBaseline`, `PickVariant`/`promoteAgentVersion`, `executeConnectorAction`) stay on `Pool` by design. **The final batch (the last 12 files) is now CUTOVER COMPLETE:** `auth.go`, `gdpr.go`, `recovery.go`, `a2a.go`, `rest.go` (run executor + workflow interpreter), `runs.go`, `run_events.go`, `templates.go`, `mcp_registry.go`, `slack_command.go`, `jarvis.go`, `llm_proxy.go`. **The count of non-exempt tenant-scoped `srv.Pool.<method>` sites across the ENTIRE `internal/handlers` package is now 0** — every remaining `srv.Pool` site carries a `// rls-exempt: <reason>` (pre-auth tenant resolution in `auth.go`/`slack_command.go`; admin/system purge in `gdpr.go`; background recovery sweep; public `is_public`-gated A2A discovery/invoke; the detached inline run executor in `rest.go` whose `runs` writes are keyed by an already-authorized run id and whose safety-net writes use a tenant-less `context.Background()`; `resolveProviderKey`/`providerAvailable` in `llm_proxy.go` self-scoped by an explicit `tenant_id` arg deep in the LLM failover loop; global catalog `mcp_servers`; and RLS-exempt child tables `journal_events`/`run_locks`). Proven by `RLSRuns_*` (runs CRUD) + `RLSMCPAttachments_*` plus the full suite green and `go test -race ./internal/handlers/ -run RLS` clean. **RLS is now safe to enable per-env** — set `PAL_APP_DB_PASSWORD` (and run `ALTER ROLE lantern_app PASSWORD '<strong>'` first). In production, setting `PAL_APP_DB_PASSWORD` is enough; `PAL_RLS_ENFORCE=1` is optional. Run a batch's tests with `DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable` (the harness sets the `lantern_app` password itself via `ALTER ROLE`).
 
 A dev tenant (`slug: dev`) and admin user (`admin@lantern.dev` / `lantern`) are seeded on startup.
 
@@ -487,34 +487,33 @@ keyed by SHA-256 of the key; fail-closed on any error). Gateway env:
 `PAL_GRPC_SERVICE_TOKEN` (same shared token as the gRPC trust boundary).
 Unset → API-key auth stays fail-closed-disabled; JWT auth is unaffected.
 
-#### Per-endpoint scope authorization (`PAL_AUTHZ_ENFORCE`, default OFF)
+#### Per-endpoint scope authorization (`PAL_AUTHZ_ENFORCE`, default ON in prod — ADR 0042)
 
-API keys carry `scopes` (stored in `api_keys`); mutating endpoints are annotated
-with a required scope via `AuthHandler.WithScope(scope, handler)` in
-`cmd/server/main.go`. Scope taxonomy (`internal/handlers/auth.go`): coarse
+API keys carry `scopes` (stored in `api_keys`); all authenticated endpoints (both
+mutating and read) are annotated with a required scope via `AuthHandler.WithScope(scope,
+handler)` in `cmd/server/main.go`. Scope taxonomy (`internal/handlers/auth.go`): coarse
 `read`/`write`/`admin` (backward-compatible with existing keys) plus fine-grained
-`agents:{read,write}`, `runs:{read,write,execute}`, `connectors:write`,
-`budgets:write`, `settings:write`. `admin` implies all; `write` implies `read`
-(`scopeImplies`). `WithScope` authenticates via the SAME `validateRequest` the
-handlers already used (caching claims in ctx so `contextWithTenant` reuses them —
-no double token validation / DB hit), so it is **not** a new auth surface.
+`agents:{read,write}`, `runs:{read,write,execute}`, `connectors:{read,write}`,
+`budgets:{read,write}`, `settings:{read,write}`. `admin` implies all; `write` implies
+`read`; coarse `read` implies all `*:read` (`scopeImplies`). `WithScope` authenticates
+via the SAME `validateRequest` the handlers already used (caching claims in ctx so
+`contextWithTenant` reuses them — no double token validation / DB hit), so it is **not**
+a new auth surface.
 
-**Staged like RLS — FLAG-GATED, DEFAULT OFF.** When `PAL_AUTHZ_ENFORCE` is
-unset/0 (default), a missing scope is LOGGED at debug and the request PROCEEDS —
-zero behavior change, safe to merge/run against the live bridges + dashboard.
-When `1`, a key missing the required scope gets `403`. JWT owner/admin sessions
-keep full access. **Prod/staging Helm values enable it** (`values-prod.yaml` /
-`values-staging.yaml` set `controlPlane.env.PAL_AUTHZ_ENFORCE: "1"`; base `values.yaml`
-stays off, rollout + rollback in `docs/runbooks/ga-staged-rollout.md`); the control-plane
-logs `authz: API-key scope enforcement {enforced}` at boot. Annotated today: the agents/runs/sessions/connectors/
-deployments/schedules/budgets/settings/templates mutating endpoints; reads are a
-follow-up. Extends invariant #7 (the RLS/token trust boundary) toward the
-fine-grained authZ the SOC 2 ADR (0018) flags as a gap.
+**Secure default in production (ADR 0042).** `PAL_AUTHZ_ENFORCE` is ON by default
+when `PAL_ENV=prod/production/staging`; dev defaults remain OFF. Explicit `=0` disables
+enforcement with a loud startup WARN (alert on `enforced=false` field). A key missing the
+required scope returns `403`. JWT owner/admin sessions keep full access. The control-plane
+logs `authz: API-key scope enforcement {enforced}` at boot.
+
+Unannotated routes are intentional exemptions documented in `TestEveryGetRouteHasScope`
+and `TestEveryMutatingRouteHasScope` (both in `cmd/server/routes_scope_test.go`): auth
+flow endpoints, public marketplace/MCP catalog, A2A well-known, Twilio/Slack provider-signed
+webhooks, runtime in-handler scope checks, and capability-token downloads.
 
 **Key creation is subset-checked.** A non-admin caller cannot mint an API key
 with a scope it could not itself exercise (privilege escalation;
-`internal/handlers/api_keys.go`); JWT owner/admin sessions are exempt. Several
-previously unscoped mutators now carry `WithScope` annotations.
+`internal/handlers/api_keys.go`); JWT owner/admin sessions are exempt.
 
 ### Kiosk / demo mode (ADR 0029)
 

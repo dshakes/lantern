@@ -22,7 +22,7 @@ global:
     pullPolicy: IfNotPresent
   logLevel: info
 
-# -- Row-Level Security: ON here, and only here --
+# -- Row-Level Security + AuthZ: ON here, and only here --
 #
 # PAL_RLS_ENFORCE=1 makes tenant-scoped queries run as the non-superuser
 # `lantern_app` role, which the policies actually apply to. Without the second

@@ -916,3 +916,44 @@ func TestRLSEnforcement_WithTenantConn_HandlerPattern(t *testing.T) {
 		}
 	})
 }
+
+// TestGrantAudit_Migration0031 proves that migration 0031_grant_brief_items
+// correctly grants SELECT/INSERT/UPDATE/DELETE on brief_items to the
+// lantern_app non-superuser role (ADR 0042, GRANT audit).
+//
+// Without migration 0031, lantern_app silently gets permission-denied on
+// brief_items queries — a runtime error that only surfaces under RLS
+// enforcement, not in dev.
+func TestGrantAudit_Migration0031(t *testing.T) {
+	superPool := openSuperPool(t)
+	ctx := context.Background()
+
+	if err := db.Migrate(ctx, superPool, false); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	// Verify lantern_app has all four DML privileges on brief_items via the
+	// information_schema.role_table_grants catalog — this is what migration 0031
+	// explicitly GRANTs; a missing grant makes RLS enforcement fail at runtime.
+	requiredPrivs := []string{"SELECT", "INSERT", "UPDATE", "DELETE"}
+	for _, priv := range requiredPrivs {
+		priv := priv
+		t.Run(priv, func(t *testing.T) {
+			var granted bool
+			err := superPool.QueryRow(ctx, `
+				SELECT EXISTS (
+					SELECT 1 FROM information_schema.role_table_grants
+					WHERE grantee    = 'lantern_app'
+					  AND table_name = 'brief_items'
+					  AND privilege_type = $1
+				)
+			`, priv).Scan(&granted)
+			if err != nil {
+				t.Fatalf("privilege lookup for %s on brief_items: %v", priv, err)
+			}
+			if !granted {
+				t.Errorf("lantern_app lacks %s on brief_items — migration 0031_grant_brief_items may not have run", priv)
+			}
+		})
+	}
+}
