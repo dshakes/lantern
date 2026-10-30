@@ -430,7 +430,7 @@ type LLMUsageDetail struct {
 // A child OTel span is created for every call using the GenAI semantic
 // conventions (gen_ai.system, gen_ai.request.model, gen_ai.operation.name,
 // gen_ai.usage.input_tokens, gen_ai.usage.output_tokens) plus the
-// PAL-specific pal.cost_usd attribute (plus the legacy pal.cost_usd). Spans are recorded only when
+// PAL-specific pal.cost_usd attribute. Spans are recorded only when
 // a real TracerProvider is installed; the default no-op provider makes this
 // a zero-cost no-op.
 //
@@ -479,13 +479,13 @@ func (h *LlmProxyHandler) callLLMSyncDetailed(
 			attribute.String("gen_ai.operation.name", "chat"),
 			attribute.Int64("gen_ai.usage.input_tokens", tokensIn),
 			attribute.Int64("gen_ai.usage.output_tokens", tokensOut),
-			attribute.Float64("pal.cost_usd", costUsd), attribute.Float64("pal.cost_usd", costUsd),
+			attribute.Float64("pal.cost_usd", costUsd),
 		)
 		// Extended FinOps attributes (zero when not applicable).
 		span.SetAttributes(
 			attribute.Int64("gen_ai.usage.reasoning_tokens", detail.ReasoningTokens),
-			attribute.Int64("pal.usage.cache_read_tokens", detail.CacheReadTokens), attribute.Int64("pal.usage.cache_read_tokens", detail.CacheReadTokens),
-			attribute.Int64("pal.usage.cache_write_tokens", detail.CacheWriteTokens), attribute.Int64("pal.usage.cache_write_tokens", detail.CacheWriteTokens),
+			attribute.Int64("pal.usage.cache_read_tokens", detail.CacheReadTokens),
+			attribute.Int64("pal.usage.cache_write_tokens", detail.CacheWriteTokens),
 		)
 		span.End()
 		if cb != nil {

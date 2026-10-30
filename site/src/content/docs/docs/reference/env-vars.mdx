@@ -38,7 +38,7 @@ Type to filter by name, service or meaning; pick a group; or show only the ones 
 
 ## How this list was built
 
-`scripts/gen-env-data.mjs` greps the code on `master` for every `PAL_*` (and legacy `PAL_*`) read: Go `os.Getenv` and its helpers, Rust `std::env::var`, `process.env` in TypeScript, Python `os.environ`, and shell expansions in `scripts/`. Tests are excluded. That gives the name list and the "Read in" link. Defaults and meanings are written by hand in `site/src/components/docs/env-vars.json` from those reads and the startup guards (`runStartupGuards` in the control plane, `authz.rs`/`tls.rs` in the manager); the script keeps them and adds any new variable with an empty meaning, so a gap shows up as "Not documented yet" instead of going missing.
+`scripts/gen-env-data.mjs` greps the code on `master` for every `PAL_*` read: Go `os.Getenv` and its helpers, Rust `std::env::var`, `process.env` in TypeScript, Python `os.environ`, and shell expansions in `scripts/`. Tests are excluded. That gives the name list and the "Read in" link. Defaults and meanings are written by hand in `site/src/components/docs/env-vars.json` from those reads and the startup guards (`runStartupGuards` in the control plane, `authz.rs`/`tls.rs` in the manager); the script keeps them and adds any new variable with an empty meaning, so a gap shows up as "Not documented yet" instead of going missing.
 
 ## Limits
 

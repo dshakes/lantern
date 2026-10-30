@@ -17,12 +17,7 @@
 
 set -u
 
-# Works on either side of the PAL cutover (ADR 0032): once dev.pal.api is
-# installed, use the dev.pal.* label, PAL_* env keys, the PAL log dir and ~/.pal.
 LABEL_PREFIX=dev.pal ENV_PREFIX=PAL LOG_DIR=~/Library/Logs/PAL STATE_DIR=~/.pal
-if [ -e ~/Library/LaunchAgents/dev.pal.api.plist ]; then
-  LABEL_PREFIX=dev.pal ENV_PREFIX=PAL LOG_DIR=~/Library/Logs/PAL STATE_DIR=~/.pal
-fi
 CFLOG=$LOG_DIR/cloudflared.err.log
 SECONDARY_LOG=$LOG_DIR/cloudflared.log  # legacy nohup path
 STATE_FILE=$STATE_DIR/tunnel-current-url

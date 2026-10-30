@@ -4,21 +4,11 @@
 package metrics
 
 import (
-	"strings"
-
 	"github.com/prometheus/client_golang/prometheus"
-	dto "github.com/prometheus/client_model/go"
-	"google.golang.org/protobuf/proto"
 )
 
-// metricPrefix is the PAL name of every scheduler metric. legacyMetricPrefix
-// is the pre-PAL name (ADR 0032): each pal_scheduler_* family is re-exposed
-// under it at scrape time for one release, so dashboards and alerts that
-// still query pal_scheduler_* keep working while they migrate.
-const (
-	metricPrefix       = "pal_scheduler_"
-	legacyMetricPrefix = "pal_scheduler_"
-)
+// metricPrefix is the name prefix of every scheduler metric.
+const metricPrefix = "pal_scheduler_"
 
 // Registry is the scheduler's private Prometheus registry. Use this (not the
 // default global one) so tests can instantiate Metrics without polluting the
@@ -111,19 +101,5 @@ func New() *Registry {
 	return m
 }
 
-// Prometheus returns the gatherer for promhttp.HandlerFor: the registry's
-// families plus a legacy-named copy of each pal_scheduler_* family.
-func (m *Registry) Prometheus() prometheus.Gatherer {
-	return prometheus.GathererFunc(func() ([]*dto.MetricFamily, error) {
-		mfs, err := m.reg.Gather()
-		out := mfs
-		for _, mf := range mfs {
-			if tail, ok := strings.CutPrefix(mf.GetName(), metricPrefix); ok {
-				legacy := proto.Clone(mf).(*dto.MetricFamily)
-				legacy.Name = proto.String(legacyMetricPrefix + tail)
-				out = append(out, legacy)
-			}
-		}
-		return out, err
-	})
-}
+// Prometheus returns the gatherer for promhttp.HandlerFor.
+func (m *Registry) Prometheus() prometheus.Gatherer { return m.reg }

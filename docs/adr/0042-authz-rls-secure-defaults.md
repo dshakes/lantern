@@ -1,7 +1,7 @@
 # ADR 0042 — AuthZ + RLS: secure defaults in production
 
 - **Status:** Accepted
-- **Relates to:** ADR 0011 (RLS), ADR 0018 (SOC 2 / authZ gaps), ADR 0027 (per-endpoint scope authZ), ADR 0032 (PAL rename)
+- **Relates to:** ADR 0011 (RLS), ADR 0018 (SOC 2 / authZ gaps), ADR 0027 (per-endpoint scope authZ), ADR 0032 (rename to PAL)
 
 ## Context
 

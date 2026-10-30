@@ -7,12 +7,10 @@ import (
 )
 
 // palStateDir must resolve exactly like bridge-core palStateDir():
-// PAL_STATE_DIR → PAL_STATE_DIR → ~/.pal if it exists → ~/.pal,
-// re-evaluated on every call.
+// PAL_STATE_DIR → ~/.pal, re-evaluated on every call.
 func TestPalStateDir_ResolutionOrder(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("PAL_STATE_DIR", "")
 	t.Setenv("PAL_STATE_DIR", "")
 	got := func() string {
 		t.Helper()
@@ -31,10 +29,6 @@ func TestPalStateDir_ResolutionOrder(t *testing.T) {
 	}
 	if d := got(); d != filepath.Join(home, ".pal") {
 		t.Fatalf("~/.pal exists (read per call): %q", d)
-	}
-	t.Setenv("PAL_STATE_DIR", "/legacy")
-	if d := got(); d != "/legacy" {
-		t.Fatalf("PAL_STATE_DIR: %q", d)
 	}
 	t.Setenv("PAL_STATE_DIR", "/pal")
 	if d := got(); d != "/pal" {

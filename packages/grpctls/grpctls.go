@@ -33,7 +33,7 @@ import (
 	"time"
 )
 
-// Env suffixes, read as PAL_<suffix> with PAL_<suffix> fallback.
+// Env suffixes, read as PAL_<suffix>.
 const (
 	ServicePrefix = "GRPC_TLS"            // service-mesh identity
 	ManagerPrefix = "RUNTIME_MANAGER_TLS" // client side of the runtime-manager CA

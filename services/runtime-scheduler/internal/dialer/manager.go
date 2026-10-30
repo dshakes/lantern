@@ -100,8 +100,7 @@ func (c serviceTokenCreds) GetRequestMetadata(context.Context, ...string) (map[s
 	if c.token == "" {
 		return nil, nil
 	}
-	// Both names (ADR 0032): a manager that predates the PAL header still authenticates.
-	return map[string]string{"x-pal-service-token": c.token, "x-pal-service-token": c.token}, nil
+	return map[string]string{"x-pal-service-token": c.token}, nil
 }
 
 // RequireTransportSecurity is false so the token also rides dev plaintext links.

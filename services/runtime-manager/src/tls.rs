@@ -242,10 +242,13 @@ pub fn verify_client_cert_vm_id(vm_id: &str, cert_der: &[u8]) -> Result<(), Stri
 /// Organizational-unit marker stamped on every per-VM client cert.
 pub const VM_CERT_OU: &str = "pal-vm";
 
-/// The pre-PAL marker (ADR 0032). VMs booted (or snapshotted) before the
-/// rename still hold certs carrying it, so it must keep marking a guest:
-/// dropping it would let those guests pass as trusted services.
-pub const LEGACY_VM_CERT_OU: &str = "pal-vm";
+/// The marker VM certs carried before the rename (ADR 0032). It is only ever
+/// matched to REFUSE: a VM booted (or snapshotted) before the cutover still
+/// holds a cert carrying it, signed by the same CA, and must keep counting as
+/// a guest — dropping it would let that guest pass as a trusted service.
+/// Remove one release after the cutover (VM certs live a day; snapshots are
+/// re-identified on restore).
+pub const LEGACY_VM_CERT_OU: &str = "lantern-vm";
 
 /// True when `cert_der` is a per-VM (guest) client cert, i.e. carries the
 /// [`VM_CERT_OU`] or [`LEGACY_VM_CERT_OU`] marker. Unparseable DER is treated
@@ -796,8 +799,8 @@ mod tests {
         assert!(is_vm_client_cert(b"not a cert"));
     }
 
-    /// ADR 0032: new VM certs carry the PAL marker, and a cert carrying the
-    /// legacy marker (a VM booted before the rename) is still a guest.
+    /// New VM certs carry the PAL marker, and a cert carrying the pre-rename
+    /// marker (a VM booted before the cutover) is still refused as a guest.
     #[test]
     fn vm_cert_marker_pal_and_legacy_both_mark_a_guest() {
         let (ca_cert, ca_key) = make_ca("manager-ca-ou2");

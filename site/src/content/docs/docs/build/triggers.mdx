@@ -163,7 +163,7 @@ PagerDuty shows its signing secret after you create the webhook subscription, so
 
 ### Generic HMAC
 
-These header names keep the `X-Pal-` prefix on the wire; they are not renamed.
+These headers use the `X-Pal-` prefix on the wire.
 
 For anything else, sign `<unix-timestamp>.<body>` with HMAC-SHA256 and send `X-Pal-Signature: t=<unix>,v1=<hex>`. The timestamp must be within five minutes of server time, in either direction. Send `X-Pal-Delivery` as a stable id per event and optionally `X-Pal-Event`.
 

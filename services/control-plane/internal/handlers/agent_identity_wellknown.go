@@ -1,6 +1,6 @@
 package handlers
 
-// AgentIdentityWellKnown handles GET /.well-known/pal-agent-identity (and the legacy /.well-known/pal-agent-identity).
+// AgentIdentityWellKnown handles GET /.well-known/pal-agent-identity.
 //
 // Ed25519 mode: publishes {algorithm, publicKey, keyFingerprint} so external
 // verifiers can confirm agent-instance JWT signatures without a shared secret.

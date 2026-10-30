@@ -26,9 +26,7 @@
 #   FORCE=1 make deploy-local    # restart everything regardless
 set -uo pipefail
 
-# Works on either side of the PAL cutover (ADR 0032): dev.pal.* once installed.
 LABEL_PREFIX=dev.pal
-if [ -e "$HOME/Library/LaunchAgents/dev.pal.api.plist" ]; then LABEL_PREFIX=dev.pal; fi
 # `ps -o lstart=` and `date -j -f "%a %b %d %T %Y"` both parse/format against
 # the locale — a non-English LC_TIME (or, on the 1st-9th of the month, extra
 # padding that only appears in some locales) breaks the parse. Pin to C so the

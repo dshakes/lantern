@@ -126,9 +126,7 @@ func computeHMAC(payload []byte, secret string) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// setPalHeader sets X-Pal-<name> and, for receivers that verify the pre-PAL
-// names, X-Pal-<name> with the same value (ADR 0032).
+// setPalHeader sets the X-Pal-<name> header.
 func setPalHeader(h http.Header, name, v string) {
-	h.Set("X-Pal-"+name, v)
 	h.Set("X-Pal-"+name, v)
 }

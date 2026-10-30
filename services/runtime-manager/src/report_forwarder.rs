@@ -229,9 +229,6 @@ pub async fn forward_report(
 
     let result = client
         .post(&url)
-        // PAL name plus the pre-PAL name for a control plane that has not
-        // upgraded yet (ADR 0032).
-        .header("X-Pal-Runtime-Token", token)
         .header("X-Pal-Runtime-Token", token)
         .header("Content-Type", "application/json")
         .json(payload)

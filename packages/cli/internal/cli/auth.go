@@ -26,8 +26,7 @@ func newLoginCommand() *cobra.Command {
 If --email and --password are provided, login is non-interactive.
 Otherwise, you will be prompted for credentials.
 
-The session token is stored in credentials.json under $PAL_HOME, ~/.pal,
-or (for logins made before the rename) the legacy ~/.pal.`,
+The session token is stored in credentials.json under $PAL_HOME, else ~/.pal.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Interactive mode: prompt for email and password.
 			if email == "" {

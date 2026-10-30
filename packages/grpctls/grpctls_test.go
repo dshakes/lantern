@@ -296,7 +296,7 @@ func TestClientConfigPolicy(t *testing.T) {
 
 func TestFromEnvAndAllowlist(t *testing.T) {
 	t.Setenv("PAL_GRPC_TLS_CA", " /a ")
-	t.Setenv("PAL_GRPC_TLS_CERT", "/b") // legacy name still served
+	t.Setenv("PAL_GRPC_TLS_CERT", "/b")
 	t.Setenv("PAL_GRPC_TLS_KEY", "")
 	t.Setenv("PAL_GRPC_TLS_ALLOWED_PEERS", " spiffe://x/svc/a ,, spiffe://x/svc/b")
 	f := FromEnv(ServicePrefix)

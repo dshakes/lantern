@@ -174,10 +174,9 @@ async fn run() -> Result<()> {
         manager = %env.manager_addr,
         workload = ?env.workload_cmd,
         secrets = env.declared_secrets.len(),
-        // One line carrying the PAL banner and the legacy one (ADR 0032):
-        // boot checks grep for "starting pal-harness (PID 1)" and count
-        // its occurrences, so it stays exactly once per boot until they move.
-        "starting pal-harness (PID 1) | starting pal-harness (PID 1)"
+        // Boot checks grep for this banner and count its occurrences, so it
+        // must be emitted exactly once per boot.
+        "starting pal-harness (PID 1)"
     );
 
     // 1. Init: mount tmpfs, prep dirs, set rlimits.

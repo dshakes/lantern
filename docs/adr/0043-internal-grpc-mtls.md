@@ -34,11 +34,11 @@ token, is refused.
 
 ### One identity per process, one helper per language
 
-- Env (PAL names, PAL fallback per ADR 0032): `PAL_GRPC_TLS_CA` / `_CERT` /
+- Env: `PAL_GRPC_TLS_CA` / `_CERT` /
   `_KEY` — the service CA and this process's cert (serverAuth + clientAuth),
   used both to serve and to dial. `PAL_GRPC_TLS_ALLOWED_PEERS` — comma-separated
   SPIFFE IDs a server accepts.
-- Go: `packages/grpctls` (stdlib + palenv, no gRPC dependency, so no version
+- Go: `packages/grpctls` (stdlib only, no gRPC dependency, so no version
   coupling). Rust: `packages/pal-grpc-tls-rs` (`pal_grpc_tls`). Same policy, same
   error text. The three copies of `ManagerTransportCreds` now call `grpctls`.
 

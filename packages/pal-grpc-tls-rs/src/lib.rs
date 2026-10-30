@@ -9,7 +9,7 @@
 //!   - `PAL_GRPC_INSECURE=1` — the only way a prod-like env runs plaintext.
 //!   - A per-VM guest cert (OU `pal-vm`) is never accepted as a service.
 //!
-//! Reads go through `pal_env` (PAL_ name, PAL_ fallback; ADR 0032).
+//! Reads are plain `std::env::var` lookups of the `PAL_*` names.
 
 use tonic::transport::{Certificate, ClientTlsConfig, Endpoint, Identity, ServerTlsConfig};
 use tonic::{Request, Status};

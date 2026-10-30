@@ -27,7 +27,7 @@ type agenticRecorder struct {
 
 func newAgenticServer(t *testing.T, rec *agenticRecorder) *httptest.Server {
 	t.Helper()
-	// Never touch the real credentials.json (~/.pal or legacy ~/.pal).
+	// Never touch the real credentials.json (~/.pal).
 	t.Setenv("HOME", t.TempDir())
 	mux := http.NewServeMux()
 	registerHealthOK(mux)

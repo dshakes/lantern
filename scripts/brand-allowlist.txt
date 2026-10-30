@@ -26,3 +26,8 @@ path:^docs/runbooks/pal-cutover\.md$ # the cutover runbook names what the cutove
 # send this header, and the owner re-points them by hand. Accepted for one
 # release on /v1/signals only (control plane + dashboard twin), then removed.
 scope:^(services/control-plane/internal/handlers/signals(_test)?\.go|apps/web/app/api/signals/route\.ts)$ \bx-lantern-signal-token\b # pre-rename iPhone Shortcuts send it; one release of grace (ADR 0032)
+
+# Security: the VM cert marker used before the rename. Matched ONLY to refuse
+# (a pre-cutover guest cert, signed by the same CA, must never pass as a
+# trusted service). Remove one release after the cutover.
+scope:^services/runtime-manager/src/tls\.rs$ LEGACY_VM_CERT_OU: &str = "lantern-vm" # refuse pre-cutover guest certs (deny-list only); one release

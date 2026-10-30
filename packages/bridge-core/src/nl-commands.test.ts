@@ -63,7 +63,6 @@ test("pal invocation + slash forms fire", () => {
   const cases: Array<[string, string]> = [
     ["pal, pause for 2h", "mute"],
     ["hey pal, status", "status"],
-    ["hey pal status", "status"],
     ["pal: on", "unmute"],
     ["/pal status", "status"],
     ["/pal ping", "ping"],

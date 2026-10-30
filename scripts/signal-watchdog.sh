@@ -11,11 +11,7 @@
 # common cases automatically; the rest it logs with the exact one-liner.
 set -uo pipefail
 
-# Works on either side of the PAL cutover (ADR 0032).
 LABEL_PREFIX=dev.pal ENV_PREFIX=PAL LOG_DIR="$HOME/Library/Logs/PAL"
-if [ -e "$HOME/Library/LaunchAgents/dev.pal.api.plist" ]; then
-  LABEL_PREFIX=dev.pal ENV_PREFIX=PAL LOG_DIR="$HOME/Library/Logs/PAL"
-fi
 LOG="$LOG_DIR/signal-watchdog.log"
 PLIST="$HOME/Library/LaunchAgents/$LABEL_PREFIX.api.plist"
 mkdir -p "$(dirname "$LOG")"

@@ -28,7 +28,7 @@ Money and unverifiable claims are [always held](/docs/pal/human-in-the-loop/), w
 
 ## Where your data lives
 
-- **On your Mac.** pal's state lives in `~/.pal/` (`~/.pal/` on installs from before the rename), owner-only (mode 0600). The stores with the most personal detail (episodes, topics, dislikes, the sent log) are AES-256-GCM encrypted at rest, with a key created beside them.
+- **On your Mac.** pal's state lives in `~/.pal/` (override with `PAL_STATE_DIR`), owner-only (mode 0600). The stores with the most personal detail (episodes, topics, dislikes, the sent log) are AES-256-GCM encrypted at rest, with a key created beside them.
 - **In your control plane.** The person graph and timeline that link iMessage and WhatsApp, behind row-level security.
 - **At your model provider.** The message text sent for each reply. Nothing else leaves the Mac.
 

@@ -77,8 +77,6 @@ var getExempt = map[string]string{
 	"GET /v1/mcp/servers/{slug}":          "public MCP server entry (no tenant data)",
 	"GET /.well-known/pal-receipts":       "public signing key / algorithm disclosure",
 	"GET /.well-known/pal-agent-identity": "public agent identity key fingerprint",
-	"GET /.well-known/pal-receipts":       "public signing key / algorithm disclosure (PAL name; ADR 0032)",
-	"GET /.well-known/pal-agent-identity": "public agent identity key fingerprint (PAL name; ADR 0032)",
 
 	// Runtime routes check runtime:* scopes inside the handler (requireRuntimeScope).
 	"GET /v1/runtime/vms":                    "in-handler runtime:read",

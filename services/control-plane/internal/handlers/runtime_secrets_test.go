@@ -1209,9 +1209,8 @@ func TestResolveSecrets_VMBinding_DenialIncrementsRateLimiter(t *testing.T) {
 	}
 }
 
-// ADR 0032: the runtime token is accepted under the PAL header and the legacy
-// header; a wrong PAL header is not rescued by a right legacy one.
-func TestAuthenticateRuntimeToken_PALAndLegacyHeaders(t *testing.T) {
+// The runtime token is accepted under the PAL header only when it matches.
+func TestAuthenticateRuntimeToken_Header(t *testing.T) {
 	t.Setenv(envRuntimeSecretToken, "rt-secret")
 	cases := []struct {
 		name string
@@ -1219,10 +1218,7 @@ func TestAuthenticateRuntimeToken_PALAndLegacyHeaders(t *testing.T) {
 		ok   bool
 	}{
 		{"pal", map[string]string{runtimeTokenHeader: "rt-secret"}, true},
-		{"legacy", map[string]string{legacyRuntimeTokenHeader: "rt-secret"}, true},
-		{"both", map[string]string{runtimeTokenHeader: "rt-secret", legacyRuntimeTokenHeader: "rt-secret"}, true},
-		{"legacy wrong", map[string]string{legacyRuntimeTokenHeader: "nope"}, false},
-		{"pal wrong legacy right", map[string]string{runtimeTokenHeader: "nope", legacyRuntimeTokenHeader: "rt-secret"}, false},
+		{"wrong", map[string]string{runtimeTokenHeader: "nope"}, false},
 		{"none", map[string]string{}, false},
 	}
 	for _, tc := range cases {

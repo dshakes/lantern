@@ -15,34 +15,22 @@ import (
 // creates are cheap no-ops that never allocate or panic.
 //
 // Instrument and attribute names use the pal.* prefix, matching EnrichSpan.
-// Each measurement is also recorded under the pre-PAL pal.* names (ADR
-// 0032) for one release, so dashboards and alerts on pal_run_total etc.
-// keep working while they migrate.
 var (
 	metricsOnce  sync.Once
-	mStepDur     f64HistPair // pal.run.step.duration (ms)
-	mStepRetries i64Pair     // pal.run.step.retries
-	mReplaySkips i64Pair     // pal.run.replay.skips
-	mBudgetBlock i64Pair     // pal.run.budget.blocks
-	mBudgetErr   i64Pair     // pal.budget.check.errors
-	mRunTotal    i64Pair     // pal.run.total
-	mOnboard     i64Pair     // pal.onboarding.step.total
+	mStepDur     metric.Float64Histogram // pal.run.step.duration (ms)
+	mStepRetries i64Counter              // pal.run.step.retries
+	mReplaySkips i64Counter              // pal.run.replay.skips
+	mBudgetBlock i64Counter              // pal.run.budget.blocks
+	mBudgetErr   i64Counter              // pal.budget.check.errors
+	mRunTotal    i64Counter              // pal.run.total
+	mOnboard     i64Counter              // pal.onboarding.step.total
 )
 
-// i64Pair is a counter under its PAL name and its legacy name.
-type i64Pair struct{ pal, legacy metric.Int64Counter }
+// i64Counter wraps a counter so call sites pass plain key/value pairs.
+type i64Counter struct{ c metric.Int64Counter }
 
-func (p i64Pair) Add(ctx context.Context, n int64, kv ...string) {
-	p.pal.Add(ctx, n, metric.WithAttributes(attrs("pal.", kv)...))
-	p.legacy.Add(ctx, n, metric.WithAttributes(attrs("pal.", kv)...))
-}
-
-// f64HistPair is a histogram under its PAL name and its legacy name.
-type f64HistPair struct{ pal, legacy metric.Float64Histogram }
-
-func (p f64HistPair) Record(ctx context.Context, v float64, kv ...string) {
-	p.pal.Record(ctx, v, metric.WithAttributes(attrs("pal.", kv)...))
-	p.legacy.Record(ctx, v, metric.WithAttributes(attrs("pal.", kv)...))
+func (p i64Counter) Add(ctx context.Context, n int64, kv ...string) {
+	p.c.Add(ctx, n, metric.WithAttributes(attrs("pal.", kv)...))
 }
 
 // attrs turns key/value pairs into attributes whose keys carry prefix.
@@ -54,42 +42,36 @@ func attrs(prefix string, kv []string) []attribute.KeyValue {
 	return out
 }
 
-func newI64Pair(m, legacy metric.Meter, name string, opts ...metric.Int64CounterOption) i64Pair {
+func newI64Counter(m metric.Meter, name string, opts ...metric.Int64CounterOption) i64Counter {
 	// Per OTel spec, Meter methods return a no-op instrument on error, never nil.
 	// Errors are discarded; a misconfigured meter name is never a crash path.
-	p, _ := m.Int64Counter("pal."+name, opts...)
-	l, _ := legacy.Int64Counter("pal."+name, opts...)
-	return i64Pair{pal: p, legacy: l}
+	c, _ := m.Int64Counter("pal."+name, opts...)
+	return i64Counter{c: c}
 }
 
 func ensureMetrics() {
 	metricsOnce.Do(func() {
-		mp := otel.GetMeterProvider()
-		m, legacy := mp.Meter("pal.runtime"), mp.Meter("pal.runtime")
-		opts := []metric.Float64HistogramOption{
+		m := otel.GetMeterProvider().Meter("pal.runtime")
+		mStepDur, _ = m.Float64Histogram("pal.run.step.duration",
 			metric.WithUnit("ms"),
-			metric.WithDescription("Workflow step wall-clock duration in milliseconds"),
-		}
-		hp, _ := m.Float64Histogram("pal.run.step.duration", opts...)
-		hl, _ := legacy.Float64Histogram("pal.run.step.duration", opts...)
-		mStepDur = f64HistPair{pal: hp, legacy: hl}
-		mStepRetries = newI64Pair(m, legacy, "run.step.retries",
+			metric.WithDescription("Workflow step wall-clock duration in milliseconds"))
+		mStepRetries = newI64Counter(m, "run.step.retries",
 			metric.WithDescription("Number of workflow step retry attempts beyond the first"))
-		mReplaySkips = newI64Pair(m, legacy, "run.replay.skips",
+		mReplaySkips = newI64Counter(m, "run.replay.skips",
 			metric.WithDescription("CompletedStep cache hits during crash-resume replay"))
-		mBudgetBlock = newI64Pair(m, legacy, "run.budget.blocks",
+		mBudgetBlock = newI64Counter(m, "run.budget.blocks",
 			metric.WithDescription("Runs blocked by agent budget hard-fail (HTTP 402)"))
-		mBudgetErr = newI64Pair(m, legacy, "budget.check.errors",
+		mBudgetErr = newI64Counter(m, "budget.check.errors",
 			metric.WithDescription("Budget lookups that errored and failed closed"))
-		mRunTotal = newI64Pair(m, legacy, "run.total",
+		mRunTotal = newI64Counter(m, "run.total",
 			metric.WithDescription("Total agent runs dispatched through the inline executor"))
-		mOnboard = newI64Pair(m, legacy, "onboarding.step.total",
+		mOnboard = newI64Counter(m, "onboarding.step.total",
 			metric.WithDescription("Onboarding steps reached / completed"))
 	})
 }
 
 // RecordStepDuration records a single workflow step's execution time against
-// pal.run.step.duration with the standard pal.* attribute set (and the legacy pal.* set).
+// pal.run.step.duration with the standard pal.* attribute set.
 //
 //   - agentName:  agent that owns the run.
 //   - nodeType:   workflow node type (ai-step, tool, connector, …).
@@ -98,12 +80,8 @@ func ensureMetrics() {
 //   - ms:         wall-clock duration of the step (including all retry backoff).
 func RecordStepDuration(ctx context.Context, agentName, nodeType, tier, outcome string, ms float64) {
 	ensureMetrics()
-	mStepDur.Record(ctx, ms,
-		"agent_name", agentName,
-		"node_type", nodeType,
-		"tier", tier,
-		"outcome", outcome,
-	)
+	mStepDur.Record(ctx, ms, metric.WithAttributes(attrs("pal.",
+		[]string{"agent_name", agentName, "node_type", nodeType, "tier", tier, "outcome", outcome})...))
 }
 
 // RecordStepRetries adds retryCount to the pal.run.step.retries counter.

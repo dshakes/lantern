@@ -1,13 +1,13 @@
 # Content map: old PAL sites (deleted in fd11a65d) to the new PAL site
 
-Method: old sources read with `git show fd11a65d^:<path>`; new docs compared by 5-word shingle overlap after PAL->PAL
+Method: old sources read with `git show fd11a65d^:<path>`; new docs compared by 5-word shingle overlap after the rename
 normalisation, plus identifier sweeps (every `PAL_*` var checked as `PAL_*`; every `/v1/...` path; connector names).
 Docs tree is still being reorganised by other agents (egress/identity/receipts/security now under `security/`, observability and SDKs
 have their own sections). Paths below are relative to `src/content/docs/docs/` unless prefixed `pages/`, `data/`.
 "Lives at" for landing items = `src/pages/*.astro`, `src/data/*.ts`.
 
 Overlap legend: coverage = share of old prose shingles found in the new page. Low numbers are almost always rewording,
-table/JSX-to-markdown reshaping, or rename (pal->pal), not loss. Spot checks listed in section 2.
+table/JSX-to-markdown reshaping, or the rename itself, not loss. Spot checks listed in section 2.
 
 ## 1. Old page inventory
 
@@ -185,5 +185,5 @@ qualifiers in the new page. "Proven at scale: Lima nested-KVM + CI only" is self
 | 4 | Broker recording | RESTORED as a link to `docs/media/egress-broker-kvm.gif` from `docs/security/egress.mdx`; the webp poster stays dropped (no image needed for a link). |
 | 5 | Per-step timings | RESTORED in `docs/runtime/sandbox-lifecycle.mdx#cost`: 131/145/160 ms forks, ~200 ms stop, benchmark link, run date, "not production" label. |
 | 6 | Home summary cells | Landing/compare owner; the full matrix is on `pages/compare`. |
-| 7 | Metric names | KEPT as `pal.*`: that is what the code emits on master (they are wire names until the infra rename). |
+| 7 | Metric names | `pal.*` only: that is what the code emits. |
 | 8 | "Wax seal" analogy | Intentionally dropped (style only). |

@@ -31,12 +31,6 @@ const tenantMetadataKey = "tenant_id"
 // Kept local so the dispatcher does not take a build dep on the control-plane module.
 const serviceTokenMetadataKey = "x-pal-service-token"
 
-// legacyServiceTokenMetadataKey is the pre-PAL name (ADR 0032). The token is
-// sent under both names so a control plane that predates the PAL name (the
-// customer data plane and the control plane upgrade independently) still
-// authenticates the call.
-const legacyServiceTokenMetadataKey = "x-pal-service-token"
-
 var tracer = otel.Tracer("pal.data-plane-agent.dispatcher")
 
 // Dispatcher receives run assignments and dispatches them to the workflow engine.
@@ -248,7 +242,7 @@ func (d *Dispatcher) driveRun(ctx context.Context, conn *grpc.ClientConn, assign
 func (d *Dispatcher) outgoingContext(ctx context.Context, tenantID string) context.Context {
 	pairs := []string{tenantMetadataKey, tenantID}
 	if d.serviceToken != "" {
-		pairs = append(pairs, serviceTokenMetadataKey, d.serviceToken, legacyServiceTokenMetadataKey, d.serviceToken)
+		pairs = append(pairs, serviceTokenMetadataKey, d.serviceToken)
 	}
 	return metadata.AppendToOutgoingContext(ctx, pairs...)
 }

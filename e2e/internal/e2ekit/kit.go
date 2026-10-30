@@ -86,11 +86,11 @@ func DefaultBase() string {
 }
 
 // DefaultEmail returns the login email from env or the default.
-func DefaultEmail() string { return EnvOr("PAL_E2E_EMAIL", EnvOr("PAL_E2E_EMAIL", defaultEmail)) }
+func DefaultEmail() string { return EnvOr("PAL_E2E_EMAIL", defaultEmail) }
 
 // DefaultPassword returns the login password from env or the default.
 func DefaultPassword() string {
-	return EnvOr("PAL_E2E_PASSWORD", EnvOr("PAL_E2E_PASSWORD", defaultPassword))
+	return EnvOr("PAL_E2E_PASSWORD", defaultPassword)
 }
 
 // EnvOr returns env[key] or def when unset/empty.

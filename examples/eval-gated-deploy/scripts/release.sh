@@ -9,8 +9,7 @@
 #      .deploy.json, .receipt.json)
 set -euo pipefail
 dir=${1:-.}
-: "${PAL_API_URL:=}" "${PAL_API_KEY:=}"
-: "${PAL_API_URL:?set PAL_API_URL (PAL_API_URL still accepted)}" "${PAL_API_KEY:?set PAL_API_KEY (PAL_API_KEY still accepted)}"
+: "${PAL_API_URL:?set PAL_API_URL}" "${PAL_API_KEY:?set PAL_API_KEY}"
 api=${PAL_API_URL%/}
 res=${EVAL_RESULT:-.eval-result.json}
 deploy=${DEPLOY_JSON:-.deploy.json}

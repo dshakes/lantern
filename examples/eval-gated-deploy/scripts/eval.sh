@@ -17,8 +17,7 @@
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 dir=${1:-.}
-: "${PAL_API_URL:=}" "${PAL_API_KEY:=}"
-: "${PAL_API_URL:?set PAL_API_URL (PAL_API_URL still accepted)}" "${PAL_API_KEY:?set PAL_API_KEY (PAL_API_KEY still accepted)}"
+: "${PAL_API_URL:?set PAL_API_URL}" "${PAL_API_KEY:?set PAL_API_KEY}"
 api=${PAL_API_URL%/}
 branch=${EVAL_BRANCH:-main}
 out=${EVAL_RESULT:-.eval-result.json}

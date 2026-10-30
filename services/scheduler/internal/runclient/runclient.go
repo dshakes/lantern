@@ -35,11 +35,6 @@ const tenantMetadataKey = "tenant_id"
 // scheduler doesn't take a build dependency on the control-plane module.
 const serviceTokenMetadataKey = "x-pal-service-token"
 
-// legacyServiceTokenMetadataKey is the pre-PAL name (ADR 0032). The token is
-// sent under both names so a control-plane that predates the PAL name still
-// authenticates the call.
-const legacyServiceTokenMetadataKey = "x-pal-service-token"
-
 // Client holds a long-lived gRPC connection to the control-plane and creates
 // runs on its RunService. One Client is shared by the cron ticker and the
 // delayed-run processor for the whole process lifetime.
@@ -130,7 +125,7 @@ func (c *Client) CreateRun(ctx context.Context, tenantID, agentName string, inpu
 func outgoingContext(ctx context.Context, tenantID, serviceToken string) context.Context {
 	pairs := []string{tenantMetadataKey, tenantID}
 	if serviceToken != "" {
-		pairs = append(pairs, serviceTokenMetadataKey, serviceToken, legacyServiceTokenMetadataKey, serviceToken)
+		pairs = append(pairs, serviceTokenMetadataKey, serviceToken)
 	}
 	return metadata.AppendToOutgoingContext(ctx, pairs...)
 }

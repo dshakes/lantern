@@ -8,7 +8,7 @@
 # (tests green + reviewer) lives in the PROMPT the model must obey.
 set -uo pipefail
 
-REPO="/Users/shakes/workspace/pal"
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CLAUDE="/Users/shakes/.nvm/versions/node/v22.18.0/bin/claude"
 NODE_BIN="/Users/shakes/.nvm/versions/node/v22.18.0/bin"
 STATE_DIR="$HOME/.pal/introspect"

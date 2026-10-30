@@ -283,13 +283,10 @@ func TestDispatchRun_ServiceTokenInMetadata(t *testing.T) {
 	if len(fake.receivedMeta) == 0 {
 		t.Fatal("no gRPC metadata captured")
 	}
-	// Both names (ADR 0032): the PAL name, plus the legacy name for a
-	// control plane that has not upgraded.
-	for _, k := range []string{"x-pal-service-token", "x-pal-service-token"} {
-		vals := fake.receivedMeta[0].Get(k)
-		if len(vals) == 0 || vals[0] != tok {
-			t.Errorf("%s in metadata: got %v, want [%s]", k, vals, tok)
-		}
+	const k = "x-pal-service-token"
+	vals := fake.receivedMeta[0].Get(k)
+	if len(vals) != 1 || vals[0] != tok {
+		t.Errorf("%s in metadata: got %v, want [%s]", k, vals, tok)
 	}
 }
 
@@ -330,10 +327,8 @@ func TestDispatchRun_NoServiceToken(t *testing.T) {
 	if len(fake.receivedMeta) == 0 {
 		t.Fatal("no gRPC metadata captured")
 	}
-	for _, k := range []string{"x-pal-service-token", "x-pal-service-token"} {
-		if vals := fake.receivedMeta[0].Get(k); len(vals) != 0 {
-			t.Errorf("%s unexpectedly present: %v", k, vals)
-		}
+	if vals := fake.receivedMeta[0].Get("x-pal-service-token"); len(vals) != 0 {
+		t.Errorf("x-pal-service-token unexpectedly present: %v", vals)
 	}
 }
 

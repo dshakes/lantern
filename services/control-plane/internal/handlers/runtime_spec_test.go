@@ -485,10 +485,9 @@ func TestScheduleAgentSpec_DLPLoadErrorFailsClosed(t *testing.T) {
 	}
 }
 
-// ADR 0032: pal.secret/ refs are accepted, and the overlap check compares the
-// canonical form, so spelling one side pal.secret/ and the other
-// pal.secret/ cannot slip an injected credential into the VM.
-func TestValidateEgressInject_PALRefsAndMixedSpellingOverlap(t *testing.T) {
+// pal.secret/ refs are accepted, and an injected ref that is also vended into
+// the VM is rejected.
+func TestValidateEgressInject_PALRefsAndOverlap(t *testing.T) {
 	rule := func(ref string) []map[string]any {
 		return []map[string]any{{"pattern": "api.openai.com", "inject": []any{
 			map[string]any{"header": "Authorization", "secretRef": ref},
@@ -497,15 +496,10 @@ func TestValidateEgressInject_PALRefsAndMixedSpellingOverlap(t *testing.T) {
 	if err := validateEgressInject(rule("pal.secret/llm/openai"), nil); err != nil {
 		t.Fatalf("pal.secret/ inject rejected: %v", err)
 	}
-	for _, c := range [][2]string{
-		{"pal.secret/llm/openai", "pal.secret/llm/openai"},
-		{"pal.secret/llm/openai", "pal.secret/llm/openai"},
-		{"pal.secret/llm/openai", "pal.secret/llm/openai"},
-	} {
-		err := validateEgressInject(rule(c[0]), []map[string]any{{"secret_uri": c[1]}})
-		if err == nil || !strings.Contains(err.Error(), "also listed in secrets") {
-			t.Errorf("inject %q + secret %q: want overlap rejection, got %v", c[0], c[1], err)
-		}
+	const ref = "pal.secret/llm/openai"
+	err := validateEgressInject(rule(ref), []map[string]any{{"secret_uri": ref}})
+	if err == nil || !strings.Contains(err.Error(), "also listed in secrets") {
+		t.Errorf("inject %q + secret %q: want overlap rejection, got %v", ref, ref, err)
 	}
 }
 
@@ -515,9 +509,6 @@ func TestParseRef_PALPrefix(t *testing.T) {
 	}
 	if p := parseRef("pal.secret/connector/abc/apiKey"); p.scope != "connector" || p.installID != "abc" || p.configKey != "apiKey" {
 		t.Errorf("pal connector ref: %+v", p)
-	}
-	if p := parseRef("pal.secret/llm/openai"); p.scope != "llm" || p.provider != "openai" {
-		t.Errorf("legacy ref: %+v", p)
 	}
 	if p := parseRef("palx.secret/llm/openai"); p.scope != "" {
 		t.Errorf("look-alike prefix accepted: %+v", p)

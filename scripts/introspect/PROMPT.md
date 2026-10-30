@@ -51,7 +51,7 @@ Focus ONLY on the owner's real DM conversations. Do not invent examples.
 
 The bridge's own rules live in `CLAUDE.md` (the "Personal-docs + agentic Mac
 actions" section) and the project memory under
-`~/.claude/projects/-Users-shakes-workspace-pal/memory/`. A response is WRONG
+the Claude Code project memory directory for this checkout (`~/.claude/projects/<checkout path with / as ->/memory/`). A response is WRONG
 if it does any of:
 
 - **Claims an action it didn't take** (false "sent"/"done"; `docRelay:false` on a

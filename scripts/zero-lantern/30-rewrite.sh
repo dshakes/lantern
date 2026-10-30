@@ -18,7 +18,6 @@ zl_note "$(printf '%s\n' "$list" | wc -l | tr -d ' ') files to rewrite"
 
 printf '%s\n' "$list" | tr '\n' '\0' | xargs -0 -n 200 perl -0pi "$ZL_HERE/rewrite.pl"
 
-left="$(git grep -I -i -l lantern -- . "${ZL_EXCLUDES[@]}" | grep -v -E '^(services/control-plane/internal/handlers/signals(_test)?\.go|apps/web/app/api/signals/route\.ts)$' || true)"
-[[ -z "$left" ]] || zl_fail "content still mentions the old name:
-$left"
+# Postcondition: only the allowlisted keeps remain (brand-check is allowlist-aware).
+bash scripts/brand-check.sh --enforce >/dev/null 2>&1 || { bash scripts/brand-check.sh >&2 || true; zl_fail "content still mentions the old name outside the allowlist"; }
 zl_note "content rewritten"

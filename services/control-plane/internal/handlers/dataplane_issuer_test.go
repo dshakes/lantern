@@ -7,9 +7,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// ADR 0032: data-plane session tokens are minted with the PAL issuer; a token
-// minted before the rename (legacy issuer) still verifies until it expires;
-// any other issuer is refused.
+// Data-plane session tokens are minted with the PAL issuer; any other issuer
+// is refused.
 func TestDataPlaneSessionToken_Issuers(t *testing.T) {
 	s := &DataPlaneService{jwtSecret: []byte("dp-test-secret")}
 	tok, err := s.issueSessionToken("t1", "p1")
@@ -36,7 +35,7 @@ func TestDataPlaneSessionToken_Issuers(t *testing.T) {
 		return out
 	}
 	if _, err := s.verifySessionToken(mint("pal-cp")); err != nil {
-		t.Errorf("legacy issuer rejected: %v", err)
+		t.Errorf("PAL issuer rejected: %v", err)
 	}
 	for _, bad := range []string{"", "pal", "evil-cp"} {
 		if _, err := s.verifySessionToken(mint(bad)); err == nil {

@@ -446,13 +446,11 @@ func TestAgentIdentityPublicKey_NoSeed(t *testing.T) {
 	}
 }
 
-// ADR 0032: tokens are minted with the PAL issuer; tokens minted before the
-// rename (legacy issuer) still verify until they expire; any other issuer is
-// refused.
-func TestVerify_IssuerPALLegacyAndForeign(t *testing.T) {
+// Tokens carry the PAL issuer; any other issuer is refused.
+func TestVerify_IssuerPALAndForeign(t *testing.T) {
 	iss := newTestIssuer(t)
-	if tokenIssuer != "pal-agent" || legacyTokenIssuer != "pal-agent" {
-		t.Fatalf("issuers drifted: %q / %q", tokenIssuer, legacyTokenIssuer)
+	if tokenIssuer != "pal-agent" {
+		t.Fatalf("issuer drifted: %q", tokenIssuer)
 	}
 	mint := func(issuer string) string {
 		now := time.Now()
@@ -469,10 +467,8 @@ func TestVerify_IssuerPALLegacyAndForeign(t *testing.T) {
 		}
 		return s
 	}
-	for _, ok := range []string{"pal-agent", "pal-agent"} {
-		if _, err := iss.Verify(mint(ok)); err != nil {
-			t.Errorf("issuer %q rejected: %v", ok, err)
-		}
+	if _, err := iss.Verify(mint("pal-agent")); err != nil {
+		t.Errorf("PAL issuer rejected: %v", err)
 	}
 	for _, bad := range []string{"", "pal", "someone-else"} {
 		if _, err := iss.Verify(mint(bad)); err == nil {

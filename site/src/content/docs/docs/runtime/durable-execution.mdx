@@ -124,7 +124,7 @@ For an orphaned `microvm` run (no live VM, lock expired) the sweep calls `resume
 PAL_RESUME=1
 ```
 
-`PAL_RESUME=1` (the code still emits the old name) signals a re-drive; skipping completed work is the workload's responsibility (no SDK helper reads it yet). The 3-attempt cap is a hard constant (`maxMicroVMResumeAttempts = 3`). On exhaustion the run is marked `failed` and its error field carries `{code: microvm_resume_exhausted, attempts}`.
+`PAL_RESUME=1` signals a re-drive; skipping completed work is the workload's responsibility (no SDK helper reads it yet). The 3-attempt cap is a hard constant (`maxMicroVMResumeAttempts = 3`). On exhaustion the run is marked `failed` and its error field carries `{code: microvm_resume_exhausted, attempts}`.
 
 ## Inspecting and recovering a run
 

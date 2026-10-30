@@ -125,7 +125,7 @@ func dialModelRouter(addr string) (palv1.ModelServiceClient, func() error, error
 		grpc.WithTransportCredentials(creds),
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 	}
-	// The router requires x-pal-service-token (or the legacy x-pal-service-token) (invariant #7); reuse the
+	// The router requires x-pal-service-token (invariant #7); reuse the
 	// scheduler creds helper. Empty token → nothing attached (dev only).
 	if tok := os.Getenv("PAL_GRPC_SERVICE_TOKEN"); tok != "" {
 		opts = append(opts, grpc.WithPerRPCCredentials(schedulerTokenCreds{token: tok}))

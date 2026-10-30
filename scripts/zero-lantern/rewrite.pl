@@ -10,8 +10,12 @@
   s/\$2b\$10\$\.hAunSjVIs5aiTYrzIAmfuLbpy1Im2N4xIvhjFVG5v3fak\/eeyP7W/\$2a\$10\$TjzuOlrLRP\/7gC9HGdUX0u4aLfWZH\/ho3WzZUiW7bSbRkAf2VEIau/g;
   # the one kept legacy wire name (scripts/brand-allowlist.txt): pre-rename
   # iPhone Shortcuts send it to /v1/signals; protected from the rewrite.
-  my $keep = ($ENV{ZL_PATH} // $ARGV) =~ m{^(services/control-plane/internal/handlers/signals(_test)?\.go|apps/web/app/api/signals/route\.ts)$};
+  my $zlp = $ENV{ZL_PATH} // $ARGV;
+  my $keep = $zlp =~ m{^(services/control-plane/internal/handlers/signals(_test)?\.go|apps/web/app/api/signals/route\.ts)$};
   s/x-lantern-signal-token/\x00KEEP\x00/g if $keep;
+  # the pre-rename VM cert marker, matched only to refuse (runtime-manager tls.rs)
+  my $keepou = $zlp eq "services/runtime-manager/src/tls.rs";
+  s/LEGACY_VM_CERT_OU: &str = "lantern-vm"/\x00KEEPOU\x00/g if $keepou;
   # 2-6. the rename
   s/X-Lantern-/X-Pal-/g;
   s/Lantern(?=[A-Za-z0-9])/Pal/g;
@@ -21,3 +25,4 @@
   s/lantern/pal/g;
   s/(?i:lantern)/pal/g;
   s/\x00KEEP\x00/x-lantern-signal-token/g if $keep;
+  s/\x00KEEPOU\x00/LEGACY_VM_CERT_OU: &str = "lantern-vm"/g if $keepou;

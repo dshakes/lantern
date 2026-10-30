@@ -161,14 +161,11 @@ impl ControlPlaneClient {
         if let Ok(val) = tenant_id.parse() {
             md.insert("tenant_id", val);
         }
-        // Sent under the PAL name and the pre-PAL name, so a control plane
-        // that has not upgraded still authenticates the call (ADR 0032).
         if !self.service_token.is_empty()
             && let Ok(val) = self
                 .service_token
                 .parse::<tonic::metadata::MetadataValue<_>>()
         {
-            md.insert("x-pal-service-token", val.clone());
             md.insert("x-pal-service-token", val);
         }
     }

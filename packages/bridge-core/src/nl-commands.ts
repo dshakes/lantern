@@ -83,7 +83,7 @@ export interface ParsedCommand {
 
 // "pal" is an everyday word ("hey pal, how are you"), so it needs punctuation
 // right after it; the legacy "pal" form keeps its looser match.
-const INVOCATION_PREFIX = /^(?:(?:hey\s+)?pal[,!:\s]+|(?:hey\s+)?pal[,!:]\s*)/i;
+const INVOCATION_PREFIX = /^(?:hey\s+)?pal[,!:]\s*/i;
 
 // Full-body anchored: the verb must BE the message (optionally + a recognized
 // scope/duration), never just appear inside a sentence. "pause and tell me how

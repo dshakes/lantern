@@ -4,9 +4,7 @@
 # its report it disarms itself so it only runs on the first login after arming.
 set -uo pipefail
 
-# Works on either side of the PAL cutover (ADR 0032): dev.pal.* once installed.
 LABEL_PREFIX=dev.pal LOG_DIR="$HOME/Library/Logs/PAL"
-if [ -e "$HOME/Library/LaunchAgents/dev.pal.api.plist" ]; then LABEL_PREFIX=dev.pal LOG_DIR="$HOME/Library/Logs/PAL"; fi
 
 REPORT="$LOG_DIR/post-reboot-check.log"
 mkdir -p "$(dirname "$REPORT")"

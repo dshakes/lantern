@@ -188,7 +188,7 @@ func (h *SessionHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		SystemHint string `json:"systemHint,omitempty"`
 		// TurnHint is an optional complexity hint that overrides the server-side
 		// classifier (G1). Valid values: "trivial", "hard". Passed as the
-		// X-Pal-Turn-Hint (or legacy X-Pal-Turn-Hint) header or inline in the JSON body. Ignored when
+		// X-Pal-Turn-Hint header or inline in the JSON body. Ignored when
 		// PAL_COMPLEXITY_ROUTING is off.
 		TurnHint string `json:"turnHint,omitempty"`
 		// NoTools, when true, disables tool-catalog attachment for this
@@ -223,9 +223,9 @@ func (h *SessionHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "content is required"})
 		return
 	}
-	// X-Pal-Turn-Hint (or legacy X-Pal-Turn-Hint) header overrides the JSON field (so bridges that
+	// X-Pal-Turn-Hint header overrides the JSON field (so bridges that
 	// don't control the JSON body can still pass a hint).
-	if hdr := palOrLegacyHeader(r.Header, "Turn-Hint"); hdr != "" && body.TurnHint == "" {
+	if hdr := r.Header.Get("X-Pal-Turn-Hint"); hdr != "" && body.TurnHint == "" {
 		body.TurnHint = hdr
 	}
 

@@ -876,24 +876,14 @@ func palStepDone(cfg *palSetupConfig, client *internal.RESTClient, doc *palDoc, 
 // ---- --apply: write the setup into this Mac's bridge config ---------------------
 
 // palStateDir mirrors packages/bridge-core/src/state-dir.ts: PAL_STATE_DIR,
-// else ~/.pal when it exists, else the legacy directory older installs use.
+// else ~/.pal.
 func palStateDir() string {
-	if v := envFirst("PAL_STATE_DIR", legacyStateDirEnv); v != "" {
+	if v := envFirst("PAL_STATE_DIR"); v != "" {
 		return v
 	}
 	home, _ := os.UserHomeDir()
-	pal := filepath.Join(home, ".pal")
-	if st, err := os.Stat(pal); err == nil && st.IsDir() {
-		return pal
-	}
-	return filepath.Join(home, legacyStateDirName)
+	return filepath.Join(home, ".pal")
 }
-
-// Pre-rename compat (ADR 0032): older installs keep state here.
-const (
-	legacyStateDirEnv  = "PAL_STATE_DIR"
-	legacyStateDirName = ".pal"
-)
 
 func palApply(cfg *palSetupConfig, client *internal.RESTClient, doc *palDoc) error {
 	cfg.defaults()

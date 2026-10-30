@@ -7,7 +7,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/shakes/workspace/pal/scripts/introspect/run.sh</string>
+        <string>__REPO_ROOT__/scripts/introspect/run.sh</string>
     </array>
     <key>StartCalendarInterval</key>
     <array>

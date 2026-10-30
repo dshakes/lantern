@@ -16,25 +16,17 @@ import (
 // server.
 const ServiceTokenMetadataKey = "x-pal-service-token"
 
-// LegacyServiceTokenMetadataKey is the pre-PAL name of the same header (ADR
-// 0032). Accepted alongside the PAL name; callers send both.
-const LegacyServiceTokenMetadataKey = "x-pal-service-token"
-
-// ServiceTokenFromMetadata returns the first non-empty token under the PAL
-// name, then the legacy name. Exactly one value is ever compared.
+// ServiceTokenFromMetadata returns the service token from gRPC metadata.
 func ServiceTokenFromMetadata(md metadata.MD) string {
-	for _, k := range [...]string{ServiceTokenMetadataKey, LegacyServiceTokenMetadataKey} {
-		if v := md.Get(k); len(v) > 0 && v[0] != "" {
-			return v[0]
-		}
+	if v := md.Get(ServiceTokenMetadataKey); len(v) > 0 {
+		return v[0]
 	}
 	return ""
 }
 
-// OutgoingServiceTokenMetadata is the metadata a caller attaches: the token
-// under both names, so a peer that has not upgraded still authenticates it.
+// OutgoingServiceTokenMetadata is the metadata a caller attaches.
 func OutgoingServiceTokenMetadata(token string) map[string]string {
-	return map[string]string{ServiceTokenMetadataKey: token, LegacyServiceTokenMetadataKey: token}
+	return map[string]string{ServiceTokenMetadataKey: token}
 }
 
 // serviceTokenValid reports whether presented matches expected using a

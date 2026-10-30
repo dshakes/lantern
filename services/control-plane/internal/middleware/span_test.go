@@ -109,23 +109,16 @@ func TestEnrichSpan_NoopSpan(t *testing.T) {
 	EnrichSpan(context.Background(), "tnt", "usr", "run", "step") // must not panic
 }
 
-// ADR 0032: the legacy pal.* keys are dual-emitted for one release so
-// saved trace queries outside the repo keep matching.
-func TestEnrichSpan_DualEmitsLegacyKeys(t *testing.T) {
-	ctx, finish := startRecordedSpan(t)
-	EnrichSpan(ctx, "tnt", "usr", "run", "stp")
-	attrs := finish()
-	for key, want := range map[string]string{
-		AttrTenantID: "tnt", LegacyAttrTenantID: "tnt",
-		AttrUserID: "usr", LegacyAttrUserID: "usr",
-		AttrRunID: "run", LegacyAttrRunID: "run",
-		AttrStepID: "stp", LegacyAttrStepID: "stp",
+// The attribute keys are a stable contract for saved trace queries.
+func TestEnrichSpan_KeyNames(t *testing.T) {
+	for got, want := range map[string]string{
+		AttrTenantID: "pal.tenant_id",
+		AttrUserID:   "pal.user_id",
+		AttrRunID:    "pal.run_id",
+		AttrStepID:   "pal.step_id",
 	} {
-		if kv, ok := findAttr(attrs, key); !ok || kv.Value.AsString() != want {
-			t.Errorf("attribute %q: ok=%v", key, ok)
+		if got != want {
+			t.Errorf("attribute key drifted: %q, want %q", got, want)
 		}
-	}
-	if AttrTenantID != "pal.tenant_id" || LegacyAttrTenantID != "pal.tenant_id" {
-		t.Fatalf("attribute keys drifted: %q / %q", AttrTenantID, LegacyAttrTenantID)
 	}
 }

@@ -78,20 +78,16 @@ func TestServiceAuth_HealthCheckExempt(t *testing.T) {
 	}
 }
 
-// TestServiceAuth_LegacyAndPALNames (ADR 0032): the legacy header still
-// authenticates; a wrong PAL token is not rescued by a right legacy one.
-func TestServiceAuth_LegacyAndPALNames(t *testing.T) {
+// TestServiceAuth_Names: a matching token authenticates; a wrong one does not.
+func TestServiceAuth_Names(t *testing.T) {
 	interceptor := middleware.UnaryServiceAuthInterceptor(zap.NewNop(), "secret")
 	cases := []struct {
 		name string
 		md   map[string]string
 		ok   bool
 	}{
-		{"pal", map[string]string{middleware.ServiceTokenMetadataKey: "secret"}, true},
-		{"legacy", map[string]string{middleware.LegacyServiceTokenMetadataKey: "secret"}, true},
-		{"both", middleware.OutgoingServiceTokenMetadata("secret"), true},
-		{"legacy wrong", map[string]string{middleware.LegacyServiceTokenMetadataKey: "nope"}, false},
-		{"pal wrong legacy right", map[string]string{middleware.ServiceTokenMetadataKey: "nope", middleware.LegacyServiceTokenMetadataKey: "secret"}, false},
+		{"valid", middleware.OutgoingServiceTokenMetadata("secret"), true},
+		{"wrong", map[string]string{middleware.ServiceTokenMetadataKey: "nope"}, false},
 	}
 	for _, tc := range cases {
 		ctx := metadata.NewIncomingContext(context.Background(), metadata.New(tc.md))

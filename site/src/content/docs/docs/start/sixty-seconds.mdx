@@ -134,7 +134,7 @@ async with PalClient(base_url="http://localhost:8080") as client:
 </TabItem>
 <TabItem label="Go" icon="seti:go">
 ```go
-import pal "github.com/dshakes/pal/packages/sdk-go" // module path predates the rename
+import pal "github.com/dshakes/pal/packages/sdk-go"
 
 c := pal.New(pal.WithBaseURL("http://localhost:8080"))
 r, err := c.CreateRun(ctx, pal.RunOptions{AgentName: "my-agent", Input: map[string]string{"notes": "..."}})
