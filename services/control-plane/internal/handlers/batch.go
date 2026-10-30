@@ -49,6 +49,11 @@ const (
 	// batchResultsPageSize is the default / max page size for GET /results.
 	batchResultsPageSize = 100
 
+	// batchMaxConcurrency is the hard cap on caller-supplied concurrency.
+	// A caller sending concurrency=10000 would exhaust the DB connection pool;
+	// cap at 10× the default so the user can tune but cannot break the pool.
+	batchMaxConcurrency = batchDefaultConcurrency * 10
+
 	// batchRecoveryInterval is how often the batch recovery sweep runs.
 	batchRecoveryInterval = 30 * time.Second
 
@@ -56,6 +61,12 @@ const (
 	// "stuck". Newly-created batches (status='running') are normal; we only
 	// recover batches whose goroutines must have died in a crash.
 	batchRecoveryMinAge = 2 * time.Minute
+
+	// batchRecoveryForceAge is the age at which a batch with un-dispatched
+	// items (pending_count > 0) is force-finalized even though the dispatch
+	// goroutine may still be alive. A goroutine that has been running for
+	// this long without dispatching all items is almost certainly dead.
+	batchRecoveryForceAge = 20 * time.Minute
 
 	// batchRecoverySweepLimit caps how many stuck batches are processed per
 	// sweep to bound single-tick latency.
@@ -487,6 +498,9 @@ func (h *BatchHandler) dispatchBatch(batchID, tenantID string, body createBatchR
 	if concurrency <= 0 {
 		concurrency = batchDefaultConcurrency
 	}
+	if concurrency > batchMaxConcurrency {
+		concurrency = batchMaxConcurrency
+	}
 
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
@@ -734,7 +748,8 @@ func (h *BatchHandler) recoverStuckBatches(ctx context.Context, log *zap.Logger)
 	// does not expose cross-tenant data — it returns IDs that are then
 	// processed individually.
 	rows, err := h.srv.Pool.Query(ctx, `
-		SELECT id, tenant_id, COALESCE(callback_url, '')
+		SELECT id, tenant_id, COALESCE(callback_url, ''),
+		       EXTRACT(EPOCH FROM now() - created_at)::BIGINT AS age_secs
 		FROM batches
 		WHERE status = 'running' AND created_at < now() - $1::interval
 		LIMIT $2
@@ -747,14 +762,17 @@ func (h *BatchHandler) recoverStuckBatches(ctx context.Context, log *zap.Logger)
 
 	type stuckBatch struct {
 		id, tenantID, callbackURL string
+		age                       time.Duration
 	}
 	var stuck []stuckBatch
 	for rows.Next() {
 		var b stuckBatch
-		if err := rows.Scan(&b.id, &b.tenantID, &b.callbackURL); err != nil {
+		var ageSecs int64
+		if err := rows.Scan(&b.id, &b.tenantID, &b.callbackURL, &ageSecs); err != nil {
 			log.Warn("batch recovery: scan failed", zap.Error(err))
 			continue
 		}
+		b.age = time.Duration(ageSecs) * time.Second
 		stuck = append(stuck, b)
 	}
 	if err := rows.Err(); err != nil {
@@ -769,7 +787,7 @@ func (h *BatchHandler) recoverStuckBatches(ctx context.Context, log *zap.Logger)
 	log.Info("batch recovery: found stuck batches", zap.Int("count", len(stuck)))
 
 	for _, b := range stuck {
-		h.recoverOneBatch(ctx, b.id, b.tenantID, b.callbackURL, log)
+		h.recoverOneBatch(ctx, b.id, b.tenantID, b.callbackURL, b.age, log)
 	}
 }
 
@@ -781,7 +799,7 @@ func (h *BatchHandler) recoverStuckBatches(ctx context.Context, log *zap.Logger)
 // fired) will never have a corresponding run row. The gap between total_count
 // and actual dispatched runs is counted as failed items so the batch always
 // reaches a terminal status and reports consistent totals.
-func (h *BatchHandler) recoverOneBatch(ctx context.Context, batchID, tenantID, callbackURL string, log *zap.Logger) {
+func (h *BatchHandler) recoverOneBatch(ctx context.Context, batchID, tenantID, callbackURL string, age time.Duration, log *zap.Logger) {
 	log = log.With(zap.String("batch_id", batchID), zap.String("tenant_id", tenantID))
 
 	// Read total_count from the batch row so we know how many items were planned.
@@ -818,6 +836,31 @@ func (h *BatchHandler) recoverOneBatch(ctx context.Context, batchID, tenantID, c
 		log.Info("batch recovery: skipping — child runs still in progress",
 			zap.Int("pending_or_running", pendingOrRunning))
 		return
+	}
+
+	// Guard against premature finalization of a still-live large batch.
+	//
+	// The child-run count query above only sees runs that were DISPATCHED (i.e.,
+	// have a runs row). For a large batch, items not yet dispatched have no run
+	// row. If all currently-dispatched items happen to complete between dispatch
+	// cycles, pendingOrRunning becomes 0 even though the dispatch goroutine is
+	// still alive and more items remain.
+	//
+	// batches.pending_count is the authoritative in-flight counter maintained by
+	// dispatchBatch / spawnBatchRun. If it is non-zero and the batch is still
+	// young enough (< batchRecoveryForceAge), defer finalization to the next tick.
+	// After batchRecoveryForceAge we force-finalize regardless, to avoid a batch
+	// stuck forever because the counter was corrupted.
+	if age < batchRecoveryForceAge {
+		var dbPendingCount int
+		// rls-exempt: recovery worker; keyed by id.
+		if qErr := h.srv.Pool.QueryRow(ctx,
+			`SELECT pending_count FROM batches WHERE id = $1`, batchID,
+		).Scan(&dbPendingCount); qErr == nil && dbPendingCount > 0 {
+			log.Info("batch recovery: deferring — pending_count suggests live dispatch goroutine",
+				zap.Int("db_pending_count", dbPendingCount), zap.Duration("age", age))
+			return
+		}
 	}
 
 	// Account for items that were never dispatched: the batch goroutine died
