@@ -1,8 +1,8 @@
 # Demo 01: hello
 #
-# The smallest possible Lantern agent. Echoes the input back with a
+# The smallest possible PAL agent. Echoes the input back with a
 # timestamp. Picks the `trusted` isolation class because the code is
-# Lantern-authored — no untrusted package loading, no LLM-generated
+# PAL-authored — no untrusted package loading, no LLM-generated
 # code path. Cold start target: <1.5s on a K8s Job. Warm: <100ms.
 #
 # What this demo proves end-to-end:

@@ -2,6 +2,7 @@ mod auth;
 mod cache;
 mod config;
 mod error;
+mod metrics;
 mod otel;
 mod proto;
 mod provider;
@@ -101,6 +102,8 @@ async fn main() -> anyhow::Result<()> {
             "PAL_GRPC_SERVICE_TOKEN is unset: model-router accepts unauthenticated callers (dev only)"
         );
     }
+
+    metrics::serve_from_env().await;
 
     info!(listen_addr = %config.listen_addr, "gRPC server starting");
 

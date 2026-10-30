@@ -53,6 +53,7 @@ test("stageDownloadLink streams raw bytes + headers (no base64) and returns the 
   });
   assert.deepEqual(r, { url: "https://t/dl/tok", expiresAt: 123 });
   assert.equal(seen.url, "http://127.0.0.1:8080/internal/dl/stage");
+  assert.equal(seen.init.headers["x-pal-service-token"], "svc-tok");
   assert.equal(seen.init.headers["x-lantern-service-token"], "svc-tok");
   assert.equal(seen.init.headers["Content-Type"], "application/octet-stream");
   assert.equal(seen.init.headers["X-Filename"], "a.pdf");

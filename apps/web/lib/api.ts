@@ -1230,7 +1230,7 @@ Generate a thoughtful, well-structured agent with appropriate steps for the task
       messages: [
         {
           role: "system",
-          content: `You are the PAL code generator. Given an agent specification JSON, generate production-ready TypeScript agent code using the @lantern/sdk.
+          content: `You are the PAL code generator. Given an agent specification JSON, generate production-ready TypeScript agent code using the @pal-runtime/sdk.
 
 Output ONLY valid JSON with this exact structure (no markdown, no backticks):
 {
@@ -1239,7 +1239,7 @@ Output ONLY valid JSON with this exact structure (no markdown, no backticks):
 }
 
 The TypeScript code should:
-- Import from "@lantern/sdk"
+- Import from "@pal-runtime/sdk"
 - Use the Agent class with proper typing
 - Implement each step using the step() function for durability
 - Use ctx.llm.generate() for LLM calls (never call models directly)

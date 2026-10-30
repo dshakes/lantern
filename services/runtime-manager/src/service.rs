@@ -1743,7 +1743,10 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
             }
         }
 
-        let resp = self.schedule(Request::new(internal)).await?.into_inner();
+        let boot_start = std::time::Instant::now();
+        let scheduled = self.schedule(Request::new(internal)).await;
+        crate::metrics::observe_spawn(from_snapshot, scheduled.is_ok(), boot_start.elapsed());
+        let resp = scheduled?.into_inner();
 
         let cold_start_ms = resp.cold_start_ms;
         let boot_seconds = (cold_start_ms / 1000.0).floor() as i64;

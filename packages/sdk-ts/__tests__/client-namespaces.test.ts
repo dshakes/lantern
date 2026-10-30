@@ -1,4 +1,4 @@
-// Wire-contract tests for the parity namespaces added to LanternClient
+// Wire-contract tests for the parity namespaces added to PalClient
 // (sessions, connectors, budgets, evalSuites, evalRuns, evalBaselines,
 // experiments, marketplace, mcp, receipts, feedback, rehearsals,
 // runs.forecast). Field casing and paths are checked against the Go
@@ -7,7 +7,7 @@
 // client-wire-contract.test.ts.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { LanternClient } from "../src/client.js";
+import { PalClient } from "../src/client.js";
 
 const realFetch = globalThis.fetch;
 
@@ -33,12 +33,12 @@ function bodyOf(init: RequestInit): Record<string, unknown> {
   return init.body ? JSON.parse(init.body as string) : {};
 }
 
-describe("LanternClient namespaces (wire contract)", () => {
-  let client: LanternClient;
+describe("PalClient namespaces (wire contract)", () => {
+  let client: PalClient;
 
   beforeEach(() => {
     mockFetch();
-    client = new LanternClient({ apiKey: "k", baseUrl: "http://localhost:9" });
+    client = new PalClient({ apiKey: "k", baseUrl: "http://localhost:9" });
   });
 
   afterEach(() => {
@@ -48,7 +48,7 @@ describe("LanternClient namespaces (wire contract)", () => {
   // -- config -----------------------------------------------------------
 
   it("accepts baseURL (camelCase) as an alias for baseUrl", async () => {
-    const c = new LanternClient({ baseURL: "http://alt:1234" });
+    const c = new PalClient({ baseURL: "http://alt:1234" });
     await c.agents.get("x");
     const { url } = lastCall();
     expect(url).toBe("http://alt:1234/v1/agents/x");

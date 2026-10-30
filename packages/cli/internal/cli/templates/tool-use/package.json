@@ -3,6 +3,6 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@lantern/sdk": "^0.1.0"
+    "@pal-runtime/sdk": "^0.1.0"
   }
 }

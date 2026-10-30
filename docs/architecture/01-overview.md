@@ -245,7 +245,7 @@ We promise:
 - **Exactly-once** completion observation. The journal is the source of truth.
 - **Bounded staleness** of the dashboard: live runs are streamed; history is eventually consistent within ~1s.
 - **Crash safety**: any service can be killed at any moment. Replays will reconstruct state correctly.
-- **Multi-region durability** in the managed offering (post-spike); single-region in self-hosted (use your own DR).
+- **Multi-region durability** (opt-in): active-passive control plane per region — Postgres streaming replica, per-region Redis, S3 CRR for bundles/snapshots, DB-level fencing epochs against split-brain, read-only standby, data-plane multi-endpoint failover. Promotion is operator-driven ([ADR 0046](../adr/0046-multi-region-active-passive.md), [runbook](../runbooks/region-failover.md)); single-region remains the default.
 
 ## Security model (one paragraph; full doc in `10-security.md`)
 

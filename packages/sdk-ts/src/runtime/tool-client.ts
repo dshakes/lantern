@@ -13,7 +13,7 @@
 import type { ToolClient } from "../types.js";
 import type { Runtime } from "./runtime.js";
 import type { RequestMeta } from "./grpc-client.js";
-import { LanternToolError } from "./errors.js";
+import { PalToolError } from "./errors.js";
 import { traced } from "./tracing.js";
 
 // ---------------------------------------------------------------------------
@@ -96,14 +96,14 @@ export class RuntimeToolClient implements ToolClient {
    *
    * @param query - The search query string.
    * @returns An array of search results with title, URL, and snippet.
-   * @throws {LanternToolError} If the search fails.
+   * @throws {PalToolError} If the search fails.
    */
   private async invokeWebSearch(query: string): Promise<SearchResult[]> {
     return traced("tool.web.search", { query: query.slice(0, 100) }, async () => {
       const output = await this.invoke("lantern.web", { action: "search", query });
       const parsed = JSON.parse(output);
       if (!Array.isArray(parsed)) {
-        throw new LanternToolError("lantern.web", `Expected array of search results, got: ${typeof parsed}`);
+        throw new PalToolError("lantern.web", `Expected array of search results, got: ${typeof parsed}`);
       }
       return parsed as SearchResult[];
     });
@@ -114,7 +114,7 @@ export class RuntimeToolClient implements ToolClient {
    *
    * @param url - The URL to fetch.
    * @returns The response body as a string.
-   * @throws {LanternToolError} If the fetch fails.
+   * @throws {PalToolError} If the fetch fails.
    */
   private async invokeWebFetch(url: string): Promise<string> {
     return traced("tool.web.fetch", { url: url.slice(0, 200) }, async () => {
@@ -134,7 +134,7 @@ export class RuntimeToolClient implements ToolClient {
    *
    * @param code - Python source code to execute.
    * @returns Execution results.
-   * @throws {LanternToolError} If execution fails at the infrastructure level.
+   * @throws {PalToolError} If execution fails at the infrastructure level.
    */
   private async invokePythonExec(code: string): Promise<PythonResult> {
     return traced("tool.python.exec", {}, async () => {
@@ -156,7 +156,7 @@ export class RuntimeToolClient implements ToolClient {
    *
    * @param path - Relative path within the scratch workspace.
    * @returns The file content as a string.
-   * @throws {LanternToolError} If the file does not exist or cannot be read.
+   * @throws {PalToolError} If the file does not exist or cannot be read.
    */
   private async invokeFsRead(path: string): Promise<string> {
     return traced("tool.fs.read", { path }, async () => {
@@ -169,7 +169,7 @@ export class RuntimeToolClient implements ToolClient {
    *
    * @param path - Relative path within the scratch workspace.
    * @param content - The content to write.
-   * @throws {LanternToolError} If the write fails.
+   * @throws {PalToolError} If the write fails.
    */
   private async invokeFsWrite(path: string, content: string): Promise<void> {
     return traced("tool.fs.write", { path }, async () => {
@@ -185,12 +185,12 @@ export class RuntimeToolClient implements ToolClient {
    * @param toolName - The tool identifier (e.g. "lantern.web").
    * @param input - The tool input object.
    * @returns The raw output string from the sidecar.
-   * @throws {LanternToolError} If the tool invocation fails.
+   * @throws {PalToolError} If the tool invocation fails.
    */
   private async invoke(toolName: string, input: Record<string, unknown>): Promise<string> {
     const sidecar = this.runtime.sidecar;
     if (!sidecar) {
-      throw new LanternToolError(toolName, "Tool client requires a production runtime with sidecar");
+      throw new PalToolError(toolName, "Tool client requires a production runtime with sidecar");
     }
 
     const meta: RequestMeta = { ...this.runtime.meta };
@@ -203,8 +203,8 @@ export class RuntimeToolClient implements ToolClient {
       });
       return response.outputJson;
     } catch (err) {
-      if (err instanceof LanternToolError) throw err;
-      throw new LanternToolError(
+      if (err instanceof PalToolError) throw err;
+      throw new PalToolError(
         toolName,
         err instanceof Error ? err.message : String(err),
       );

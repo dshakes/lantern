@@ -23,6 +23,7 @@ func TestMetricsEndpoint(t *testing.T) {
 	m.ScheduleTotal.WithLabelValues("ok").Inc()
 	m.ScheduleErrorsTotal.Inc()
 	m.PlacementScore.Observe(3.5)
+	m.ScheduleDuration.WithLabelValues("ok").Observe(0.2)
 	m.ActiveVMs.Set(7)
 	m.Nodes.Set(2)
 	m.IsLeader.Set(1)
@@ -51,6 +52,7 @@ func TestMetricsEndpoint(t *testing.T) {
 		"lantern_scheduler_schedule_total",
 		"lantern_scheduler_schedule_errors_total",
 		"lantern_scheduler_placement_score",
+		"lantern_scheduler_schedule_duration_seconds",
 		"lantern_scheduler_active_vms",
 		"lantern_scheduler_nodes",
 		"lantern_scheduler_is_leader",

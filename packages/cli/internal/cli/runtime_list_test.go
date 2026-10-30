@@ -1,6 +1,6 @@
 package cli
 
-// runtime_list_test.go — regression tests for `lantern vm list`.
+// runtime_list_test.go — regression tests for `pal vm list`.
 //
 // The control-plane REST endpoint /v1/runtime/vms returns a BARE JSON array
 // with camelCase fields. `vm list` previously read res["items"] via apiDo

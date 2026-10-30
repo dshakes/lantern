@@ -5,7 +5,7 @@
 // what the owner wrote in "## My world" (Chantilly, VA /EST) because the
 // env was the only source and was wrong/unset. The profile is now
 // authoritative: parseProfile derives an IANA zone, and the store mirrors
-// it into LANTERN_OWNER_TIMEZONE when the operator didn't pin one.
+// it into PAL_OWNER_TIMEZONE when the operator didn't pin one.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -58,7 +58,7 @@ test("parseProfile: timezone derived from '## My world', not nativity origin", (
 // ── Store: mirrors into env when operator didn't pin one ──
 
 function writeProfile(body: string): string {
-  const dir = mkdtempSync(join(tmpdir(), "lantern-tz-"));
+  const dir = mkdtempSync(join(tmpdir(), "pal-tz-"));
   const path = join(dir, "owner-profile.md");
   writeFileSync(path, body);
   return path;
@@ -70,7 +70,7 @@ test("store.timezone() exposes the parsed zone", () => {
   assert.equal(store.timezone(), "America/New_York");
 });
 
-test("store mirrors profile timezone into LANTERN_OWNER_TIMEZONE when env unset", () => {
+test("store mirrors profile timezone into PAL_OWNER_TIMEZONE when env unset", () => {
   // NOTE: OWNER_TZ_ENV_EXPLICIT is captured at module import; this process
   // imported with the env unset, so the mirror path is active here.
   const before = process.env.PAL_OWNER_TIMEZONE;

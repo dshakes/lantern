@@ -12,14 +12,14 @@ describe("built ESM bundle", () => {
   it("imports from an ES module without throwing", () => {
     const root = resolve(__dirname, "..");
     execFileSync("npm", ["run", "build"], { cwd: root, stdio: "ignore" });
-    const dir = mkdtempSync(join(tmpdir(), "lantern-sdk-esm-"));
+    const dir = mkdtempSync(join(tmpdir(), "pal-sdk-esm-"));
     const probe = join(dir, "probe.mjs");
     const url = (f: string) => pathToFileURL(join(root, "dist", f)).href;
     writeFileSync(
       probe,
       `const m = await import(${JSON.stringify(url("index.js"))});\n` +
         `await import(${JSON.stringify(url("runner.js"))});\n` +
-        `console.log(typeof m.LanternClient);\n`,
+        `console.log(typeof m.PalClient);\n`,
     );
     expect(execFileSync(process.execPath, [probe], { encoding: "utf8" }).trim()).toBe("function");
   }, 120_000);

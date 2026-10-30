@@ -161,7 +161,8 @@ func findOrphanedRuns(ctx context.Context, pool *pgxpool.Pool) ([]orphanedRun, e
 		LEFT   JOIN agents a ON a.id = r.agent_id AND a.tenant_id = r.tenant_id
 		LEFT   JOIN run_locks rl ON rl.run_id = r.id
 		WHERE  r.status IN ('running', 'queued')
-		  AND  (rl.run_id IS NULL OR rl.expires_at < now())
+		  AND  (rl.run_id IS NULL OR rl.expires_at < now()
+		        OR rl.fence_epoch < pal_current_fence_epoch())
 		ORDER  BY r.created_at
 		LIMIT  $1
 	`, recoverySweepLimit)
@@ -194,6 +195,7 @@ func acquireRecoveryLock(ctx context.Context, pool *pgxpool.Pool, runID, workerI
 		      acquired_at = now(),
 		      expires_at  = now() + $3::interval
 		WHERE run_locks.expires_at < now()
+		   OR run_locks.fence_epoch < pal_current_fence_epoch()
 	`, runID, workerID, recoveryLockTTL.String())
 	if err != nil {
 		return false, fmt.Errorf("upsert run_lock: %w", err)

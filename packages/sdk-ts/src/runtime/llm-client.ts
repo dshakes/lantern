@@ -1,6 +1,6 @@
 /**
  * Production LLM client that routes all model calls through the
- * runtime sidecar to the Lantern model router.
+ * runtime sidecar to the PAL model router.
  *
  * The model router handles:
  * - Capability-to-model resolution (e.g. "reasoning-large" -> claude-opus)
@@ -29,7 +29,7 @@ import type {
   GrpcToolDef,
   RequestMeta,
 } from "./grpc-client.js";
-import { LanternLlmError, LanternLlmJsonError } from "./errors.js";
+import { PalLlmError, PalLlmJsonError } from "./errors.js";
 import { traced } from "./tracing.js";
 
 // ---------------------------------------------------------------------------
@@ -85,7 +85,7 @@ function buildMessages(opts: LlmOptions): GrpcMessage[] {
   if (opts.prompt) {
     return [{ role: "user", content: opts.prompt }];
   }
-  throw new LanternLlmError("Either 'prompt' or 'messages' must be provided");
+  throw new PalLlmError("Either 'prompt' or 'messages' must be provided");
 }
 
 /** Resolve the capability string, defaulting to "auto". */
@@ -123,12 +123,12 @@ export class RuntimeLlmClient implements LlmClient {
    *
    * @param opts - Completion options (prompt or messages, capability, etc.).
    * @returns The model's text response.
-   * @throws {LanternLlmError} If the model call fails.
+   * @throws {PalLlmError} If the model call fails.
    */
   async complete(opts: LlmOptions): Promise<string> {
     const sidecar = this.runtime.sidecar;
     if (!sidecar) {
-      throw new LanternLlmError("LLM client requires a production runtime with sidecar");
+      throw new PalLlmError("LLM client requires a production runtime with sidecar");
     }
 
     const meta: RequestMeta = { ...this.runtime.meta };
@@ -155,8 +155,8 @@ export class RuntimeLlmClient implements LlmClient {
         span.setAttribute("costUsd", res.costUsd);
         return res.text;
       } catch (err) {
-        if (err instanceof LanternLlmError) throw err;
-        throw new LanternLlmError(
+        if (err instanceof PalLlmError) throw err;
+        throw new PalLlmError(
           err instanceof Error ? err.message : String(err),
           undefined,
           true,
@@ -199,13 +199,13 @@ export class RuntimeLlmClient implements LlmClient {
    *
    * @param opts - Completion options including a Zod schema.
    * @returns The parsed and validated response object.
-   * @throws {LanternLlmJsonError} If validation fails after all retries.
-   * @throws {LanternLlmError} If the model call itself fails.
+   * @throws {PalLlmJsonError} If validation fails after all retries.
+   * @throws {PalLlmError} If the model call itself fails.
    */
   async json<T>(opts: LlmJsonOptions<T>): Promise<T> {
     const sidecar = this.runtime.sidecar;
     if (!sidecar) {
-      throw new LanternLlmError("LLM client requires a production runtime with sidecar");
+      throw new PalLlmError("LLM client requires a production runtime with sidecar");
     }
 
     const meta: RequestMeta = { ...this.runtime.meta };
@@ -238,8 +238,8 @@ export class RuntimeLlmClient implements LlmClient {
           span.setAttribute("tokensIn", res.tokensIn);
           span.setAttribute("tokensOut", res.tokensOut);
         } catch (err) {
-          if (err instanceof LanternLlmError) throw err;
-          throw new LanternLlmError(
+          if (err instanceof PalLlmError) throw err;
+          throw new PalLlmError(
             err instanceof Error ? err.message : String(err),
             undefined,
             true,
@@ -289,7 +289,7 @@ export class RuntimeLlmClient implements LlmClient {
       }
 
       // All retries exhausted
-      throw new LanternLlmJsonError(lastRaw, lastValidationErrors);
+      throw new PalLlmJsonError(lastRaw, lastValidationErrors);
     });
   }
 
@@ -303,12 +303,12 @@ export class RuntimeLlmClient implements LlmClient {
    *
    * @param opts - Completion options.
    * @yields Text delta strings.
-   * @throws {LanternLlmError} If the stream fails.
+   * @throws {PalLlmError} If the stream fails.
    */
   async *stream(opts: LlmStreamOptions): AsyncIterable<string> {
     const sidecar = this.runtime.sidecar;
     if (!sidecar) {
-      throw new LanternLlmError("LLM client requires a production runtime with sidecar");
+      throw new PalLlmError("LLM client requires a production runtime with sidecar");
     }
 
     const meta: RequestMeta = { ...this.runtime.meta };
@@ -336,8 +336,8 @@ export class RuntimeLlmClient implements LlmClient {
         }
       }
     } catch (err) {
-      if (err instanceof LanternLlmError) throw err;
-      throw new LanternLlmError(
+      if (err instanceof PalLlmError) throw err;
+      throw new PalLlmError(
         err instanceof Error ? err.message : String(err),
         undefined,
         true,
@@ -351,12 +351,12 @@ export class RuntimeLlmClient implements LlmClient {
    * @param texts - The texts to embed.
    * @param capability - Embedding capability (defaults to "embed-large").
    * @returns A 2D array of vectors, one per input text.
-   * @throws {LanternLlmError} If the embedding call fails.
+   * @throws {PalLlmError} If the embedding call fails.
    */
   async embed(texts: string[], capability?: Capability): Promise<number[][]> {
     const sidecar = this.runtime.sidecar;
     if (!sidecar) {
-      throw new LanternLlmError("LLM client requires a production runtime with sidecar");
+      throw new PalLlmError("LLM client requires a production runtime with sidecar");
     }
 
     const meta: RequestMeta = { ...this.runtime.meta };
@@ -369,8 +369,8 @@ export class RuntimeLlmClient implements LlmClient {
         span.setAttribute("tokensIn", res.tokensIn);
         return res.vectors;
       } catch (err) {
-        if (err instanceof LanternLlmError) throw err;
-        throw new LanternLlmError(
+        if (err instanceof PalLlmError) throw err;
+        throw new PalLlmError(
           err instanceof Error ? err.message : String(err),
           undefined,
           true,

@@ -1,6 +1,6 @@
 package cli
 
-// `lantern test` runs an agent's eval suite locally and posts results to the
+// `pal test` runs an agent's eval suite locally and posts results to the
 // control plane, which compares them against the branch baseline and returns
 // a regression flag. CI uses `--against=last-green` to fail the build if the
 // score drops.
@@ -83,16 +83,16 @@ exits with a non-zero status so CI can fail the build.
 catching regressions on the exact inputs that broke it in production.
 
 Example:
-  lantern test --agent=email-triage --suite=core
-  lantern test --agent=email-triage --suite=core --against=last-green
-  lantern test --agent=email-triage --suite=core --set-baseline
-  lantern test --agent=email-triage --rehearse --window=7d
+  pal test --agent=email-triage --suite=core
+  pal test --agent=email-triage --suite=core --against=last-green
+  pal test --agent=email-triage --suite=core --set-baseline
+  pal test --agent=email-triage --rehearse --window=7d
 `,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			base := deriveRESTURL(flags.apiURL)
 			token := resolveToken()
 			if token == "" {
-				return fmt.Errorf("not authenticated — run `lantern login` or set LANTERN_API_KEY")
+				return fmt.Errorf("not authenticated — run `pal login` or set PAL_API_KEY")
 			}
 			if rehearse {
 				if agent == "" {

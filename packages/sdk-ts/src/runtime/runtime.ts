@@ -1,7 +1,7 @@
 /**
  * Runtime detection and initialization.
  *
- * Detects whether the SDK is running inside a Lantern sandbox (Firecracker
+ * Detects whether the SDK is running inside a PAL sandbox (Firecracker
  * microVM) or in local dev mode, and initializes the appropriate runtime
  * implementation.
  */
@@ -12,7 +12,7 @@ import {
   type RequestMeta,
   type RunInfoResponse,
 } from "./grpc-client.js";
-import { LanternError } from "./errors.js";
+import { PalError } from "./errors.js";
 import { palEnv } from "../env.js";
 
 // ---------------------------------------------------------------------------
@@ -115,7 +115,7 @@ async function createProductionRuntime(): Promise<Runtime> {
   // The run ID is injected by the runtime manager as an env var.
   const runId = palEnv("RUN_ID");
   if (!runId) {
-    throw new LanternError(
+    throw new PalError(
       "RUNTIME_INIT",
       "LANTERN_RUN_ID environment variable is not set. Cannot initialize production runtime.",
     );
@@ -129,7 +129,7 @@ async function createProductionRuntime(): Promise<Runtime> {
   try {
     info = await sidecar.getRunInfo(meta);
   } catch (err) {
-    throw new LanternError(
+    throw new PalError(
       "RUNTIME_INIT",
       `Failed to get run info from sidecar at ${sidecarAddr}: ${err instanceof Error ? err.message : String(err)}`,
     );
@@ -151,7 +151,7 @@ async function createProductionRuntime(): Promise<Runtime> {
   // Set up cancellation: listen for SIGTERM from the runtime manager.
   const abortController = new AbortController();
   const onSignal = () => {
-    abortController.abort(new LanternError("CANCELLED", "Run cancelled by runtime (SIGTERM)"));
+    abortController.abort(new PalError("CANCELLED", "Run cancelled by runtime (SIGTERM)"));
   };
   process.on("SIGTERM", onSignal);
 
@@ -190,7 +190,7 @@ async function createProductionRuntime(): Promise<Runtime> {
 }
 
 // ---------------------------------------------------------------------------
-// LanternRuntime — public API
+// PalRuntime — public API
 // ---------------------------------------------------------------------------
 
 /**
@@ -198,15 +198,15 @@ async function createProductionRuntime(): Promise<Runtime> {
  *
  * @example
  * ```ts
- * if (LanternRuntime.isProduction()) {
- *   const runtime = await LanternRuntime.initialize();
+ * if (PalRuntime.isProduction()) {
+ *   const runtime = await PalRuntime.initialize();
  *   // runtime.sidecar is available
  * }
  * ```
  */
-export class LanternRuntime {
+export class PalRuntime {
   /**
-   * Returns `true` when running inside a Lantern sandbox.
+   * Returns `true` when running inside a PAL sandbox.
    * Checks the `LANTERN_RUNTIME` environment variable.
    */
   static isProduction(): boolean {
@@ -223,7 +223,7 @@ export class LanternRuntime {
    * @param overrides - Partial run info for dev mode (ignored in production).
    */
   static async initialize(overrides?: Partial<RunInfo>): Promise<Runtime> {
-    if (LanternRuntime.isProduction()) {
+    if (PalRuntime.isProduction()) {
       return createProductionRuntime();
     }
     return createDevRuntime(overrides);

@@ -1,155 +1,30 @@
-"""Lantern Python SDK — build production AI agents with durable execution.
+"""Deprecated shim: the ``lantern`` package is now ``pal`` (ADR 0032)."""
 
-Quick start::
+import importlib
+import importlib.abc
+import importlib.util
+import sys
+import warnings
 
-    from lantern import agent, step
+from pal import *  # noqa: F403
+from pal import __all__  # noqa: F401
 
-    @agent("hello-world", model="auto")
-    async def hello(input: dict, ctx):
-        greeting = await step("greet", lambda: ctx.llm.complete(
-            prompt=f"Say hello to {input['name']}",
-            capability="chat-small",
-        ))
-        return {"greeting": greeting}
-"""
+warnings.warn("the `lantern` package is now `pal`; import from `pal`", DeprecationWarning, stacklevel=2)
 
-from lantern.agent import LanternAgent, agent, get_agent, list_agents
-from lantern.client import LanternClient
-from lantern.errors import (
-    LanternApiError,
-    LanternError,
-    LanternLlmError,
-    LanternStepError,
-    LanternTimeoutError,
-    LanternValidationError,
-)
-from lantern.step import step, step_map, step_race, step_signal, step_sleep
-from lantern.tools import tool
-from lantern.types import (
-    AgentConfig,
-    AgentContext,
-    AgentInfo,
-    ApprovalRequest,
-    AskOptions,
-    BuiltContext,
-    Capability,
-    CompactionConfig,
-    ConnectorAction,
-    ConnectorInfo,
-    ConnectorResult,
-    ContextBudget,
-    ContextBuildOpts,
-    ContextConfig,
-    GuardrailConfig,
-    IsolationClass,
-    IsolationConfig,
-    LlmClient,
-    LlmJsonOptions,
-    LlmOptions,
-    LlmStreamOptions,
-    MemoryClient,
-    MemoryConfig,
-    MemoryEntry,
-    MemoryTier,
-    Message,
-    MessageRole,
-    NotifyOptions,
-    OptimizeTarget,
-    OptimizeWeights,
-    PrivacyLevel,
-    RecallConfig,
-    ResourceLimits,
-    RetryPolicy,
-    RouteStrategy,
-    Run,
-    RunError,
-    RunStatus,
-    Session,
-    SessionConfig,
-    SessionMessage,
-    StepOptions,
-    StreamEvent,
-    StreamEventKind,
-    ToolCallMessage,
-    ToolClient,
-    ToolDef,
-    TriggerKind,
-)
 
-__version__ = "0.1.0"
+class _AliasFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+    """Map ``lantern.<sub>`` to the real ``pal.<sub>`` module object (no double import)."""
 
-__all__ = [
-    # Agent definition
-    "agent",
-    "LanternAgent",
-    "get_agent",
-    "list_agents",
-    # Step primitives
-    "step",
-    "step_map",
-    "step_race",
-    "step_sleep",
-    "step_signal",
-    # Client
-    "LanternClient",
-    # Tools
-    "tool",
-    # Errors
-    "LanternError",
-    "LanternApiError",
-    "LanternStepError",
-    "LanternLlmError",
-    "LanternTimeoutError",
-    "LanternValidationError",
-    # Types — enums
-    "Capability",
-    "OptimizeTarget",
-    "RunStatus",
-    "TriggerKind",
-    "IsolationClass",
-    "MemoryTier",
-    "StreamEventKind",
-    "MessageRole",
-    "PrivacyLevel",
-    "RouteStrategy",
-    # Types — models
-    "AgentConfig",
-    "AgentContext",
-    "AgentInfo",
-    "Message",
-    "ToolCallMessage",
-    "ToolDef",
-    "RetryPolicy",
-    "StepOptions",
-    "MemoryConfig",
-    "ResourceLimits",
-    "IsolationConfig",
-    "RunError",
-    "Run",
-    "StreamEvent",
-    "MemoryEntry",
-    "ApprovalRequest",
-    "AskOptions",
-    "NotifyOptions",
-    "OptimizeWeights",
-    "ContextBudget",
-    "CompactionConfig",
-    "RecallConfig",
-    "ContextConfig",
-    "ContextBuildOpts",
-    "BuiltContext",
-    "LlmOptions",
-    "LlmJsonOptions",
-    "LlmStreamOptions",
-    "SessionConfig",
-    "GuardrailConfig",
-    "Session",
-    "SessionMessage",
-    "ConnectorAction",
-    "ConnectorInfo",
-    "ConnectorResult",
-    # Types — clients/interfaces
-    "LlmClient",
-    "ToolClient",
-    "MemoryClient",
-]
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.startswith("lantern."):
+            return importlib.util.spec_from_loader(fullname, self)
+        return None
+
+    def create_module(self, spec):
+        return importlib.import_module("pal" + spec.name[len("lantern") :])
+
+    def exec_module(self, module):
+        pass
+
+
+sys.meta_path.insert(0, _AliasFinder())

@@ -92,7 +92,7 @@ fi
 log "[6/8] nl-commands parser"
 cd "$(dirname "$0")/.." 2>/dev/null
 PARSE_OUT=$(cd services/imessage-bridge 2>/dev/null && npx tsx -e '
-import { parseNLCommand } from "@lantern/bridge-core/nl-commands";
+import { parseNLCommand } from "@pal/bridge-core/nl-commands";
 const tests = [
   ["pause", "mute"],
   ["status", "status"],

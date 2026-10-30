@@ -28,7 +28,7 @@ import (
 
 const (
 	egdStaging = "e2e-analyst"    // eval runs here (created through e2ekit: budget + cheap model)
-	egdProd    = "e2e-quickstart" // `lantern deploy` creates this one; eval.sh never runs it
+	egdProd    = "e2e-quickstart" // `pal deploy` creates this one; eval.sh never runs it
 )
 
 // egdScript runs one of the example's scripts and returns its exit code and output.
@@ -79,12 +79,12 @@ func TestEvalGatedDeploy(t *testing.T) {
 	s := connect(t)
 	tmp := t.TempDir()
 
-	// The real CLI: `lantern deploy` is what the sample workflow calls.
-	cli := filepath.Join(tmp, "lantern")
-	build := exec.Command("go", "build", "-o", cli, "./cmd/lantern")
+	// The real CLI: `pal deploy` is what the sample workflow calls.
+	cli := filepath.Join(tmp, "pal")
+	build := exec.Command("go", "build", "-o", cli, "./cmd/pal")
 	build.Dir = filepath.Join("..", "..", "packages", "cli")
 	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build lantern CLI: %v\n%s", err, out)
+		t.Fatalf("build pal CLI: %v\n%s", err, out)
 	}
 
 	s.kit.CreateAgent(t, egdStaging, map[string]any{"description": "e2e eval staging", "systemPrompt": "placeholder"})
@@ -92,9 +92,9 @@ func TestEvalGatedDeploy(t *testing.T) {
 
 	branch := uniq("e2e-main") // baselines are per (agent, branch): never touch another run's
 	env := []string{
-		"LANTERN_API_URL=" + strings.TrimRight(cmp.Or(os.Getenv("PAL_E2E_API_URL"), os.Getenv("LANTERN_E2E_API_URL")), "/"),
-		"LANTERN_API_KEY=" + s.token(t),
-		"LANTERN=" + cli,
+		"PAL_API_URL=" + strings.TrimRight(cmp.Or(os.Getenv("PAL_E2E_API_URL"), os.Getenv("LANTERN_E2E_API_URL")), "/"),
+		"PAL_API_KEY=" + s.token(t),
+		"PAL_CLI=" + cli,
 		"STAGING_AGENT=" + egdStaging,
 		"EVAL_BRANCH=" + branch,
 		"EVAL_RESULT=" + filepath.Join(tmp, "eval-result.json"),

@@ -35,6 +35,11 @@ type Registry struct {
 	// for simple alerting.
 	ScheduleErrorsTotal prometheus.Counter
 
+	// ScheduleDuration is the Schedule RPC latency (placement; the spawn
+	// dispatch is async) by result ("ok" | "error"). Backs the
+	// scheduling-latency SLO (ADR 0041); leader-only, standby rejections excluded.
+	ScheduleDuration *prometheus.HistogramVec
+
 	// PlacementScore records the score assigned to the winning node on each
 	// successful placement.
 	PlacementScore prometheus.Histogram
@@ -70,6 +75,13 @@ func New() *Registry {
 		Help: "Total Schedule RPCs that returned an error.",
 	})
 	reg.MustRegister(m.ScheduleErrorsTotal)
+
+	m.ScheduleDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "lantern_scheduler_schedule_duration_seconds",
+		Help:    "Schedule RPC latency (placement; spawn dispatch is async), partitioned by result (ok|error).",
+		Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
+	}, []string{"result"})
+	reg.MustRegister(m.ScheduleDuration)
 
 	m.PlacementScore = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    metricPrefix + "placement_score",

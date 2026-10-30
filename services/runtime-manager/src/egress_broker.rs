@@ -1120,6 +1120,7 @@ impl Broker {
     }
 
     fn audit_decision(&self, host: &str, port: u16, decision: Result<(), &str>, tls: &str) {
+        crate::metrics::egress_decision(decision.err());
         let mut attrs = HashMap::from([
             ("host".to_string(), host.to_string()),
             ("port".to_string(), port.to_string()),
@@ -1150,6 +1151,7 @@ impl Broker {
     }
 
     fn audit_inject_deny(&self, host: &str, method: &str, reason: &str) {
+        crate::metrics::egress_decision(Some(reason));
         self.emit(
             "egress_inject",
             HashMap::from([
