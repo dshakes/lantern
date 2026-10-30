@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bufio"
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"net/http"
@@ -11,8 +12,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
+	"github.com/dshakes/lantern/services/control-plane/internal/db"
+	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
 
@@ -25,10 +30,19 @@ import (
 // apps/web/app/api/signals/route.ts writes the SAME contract on :3001 — this
 // handler exists so the write path is reachable over the tunnel.
 //
-// This is a single-owner PERSONAL endpoint: it is NOT JWT/tenant-scoped. It is
-// gated by a shared secret (LANTERN_SIGNAL_TOKEN), exactly like the bridge
-// heartbeat shared-token pattern in surfaces.go, and fails closed when the env
-// var is unset.
+// Two auth modes (ADR 0047):
+//
+//   - TENANT (the GA path): `Authorization: Bearer <bridge token>` from a paired
+//     device (scope bridge:signals:write / :read), or a user JWT / scoped API
+//     key. Signals are stored per tenant in device_signals under RLS.
+//   - LEGACY single-owner (the pre-tenancy install): the shared secret
+//     PAL_SIGNAL_TOKEN in x-lantern-signal-token (or x-pal-signal-token), with
+//     NO Authorization header. Behaviour is byte-identical to before — the line
+//     is appended to the device-signals file the live bridge reads — and the
+//     signal is additionally mirrored, best-effort, into device_signals for the
+//     legacy owner tenant (PAL_SIGNALS_LEGACY_OWNER_TENANT, default the dev
+//     tenant; "off" disables the legacy path entirely). Fails closed when
+//     PAL_SIGNAL_TOKEN is unset.
 //
 // Supported signal kinds (bridge reads all of these):
 //
@@ -43,12 +57,158 @@ import (
 //	{kind:"sleep",                                  ts}
 //	{kind:"screenshot",                             ts}
 type SignalHandler struct {
-	srv *server.Server
+	srv  *server.Server
+	auth *AuthHandler
 }
 
-// NewSignalHandler creates a new SignalHandler.
-func NewSignalHandler(srv *server.Server) *SignalHandler {
-	return &SignalHandler{srv: srv}
+// NewSignalHandler creates a new SignalHandler. auth may be nil, in which case
+// only the legacy shared-token path is served (tenant credentials get 401).
+func NewSignalHandler(srv *server.Server, auth *AuthHandler) *SignalHandler {
+	return &SignalHandler{srv: srv, auth: auth}
+}
+
+// legacyOwnerDefaultTenant is the pre-tenancy single-owner install's tenant.
+const legacyOwnerDefaultTenant = "00000000-0000-0000-0000-000000000001"
+
+// legacyOwnerTenant returns the tenant the legacy shared-token path writes for,
+// or "" when the operator disabled the legacy path (multi-tenant deployments
+// set PAL_SIGNALS_LEGACY_OWNER_TENANT=off so a shared secret can never write
+// into some tenant's data).
+func legacyOwnerTenant() string {
+	v := strings.TrimSpace(os.Getenv("PAL_SIGNALS_LEGACY_OWNER_TENANT"))
+	switch strings.ToLower(v) {
+	case "":
+		return legacyOwnerDefaultTenant
+	case "off", "none", "disabled", "0", "false":
+		return ""
+	}
+	if _, err := uuid.Parse(v); err != nil {
+		return "" // a malformed tenant id fails closed
+	}
+	return v
+}
+
+// signalCaller is the resolved principal for one signals request.
+type signalCaller struct {
+	tenantID string
+	bridgeID *string
+	source   string // bridge | user | legacy
+}
+
+// signalRetention bounds how long tenant signals are kept (app-context PII).
+func signalRetention() time.Duration {
+	if n, err := strconv.Atoi(os.Getenv("PAL_SIGNALS_RETENTION_DAYS")); err == nil && n > 0 {
+		return time.Duration(n) * 24 * time.Hour
+	}
+	return 30 * 24 * time.Hour
+}
+
+// resolveCaller authenticates the request. A request carrying an Authorization
+// header is ALWAYS judged on that credential (it never falls back to the
+// shared secret). Without one, the legacy shared-token path applies. On
+// failure it has already written the response and returns ok=false.
+func (h *SignalHandler) resolveCaller(w http.ResponseWriter, r *http.Request, write bool) (signalCaller, bool) {
+	if r.Header.Get("Authorization") == "" {
+		if !h.authorize(w, r) {
+			return signalCaller{}, false
+		}
+		tid := legacyOwnerTenant()
+		if tid == "" {
+			h.logger().Warn("signal rejected (401)", zap.String("reason", "legacy shared-token path disabled (PAL_SIGNALS_LEGACY_OWNER_TENANT)"))
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return signalCaller{}, false
+		}
+		return signalCaller{tenantID: tid, source: "legacy"}, true
+	}
+
+	raw := bearerToken(r)
+	if strings.HasPrefix(raw, bridgeTokenPrefix) {
+		id, err := authenticateBridge(r.Context(), h.srv, raw)
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return signalCaller{}, false
+		}
+		need := ScopeBridgeSignalsRead
+		if write {
+			need = ScopeBridgeSignalsWrite
+		}
+		if !id.has(need) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "missing required scope: " + need})
+			return signalCaller{}, false
+		}
+		middleware.EnrichSpan(r.Context(), id.TenantID, "", "", "")
+		return signalCaller{tenantID: id.TenantID, bridgeID: &id.BridgeID, source: "bridge"}, true
+	}
+
+	if h.auth == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return signalCaller{}, false
+	}
+	claims, err := h.auth.validateRequest(r)
+	if err != nil || claims.TenantID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return signalCaller{}, false
+	}
+	need := ScopeRead
+	if write {
+		need = ScopeWrite
+	}
+	// Enforced unconditionally (new surface; not behind the staging flag).
+	if claims.Role == kioskRole || !HasScope(claims, need) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "missing required scope: " + need})
+		return signalCaller{}, false
+	}
+	middleware.EnrichSpan(r.Context(), claims.TenantID, claims.Subject, "", "")
+	return signalCaller{tenantID: claims.TenantID, source: "user"}, true
+}
+
+// insertTenantSignal stores one signal for the caller's tenant under RLS and
+// prunes that tenant's rows past the retention window in the same tx.
+func (h *SignalHandler) insertTenantSignal(ctx context.Context, c signalCaller, e signalEntry) error {
+	cutoff := time.Now().Add(-signalRetention())
+	return db.WithTenantConn(ctx, h.srv.TenantPool(), c.tenantID, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO device_signals (tenant_id, bridge_id, source, kind, app, detail, metric, value, ts)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		`, c.tenantID, c.bridgeID, c.source, e.Kind, e.App, e.Detail, e.Metric, e.Value, e.TS); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `DELETE FROM device_signals WHERE tenant_id = $1 AND created_at < $2`, c.tenantID, cutoff)
+		return err
+	})
+}
+
+// listTenantSignals returns the tenant's newest `limit` signals, oldest first
+// (the same order the legacy file tail returns).
+func (h *SignalHandler) listTenantSignals(ctx context.Context, tenantID string, limit int) ([]signalEntry, error) {
+	out := make([]signalEntry, 0, limit)
+	err := db.WithTenantConn(ctx, h.srv.TenantPool(), tenantID, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT app, kind, detail, metric, value, ts FROM device_signals
+			WHERE tenant_id = $1
+			ORDER BY ts DESC, id DESC
+			LIMIT $2
+		`, tenantID, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var e signalEntry
+			if err := rows.Scan(&e.App, &e.Kind, &e.Detail, &e.Metric, &e.Value, &e.TS); err != nil {
+				return err
+			}
+			out = append(out, e)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out, nil
 }
 
 func (h *SignalHandler) logger() *zap.Logger {
@@ -85,6 +245,9 @@ const (
 func (h *SignalHandler) authorize(w http.ResponseWriter, r *http.Request) bool {
 	expected := os.Getenv("PAL_SIGNAL_TOKEN")
 	provided := r.Header.Get("x-lantern-signal-token")
+	if provided == "" {
+		provided = r.Header.Get("x-pal-signal-token")
+	}
 	if expected == "" || provided == "" ||
 		subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {
 		// Log the rejection (never the token) — a silent 401 is undebuggable.
@@ -125,7 +288,8 @@ func signalsFilePath() (dir, path string, err error) {
 //   - detail clamped to signalMaxDetailLen; app to signalMaxAppLen; metric to signalMaxMetricLen.
 //   - ts defaults to now (milliseconds) when zero or absent.
 func (h *SignalHandler) IngestSignal(w http.ResponseWriter, r *http.Request) {
-	if !h.authorize(w, r) {
+	caller, ok := h.resolveCaller(w, r, true)
+	if !ok {
 		return
 	}
 
@@ -197,18 +361,39 @@ func (h *SignalHandler) IngestSignal(w http.ResponseWriter, r *http.Request) {
 		Value:  value,
 		TS:     ts,
 	}
-	if err := appendSignal(entry); err != nil {
-		h.logger().Error("append signal failed", zap.Error(err))
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to record signal"})
+	if caller.source == "legacy" {
+		// Legacy single-owner path: the file write is the contract the live
+		// bridge reads, so it is authoritative and its outcome is the response.
+		if err := appendSignal(entry); err != nil {
+			h.logger().Error("append signal failed", zap.Error(err))
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to record signal"})
+			return
+		}
+		// Upgrade path: mirror into the tenant store, best-effort — a DB
+		// problem must never fail (or slow) the owner's Shortcut.
+		if h.srv.Pool != nil {
+			mctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+			if err := h.insertTenantSignal(mctx, caller, entry); err != nil {
+				h.logger().Warn("legacy signal mirror to tenant store failed", zap.Error(err))
+			}
+			cancel()
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 		return
 	}
 
+	if err := h.insertTenantSignal(r.Context(), caller, entry); err != nil {
+		h.logger().Error("insert tenant signal failed", zap.Error(err), zap.String("tenant_id", caller.tenantID))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to record signal"})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // ListSignals handles GET /v1/signals?limit=N.
 func (h *SignalHandler) ListSignals(w http.ResponseWriter, r *http.Request) {
-	if !h.authorize(w, r) {
+	caller, ok := h.resolveCaller(w, r, false)
+	if !ok {
 		return
 	}
 
@@ -220,6 +405,17 @@ func (h *SignalHandler) ListSignals(w http.ResponseWriter, r *http.Request) {
 	}
 	if limit > 500 {
 		limit = 500
+	}
+
+	if caller.source != "legacy" {
+		entries, err := h.listTenantSignals(r.Context(), caller.tenantID, limit)
+		if err != nil {
+			h.logger().Error("list tenant signals failed", zap.Error(err), zap.String("tenant_id", caller.tenantID))
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to read signals"})
+			return
+		}
+		writeJSON(w, http.StatusOK, entries)
+		return
 	}
 
 	entries, err := readSignals()

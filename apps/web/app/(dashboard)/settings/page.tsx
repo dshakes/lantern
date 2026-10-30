@@ -17,6 +17,7 @@ import {
   ArrowUpRight,
   ToggleLeft,
   ToggleRight,
+  Laptop,
 } from "lucide-react";
 import clsx from "clsx";
 // Mock data imports removed — settings start with empty state when API is available
@@ -29,6 +30,7 @@ import type { FleetUsage } from "@/lib/api";
 import { useToast } from "@/components/settings/toast";
 import { PageHeader } from "@/components/page-header";
 import { DangerZone } from "./danger-zone";
+import { DevicesTab } from "./devices";
 import { Tabs } from "@/components/tabs";
 import { Button } from "@/components/button";
 
@@ -82,6 +84,7 @@ const TABS = [
   { id: "api-keys", label: "API Keys", icon: Key },
   { id: "providers", label: "LLM Providers", icon: Cpu },
   { id: "team", label: "Team", icon: Users },
+  { id: "devices", label: "Devices", icon: Laptop },
   { id: "billing", label: "Billing", icon: CreditCard },
 ] as const;
 
@@ -143,6 +146,12 @@ export default function SettingsPage() {
   const [removeTarget, setRemoveTarget] = useState<StoredMember | null>(null);
   const [billing, setBilling] = useState<BillingSettings>(defaultBilling);
   const [fleetUsage, setFleetUsage] = useState<FleetUsage | null>(null);
+
+  // Deep link: /settings?tab=devices opens that tab.
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get("tab");
+    if (t && TABS.some((x) => x.id === t)) setActiveTab(t as TabId);
+  }, []);
 
   // Load from real API with localStorage fallback
   useEffect(() => {
@@ -334,7 +343,7 @@ export default function SettingsPage() {
           every other page (Agents, Inbox, Connectors). */}
       <PageHeader
         title="Settings"
-        description="API keys, model providers, team access, and billing for this workspace."
+        description="API keys, model providers, team access, devices, and billing for this workspace."
       />
 
       {/* Tab strip — sits as its own bordered band right below the header,
@@ -359,6 +368,7 @@ export default function SettingsPage() {
           {activeTab === "api-keys" && <ApiKeysTab keys={keys} copiedKeyId={copiedKeyId} onCreateClick={() => setShowCreateKey(true)} onCopyPrefix={handleCopyPrefix} onRevokeClick={setRevokeTarget} />}
           {activeTab === "providers" && <ProvidersTab providers={providers} saving={providersSaving} onKeyChange={updateProvider} onTest={testProvider} onSave={handleSaveProviders} />}
           {activeTab === "team" && <TeamTab members={members} onInviteClick={() => setShowInvite(true)} onChangeRole={handleChangeRole} onRemoveClick={setRemoveTarget} />}
+          {activeTab === "devices" && <DevicesTab />}
           {activeTab === "billing" && <BillingTab billing={billing} setBilling={setBilling} onSetBudget={handleSetBudget} onToggleHardLimit={handleToggleHardLimit} fleetUsage={fleetUsage} />}
         </div>
       </div>

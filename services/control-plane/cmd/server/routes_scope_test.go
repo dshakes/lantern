@@ -34,7 +34,9 @@ var scopeExempt = map[string]string{
 
 	// Shared-token / service-to-service.
 	"POST /v1/surfaces/whatsapp/heartbeat": "bridge shared token",
-	"POST /v1/signals":                     "LANTERN_SIGNAL_TOKEN",
+	"POST /v1/signals":                     "bridge token / JWT scope checked in-handler, or legacy PAL_SIGNAL_TOKEN (ADR 0047)",
+	"POST /v1/bridges/pair":                "pre-auth: one-time pairing code is the credential, rate-limited (ADR 0047)",
+	"POST /v1/bridges/self/rotate":         "bridge token (ADR 0047)",
 	"POST /v1/runtime/secrets/resolve":     "LANTERN_RUNTIME_SECRET_TOKEN",
 	"POST /v1/runtime/report":              "LANTERN_RUNTIME_SECRET_TOKEN",
 	"POST /internal/auth/introspect-key":   "LANTERN_GRPC_SERVICE_TOKEN",

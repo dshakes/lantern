@@ -1053,11 +1053,18 @@ the API, not the dashboard on `:3001`). The bridge reads
 context. A parallel dashboard route at `apps/web/app/api/signals/route.ts`
 writes the same contract on `:3001`; this endpoint is the tunnel-reachable twin.
 
-Single-owner PERSONAL endpoint — **NOT** JWT/tenant-scoped. Gated by the
-`PAL_SIGNAL_TOKEN` shared secret via a constant-time compare; **fails
-closed** (401) when the env var is unset or the `x-lantern-signal-token`
-header is missing/mismatched. The token is never logged. The JSONL file is
-mode 0600 and bounded (trimmed to the last 4000 lines past 5000).
+**Tenant-scoped since ADR 0047.** With an `Authorization` header the caller is
+judged on that credential only: a paired-device token (`Bearer pal_brg_…`,
+scope `bridge:signals:write`/`:read`) or a JWT/API key (`write`/`read`, kiosk
+refused); rows go to `device_signals` (RLS, migration 0033, 30-day retention via
+`PAL_SIGNALS_RETENTION_DAYS`). **Without** `Authorization` the legacy
+single-owner path is unchanged: `PAL_SIGNAL_TOKEN` shared secret
+(`x-lantern-signal-token` or `x-pal-signal-token`, constant-time compare,
+**fails closed** when unset), appended to the JSONL file the live bridge reads
+(mode 0600, trimmed to the last 4000 lines past 5000) and mirrored best-effort
+into `device_signals` for ONE tenant, `PAL_SIGNALS_LEGACY_OWNER_TENANT` (default
+the dev tenant; `off` disables the legacy path — set it on multi-tenant
+deployments). The token is never logged.
 
 **Supported kinds (bridge reads all):**
 
@@ -1080,7 +1087,27 @@ Validation: `kind` is always required (≤40 chars). For `kind=app_open`, `app` 
 
 | Env var                 | Purpose                                                                                              |
 | ----------------------- | ---------------------------------------------------------------------------------------------------- |
-| `PAL_SIGNAL_TOKEN`  | Shared secret for `/v1/signals` (sent as `x-lantern-signal-token`). Unset → endpoint is 401 fail-closed |
+| `PAL_SIGNAL_TOKEN`  | Shared secret for the legacy `/v1/signals` path (sent as `x-lantern-signal-token`). Unset → legacy path is 401 fail-closed |
+| `PAL_SIGNALS_LEGACY_OWNER_TENANT` | Tenant the legacy shared-token path mirrors into (default dev tenant); `off` disables the legacy path |
+| `PAL_SIGNALS_RETENTION_DAYS` | Tenant `device_signals` retention (default 30) |
+
+### Device tenancy — bridge enrollment (ADR 0047)
+
+PAL is an **appliance + cloud control plane**: the bridge on the user's Mac keeps
+raw sources (chat.db, Mail, files) on-device and pairs to a tenant. Tables
+`bridge_pairing_codes` / `bridges` (RLS). Codes are 10-char Crockford base32,
+10-min TTL, single-use, SHA-256 at rest, ≤5 open per tenant; tokens are
+`pal_brg_`+256 bits, SHA-256 at rest, accepted ONLY by bridge endpoints (never by
+`validateRequest`). Dashboard: Settings → Devices (`/settings?tab=devices`).
+Bridge-side pairing is a flag-gated follow-up — no bridge code reads the token yet.
+
+| Method   | Path                        | Description |
+| -------- | --------------------------- | ----------- |
+| `POST`   | `/v1/bridges/enroll`        | JWT/`settings:write`. `{name?, platform: macos\|ios-shortcuts, scopes?}` → one-time `{id, code, expiresAt, scopes}` |
+| `POST`   | `/v1/bridges/pair`          | Unauthenticated, rate-limited. `{code, name?}` → `{bridgeId, tenantId, token, tokenPrefix, scopes}` (token shown once) |
+| `POST`   | `/v1/bridges/self/rotate`   | Bridge token. New token; old one dies immediately |
+| `GET`    | `/v1/bridges`               | List paired devices (`?includeRevoked=true`) |
+| `DELETE` | `/v1/bridges/{id}`          | Revoke (soft); cross-tenant → 404 |
 
 ### Surface-gateway reply loop + example suites (W2-X3)
 
