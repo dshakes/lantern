@@ -497,10 +497,24 @@ func (h *BatchHandler) dispatchBatch(batchID, tenantID string, body createBatchR
 			continue
 		}
 		wg.Add(1)
-		sem <- struct{}{} // acquire slot
+		sem <- struct{}{} // acquire slot (may block waiting for concurrency room)
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }() // release slot
+			// Second cancellation check: the batch may have been cancelled while
+			// this item was blocked waiting to acquire the semaphore.
+			// rls-exempt: keyed by the authorised batch id.
+			var cancelledAfterWait bool
+			_ = h.srv.Pool.QueryRow(ctx, `SELECT status = 'cancelled' FROM batches WHERE id = $1`, batchID).Scan(&cancelledAfterWait)
+			if cancelledAfterWait {
+				if _, e := h.srv.Pool.Exec(ctx,
+					`UPDATE batches SET pending_count = GREATEST(0, pending_count - 1),
+					 cancelled_count = cancelled_count + 1 WHERE id = $1`, batchID,
+				); e != nil {
+					log.Warn("dispatchBatch: pending→cancelled failed on cancel (post-sem)", zap.Error(e))
+				}
+				return
+			}
 			// Panic recovery: a panic in spawnBatchRun or waitAndRecord must not
 			// crash the control-plane (same guarantee as executeRunInline). Count
 			// the item as failed so the batch reaches terminal status.
