@@ -15,12 +15,12 @@ What you do after `helm install`: scrape the metrics, wire the alerts, keep back
 
 ## Install pointers
 
-One chart, `infra/helm/lantern`, with `values-dev.yaml`, `values-staging.yaml` and `values-prod.yaml`. The chart defaults `PAL_ENV=production`, so the production startup guards are on.
+One chart, `infra/helm/pal`, with `values-dev.yaml`, `values-staging.yaml` and `values-prod.yaml`. The chart defaults `PAL_ENV=production`, so the production startup guards are on.
 
 ```bash
-helm install lantern ./infra/helm/lantern \
-  --namespace lantern --create-namespace \
-  --values infra/helm/lantern/values-prod.yaml
+helm install pal ./infra/helm/pal \
+  --namespace pal --create-namespace \
+  --values infra/helm/pal/values-prod.yaml
 ```
 
 - Supply the secrets the guards require (`secrets.jwtSecret`, `credentialKey`, `receiptSecret`, `grpcServiceToken`, and the rest listed under [Production settings](/docs/operate/deployment/#production-settings)). The [production checklist](/docs/reference/env-vars/#production-checklist) shows which process needs which.
@@ -32,7 +32,7 @@ helm install lantern ./infra/helm/lantern \
 Two Prometheus endpoints exist. The control plane serves `/metrics` on its own listener, port `9464` (`PAL_METRICS_ADDR`), not on the public `:8080` API, because the endpoint is unauthenticated and its labels carry agent names: scrape it from Prometheus, never through ingress. The runtime scheduler serves `:8085/metrics`. The Helm chart annotates the control-plane pod with `prometheus.io/port: 9464` and the NetworkPolicy allows both scrape paths from `networkPolicy.metricsFrom`.
 
 ```bash
-kubectl -n lantern port-forward deploy/lantern-control-plane 9464:9464 &
+kubectl -n pal port-forward deploy/pal-control-plane 9464:9464 &
 curl -s localhost:9464/metrics | grep -E '^(lantern_|http_server_request_duration_seconds_count)' | head
 ```
 
@@ -46,10 +46,10 @@ Rules are in `infra/monitoring/prometheus/alerts.yml`; two Grafana dashboards (`
 
 | Group | Alerts | Needs |
 | --- | --- | --- |
-| `lantern-scheduler` | SchedulerDown, SchedulerNoLeader, SchedulerScheduleErrorRateHigh, SchedulerQuotaRejectionSurge, SchedulerNoRegisteredNodes | scrape job `lantern-runtime-scheduler` on `:8085` |
-| `lantern-liveness` | ControlPlaneDown, ControlPlaneNotReady, GatewayDown, ModelRouterDown | jobs `lantern-control-plane`, `lantern-gateway`, `lantern-model-router`, and a blackbox probe `lantern-control-plane-readyz` on `/readyz` |
-| `lantern-postgres` | PostgresExporterDown, PostgresConnectionSaturation, DataPlaneHeartbeatStale, CronScheduleOverdue | `postgres_exporter` with `postgres-exporter-queries.yaml` |
-| `lantern-instrumented-slos` | ControlPlane5xxRateHigh (above 5% for 5 m), RunFailureRateHigh (above 20% for 10 m), BudgetDenied402Surge | control-plane job scraping `:9464` |
+| `pal-scheduler` | SchedulerDown, SchedulerNoLeader, SchedulerScheduleErrorRateHigh, SchedulerQuotaRejectionSurge, SchedulerNoRegisteredNodes | scrape job `lantern-runtime-scheduler` on `:8085` |
+| `pal-liveness` | ControlPlaneDown, ControlPlaneNotReady, GatewayDown, ModelRouterDown | jobs `pal-control-plane`, `pal-gateway`, `pal-model-router`, and a blackbox probe `pal-control-plane-readyz` on `/readyz` |
+| `pal-postgres` | PostgresExporterDown, PostgresConnectionSaturation, DataPlaneHeartbeatStale, CronScheduleOverdue | `postgres_exporter` with `postgres-exporter-queries.yaml` |
+| `pal-instrumented-slos` | ControlPlane5xxRateHigh (above 5% for 5 m), RunFailureRateHigh (above 20% for 10 m), BudgetDenied402Surge | control-plane job scraping `:9464` |
 
 The job names must match the ones in the rules. Gateway and model-router p99 rules are parked, commented out, in a "needs instrumentation" group: do not enable a rule before its series exists, because a rule over a missing series is silently always green. `RunFailureRateHigh` counts inline-executor runs only; microVM-tier runs are not counted yet.
 
@@ -59,7 +59,7 @@ The job names must match the ones in the rules. Gateway and model-router p99 rul
 
 ```bash
 # values: backup.enabled=true  (schedule "0 2 * * *", s3Bucket lantern-backups, retentionDays 14)
-kubectl create job --from=cronjob/lantern-postgres-backup backup-manual-1 -n lantern   # dump on demand
+kubectl create job --from=cronjob/pal-postgres-backup backup-manual-1 -n pal   # dump on demand
 aws s3 ls s3://lantern-backups/postgres/                                              # newest object should be under 24 h old
 ```
 

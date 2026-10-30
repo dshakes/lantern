@@ -66,12 +66,12 @@ You manage Postgres, Redis, and Kubernetes. Ensure your team has the capacity be
 
 ## Helm
 
-The repo ships one chart, `infra/helm/lantern`, with `values-dev.yaml`, `values-staging.yaml` and `values-prod.yaml`. It deploys the gateway, control plane, model router, workflow engine, runtime manager, runtime scheduler, surface gateway and dashboard, with in-cluster Postgres and S3-compatible storage for development and a Redis subchart. The chart defaults `PAL_ENV=production`, so the production startup guards are on.
+The repo ships one chart, `infra/helm/pal`, with `values-dev.yaml`, `values-staging.yaml` and `values-prod.yaml`. It deploys the gateway, control plane, model router, workflow engine, runtime manager, runtime scheduler, surface gateway and dashboard, with in-cluster Postgres and S3-compatible storage for development and a Redis subchart. The chart defaults `PAL_ENV=production`, so the production startup guards are on.
 
 ```bash
-helm install lantern ./infra/helm/lantern \
-  --namespace lantern --create-namespace \
-  --values infra/helm/lantern/values-prod.yaml
+helm install pal ./infra/helm/pal \
+  --namespace pal --create-namespace \
+  --values infra/helm/pal/values-prod.yaml
 ```
 
 Top-level values keys: `global`, `gateway`, `controlPlane`, `modelRouter`, `workflowEngine`, `runtimeManager`, `runtimeScheduler`, `surfaceGateway`, `dashboard`, `postgresql`, `redis`, `minio`, `ingress`, `networkPolicy`, `backup`, `secrets`, `serviceAccount`. There is no separate data-plane chart yet; for a data plane in another cloud, use the Terraform path below.

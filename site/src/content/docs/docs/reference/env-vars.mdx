@@ -11,7 +11,7 @@ sidebar:
 
 import EnvTable from '../../../../components/docs/EnvTable.astro';
 
-Every environment variable the control plane, schedulers, runtime manager, in-VM harness and dashboard read, grouped by service, with its default and what it does. **Required in prod** means the process refuses to start (or, for the harness, refuses to run the workload) when `PAL_ENV` is `prod`, `production` or `staging` and the value is missing. Flag values accept `1`, `true` or `on` unless a row says otherwise.
+Every environment variable the control plane, schedulers, runtime manager, in-VM harness and dashboard read, with its default, what it does and the line of code that reads it. **Required in prod** means the process refuses to start (or, for the harness, refuses to run the workload) when `PAL_ENV` is `prod`, `production` or `staging` and the value is missing. Flag values accept `1`, `true` or `on` unless a row says otherwise.
 
 **Naming.** Every variable is spelled `PAL_*`. The old `LANTERN_*` spelling is still read as a legacy alias, so existing deployments keep working; when both are set, `PAL_*` wins.
 

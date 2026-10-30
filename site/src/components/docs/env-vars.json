@@ -592,7 +592,7 @@
   "default": "unset",
   "description": "Password of the non-superuser `lantern_app` role used when RLS is enforced. Prod refuses to start without it. **Required in prod.**",
   "prod": true,
-  "source": "infra/helm/lantern/values-prod.yaml:7"
+  "source": "infra/helm/pal/values-prod.yaml:7"
  },
  {
   "name": "PAL_APPT_INGEST",
@@ -1829,6 +1829,17 @@
   "description": "Per-trigger rate limit on `POST /v1/hooks/{id}`.",
   "prod": false,
   "source": "services/control-plane/internal/handlers/triggers.go:72"
+ },
+ {
+  "name": "PAL_IMAGE_ALLOWED_REPOS",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Service: runtime-manager",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/runtime-manager/src/config.rs:87"
  },
  {
   "name": "PAL_IMESSAGE_AGENT_NAME",
@@ -3911,6 +3922,17 @@
   "description": "",
   "prod": false,
   "source": "packages/cli/internal/cli/root.go:50"
+ },
+ {
+  "name": "PAL_VERIFY_SIGNATURES",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Service: runtime-manager",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/runtime-manager/src/config.rs:86"
  },
  {
   "name": "PAL_VM_CERT_DIR",

@@ -164,8 +164,8 @@ Production monitoring artifacts live in `infra/monitoring/`:
 
 | Group | Alerts | Source |
 | --- | --- | --- |
-| `lantern-scheduler` | SchedulerDown, SchedulerNoLeader, SchedulerScheduleErrorRateHigh, SchedulerQuotaRejectionSurge, SchedulerNoRegisteredNodes | runtime-scheduler `:8085/metrics` |
-| `lantern-liveness` | ControlPlaneDown, ControlPlaneNotReady, GatewayDown, ModelRouterDown | `up` scrape + blackbox `/readyz` |
-| `lantern-postgres` | PostgresExporterDown, PostgresConnectionSaturation, DataPlaneHeartbeatStale, CronScheduleOverdue | postgres_exporter + custom queries |
+| `pal-scheduler` | SchedulerDown, SchedulerNoLeader, SchedulerScheduleErrorRateHigh, SchedulerQuotaRejectionSurge, SchedulerNoRegisteredNodes | runtime-scheduler `:8085/metrics` |
+| `pal-liveness` | ControlPlaneDown, ControlPlaneNotReady, GatewayDown, ModelRouterDown | `up` scrape + blackbox `/readyz` |
+| `pal-postgres` | PostgresExporterDown, PostgresConnectionSaturation, DataPlaneHeartbeatStale, CronScheduleOverdue | postgres_exporter + custom queries |
 
 Operator runbooks live in `docs/runbooks/` and are linked from each alert's `runbook:` annotation in `alerts.yml`. Grafana dashboards: `grafana/platform-overview.json` and `grafana/data-plane-runtime.json`.

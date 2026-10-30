@@ -38,16 +38,14 @@ It reads `agent.yaml` (`name`, `description`, `model`, `system_prompt`, `labels`
 2. Install with the production values. The chart sets `PAL_ENV=production`, so every production startup guard is on and a missing secret stops the pod with its name in the log.
 
    ```bash
-   helm install lantern ./infra/helm/lantern \
-     --namespace lantern --create-namespace \
-     --values infra/helm/lantern/values-prod.yaml
+   helm install pal ./infra/helm/pal \
+     --namespace pal --create-namespace \
+     --values infra/helm/pal/values-prod.yaml
    ```
 
 3. Point the CLI at it: `pal --api-url https://<your-host> login`.
 
 </Steps>
-
-The chart and release are still named `lantern` until the infra rename merges.
 
 </TabItem>
 <TabItem label="Terraform (data plane per cloud)">

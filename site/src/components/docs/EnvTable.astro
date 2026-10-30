@@ -3,11 +3,12 @@
 // the env reads in code by scripts/gen-env-data.mjs. Rendered in full at build
 // time (searchable by Pagefind, readable without JS); the script only filters.
 import vars from './env-vars.json';
-import { GH } from '../../../repo.config.mjs';
+import { GH, BASE_PATH } from '../../../repo.config.mjs';
 
 const groups = [...new Set(vars.map((v) => v.group))].sort();
 const inline = (s: string) =>
-  s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!).replace(/`([^`]+)`/g, '<code>$1</code>');
+  s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!).replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\[([^\]]+)\]\((\/docs\/[^)]+)\)/g, `<a href="${BASE_PATH}$2">$1</a>`);
 ---
 <div class="env not-content">
   <div class="env-bar">
@@ -76,19 +77,19 @@ const inline = (s: string) =>
   .env-bar label { font-size: 0.85rem; display: inline-flex; gap: 0.35rem; align-items: center; color: var(--sl-color-gray-2); }
   .env-count { font-size: 0.8rem; color: var(--sl-color-gray-3); margin-left: auto; }
   .env-scroll { max-height: 70vh; overflow: auto; border: 1px solid var(--sl-color-hairline-light); border-radius: 12px; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 0.85rem; }
+  th:nth-child(1) { width: 30%; } th:nth-child(2) { width: 20%; } th:nth-child(3) { width: 36%; } th:nth-child(4) { width: 14%; }
+  td { overflow-wrap: anywhere; }
   th { position: sticky; top: 0; background: var(--sl-color-bg-nav); text-align: left; font-weight: 600; z-index: 1; }
   th, td { padding: 0.55rem 0.75rem; border-bottom: 1px solid var(--sl-color-hairline); vertical-align: top; }
-  td:first-child { white-space: nowrap; }
   td :global(code), td code { font-size: 0.8rem; overflow-wrap: anywhere; }
   .env-req { margin-left: 0.4rem; font-size: 0.68rem; font-weight: 600; padding: 0.05rem 0.4rem; border-radius: 999px;
     background: color-mix(in srgb, var(--sl-color-accent) 18%, transparent); color: var(--sl-color-accent-high); }
   .env-dim { color: var(--sl-color-gray-3); }
-  @media (max-width: 50rem) {
-    thead { display: none; }
-    tr { display: block; padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--sl-color-hairline); }
-    tr[hidden] { display: none; }
-    td { display: block; border: 0; padding: 0.15rem 0; }
-    td:first-child { white-space: normal; }
+  tr[hidden] { display: none !important; }
+  /* phones: the site-wide stacked-card table style (starlight.css) takes over */
+  @media (max-width: 40rem) {
+    .env-scroll { max-height: none; overflow: visible; border: 0; }
+    th, td { width: auto !important; }
   }
 </style>
