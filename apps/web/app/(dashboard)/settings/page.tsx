@@ -17,6 +17,7 @@ import {
   Save,
   ToggleLeft,
   ToggleRight,
+  Laptop,
 } from "lucide-react";
 import clsx from "clsx";
 // Mock data imports removed — settings start with empty state when API is available
@@ -29,6 +30,7 @@ import type { FleetUsage } from "@/lib/api";
 import { useToast } from "@/components/settings/toast";
 import { DangerZone } from "./danger-zone";
 import { BillingPlans } from "@/components/settings/billing-plans";
+import { DevicesTab } from "./devices";
 import { Button } from "@/components/button";
 
 // ---------------------------------------------------------------------------
@@ -81,6 +83,7 @@ const TABS = [
   { id: "api-keys", label: "API Keys", icon: Key },
   { id: "providers", label: "LLM Providers", icon: Cpu },
   { id: "team", label: "Team", icon: Users },
+  { id: "devices", label: "Devices", icon: Laptop },
   { id: "billing", label: "Billing", icon: CreditCard },
 ] as const;
 
@@ -332,6 +335,7 @@ export default function SettingsPage() {
           {activeTab === "api-keys" && <ApiKeysTab keys={keys} copiedKeyId={copiedKeyId} onCreateClick={() => setShowCreateKey(true)} onCopyPrefix={handleCopyPrefix} onRevokeClick={setRevokeTarget} />}
           {activeTab === "providers" && <ProvidersTab providers={providers} saving={providersSaving} onKeyChange={updateProvider} onTest={testProvider} onSave={handleSaveProviders} />}
           {activeTab === "team" && <TeamTab members={members} onInviteClick={() => setShowInvite(true)} onChangeRole={handleChangeRole} onRemoveClick={setRemoveTarget} />}
+          {activeTab === "devices" && <DevicesTab />}
           {activeTab === "billing" && <BillingTab billing={billing} setBilling={setBilling} onSetBudget={handleSetBudget} onToggleHardLimit={handleToggleHardLimit} fleetUsage={fleetUsage} />}
       </div>
 

@@ -35,7 +35,9 @@ var scopeExempt = map[string]string{
 
 	// Shared-token / service-to-service.
 	"POST /v1/surfaces/whatsapp/heartbeat": "bridge shared token",
-	"POST /v1/signals":                     "PAL_SIGNAL_TOKEN",
+	"POST /v1/signals":                     "bridge token / JWT scope checked in-handler, or legacy PAL_SIGNAL_TOKEN (ADR 0047)",
+	"POST /v1/bridges/pair":                "pre-auth: one-time pairing code is the credential, rate-limited (ADR 0047)",
+	"POST /v1/bridges/self/rotate":         "bridge token (ADR 0047)",
 	"POST /v1/runtime/secrets/resolve":     "PAL_RUNTIME_SECRET_TOKEN",
 	"POST /v1/runtime/report":              "PAL_RUNTIME_SECRET_TOKEN",
 	"POST /internal/auth/introspect-key":   "PAL_GRPC_SERVICE_TOKEN",
@@ -68,7 +70,7 @@ var getExempt = map[string]string{
 	"GET /v1/connectors/oauth/callback":   "OAuth callback (connector flow, no scope needed)",
 
 	// Shared-token endpoints.
-	"GET /v1/signals": "PAL_SIGNAL_TOKEN shared secret (not JWT/API key)",
+	"GET /v1/signals": "bridge token / JWT scope checked in-handler, or legacy PAL_SIGNAL_TOKEN (ADR 0047)",
 
 	// Public/unauthenticated by design.
 	"GET /v1/agents/{name}/card":              "A2A card: public for is_public agents; internal auth for own agents",
