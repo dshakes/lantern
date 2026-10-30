@@ -2,9 +2,9 @@
 title: Token streaming
 description: The message_delta, message_completed and message_error SSE contract for session replies, and the SDK async iterator.
 glance:
-  what: "Session replies stream token by token over three named SSE events on GET /v1/sessions/{id}/events: message_delta, message_completed and message_error."
-  why: "Words appear as the model writes them instead of after a finished answer, with no buffering along the path."
-  how: "Subscribe to the events endpoint or use the SDK's sessions.streamMessage() iterator."
+  what: "Session replies arrive as three named SSE events on GET /v1/sessions/{id}/events: message_delta, message_completed and message_error."
+  why: "Words appear as the model writes them, with no buffering between the provider and your UI."
+  how: "Iterate client.sessions.streamMessage(sessionId, { content }) and write each delta as it arrives."
 sidebar:
   order: 10
 ---
@@ -14,14 +14,10 @@ import { TokenStreaming } from '../../../../components/diagrams';
 
 <TokenStreaming client:visible />
 
-Session replies are streamed token-by-token from the model provider through the control-plane to the client. The streaming contract is a sequence of three named SSE events on `GET /v1/sessions/{id}/events`.
-
-Streaming is why chat UIs feel alive: instead of waiting for a finished answer, words appear as the model writes them. PAL Runtime passes each fragment (token) to your app as it arrives; nothing along the path holds the response back to deliver it in one piece. Your app listens on a single long-lived HTTP connection (SSE, server-sent events) and receives three kinds of messages: a fragment arrived, the reply finished, or something went wrong.
-
-Provider deltas flow through the control-plane and Redis pub/sub to connected SSE clients. Tool-using turns buffer; tool-free turns stream every token.
+Provider deltas flow through the control plane and Redis pub/sub to connected SSE clients. Tool-free turns stream every token; tool-using turns arrive as one `message_completed`.
 
 <Aside title="Sessions only">
-Session turns run in the control plane's session handler (not the run executor). The streaming contract described here covers interactive sessions. Headless microVM runs stream `step_started` / `step_completed` / `step_failed` events, not token deltas.
+This contract covers interactive sessions. Headless microVM runs stream `step_started` / `step_completed` / `step_failed` events, not token deltas.
 </Aside>
 
 ## The three events
@@ -71,8 +67,6 @@ Emitted when the LLM call fails mid-stream after at least one delta has been sen
   "error":     "provider error — partial response discarded"
 }
 ```
-
-The `turnId` is stable across all three event types for the same assistant turn. Clients can use it to correlate deltas to their final `message_completed`, and to discard in-progress buffers when a `message_error` arrives.
 
 <Aside type="caution" title="Tool-bearing turns do not stream deltas">
 When the session has tools attached, the LLM call runs through a non-streaming tool-use loop (up to 5 rounds). For those turns the client receives a single `message_completed` without any preceding `message_delta` events.
@@ -135,8 +129,4 @@ The control-plane calls the model provider in streaming mode via `streamWithFail
 
 Provider failover: if the primary provider fails before any deltas have been sent, the failover chain retries on the next configured provider. If the primary fails after deltas have been sent, a `message_error` is emitted and the partial response is discarded.
 
-## Dashboard and webchat
-
-The dashboard session chat and the embedded webchat widget both consume these events. The webchat widget, served at `/widget.js`, renders token-by-token as deltas arrive and flips to the final text on `message_completed`.
-
-Related: [Sessions and memory](/docs/runtime/sessions-and-memory/) covers how sessions are created and managed. [Observability](/docs/observability/) covers the OTel span attributes set on LLM calls.
+The dashboard session chat and the webchat widget (`/widget.js`) consume these same events. Span attributes for LLM calls are in [Observability](/docs/observability/).

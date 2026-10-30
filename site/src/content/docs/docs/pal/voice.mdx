@@ -24,7 +24,7 @@ Stages 1–4 are soft: a failure triggers one regeneration. Stages 5 and 6 are h
 | 5 | Commitment gate | Promises of money or an action, in any language | [Hold for you](/docs/pal/human-in-the-loop/) |
 | 6 | Grounding gate | Facts about your plans pal can't verify; bad news answered in the wrong tone | [Hold for you](/docs/pal/human-in-the-loop/) |
 | 7 | Claim rewrite | "I sent it" becomes "I'll send it" unless the action was recorded for that contact in the last 10 minutes | Rewrite |
-| 8 | Paced send | Your real reply latency for that contact, jittered, clamped to 600 ms – 25 s | — |
+| 8 | Paced send | Your real reply latency for that contact, jittered, clamped to 3 – 25 s | — |
 
 ## How the voice floor works
 
@@ -46,14 +46,15 @@ Your owner profile (`~/.pal/owner-profile.md`, or `$PAL_OWNER_PROFILE`) holds fa
 
 ```markdown
 ## Facts
-- spouse: Sam
-- wedding anniversary: 2017-06-03
+- married: yes
+- spouse: Alex
+- anniversary: 2015-05-02
 
 ## Relationships
-- Sujith: college friend | address as: Sujith | never: bava
+- Jordan: college friend | address as: Jo | never: buddy, bro
 ```
 
-You can also teach it in your own chat: "remember: anniversary is June 3 2017" or "don't call Sujith bava". pal acknowledges with `📝 noted — …`.
+You can also teach it in your own chat: "remember: anniversary is May 2 2015" or "don't call Jordan buddy". pal acknowledges with `📝 noted — …`.
 
 ## Settings
 

@@ -2,9 +2,9 @@
 title: Identity and secrets
 description: Per-instance Ed25519 identity and short-TTL secret vending for microVM workloads, plus broker mode where credentials never enter the VM.
 glance:
-  what: "Every spawn gets its own Ed25519 identity, and secrets are vended to it at execution time over a mutually authenticated channel."
-  why: "Real API keys never sit where agent code can casually find them: the config holds only a reference, not a value."
-  how: "Reference secrets with the lantern.secret/... form described in that section, and read Broker mode for the strongest isolation."
+  what: "Each spawn gets its own Ed25519 identity, and secrets are vended to it at runtime with a 300-second TTL, authenticated by kernel-attested peer credentials."
+  why: "The spec holds only a reference, never a key, and a leaked value expires in minutes."
+  how: "Add a secrets entry with secret_uri: lantern.secret://... to your spec; use broker mode if even a short-lived value in the VM is too much."
 sidebar:
   order: 3
 ---
@@ -14,9 +14,7 @@ import { IdentitySecrets } from '../../../../components/diagrams';
 
 <IdentitySecrets client:visible />
 
-Every headless agent spawn gets its own cryptographic identity, and secrets are vended to it at execution time over a mutually-authenticated channel, never baked into the image or the spec. The two are linked: the per-instance identity is what authenticates the secret-vending call.
-
-Agents need API keys to do their jobs, and API keys are what an attacker wants. PAL Runtime never puts the real key anywhere the agent's code can casually find it. The agent config holds only a reference (a name, not a value). The actual key is handed over at the last possible moment, expires quickly, and is delivered only to a process that can cryptographically prove it is the agent it claims to be. Each spawn also gets its own identity, so anything it does can be traced back to exactly that one run.
+Agents need API keys, and keys are what an attacker wants. The spec holds only a reference. The real value is handed over at the last moment, expires quickly, and goes only to a process that proves it is the workload it claims to be. Because every spawn has its own identity, anything it does traces back to that one run.
 
 ## Per-instance Ed25519 identity
 
@@ -40,10 +38,6 @@ The control-plane resolves `lantern.secret/...` references through a relay endpo
 mTLS between the runtime-manager and control-plane is the planned stronger follow-up and is not yet implemented.
 </Aside>
 
-- **`SO_PEERCRED` peer auth.** The kernel attests uid/pid on every socket connection; there is no credential the workload can forge.
-- **Short TTL (300 s).** A leaked value has a small blast radius; the workload re-requests as needed.
-- **Pre-shared token on the relay.** The manager authenticates to the control-plane relay via `X-Lantern-Runtime-Token`; fail-closed when unset.
-
 ## The `lantern.secret/...` ref form
 
 In the spec you reference a secret, you do not embed it. The runtime resolves the reference at execution time, so the raw value never appears in the image, logs, traces or run state. From demo 02:
@@ -63,12 +57,6 @@ Pair secret vending with the right [isolation class](/docs/runtime/isolation/). 
 ## Broker mode: credentials never enter the VM
 
 Vending still puts a short-lived value inside the VM, so a compromised workload can read it while it is valid. The opt-in broker mode (`PAL_EGRESS_MODE=broker`, Firecracker only) closes that gap for outbound API calls: the VM has no network device, and the host broker resolves the `lantern.secret` ref and injects the header on the way out. The workload never holds the value. See [Egress and credentials](/docs/security/egress/).
-
-## What you get
-
-- Per-spawn Ed25519 identity, externally verifiable at `/.well-known/lantern-agent-identity`.
-- `SO_PEERCRED` peer auth and short-TTL secret vending via the harness Unix socket.
-- Reference-form secrets resolved inside the isolation boundary. Raw values never touch the image, env, logs or run state.
 
 ## Operating notes
 

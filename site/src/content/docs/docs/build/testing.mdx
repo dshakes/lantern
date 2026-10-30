@@ -2,9 +2,9 @@
 title: End-to-end tests
 description: Run the e2e suites against a live local stack, the spend policy that bounds them, the fixture LLM tier and CI.
 glance:
-  what: "`make test-e2e` runs Go suites against a live local stack over HTTP, with real JWT login and real Postgres rows."
-  why: "Some tests call a real LLM, so a code-enforced spend policy caps cost and fails the test if a cap is hit."
-  how: "Run the commands under Run it, then read Spend policy before pointing the suites at a real model key."
+  what: "`make test-e2e` runs Go suites against a live local stack over HTTP: real JWT login, real Postgres rows, no mocks."
+  why: "Some suites call a real LLM, so each test agent gets a hard-fail budget and the test fails if a cap is hit."
+  how: "make dev-infra && make run-api, then PAL_E2E_API_URL=http://localhost:8080 make test-e2e."
 sidebar:
   order: 9
 ---
@@ -14,9 +14,7 @@ import { ToolCallSequence } from '../../../../components/diagrams';
 
 <ToolCallSequence client:visible />
 
-`make test-e2e` runs Go suites against a live local stack over HTTP: real JWT login, real Postgres rows, no mocks. Because some tests call a real LLM, a spend policy is enforced in code.
-
-The tests get a small, fixed set of named test agents, each with a hard daily cost cap. If a cap is hit the test fails on purpose: it proves the guard works, and it stops a bad loop from running up a bill.
+Tests get a small, fixed set of named agents, each with a hard daily cost cap. If a cap is hit the test fails on purpose: the guard works, and a bad loop cannot run up a bill.
 
 ## Run it
 

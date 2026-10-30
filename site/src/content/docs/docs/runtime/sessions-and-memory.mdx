@@ -2,9 +2,9 @@
 title: Sessions and memory
 description: Interactive multi-turn sessions on the shared tier, and LLM-distilled long-term memory.
 glance:
-  what: "Sessions are interactive multi-turn conversations with an agent, and memory distillates are durable facts the LLM distills from transcripts and events."
-  why: "Memory keeps what matters after a conversation ends without storing every word forever."
-  how: "Create a session as shown under Lifecycle, then send a message and stream its events."
+  what: "A session is a multi-turn conversation that replays its full history each turn; memory distillates are durable facts an LLM extracts from transcripts every 6 hours."
+  why: "The agent remembers what you said two messages ago, and keeps what matters after the conversation ends without storing every word."
+  how: "POST /v1/sessions with an agentName, then POST a message and read GET /v1/sessions/{id}/events."
 sidebar:
   order: 9
 ---
@@ -14,13 +14,11 @@ import { SessionsMemory } from '../../../../components/diagrams';
 
 <SessionsMemory client:visible />
 
-Sessions are interactive, multi-turn conversations with an agent. Memory distillates are the long-term memory layer: durable facts and preferences distilled by the LLM from raw session transcripts and timeline events, stored and re-injected into future sessions.
-
-A session is the back-and-forth kind of conversation, where the agent remembers what you said two messages ago. Memory is what survives after the conversation ends. Instead of storing every word forever, PAL Runtime periodically distills transcripts into durable facts ("prefers morning meetings", "works at Acme") and brings those facts into future conversations.
+A session is a multi-turn conversation. Memory is what survives it: PAL Runtime periodically distills transcripts into durable facts ("prefers morning meetings", "works at Acme") and re-injects them into future sessions.
 
 ## Sessions
 
-Session turns run in the control plane's session handler, not the run executor. Each message turn calls the provider-failover chain directly: streaming when no tools are attached, otherwise a non-streaming tool loop of up to 5 rounds. No run row is created. Sessions maintain a `messages` JSONB column on the `sessions` table; the full history is passed as context on each turn.
+Session turns run in the control plane's session handler, not the run executor, so no run row is created. Each turn calls the provider-failover chain directly: streaming when no tools are attached, otherwise a non-streaming tool loop of up to 5 rounds. History lives in the `messages` JSONB column of `sessions` and is passed in full on every turn.
 
 ### Lifecycle
 
@@ -43,7 +41,7 @@ DELETE /v1/sessions/sess_abc123
 
 ### Token streaming
 
-Session replies stream via `GET /v1/sessions/{id}/events` (SSE). The three named events (`message_delta`, `message_completed`, `message_error`) and the TypeScript SDK `sessions.streamMessage()` async iterator are covered in full in [Token streaming](/docs/runtime/streaming/).
+Replies stream over SSE on `GET /v1/sessions/{id}/events`; the event contract and the `sessions.streamMessage()` iterator are in [Token streaming](/docs/runtime/streaming/).
 
 ### Durability
 
@@ -128,4 +126,4 @@ Any error (DB, LLM, parse) results in no writes, never a crash. PII in session c
 
 The `memory_distillates` table is RLS-enforced (migration 0013). All DB writes use `db.WithTenantConn`; reads use `srv.WithTenant`. No cross-tenant data can be read or written by the distillation pass.
 
-Related: [Token streaming](/docs/runtime/streaming/) is the event contract for session turns. The [API reference](/docs/reference/api/) has the full session and memory endpoint shapes.
+Full endpoint shapes: [API reference](/docs/reference/api/).

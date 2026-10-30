@@ -2,28 +2,22 @@
 title: Headless agent quickstart
 description: Write your first agent.yaml, pick an isolation class, run it, watch it, and terminate it, in about 15 minutes.
 glance:
-  what: "Write a first agent.yaml, pick an isolation class, run it, watch its logs, traces and cost, then terminate it."
-  why: "A headless agent is a background worker rather than a chatbot, and this builds the smallest one in about 15 minutes."
-  how: "Check Prerequisites, then do step 1, Write the spec."
+  what: "A headless agent is a container image plus a short agent.yaml (limits, isolation class, egress) that PAL Runtime schedules into a sandbox and cleans up."
+  why: "It is the smallest background worker you can run, and the same spec scales to the untrusted-code classes."
+  how: "Start the four make targets under Prerequisites, then run pal run examples/headless-agents/01-hello/agent.yaml."
 sidebar:
   order: 2
 ---
 
-import { Aside } from '@astrojs/starlight/components';
 import { MicroVmRunSequence } from '../../../../components/diagrams';
 
 <MicroVmRunSequence client:visible />
 
-Write your first `agent.yaml`, pick an isolation class, run it, watch its logs, traces and cost, then terminate it. The four worked demos in `examples/headless-agents/` are the reference; this page builds the smallest one from scratch.
-
-"Headless" means no conversation: the agent is a background worker, not a chatbot. You package your code as a container image, describe it in a short `agent.yaml` (what to run, how much CPU and memory, how strong a sandbox, which sites it may reach) and hand it to PAL Runtime. It finds a machine, builds the sandbox, runs it, streams the logs and cleans up.
-
-<Aside>
-</Aside>
+"Headless" means no conversation. You package code as an image, describe it in `agent.yaml`, and PAL Runtime finds a machine, builds the sandbox, runs it, streams logs and cleans up. This page builds the smallest of the four demos in `examples/headless-agents/`.
 
 ## Prerequisites
 
-Have the runtime services running. From the repo root, in separate terminals:
+From the repo root, in separate terminals:
 
 ```bash
 make dev-infra            # Postgres + Redis + MinIO
@@ -32,7 +26,7 @@ make run-scheduler        # scheduler on :50055 / :8085
 make run-api-runtime      # control-plane wired to the scheduler, :8080
 ```
 
-Docker on the host is enough for the `trusted` and `standard` classes. You also need an API token exported as `PAL_API_TOKEN` for the REST calls below.
+Docker on the host is enough for `trusted` and `standard`. Export an API token as `PAL_API_TOKEN` for the REST calls below.
 
 ## 1. Write the spec
 
@@ -59,7 +53,7 @@ spec:
   idempotent: true
 ```
 
-`image_digest` is pinned by digest, not a tag, so the runtime runs exactly the bytes you signed. Choosing the isolation class is the decision that matters most; the [isolation classes guide](/docs/runtime/isolation/) is the decision tree.
+`image_digest` is pinned by digest, not a tag, so the runtime runs exactly the bytes you signed.
 
 ## 2. Pick the isolation class
 
@@ -70,7 +64,7 @@ Rule of thumb:
 - Loads internet packages or drives a browser: `untrusted`.
 - Adversarial input: `hostile`.
 
-Demo 02 (`web-scraper`) uses `untrusted` because it pulls `requests` and `beautifulsoup4` from PyPI. The full tree is in [Isolation classes](/docs/runtime/isolation/).
+Demo 02 (`web-scraper`) uses `untrusted` because it pulls packages from PyPI. The decision tree is in [Isolation classes](/docs/runtime/isolation/).
 
 ## 3. Run it
 
@@ -112,12 +106,6 @@ curl -X DELETE "http://localhost:8080/v1/runtime/vms/<vm_id>?grace=30s" \
   -H "Authorization: Bearer $PAL_API_TOKEN"
 ```
 
-The instance drains for the grace period, the manager tears down the pod, and the scheduler marks its state terminated.
+The instance drains for the grace period, the manager tears it down, and the scheduler marks it terminated.
 
-## What's next
-
-- [Isolation classes](/docs/runtime/isolation/): pick the right boundary for the workload.
-- [Durable execution](/docs/runtime/durable-execution/): what happens when a node dies mid-run.
-- [Identity and secrets](/docs/security/identity/): vend a real secret into the workload (demo 02).
-- `examples/data-analyst`: upload a CSV, run pandas in the sandbox, egress denied by default (docker tier in CI, Firecracker nightly).
-- [Observability](/docs/observability/): wire an OTel collector and read the trace.
+Next: [invocation modes](/docs/runtime/invocation/). For a sandbox with real data, see `examples/data-analyst` (egress denied by default).

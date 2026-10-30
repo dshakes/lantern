@@ -89,7 +89,7 @@ curl -s -X POST localhost:8080/v1/schedules -H "Authorization: Bearer $PAL_API_K
   "agentName": "research-agent",
   "cronExpr": "0 9 * * 1-5",
   "timezone": "America/New_York",
-  "config": { "input": { "mode": "daily-digest" } },
+  "inputTemplate": { "mode": "daily-digest" },
   "enabled": true
 }'
 ```

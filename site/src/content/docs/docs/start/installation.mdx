@@ -2,18 +2,16 @@
 title: Installation
 description: Clone the repo, start the local stack, verify it is healthy.
 glance:
-  what: "Clone the repo, start the local stack of Postgres, Redis, MinIO, the API server and the dashboard, then verify it is healthy."
-  why: "One command starts everything PAL needs on your laptop."
-  how: "Follow the numbered steps below, starting with the clone and the first make command."
+  what: "Clone the repo, build the pal CLI and run pal dev to start Postgres, Redis, MinIO, the API and the dashboard on your machine."
+  why: "A local stack is what every other guide in these docs runs against."
+  how: "Install Docker, Node 22 and Go 1.26, then follow the four steps below."
 sidebar:
   order: 5
 ---
 
-import { Aside, Steps, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import { Aside, Steps } from '@astrojs/starlight/components';
 
-Clone, start the stack, verify it is healthy. Only want to look around? `make demo` needs Docker and no API key; see [Demo mode](/docs/start/demo/).
-
-The "stack" is everything PAL needs on your laptop: Postgres (agents and runs), Redis (live updates), MinIO (agent bundles), the API server and the dashboard. One command starts all of it.
+The stack is Postgres (agents and runs), Redis (live updates), MinIO (agent bundles), the API server and the dashboard. Only want to look around? `make demo` needs Docker and no key ([Demo mode](/docs/start/demo/)).
 
 <Steps>
 
@@ -119,10 +117,4 @@ Seeded automatically on first boot. No setup required.
 | `make proto` | Regenerate from `.proto` definitions |
 | `make clean` | Remove artifacts + docker volumes |
 
-## Next steps
-
-<CardGrid>
-  <LinkCard title="Quickstart" description="Create your first agent and run it end-to-end." href="/docs/start/quickstart/" />
-  <LinkCard title="Agents" description="Instructions, tools, visual editor." href="/docs/build/agents/" />
-  <LinkCard title="Deployment" description="Production with Helm or Terraform." href="/docs/operate/deployment/" />
-</CardGrid>
+Next: [see real examples](/docs/start/examples/).

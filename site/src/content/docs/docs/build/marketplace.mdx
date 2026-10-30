@@ -2,9 +2,9 @@
 title: Marketplace and A2A
 description: Publish, fork and invoke agents, and expose public agents to other platforms through A2A agent cards.
 glance:
-  what: "Publish an agent, fork another tenant's agent into yours, or invoke a published agent, with A2A agent cards for cross-platform discovery."
-  why: "It lets you reuse agents others published and make yours callable by other platforms without sharing your tenant."
-  how: "Read the visibility rules under A2A agent cards, then use the publish and fork endpoints in the sections below."
+  what: "Publish an agent to a public registry, fork or invoke one someone else published, and expose public agents to other platforms through A2A cards."
+  why: "You reuse existing agents, and other platforms can call yours without ever sharing your tenant."
+  how: "POST /v1/marketplace/publish to list an agent, or POST /v1/marketplace/{slug}/fork to copy one."
 sidebar:
   order: 8
 ---
@@ -14,24 +14,20 @@ import { AgentNetwork } from '../../../../components/diagrams';
 
 <AgentNetwork client:visible />
 
-Publish an agent, fork someone else's into your tenant, or call a published agent without forking it. A2A agent cards make public agents discoverable by other platforms.
+A2A (Agent-to-Agent) is an open protocol for agents to find and call each other; an *agent card* is the public description an agent publishes. A *fork* is your private copy of a published agent.
 
-A2A (Agent-to-Agent) is an open protocol for agents to find and call each other; an agent card is the public description an agent publishes. A fork is your private copy.
+## Two registries
 
-## What is the Marketplace
-
-In the dashboard, **Marketplace** sits under the Workspace section. Two registries sit behind it:
+The dashboard **Marketplace** (`/marketplace`) fronts two:
 
 - **Agent Marketplace**: published agents (`/v1/marketplace`). Filter by category or search text; star, fork, or unpublish your own. Listings carry a description, tags, README, star and fork counts.
 - **MCP Marketplace**: a curated registry of Model Context Protocol servers (`/v1/mcp/servers`). Attach one to an agent with `POST /v1/agents/{name}/mcp-servers`.
 
-<Aside>
-A fork is a copy in your tenant. The original author does not see your data or runs.
-</Aside>
+A fork is a copy in your tenant; the original author sees none of your data or runs.
 
 ## A2A agent cards and visibility
 
-PAL implements the **Agent-to-Agent (A2A) protocol** for cross-platform agent discovery. Agents are **private by default** (`agents.is_public = false`). The card, the well-known directory, and A2A invoke only expose an agent to a non-owner when it is marked public.
+Agents are **private by default** (`agents.is_public = false`). The card, the well-known directory and A2A invoke expose an agent to a non-owner only when it is public.
 
 <Aside type="caution">
 No REST endpoint sets the flag yet; today it is a column on `agents` that an operator flips.
@@ -52,7 +48,7 @@ GET /.well-known/agent.json          — lists only public agents
 
 ## Publishing your agent
 
-Publishing copies the agent's manifest into the public registry under a slug. There is no review queue and no unlisted mode; a listing is live as soon as the call returns.
+Publishing copies the agent's manifest into the public registry under a slug. There is no review queue and no unlisted mode: the listing is live when the call returns.
 
 ```http
 POST /v1/marketplace/publish
@@ -101,4 +97,6 @@ GET /v1/marketplace/invocations?role=seller   # seller-side history
 
 - **Discovery**: other platforms read `/.well-known/agent.json` and `/v1/agents/{name}/card`. Both are limited to public agents (plus your own, when authenticated).
 - **Inbound call**: `POST /v1/agents/{name}/a2a/invoke` requires an authenticated caller; it returns 401 without credentials.
-- **Outbound call**: inside a running agent, `ctx.a2a(agentCardUrl).submit({ input })` calls a remote A2A agent through the runtime sidecar (production runtime only). `ctx.subagent(name, input)` calls another agent by name.
+- **Outbound call**: inside a running agent, `ctx.a2a(agentCardUrl).submit({ input })` calls a remote A2A agent through the runtime sidecar (production runtime only; the Python `AgentContext` stub raises `NotImplementedError`). `ctx.subagent(name, input)` calls another agent by name.
+
+Next: [accounts and sign-up](/docs/build/accounts/).

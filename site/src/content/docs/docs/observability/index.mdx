@@ -2,9 +2,9 @@
 title: Observability
 description: One OTel trace per spawn, GenAI token telemetry, the five lantern.run.* metrics, anomaly detection and the service-health sweep.
 glance:
-  what: "One OpenTelemetry trace per spawn, GenAI token telemetry, the five lantern.run.* metrics and real-time anomaly detection."
-  why: "It answers what an agent is doing now and what it did last Tuesday, using the same identifiers everywhere."
-  how: "Turn it on under Enabling OTel, then use Find a run to follow one run across signals."
+  what: "One OpenTelemetry trace per run tagged with tenant, run and step ids, GenAI token attributes, the five lantern.run.* metrics and anomaly events."
+  why: "You can answer what an agent is doing now, and what it did last Tuesday, with one id."
+  how: "Set OTEL_EXPORTER_OTLP_ENDPOINT, then query your trace backend for lantern.run_id=<run_id>."
 sidebar:
   order: 1
 ---
@@ -14,22 +14,11 @@ import { TracePropagation } from '../../../../components/diagrams';
 
 <TracePropagation client:visible />
 
-One OTel trace per spawn, GenAI token telemetry and real-time anomaly detection, wired through standard OpenTelemetry.
-
-Observability answers "what is my agent doing right now, and what did it do last Tuesday?" Every run produces a trace, a timeline of each step with its timing, model, tokens and cost. Every trace is tagged with who, which run and which step, so you can filter straight to the one that matters. It plugs into the monitoring tools teams already use (Grafana, Datadog, anything OpenTelemetry-compatible), and it costs nothing when switched off.
-
-Every signal (OTel span, metric, journal row, health probe, receipt) speaks the same identifiers, so nothing needs correlation glue.
+Every run produces a trace: a timeline of each step with its timing, model, tokens and cost, tagged with tenant, run and step. It works with any OpenTelemetry backend (Grafana, Datadog, Jaeger) and is a no-op when switched off. Spans, metrics, journal rows and receipts share the same identifiers, so nothing needs correlation glue.
 
 ## One trace per spawn
 
-Every run opens a single OTel trace. Spans from every entry point use the same attribute keys, defined in `internal/middleware/span.go` and stamped by a single `EnrichSpan` helper so they never drift between HTTP and gRPC code paths:
-
-```
-lantern.tenant_id   # on every control-plane HTTP/gRPC span
-lantern.user_id
-lantern.run_id
-lantern.step_id     # per-step spans in the inline executor
-```
+Every run opens a single OTel trace. Spans from every entry point use the attribute keys in the [contract below](#otel-span-attribute-contract), stamped by one `EnrichSpan` helper (`internal/middleware/span.go`) so HTTP and gRPC paths never drift.
 
 On the **microVM tier**, scheduler spans carry `tenant_id` and `vm_id`; the per-VM isolation class is recorded as a container/pod label, and the trace context propagates through the manager into the harness (see [Identity and secrets](/docs/security/identity/) for the per-spawn identity). A [durable resume](/docs/runtime/durable-execution/) starts a new trace tagged with the same `lantern.run_id`.
 
@@ -90,7 +79,7 @@ The inline executor emits five OTel metric instruments via the `lantern.runtime`
 
 ## Real-time anomaly detection
 
-The runtime watches the live event stream for pathological shapes, such as a tool-call loop or a step retrying without progress, and surfaces them in real time. This is the early-warning layer for runaway runs.
+The runtime watches the live event stream and journals an `anomaly_detected` event with one of `runaway_loop`, `excessive_steps`, `retry_storm`, `cost_spike` or `token_spike`. It shows up in the run waterfall.
 
 ## Peer-service health sweep
 

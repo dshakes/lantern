@@ -2,14 +2,14 @@
 title: Examples
 description: Runnable end-to-end agents that work with no SaaS account and no model key.
 glance:
-  what: "Runnable end-to-end agents under examples/, each with a README and a test run against recorded servers and a fixture model."
-  why: "They work with no SaaS account and no model key, so you can see a real agent run end to end."
-  how: "Start with the Support desk example and follow its commands."
+  what: "Eight runnable agents under examples/, each with a README and an end-to-end test against recorded GitHub, Sentry, PagerDuty, Calendar and Slack servers."
+  why: "They run with no SaaS account and no model key, so you can watch a real workflow, webhook, schedule or sandbox end to end."
+  how: "Start with Support desk: make dev-infra && make run-api, then python3 examples/support-desk/setup.py."
 sidebar:
   order: 7
 ---
 
-Runnable, end-to-end agents. Each lives under `examples/` in the repo with a README and an end-to-end test that runs it against recorded GitHub, Sentry, PagerDuty, Google Calendar and Slack servers, a fixture model, and (for chat) the real surface-gateway (`make test-e2e-examples`; the data analyst has its own target, below), so you can try it with no SaaS account and no model key.
+Each example lives under `examples/` with a README and a test (`make test-e2e-examples`; the data analyst has its own target, below) that runs it against recorded servers and a fixture model, plus the real surface-gateway for chat.
 
 ## Support desk
 

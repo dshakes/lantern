@@ -206,7 +206,7 @@ export function FlowDiagram({ def, autoplay = true, compact = false }: { def: Fl
               const on = litEdges.has(ek(e));
               // ponytail: label width estimated at 6.4px/char; a label that won't fit its edge is left to the step text and the panel.
               const len = pts.slice(1).reduce((t, p, i) => t + Math.hypot(p[0] - pts[i][0], p[1] - pts[i][1]), 0);
-              const showLabel = !!e.label && e.label.length * 6.4 + 16 < len;
+              const showLabel = !!e.label && e.label.length * 6.8 + 16 < len;
               const deny = on && denyEdge === ek(e);
               return (
                 <g key={ek(e) + (e.label ?? "")} aria-hidden="true"
@@ -225,8 +225,8 @@ export function FlowDiagram({ def, autoplay = true, compact = false }: { def: Fl
                   aria-label={`${n.label}${n.sub ? `, ${n.sub}` : ""}${n.detail ? `. ${n.detail}` : ""}`} {...press(n.id)}>
                   <rect className="ring" x={n.x - 4} y={n.y - 4} width={n.w + 8} height={n.h + 8} rx={13} />
                   <rect className="box" x={n.x} y={n.y} width={n.w} height={n.h} rx={10} />
-                  <text className="t1" x={n.x + n.w / 2} y={n.sub ? n.y + n.h / 2 - 3 : n.y + n.h / 2 + 5} textAnchor="middle" {...fitText(n.label, 7.9, n.w)}>{n.label}</text>
-                  {n.sub && <text className="t2" x={n.x + n.w / 2} y={n.y + n.h / 2 + 14} textAnchor="middle" {...fitText(n.sub, 6.5, n.w)}>{n.sub}</text>}
+                  <text className="t1" x={n.x + n.w / 2} y={n.sub ? n.y + n.h / 2 - 3 : n.y + n.h / 2 + 5} textAnchor="middle" {...fitText(n.label, 8.4, n.w)}>{n.label}</text>
+                  {n.sub && <text className="t2" x={n.x + n.w / 2} y={n.y + n.h / 2 + 14} textAnchor="middle" {...fitText(n.sub, 6.8, n.w)}>{n.sub}</text>}
                 </g>
               );
             })}

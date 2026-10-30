@@ -13,7 +13,7 @@ import { Aside } from '@astrojs/starlight/components';
 
 The control plane serves REST on `:8080`. Every `/v1/` endpoint takes a Bearer token: a dashboard JWT or an API key.
 
-The dashboard, CLI and SDKs all call this API. Use this page to call it with `curl`. The [SDKs](/docs/sdks/) wrap the same endpoints in typed methods. This page covers the core resources; the full route list is in `services/control-plane/cmd/server/main.go`.
+The dashboard, CLI and SDKs all call this API. The [SDKs](/docs/sdks/) wrap the same endpoints in typed methods. Request and response shapes for the core resources follow; [More endpoints](#more-endpoints) indexes the rest.
 
 ## Authentication
 
@@ -382,6 +382,32 @@ GET  /v1/settings/llm-providers           — list configured providers (bare ar
 POST /v1/settings/llm-providers/{provider}/test  — test the key
 ```
 
+## More endpoints
+
+Everything else registered in `services/control-plane/cmd/server/main.go`, with the page that explains it. Paths are relative to `:8080`; all take a Bearer token unless noted.
+
+| Area | Endpoints | Guide |
+| --- | --- | --- |
+| Completions | `POST /v1/completions` (LLM proxy, routes to your configured providers) | [Models](/docs/build/models/) |
+| Budgets | `GET/PUT/DELETE /v1/agents/{name}/budget`, `GET /v1/budgets`, `GET/PUT/DELETE /v1/budgets/tenant`, `GET /v1/usage` | [Budgets](/docs/build/budgets/) |
+| Evals | `/v1/eval-suites`, `/v1/eval-runs` (422 on regression), `/v1/eval-baselines`, `GET /v1/eval-observability/{failures,trends}`, `POST /v1/runs/rehearse` | [Evaluations](/docs/build/evaluations/) |
+| Experiments | `/v1/experiments`, `POST /v1/experiments/{id}/{record,conclude}` | [Evaluations](/docs/build/evaluations/) |
+| Takeover | `POST /v1/runs/{id}/takeover/request`, `GET .../takeover`, `POST .../takeover/{id}/{grant,deny,answer,release}` | [Trust and holds](/docs/pal/human-in-the-loop/) |
+| Receipts | `POST /v1/runs/{id}/receipt`, `POST /v1/runs/receipts/verify` (no auth), `GET /.well-known/lantern-receipts`, `GET /.well-known/lantern-agent-identity` | [Receipts](/docs/security/receipts/) |
+| Knowledge and handoff | `/v1/agents/{name}/documents` (+ `/search`), `POST /v1/sessions/{id}/{handoff,operator-messages,resolve}` | [Knowledge and handoff](/docs/pal/knowledge/) |
+| Marketplace and MCP | `/v1/marketplace` (+ `publish`, `{slug}/{fork,star,invoke}`, `invocations`), `GET /v1/mcp/servers`, `/v1/agents/{name}/mcp-servers`, A2A: `GET /v1/agents/{name}/card`, `POST /v1/agents/{name}/a2a/invoke`, `GET /.well-known/agent.json` | [Marketplace](/docs/build/marketplace/) |
+| Agent extras | `PATCH /v1/agents/{name}`, `GET/PUT /v1/agents/{name}/workflow`, `POST /v1/agents/{generate-spec,generate-code,from-template,loop}`, `GET /v1/agents/templates`, `GET /v1/agents/{name}/feedback`, `GET /v1/agents/{name}/setup` | [Agents](/docs/build/agents/) |
+| Deployments | `/v1/deployments`, `GET/POST /v1/agents/{name}/deploy` (+ `deploy/stop`), `/v1/data-planes` | [Production deployment](/docs/operate/deployment/) |
+| Sandbox VMs | `POST /v1/runtime/schedule`, `/v1/runtime/vms` (+ `{id}`, `pause`, `resume`, `fork`, `exec`, `logs`, `files`, `files/content`), `/v1/runtime/{quota,cluster,audit,metrics}`, `GET/PUT /v1/egress/dlp-policy` (+ `rules`) | [Sandbox lifecycle](/docs/runtime/sandbox-lifecycle/) |
+| Runtime internals | `POST /v1/runtime/report`, `POST /v1/runtime/secrets/resolve` (service token, not JWT) | [Egress and credentials](/docs/security/egress/) |
+| Channels | `/v1/surfaces` (+ `{id}/test`, `slack/command`, `whatsapp/{heartbeat,status}`), `/v1/voice/{numbers,calls,token,webhook/{provider},calls/status/{provider}}` | [Connect your channels](/docs/pal/surfaces/) |
+| Memory and people | `/v1/people` (+ `resolve`, `merge`, `duplicates`, `relationship`), `/v1/memory/{events,context,search,distill,distillates}` | [pal internals](/docs/architecture/pal/) |
+| Settings and keys | `/v1/settings/llm-providers`, `/v1/api-keys`, `GET /v1/system/health` | [Quickstart](/docs/start/quickstart/) |
+| Onboarding | `GET/PUT/DELETE /v1/onboarding`, `POST /v1/onboarding/explain` | [Quickstart](/docs/start/quickstart/) |
+| Internal | `POST /internal/auth/introspect-key` (gateway, `x-lantern-service-token`) | [Security boundaries](/docs/architecture/security-boundaries/) |
+
+The bridges also use endpoints that serve the personal agent only: `/v1/life-events`, `/v1/commitments`, `/v1/errands`, `/v1/whatsapp/{drafts,facts,vips}`, `/v1/jarvis/*`, `/v1/signals` (shared-token auth), `/v1/shortcuts/*`, `/v1/news`, `/v1/vision/ocr`, `/v1/audio/transcriptions`, `/v1/browser/*`. They are single-owner and not a stable public surface.
+
 ## Errors
 
 Errors use a flat JSON body:
@@ -399,8 +425,10 @@ Common HTTP status codes:
 - `400`: bad request or validation failure.
 - `401`: missing or invalid API key.
 - `403`: insufficient scope or cross-tenant access.
-- `404`: resource not found.
-- `402`: budget exceeded (hard-fail policy).
+- `402`: budget or VM quota exceeded (hard-fail policy).
+- `404`: resource not found, including another tenant's resource.
+- `409`: wrong state (for example resuming a VM that is not paused).
+- `422`: an eval run regressed against its branch baseline.
 - `500`: internal error.
 
 <Aside type="note">

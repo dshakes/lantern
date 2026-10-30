@@ -2,9 +2,9 @@
 title: Run real microVMs on your Mac
 description: Run Firecracker microVMs locally on Apple Silicon with a Lima guest and nested virtualization.
 glance:
-  what: "On an Apple Silicon Mac, a Lima Linux guest with nested virtualization provides /dev/kvm so Firecracker microVMs can run locally."
-  why: "macOS has no KVM, so this is how you try real microVMs on a laptop instead of a Linux host."
-  how: "Check Requirements, then follow Setup or the Manual steps."
+  what: "A Lima Linux guest with nested virtualization gives an Apple Silicon Mac (M3 or newer, macOS 15+) a /dev/kvm, so real Firecracker microVMs run locally."
+  why: "macOS has no KVM; without this you only get the stub scheduler, which spawns nothing."
+  how: "brew install lima, then make lima-up and make lima-e2e."
 sidebar:
   order: 8
 ---
@@ -14,9 +14,7 @@ import { DeployTopology } from '../../../../components/diagrams';
 
 <DeployTopology client:visible />
 
-On an Apple Silicon Mac you can run real Firecracker microVMs locally: a Lima Linux guest with nested virtualization provides `/dev/kvm`, and the runtime-manager runs inside it with `RUNTIME_BACKEND=firecracker`.
-
-macOS has no KVM, so Firecracker cannot run on it directly. Lima starts a small Linux machine that is allowed to host virtual machines of its own: a VM inside a VM. Firecracker runs in the inner layer exactly as it would on a Linux server.
+Lima starts a small Linux machine allowed to host VMs of its own, so Firecracker runs in the inner layer as it would on a Linux server. The runtime-manager runs inside the guest with `RUNTIME_BACKEND=firecracker`.
 
 ## Requirements
 

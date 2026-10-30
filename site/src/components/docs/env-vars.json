@@ -1944,7 +1944,7 @@
   ],
   "group": "Service: control-plane",
   "default": "off",
-  "description": "`on` enables the immigration-deadline sentinel (control plane).",
+  "description": "`on` enables the document-deadline sentinel, which derives deadlines from documents and mail (control plane).",
   "prod": false,
   "source": "services/control-plane/internal/handlers/immigration_sentinel.go:50"
  },

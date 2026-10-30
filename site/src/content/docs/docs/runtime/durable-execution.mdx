@@ -2,9 +2,9 @@
 title: Durable execution
 description: Crash-resume with an event-sourced journal, CompletedStep replay, idempotency keys and per-step retry.
 glance:
-  what: "An event-sourced journal_events table and a CompletedStep replay gate let a crashed run resume without losing work or repeating side effects."
-  why: "A restart mid-run would otherwise lose the run or send the same email twice and re-spend model tokens."
-  how: "Read Event-sourced journal and CompletedStep replay, then Per-step retry policy to tune retries."
+  what: "Every step is appended to journal_events, and a recovery sweep re-drives crashed runs, skipping steps that already have a step_completed row."
+  why: "A restart mid-run neither loses the run, re-spends model tokens, nor sends the same email twice."
+  how: "Watch it work: curl -N $API/v1/runs/<run_id>/events, or open the run waterfall at /runs/<run_id>."
 sidebar:
   order: 3
 ---
@@ -16,9 +16,7 @@ import { CheckpointSequence } from '../../../../components/diagrams';
 
 <CheckpointSequence client:visible />
 
-A crash mid-run does not lose work, re-spend tokens, or fire a side effect twice. The shared tier (inline executor) recovers through an event-sourced `journal_events` table and a `CompletedStep` replay gate, with external deliveries de-duplicated by idempotency key. MicroVM runs are re-scheduled by the same recovery sweep (see below).
-
-Consider an agent three steps into a five-step task that has already sent an email and spent money on model calls, when the server restarts. Without durability you either lose the run or start over and send the email twice. PAL Runtime writes each step to the database as it finishes. After a crash the run reloads at the last completed step: finished steps are skipped and their saved results reused, and only the unfinished work runs again.
+A crash mid-run does not lose work, re-spend tokens, or fire a side effect twice. Each step is written to the database as it finishes; after a restart the run reloads at the last completed step, reuses saved results and runs only what is left. Delivery is de-duplicated by idempotency key.
 
 <Diagram name="crash-resume" />
 
@@ -86,7 +84,7 @@ The shared tier uses `run_locks` to detect orphaned runs. Each in-flight run hol
 
 </Steps>
 
-MicroVM runs are handled separately by the recovery sweep. When the sweep finds an orphaned microVM run it calls `resumeMicroVMRun` (see [MicroVM-tier crash-resume](#microvm-tier-crash-resume) below) rather than re-driving it through the shared-tier inline executor. The two paths are distinct to avoid racing with the scheduler's own state machine.
+Orphaned microVM runs take a separate path, `resumeMicroVMRun` ([below](#microvm-tier-crash-resume)), so the sweep does not race the scheduler's own state machine.
 
 ## Scheduler HA (microVM tier)
 
@@ -114,7 +112,7 @@ Retry wraps `executeNode` outside the `CompletedStep` check. A crash-replay skip
 
 ## MicroVM-tier crash-resume
 
-The recovery sweep handles microVM runs separately from shared-tier runs. When the sweep finds an orphaned `microvm` run (no live VM, lock expired), it calls `resumeMicroVMRun`:
+For an orphaned `microvm` run (no live VM, lock expired) the sweep calls `resumeMicroVMRun`:
 
 1. If a live (non-terminal) VM exists for this run, skip. The VM is self-managing.
 2. Count all `runtime_vms` rows for this run (total VMs ever spawned equals resume attempts).
@@ -145,11 +143,4 @@ The journal gives exactly-once completion: the `run_completed` event and the mov
 
 `loop` and `subagent` nodes are durable too: a crash mid-loop replays from the last completed iteration, and a re-driven parent finds the child's completed step in its journal instead of spawning it again. An `approval` wait survives a restart because the interpreter re-reads the `takeover_requests` row. A child that stops on an approval fails the parent step with `ErrChildRunPaused`; nested approvals are not supported yet.
 
-## Why it matters
-
-- **No double-spend.** LLM steps are replayed from the journal, never re-billed at the provider.
-- **No double-send.** Idempotency keys and `side_effect_receipts` de-dup LLM calls and external deliveries across retries.
-- **No babysitting.** The 30 s recovery sweep re-drives crashed shared-tier runs and re-schedules microVM runs (up to 3 attempts) without intervention.
-- **Retry visibility.** `step_retrying` events appear in the waterfall so you see how many attempts a step took.
-
-Each resume is still one trace per span (see [Observability](/docs/observability/)), and the completed run's journal is what the [verifiable receipt](/docs/security/receipts/) is signed over.
+Each resume is one trace (see [Observability](/docs/observability/)), and the completed run's journal is what the [verifiable receipt](/docs/security/receipts/) is signed over.

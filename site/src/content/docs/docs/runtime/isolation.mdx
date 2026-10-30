@@ -2,9 +2,9 @@
 title: Isolation classes
 description: The decision tree from trusted to hostile workloads, and the fail-closed gate.
 glance:
-  what: "Every headless agent declares an isolation class in agent.yaml, which is the security boundary the workload runs behind."
-  why: "It sets how strong the walls around an agent are, from your own code to hostile workloads, and fails closed."
-  how: "Follow The decision tree, then set the class in your spec as shown under In a spec."
+  what: "Each headless agent declares one of six isolation classes in agent.yaml, mapped to a Kubernetes runtimeClassName from runc up to a Kata microVM."
+  why: "Stronger walls for untrusted code, and a refusal rather than a quiet downgrade when the cluster cannot provide them."
+  how: "Walk The decision tree, then set spec.isolation as shown under In a spec."
 sidebar:
   order: 4
 ---
@@ -14,9 +14,7 @@ import { IsolationClasses } from '../../../../components/diagrams';
 
 <IsolationClasses client:visible />
 
-Every headless agent declares an isolation class in its `agent.yaml`. The class is the security boundary the workload runs behind. On Kubernetes it maps to a `runtimeClassName`: isolation is a tier on the pod, not a separate backend (ADR 0009).
-
-An isolation class answers one question: how strong should the walls around this agent be? Code you wrote yourself gets normal walls. Code that pulls packages from the internet or was written by an LLM gets a sandbox that intercepts the operating system's syscalls. Hostile input gets a full virtual machine with its own kernel. You declare the level once in the agent's config. If the cluster can't provide walls that strong, PAL Runtime refuses to run the workload rather than quietly using weaker ones.
+An isolation class answers one question: how strong should the walls around this agent be? Your own code gets normal walls, internet packages or LLM-written code get a syscall-intercepting sandbox, and hostile input gets a full VM with its own kernel. On Kubernetes the class maps to a `runtimeClassName`: isolation is a tier on the pod, not a separate backend (ADR 0009).
 
 ## The decision tree
 

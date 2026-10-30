@@ -12,6 +12,8 @@ import { KnowledgeHandoff } from '../../../../components/diagrams';
 
 <KnowledgeHandoff client:visible />
 
+This is the platform feature for agents you build. pal's search over your own files works differently: it reads local documents on your Mac, never uploaded ([Privacy](/docs/pal/privacy/)).
+
 Upload documents to an agent. Each one is split into chunks, embedded and stored in Postgres with pgvector. On every session message the best chunks are added to the agent's context, and the reply carries the documents it was drawn from. An agent labelled `handoff=human` can also pass a conversation to a person.
 
 ## Documents

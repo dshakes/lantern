@@ -2,9 +2,9 @@
 title: Evaluations
 description: Eval suites, CI regression gates, baselines, A/B experiments, human feedback and rehearsals.
 glance:
-  what: "Eval suites, CI regression gates, baselines, A/B experiments, human feedback and rehearsals, all on the same REST API as the dashboard."
-  why: "Changing a prompt can make an agent worse; a pinned baseline makes the API answer 422 so CI fails first."
-  how: "Create a suite under Eval suites, record a run, then pin it as the baseline."
+  what: "Eval suites score an agent against fixed cases; a run that scores below the pinned branch baseline gets HTTP 422."
+  why: "A prompt change can quietly make an agent worse, and a 422 fails CI before users see it."
+  how: "POST /v1/eval-suites, post a run to /v1/eval-runs, then pin it with pal test --set-baseline."
 sidebar:
   order: 7
 ---
@@ -12,9 +12,7 @@ import { BudgetEvalGate } from '../../../../components/diagrams';
 
 <BudgetEvalGate client:visible />
 
-Test agents against fixed cases, fail CI on regressions, split traffic between versions, and collect human feedback. All of it is on the same REST API the dashboard uses.
-
-Change a prompt and the agent may get worse. An eval suite is a set of inputs with expected results. Run it like a test suite, pin today's score as the baseline, and the API answers 422 when a later run scores lower, so CI fails before users see it.
+An eval suite is a set of inputs with expected results. Run it like a test suite, pin today's score as the baseline, and the API answers 422 when a later run scores lower. Everything here is on the REST API the dashboard uses.
 
 ## Eval suites
 
@@ -231,6 +229,4 @@ Response: { "agentName", "window", "cases": [{ "originalRunId", "input",
   "expectedOutput", ... }], "count", "reason"? }
 ```
 
-## OTel traces
-
-Every HTTP request and gRPC call carries a span enriched with `lantern.tenant_id`, `lantern.run_id`, `lantern.step_id`, and `lantern.user_id` via `middleware.EnrichSpan`. Traces are no-op safe when `PAL_OTEL_ENABLED` is unset. Export to any OTel backend by setting `OTEL_EXPORTER_OTLP_ENDPOINT`.
+Span attributes and traces: [Observability](/docs/observability/).

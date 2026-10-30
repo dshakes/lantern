@@ -2,9 +2,9 @@
 title: Egress and credentials
 description: How sandboxes reach the network. Default in-guest proxy mode, opt-in broker mode, allowlists and host-side credential injection.
 glance:
-  what: "Sandboxes reach the network through one of two modes: an in-guest allowlist proxy by default, or opt-in broker mode with PAL_EGRESS_MODE=broker."
-  why: "In broker mode the host enforces the allowlist and injects credentials, so the real secret never enters the VM."
-  how: "Read The path out, then set the Allowlist and Credential injection rules for your sandbox."
+  what: "A sandbox reaches the network through an in-guest allowlist proxy by default, or through a host-side broker over vsock when PAL_EGRESS_MODE=broker."
+  why: "In broker mode the VM has no network device and the real credential is added on the host, so a compromised workload has nothing to steal."
+  how: "Declare egress rules (and an inject entry with a secret_uri) in the spawn spec, then set PAL_EGRESS_MODE=broker on the runtime-manager."
 sidebar:
   order: 2
 ---
@@ -15,7 +15,7 @@ import { EgressSequence, BrokerDemo } from '../../../../components/diagrams';
 <EgressSequence client:visible />
 <BrokerDemo client:visible />
 
-A sandbox is only as safe as its way out. PAL Runtime ships two egress modes. The default mode enforces the allowlist inside the guest via an iptables-redirected CONNECT proxy. The optional **broker mode** (`PAL_EGRESS_MODE=broker`, Firecracker only) removes the network device entirely: every outbound request crosses a vsock to a broker in the runtime-manager on the host, which checks the sandbox's allowlist and adds the credential there. In broker mode the workload never holds the token it is using.
+Default mode enforces the allowlist inside the guest through an iptables-redirected CONNECT proxy. **Broker mode** (`PAL_EGRESS_MODE=broker`, Firecracker only) removes the network device: every outbound request crosses a vsock to a broker in the runtime-manager, which checks the allowlist and adds the credential on the host.
 
 <Diagram name="sandbox-egress" />
 

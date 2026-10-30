@@ -65,5 +65,14 @@ const label: Record<string, string> = {
   .cap-prod { font: 600 11px/1 var(--p-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--at); }
   .cap-t { font-family: var(--p-display); font-weight: 650; font-size: 1.02rem; letter-spacing: -0.01em; color: var(--sl-color-white); }
   .cap-l { font-size: 0.875rem; line-height: 1.5; color: var(--sl-color-gray-2); }
+  @media (max-width: 560px) {
+    .capg-grid { gap: 10px; }
+    .cap { flex-direction: row; align-items: stretch; }
+    .cap-thumb { flex: 0 0 34%; aspect-ratio: auto; padding: 10px 8px; border-bottom: 0; border-right: 1px solid var(--sl-color-hairline); display: grid; align-items: center; }
+    .cap-body { padding: 12px 14px; gap: 4px; }
+    .cap-ic { width: 24px; height: 24px; }
+    .cap-t { font-size: 0.98rem; }
+    .cap-l { font-size: 0.84rem; }
+  }
   @media (prefers-reduced-motion: reduce) { .cap { transition: none; } .cap:hover { transform: none; } }
 </style>

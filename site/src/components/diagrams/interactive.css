@@ -47,8 +47,8 @@
 /* Nodes */
 .ix-node { cursor: pointer; }
 .ix-node rect.box { stroke-width: 1.5; }
-.ix-node .t1 { font-size: 15px; font-weight: 600; }
-.ix-node .t2 { font-size: 12.5px; fill: var(--lx-ink-2); }
+.ix-node .t1 { font-size: 16px; font-weight: 600; }
+.ix-node .t2 { font-size: 13px; fill: var(--lx-ink-2); }
 .ix-node:focus { outline: none; }
 .ix-node:focus-visible rect.box, .ix-node[aria-pressed="true"] rect.box { stroke: var(--lx-ink); stroke-width: 2.5; }
 .ix-node:focus-visible rect.ring { stroke: var(--ix-focus); }
@@ -81,7 +81,7 @@
 .ix-edge.l-store path { stroke-dasharray: 3 3; }
 .ix-edge.on path { stroke: var(--lx-ink); stroke-width: 2.25; }
 .ix-edge.on.l-broker path, .ix-edge.on.l-guest path { stroke: var(--lx-flame); }
-.ix-edge text { font-size: 12.5px; fill: var(--lx-ink-2); paint-order: stroke; stroke: var(--lx-bg); stroke-width: 4px; stroke-linejoin: round; }
+.ix-edge text { font-size: 13px; fill: var(--lx-ink-2); paint-order: stroke; stroke: var(--lx-bg); stroke-width: 4px; stroke-linejoin: round; }
 .ix-edge.on text { fill: var(--lx-ink); font-weight: 600; }
 .ix-arrow { fill: var(--lx-ink-3); }
 

@@ -2,9 +2,9 @@
 title: Security
 description: Trust boundaries, what is shipped versus planned, encryption, isolation and secret handling in PAL Runtime.
 glance:
-  what: "The trust boundaries between caller, control plane, data-plane host and microVM, with what is shipped versus planned."
-  why: "It tells you which protections you can rely on today and which are still planned."
-  how: "Read What is shipped today first, then Isolation and Secret management."
+  what: "Each hop from caller to control plane to data-plane host to microVM has its own credential, and every control here is labelled shipped or planned."
+  why: "You can tell which protections to rely on today and which are still designs."
+  how: "Read What is shipped today, then follow the links to Egress, Identity and Receipts."
 sidebar:
   order: 1
 ---
@@ -17,22 +17,18 @@ import { TrustBoundaries, TenancyRls } from '../../../../components/diagrams';
 <TrustBoundaries client:visible />
 <TenancyRls client:visible />
 
-Each hop between the caller, the control plane, the data-plane host and the microVM is a trust boundary with its own credential, and untrusted code sits behind all of them.
-
 <Diagram name="sandbox-egress" />
 
 How a sandbox reaches the network, and why it never holds a credential in broker mode: [Egress and credentials](/docs/security/egress/).
 
-This page answers three questions.
+Three questions this page answers:
 
 - **Can one customer's agent see another customer's data?** No. Every record is fenced by tenant, enforced down to the database row.
 - **What happens if an agent runs malicious code?** It runs inside a microVM, with egress limited to a per-sandbox allowlist: structurally in broker mode, where the VM has no network device, and in default mode when the image installs the iptables REDIRECT rule.
 - **Can you prove what an agent did?** Yes. You can issue a signed receipt for any completed run; with an Ed25519 seed configured, anyone can verify it.
 
-Everything below is labeled shipped or planned.
-
-<Aside type="caution" title="Status">
-The controls described below reflect what is shipped and what is planned. Items marked (planned) are designed and documented but not yet implemented. Do not rely on planned features for compliance decisions.
+<Aside type="caution" title="Shipped versus planned">
+Items marked (planned) are designed but not implemented. Do not rely on them for compliance decisions.
 </Aside>
 
 ## What is shipped today
@@ -46,10 +42,10 @@ The controls described below reflect what is shipped and what is planned. Items 
 - **Signed run receipts.** Issued on request for a completed run (`POST /v1/runs/{id}/receipt`). A SHA-256 of the run's full `journal_events` stream is signed with Ed25519 when `PAL_RECEIPT_ED25519_SEED` is set (verifiable with no PAL account at `/proof` against the key at `/.well-known/lantern-receipts`), with an HMAC-SHA256 dev fallback otherwise (verifiable only by the deployment).
 - **Fail-closed token gates.** The gateway's API-key introspection endpoint refuses (403) in production when `PAL_GRPC_SERVICE_TOKEN` is unset (dev allows it with a warning). The personal `/v1/signals` endpoint refuses (401) whenever `PAL_SIGNAL_TOKEN` is unset. Both gates use constant-time token comparisons when a token is set.
 - **A2A tenant isolation.** `GetAgentCard` / `InvokeAgent` gate on `is_public` OR caller tenant; private agents return 404 to cross-tenant callers.
-- **Bridge retry and surface-gateway tenant resolution.** The surface gateway resolves a real `PAL_TENANT_ID` instead of using platform IDs; unknown installs are rejected.
+- **Surface-gateway tenant resolution.** The surface gateway resolves a real `PAL_TENANT_ID` instead of using platform IDs; unknown installs are rejected.
 - **LLM idempotency keys on all provider calls**, derived from `(run_id, step_id, attempt)` and reused across same-provider retries.
 - **Dependency vulnerability gate.** `govulncheck`, `cargo-audit`, and `npm audit` run on every CI build.
-- **OTel traces with `tenant_id`.** Every control-plane HTTP request and gRPC call carries a span enriched with `tenant_id`, `run_id`, and `step_id`.
+- **OTel traces with tenant identity.** Every control-plane HTTP request and gRPC call carries a span enriched with `lantern.tenant_id`, `lantern.run_id` and `lantern.step_id`.
 
 ## Privacy levels (planned)
 
@@ -69,8 +65,6 @@ These constraints are enforced by the platform, outside the model, so a prompt i
 - **Egress allowlist.** Declared per spawn. In broker mode anything not on the allowlist is denied structurally (there is no network device). In default mode the allowlist binds only when the VM host/image installs the iptables REDIRECT rule. See [Egress and credentials](/docs/security/egress/).
 - **Human approval.** Workflow approval nodes block on a takeover request until an operator grants it. Nested approvals inside child runs fail today rather than wait.
 - **Confidence gate.** Low-confidence tool and connector steps divert to approval. Off by default (`PAL_CONFIDENCE_GATE`).
-
-<Diagram name="budget-gate" />
 
 <Aside type="caution">
 The dashboard also has output filters (blocked topics and similar). These run in the browser on displayed output. They are a convenience, not a security control.
@@ -109,16 +103,7 @@ SIEM export via webhook or S3 is planned but not yet available.
 
 ## Isolation
 
-Agent runs execute inside isolated sandboxes. The isolation class depends on the workload type. The default backend is Kubernetes (`RUNTIME_BACKEND=k8s`); Docker is available for local development (`RUNTIME_BACKEND=docker`). In production, the runtime manager supports gVisor (standard), Kata microVM (hostile), and Firecracker-backed Kata for the highest isolation tier.
-
-Fail-closed: untrusted or hostile workloads are refused unless the appropriate RuntimeClass is configured, and are never silently downgraded to a bare pod.
-
-All isolation tiers provide:
-
-- **Process isolation.** Separate filesystem and network namespace per run; microVM classes add their own guest kernel.
-- **seccomp filtering.** Syscall restriction is a property of the configured RuntimeClass (gVisor / Kata), not a PAL-shipped profile.
-- **Egress control.** Default mode: an in-guest allowlist CONNECT proxy, fail-closed in production, which needs the iptables REDIRECT rule on the VM host/image (proxy env vars alone are advisory). Opt-in broker mode (`PAL_EGRESS_MODE=broker`, Firecracker only): the VM has no network device and a host broker enforces the allowlist and injects credentials, so they never enter the VM.
-- **Resource limits.** CPU, memory, and disk are capped per run.
+Agent runs execute in isolated sandboxes whose strength depends on the workload type: gVisor (standard), Kata microVM (hostile), and Firecracker for the strongest tier. Untrusted or hostile workloads are refused unless the right RuntimeClass is configured, and are never silently downgraded to a bare pod. The classes and the decision tree are on [Isolation classes](/docs/runtime/isolation/); how a sandbox reaches the network is on [Egress and credentials](/docs/security/egress/).
 
 <Aside type="danger" title="Architectural invariant">
 User-supplied code, Python `exec`, browser automation, and anything that loads packages from the internet MUST run inside a microVM. Never run untrusted code in a bare container.

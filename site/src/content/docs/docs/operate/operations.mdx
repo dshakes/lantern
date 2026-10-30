@@ -2,9 +2,9 @@
 title: Operations
 description: "Day-two operation of a PAL install: metrics, alerts, backups and restore drills, upgrades, kiosk mode and runbooks."
 glance:
-  what: "Day-two operation of a PAL install: metrics, alerts, backups and restore drills, upgrades, kiosk mode and runbooks."
-  why: "It covers what you do after helm install so you can detect problems, restore from backup and upgrade without losing data."
-  how: "Start with Install pointers, then wire the Metrics and Alert groups."
+  what: "What to do after helm install: scrape :9464/metrics, load the four alert groups, and prove backups restore with scripts/db-restore-drill.sh."
+  why: "You find out about problems before users do, and a restore works when you need it."
+  how: "kubectl -n pal port-forward deploy/pal-control-plane 9464:9464, then follow Metrics and Alert groups."
 sidebar:
   order: 2
 ---
@@ -118,4 +118,3 @@ On-call runbooks live in the repository, each as symptom, what fired it, triage,
 - The logical backup has no point-in-time recovery: you lose every write since the last dump. It is a floor, not a recovery objective.
 - The scheduler's readiness probe defaults to `/healthz` because `/readyz` stays unready until a runtime manager registers.
 - HPAs are CPU-based and need metrics-server.
-- Some runbooks still describe SLO metrics as not yet emitted; the control-plane series above now exist, and the alert rules are the source of truth.

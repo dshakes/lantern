@@ -2,9 +2,9 @@
 title: Scheduling
 description: Run an agent on a cron expression, with per-schedule input and timezone.
 glance:
-  what: "Run an agent on a five-field cron expression; schedules are their own resource with per-schedule input and timezone, managed at /v1/schedules."
-  why: "One agent can have many schedules, and scheduled runs show up in the dashboard like any other run."
-  how: "Write a cron expression, then call Create a schedule in the Schedule API section."
+  what: "A schedule starts an agent on a five-field cron expression, in an IANA timezone, with its own input template."
+  why: "One agent can have many schedules, an over-budget agent does not fire, and scheduled runs look like any other run."
+  how: "POST /v1/schedules with agentName, cronExpr and timezone, as in Create a schedule."
 sidebar:
   order: 5
 ---
@@ -13,8 +13,6 @@ import { Aside } from '@astrojs/starlight/components';
 import { CronSchedules } from '../../../../components/diagrams';
 
 <CronSchedules client:visible />
-
-Run an agent on a cron expression. Schedules are their own resource, so one agent can have many, each with its own input and timezone. Manage them at `/v1/schedules`. Scheduled runs appear in the dashboard like any other run.
 
 ## Cron expressions
 
@@ -111,6 +109,6 @@ The scheduler polls every 60 seconds, so a due schedule fires within a minute. T
 Setting `deliveryEmail` also mails the run output. That path is not covered by the fixture suite.
 </Aside>
 
-## Surfaces trigger runs too
+Inbound channel messages ([Surfaces](/docs/pal/surfaces/)) and [webhooks](/docs/build/triggers/) start runs too, with the same lifecycle.
 
-Inbound messages on a channel start runs. They are not schedules but follow the same run lifecycle. See [Surfaces](/docs/pal/surfaces/). Signed webhooks start runs as well; see [Webhook triggers](/docs/build/triggers/).
+Next: [sessions and memory](/docs/runtime/sessions-and-memory/).

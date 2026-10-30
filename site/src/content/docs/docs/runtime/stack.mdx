@@ -12,8 +12,6 @@ import { ContainerView } from '../../../../components/diagrams';
 
 <ContainerView client:visible />
 
-Four languages, three data stores, one contract format. This page explains why Rust and Go are both in here: what each piece does and why it went to that tool.
-
 Running other people's agents is three jobs. **Coordinate** (who owns what, what ran, who is billed): Go, for its database and cluster libraries. **Stay fast on every request** (route tokens, hold sandboxes): Rust, with no garbage-collector pauses. **Be easy to build against**: TypeScript, where the AI ecosystem lives. One language does not win all three, so each layer gets its own.
 
 ## The rule
@@ -24,7 +22,7 @@ Right tool per layer. **Never unify for unification's sake.** Adding a new langu
 
 | Layer | Language | Why this one |
 | --- | --- | --- |
-| Control plane, workflow engine, scheduler, memory, billing | **Go 1.23** | Kubernetes is written in Go, so every cluster library is first-class. Compiles to one static binary with no runtime to install. Mature gRPC and Postgres ecosystem. Its concurrency model (goroutines) suits work that is mostly waiting, on a database or on another service. |
+| Control plane, workflow engine, scheduler, memory, billing | **Go 1.25+** | Kubernetes is written in Go, so every cluster library is first-class. Compiles to one static binary with no runtime to install. Mature gRPC and Postgres ecosystem. Its concurrency model (goroutines) suits work that is mostly waiting, on a database or on another service. |
 | Gateway, model router, runtime manager, surface gateway | **Rust 2024** | The hot path. Rust has no garbage collector, so there are no unpredictable pauses while a token stream is in flight and latency stays flat instead of spiking. It also frees memory deterministically, which matters for a process babysitting hundreds of sandboxes. Firecracker itself is Rust, so we speak its native language. |
 | Dashboard, landing page, docs site | **TypeScript / Next.js 15** | React Server Components and streaming mean the run waterfall can render tokens as they arrive rather than after. It is the same language as the primary SDK, so types flow straight through. |
 | Primary SDK | **TypeScript** | Where the agent ecosystem already lives. |
@@ -92,7 +90,7 @@ What happens between `pal run agent.yaml` and a result. Every hop is a process b
 
 ## The rules that hold it together
 
-The stack choices above only pay off because a handful of boundaries are never crossed. These are load-bearing: breaking one causes an incident, not a bug.
+These boundaries are load-bearing: breaking one causes an incident, not a bug.
 
 - **The control plane never touches your code.** Only the runtime manager talks to Firecracker, Kata or pods.
 - **One writer for run state.** Services emit events; the workflow engine is the only thing that writes the outcome. No service updates the `runs` table directly.
