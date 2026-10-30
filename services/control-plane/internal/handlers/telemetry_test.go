@@ -136,7 +136,7 @@ func TestCallLLMSync_GenAISpan_UnsupportedProvider(t *testing.T) {
 }
 
 // TestCallLLMSync_GenAISpan_ClaudeCode exercises the claude-code provider
-// branch. With LANTERN_USE_CLAUDE_CODE=0 the binary look-up is skipped and the
+// branch. With PAL_USE_CLAUDE_CODE=0 the binary look-up is skipped and the
 // function returns an error immediately, confirming the span is still recorded.
 func TestCallLLMSync_GenAISpan_ClaudeCode(t *testing.T) {
 	t.Setenv("PAL_USE_CLAUDE_CODE", "0")

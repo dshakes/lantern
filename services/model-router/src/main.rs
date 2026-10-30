@@ -55,7 +55,7 @@ async fn main() -> anyhow::Result<()> {
 
     info!(
         listen_addr = %config.listen_addr,
-        "starting lantern model router"
+        "starting PAL model router"
     );
 
     // Build the provider registry based on available API keys.
@@ -101,7 +101,7 @@ async fn main() -> anyhow::Result<()> {
     }
     if token.as_deref().is_none_or(str::is_empty) {
         tracing::warn!(
-            "LANTERN_GRPC_SERVICE_TOKEN is unset: model-router accepts unauthenticated callers (dev only)"
+            "PAL_GRPC_SERVICE_TOKEN is unset: model-router accepts unauthenticated callers (dev only)"
         );
     }
 

@@ -8,7 +8,7 @@ import (
 )
 
 // scopeExempt lists the mutating routes that legitimately carry no WithScope,
-// each with the reason. WithScope authenticates a Lantern JWT/API key, so a
+// each with the reason. WithScope authenticates a PAL JWT/API key, so a
 // route authenticated some other way cannot use it. Adding a route here is
 // fine — writing down why is the point (ADR 0027 §8).
 var scopeExempt = map[string]string{
@@ -42,7 +42,7 @@ var scopeExempt = map[string]string{
 
 	// Public by design.
 	"POST /v1/runs/receipts/verify": "public receipt verification",
-	"POST /v1/kiosk/session":        "anonymous by design; registered only when LANTERN_KIOSK=1 (ADR 0029)",
+	"POST /v1/kiosk/session":        "anonymous by design; registered only when PAL_KIOSK=1 (ADR 0029)",
 
 	// Runtime routes check runtime:* scopes inside the handler (requireRuntimeScope).
 	"POST /v1/runtime/schedule":              "in-handler runtime:write",
@@ -60,34 +60,36 @@ var scopeExempt = map[string]string{
 // exempt; every other GET must be scope-annotated.
 var getExempt = map[string]string{
 	// Auth flow — these ARE the authentication endpoints.
-	"GET /auth/me":                          "auth endpoint (returns current user, internal JWT validation)",
-	"GET /auth/oauth/{provider}/start":      "OAuth flow start (no credential yet)",
-	"GET /auth/oauth/{provider}/callback":   "OAuth callback (no credential yet)",
-	"GET /v1/connectors/oauth/callback":     "OAuth callback (connector flow, no scope needed)",
+	"GET /auth/me":                        "auth endpoint (returns current user, internal JWT validation)",
+	"GET /auth/oauth/{provider}/start":    "OAuth flow start (no credential yet)",
+	"GET /auth/oauth/{provider}/callback": "OAuth callback (no credential yet)",
+	"GET /v1/connectors/oauth/callback":   "OAuth callback (connector flow, no scope needed)",
 
 	// Shared-token endpoints.
 	"GET /v1/signals": "PAL_SIGNAL_TOKEN shared secret (not JWT/API key)",
 
 	// Public/unauthenticated by design.
-	"GET /v1/agents/{name}/card":            "A2A card: public for is_public agents; internal auth for own agents",
-	"GET /.well-known/agent.json":           "public A2A directory (is_public agents only)",
-	"GET /v1/marketplace":                   "public marketplace listing (no tenant data)",
-	"GET /v1/marketplace/{slug}":            "public marketplace entry (no tenant data)",
-	"GET /v1/mcp/servers":                   "public MCP server catalog (no tenant data)",
-	"GET /v1/mcp/servers/{slug}":            "public MCP server entry (no tenant data)",
-	"GET /.well-known/lantern-receipts":     "public signing key / algorithm disclosure",
+	"GET /v1/agents/{name}/card":              "A2A card: public for is_public agents; internal auth for own agents",
+	"GET /.well-known/agent.json":             "public A2A directory (is_public agents only)",
+	"GET /v1/marketplace":                     "public marketplace listing (no tenant data)",
+	"GET /v1/marketplace/{slug}":              "public marketplace entry (no tenant data)",
+	"GET /v1/mcp/servers":                     "public MCP server catalog (no tenant data)",
+	"GET /v1/mcp/servers/{slug}":              "public MCP server entry (no tenant data)",
+	"GET /.well-known/lantern-receipts":       "public signing key / algorithm disclosure",
 	"GET /.well-known/lantern-agent-identity": "public agent identity key fingerprint",
+	"GET /.well-known/pal-receipts":           "public signing key / algorithm disclosure (PAL name; ADR 0032)",
+	"GET /.well-known/pal-agent-identity":     "public agent identity key fingerprint (PAL name; ADR 0032)",
 
 	// Runtime routes check runtime:* scopes inside the handler (requireRuntimeScope).
-	"GET /v1/runtime/vms":                   "in-handler runtime:read",
-	"GET /v1/runtime/vms/{id}":              "in-handler runtime:read",
-	"GET /v1/runtime/vms/{id}/logs":         "in-handler runtime:read",
-	"GET /v1/runtime/vms/{id}/files":        "in-handler runtime:read",
+	"GET /v1/runtime/vms":                    "in-handler runtime:read",
+	"GET /v1/runtime/vms/{id}":               "in-handler runtime:read",
+	"GET /v1/runtime/vms/{id}/logs":          "in-handler runtime:read",
+	"GET /v1/runtime/vms/{id}/files":         "in-handler runtime:read",
 	"GET /v1/runtime/vms/{id}/files/content": "in-handler runtime:read",
-	"GET /v1/runtime/cluster":               "in-handler runtime:read",
-	"GET /v1/runtime/quota":                 "in-handler runtime:read",
-	"GET /v1/runtime/audit":                 "in-handler runtime:read",
-	"GET /v1/runtime/metrics":               "in-handler runtime:read",
+	"GET /v1/runtime/cluster":                "in-handler runtime:read",
+	"GET /v1/runtime/quota":                  "in-handler runtime:read",
+	"GET /v1/runtime/audit":                  "in-handler runtime:read",
+	"GET /v1/runtime/metrics":                "in-handler runtime:read",
 
 	// SSE endpoints: browser EventSource cannot set custom headers so these
 	// handlers accept both Authorization header AND ?token= query param.

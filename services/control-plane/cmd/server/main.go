@@ -53,7 +53,7 @@ func main() {
 	zap.ReplaceGlobals(logger)
 
 	// --- Startup security guards ---
-	// Fail closed in production; warn and continue in dev (LANTERN_ENV unset).
+	// Fail closed in production; warn and continue in dev (PAL_ENV unset).
 	runStartupGuards(logger)
 
 	// --- Region identity / standby mode (ADR 0046; all unset = single-region) ---
@@ -72,7 +72,7 @@ func main() {
 	defer cancel()
 
 	// --- OpenTelemetry ---
-	// No-op when OTEL_EXPORTER_OTLP_ENDPOINT / LANTERN_OTEL_ENABLED=1 are unset,
+	// No-op when OTEL_EXPORTER_OTLP_ENDPOINT / PAL_OTEL_ENABLED=1 are unset,
 	// so the default path is unchanged (no collector required, no spans exported).
 	otelShutdown, err := telemetry.InitTracer(ctx, "lantern.control-plane", regionCfg.ResourceAttrs()...)
 	if err != nil {
@@ -111,13 +111,13 @@ func main() {
 	logger.Info("connected to postgres")
 
 	// Run migrations. seedDev=true injects the fixed dev tenant + admin account
-	// so `make dev` works without manual bootstrapping. In prod (LANTERN_ENV set)
+	// so `make dev` works without manual bootstrapping. In prod (PAL_ENV set)
 	// we skip those rows — a static-password seed is a backdoor.
 	// Kiosk mode (ADR 0029) never seeds the well-known dev admin: the instance is
 	// reachable by anonymous visitors.
 	seedDev := !handlers.IsProd() && !handlers.KioskEnabled()
 	if seedDev {
-		logger.Info("dev mode: seeding dev tenant + admin user (set LANTERN_ENV=prod to disable)")
+		logger.Info("dev mode: seeding dev tenant + admin user (set PAL_ENV=prod to disable)")
 	} else {
 		logger.Info("prod mode: skipping dev seed — provision an admin account manually")
 	}
@@ -324,13 +324,13 @@ func main() {
 	// --- REST handler (wraps gRPC handlers for direct HTTP access) ---
 	restHandler := handlers.NewRESTHandler(srv, authHandler, agentSvc, runSvc)
 
-	// SAFETY: warn loudly when LANTERN_USE_CLAUDE_CODE is set. The local CLI
+	// SAFETY: warn loudly when PAL_USE_CLAUDE_CODE is set. The local CLI
 	// is excluded from all user-facing paths (bridge replies, SMS, voice,
 	// sessions) unconditionally. It can only serve the developer-dashboard
 	// "Generate spec/code" path (Complete with empty AgentName). If you see
-	// this in prod logs, remove LANTERN_USE_CLAUDE_CODE from the deployment.
+	// this in prod logs, remove PAL_USE_CLAUDE_CODE from the deployment.
 	if os.Getenv("PAL_USE_CLAUDE_CODE") == "1" {
-		logger.Warn("LANTERN_USE_CLAUDE_CODE=1 is set — claude-code is enabled for dev-only dashboard paths; it is EXCLUDED from all user-facing reply paths (bridge contacts, SMS, voice, sessions)")
+		logger.Warn("PAL_USE_CLAUDE_CODE=1 is set — claude-code is enabled for dev-only dashboard paths; it is EXCLUDED from all user-facing reply paths (bridge contacts, SMS, voice, sessions)")
 	}
 
 	// --- Domain-specific handlers ---
@@ -357,8 +357,8 @@ func main() {
 	crossAppHandler := handlers.NewCrossAppHandler(srv, authHandler)
 	crossAppHandler.SetLlmProxy(llmProxyHandler) // enables cross-app LLM composition
 
-	// Browser-as-skill (LANTERN_BROWSER_SKILL=on, default OFF).
-	// Optionally wires RuntimeManager.ExecTool when LANTERN_RUNTIME_MANAGER_ADDR
+	// Browser-as-skill (PAL_BROWSER_SKILL=on, default OFF).
+	// Optionally wires RuntimeManager.ExecTool when PAL_RUNTIME_MANAGER_ADDR
 	// is set. Without the addr the handler is 503 for dispatch endpoints — honest
 	// increment 1 behavior until the runtime image ships (increment 2).
 	browserHandler := handlers.NewBrowserHandler(srv, authHandler)
@@ -435,7 +435,7 @@ func main() {
 
 		// Check whether the lantern_app role exists. Best-effort: if the DB is
 		// unreachable the field reports false rather than erroring the health probe.
-		var lanternAppRoleExists bool
+		var appRoleExists bool
 		ctx, cancel := r.Context(), func() {}
 		if deadline, ok := r.Context().Deadline(); !ok || time.Until(deadline) > 2*time.Second {
 			ctx, cancel = context.WithTimeout(r.Context(), 2*time.Second)
@@ -443,13 +443,13 @@ func main() {
 		defer cancel()
 		_ = pool.QueryRow(ctx,
 			`SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = 'lantern_app')`,
-		).Scan(&lanternAppRoleExists)
+		).Scan(&appRoleExists)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintf(w,
 			`{"status":"ok","llmMode":%q,"rlsEnforce":%v,"appPoolActive":%v,"lanternAppRoleExists":%v}`+"\n",
-			llmMode, rlsEnforce, appPoolActive, lanternAppRoleExists,
+			llmMode, rlsEnforce, appPoolActive, appRoleExists,
 		)
 	})
 	// /metrics is unauthenticated and its labels carry agent names, so it gets
@@ -542,7 +542,7 @@ func main() {
 
 	// Personal device signals — iPhone Shortcuts POST app-context here
 	// THROUGH the cloudflared tunnel (API :8080, not dashboard :3001). NO
-	// JWT/tenant scope; gated by the LANTERN_SIGNAL_TOKEN shared secret
+	// JWT/tenant scope; gated by the PAL_SIGNAL_TOKEN shared secret
 	// (fail-closed when unset), mirroring the bridge-heartbeat pattern.
 	httpMux.HandleFunc("POST /v1/signals", signalHandler.IngestSignal)
 	httpMux.HandleFunc("GET /v1/signals", signalHandler.ListSignals)
@@ -577,7 +577,7 @@ func main() {
 	// persisted when that brief was sent.
 	// Mutating: closes/snoozes/dismisses a commitment, so it carries a write
 	// scope. Without WithScope a read-scoped API key could mutate under
-	// LANTERN_AUTHZ_ENFORCE=1.
+	// PAL_AUTHZ_ENFORCE=1.
 	httpMux.HandleFunc("POST /v1/jarvis/brief/act", authHandler.WithScope(handlers.ScopeRunsWrite, jarvisHandler.BriefAct))
 
 	// iOS Shortcuts / Siri endpoints — single-purpose actions that map
@@ -611,7 +611,7 @@ func main() {
 	httpMux.HandleFunc("POST /v1/jarvis/stream-completion", authHandler.WithScope(handlers.ScopeRunsExecute, llmProxyHandler.HandleStreamCompletion))
 	// Outbound TTS — OpenAI tts-1. Returns raw audio bytes (mp3 by
 	// default). Used by the bridges' voice-out path when the owner
-	// opts in via LANTERN_VOICE_OUT=on.
+	// opts in via PAL_VOICE_OUT=on.
 	httpMux.HandleFunc("POST /v1/voice/tts", authHandler.WithScope(handlers.ScopeRunsExecute, llmProxyHandler.HandleTTS))
 
 	// Agent AI generation endpoints.
@@ -685,13 +685,13 @@ func main() {
 	httpMux.HandleFunc("POST /v1/commitments/{id}/dismiss", authHandler.WithScope(handlers.ScopeWrite, commitmentHandler.DismissCommitment))
 	// Stage 2: LLM-powered research + cited action plan.
 	httpMux.HandleFunc("POST /v1/commitments/{id}/research", authHandler.WithScope(handlers.ScopeRunsExecute, commitmentHandler.ResearchCommitment))
-	// Cross-app workflows (LANTERN_CROSS_APP=on, default OFF).
+	// Cross-app workflows (PAL_CROSS_APP=on, default OFF).
 	// Propose: autonomous read + LLM compose → stored proposal (no side-effect).
 	// Execute-action: SOLE side-effect path; requires explicit owner confirm.
 	httpMux.HandleFunc("POST /v1/cross-app/propose", authHandler.WithScope(handlers.ScopeRunsExecute, crossAppHandler.Propose))
 	httpMux.HandleFunc("POST /v1/commitments/{id}/execute-action", authHandler.WithScope(handlers.ScopeRunsExecute, crossAppHandler.ExecuteAction))
 
-	// Browser-as-skill (LANTERN_BROWSER_SKILL=on, default OFF — ADR 0017).
+	// Browser-as-skill (PAL_BROWSER_SKILL=on, default OFF — ADR 0017).
 	// Read: autonomous web read; dispatch 503 in increment 1 (no runtime yet).
 	// Propose: owner-confirm browser_act stored as a commitment (no execution).
 	// Execute: SOLE browser write path; owner confirm required.
@@ -803,12 +803,14 @@ func main() {
 	// Verifiable execution receipts — HMAC-signed, journal-bound run summaries.
 	httpMux.HandleFunc("POST /v1/runs/{id}/receipt", authHandler.WithScope(handlers.ScopeRunsWrite, receiptHandler.IssueReceipt))
 	httpMux.HandleFunc("POST /v1/runs/receipts/verify", receiptHandler.VerifyReceipt)
-	httpMux.HandleFunc("GET /.well-known/lantern-receipts", receiptHandler.WellKnown)
+	httpMux.HandleFunc("GET /.well-known/pal-receipts", receiptHandler.WellKnown)
+	httpMux.HandleFunc("GET /.well-known/lantern-receipts", receiptHandler.WellKnown) // legacy path for external verifiers (ADR 0032)
 
 	// Agent-instance identity public-key discovery. No auth (public endpoint).
 	// Ed25519 mode: returns {algorithm, publicKey, keyFingerprint}.
 	// HS256 mode (default): returns {algorithm:"HS256"} only — no secret emitted.
-	httpMux.HandleFunc("GET /.well-known/lantern-agent-identity", handlers.AgentIdentityWellKnown)
+	httpMux.HandleFunc("GET /.well-known/pal-agent-identity", handlers.AgentIdentityWellKnown)
+	httpMux.HandleFunc("GET /.well-known/lantern-agent-identity", handlers.AgentIdentityWellKnown) // legacy path (ADR 0032)
 
 	// Log the active agent-identity signing mode once at startup.
 	{
@@ -834,11 +836,11 @@ func main() {
 	// Rehearsals — replay past failures against a candidate agent version.
 	httpMux.HandleFunc("POST /v1/runs/rehearse", authHandler.WithScope(handlers.ScopeRunsWrite, rehearseHandler.Rehearse))
 
-	// Immigration Deadline Sentinel (LANTERN_IMMIGRATION_SENTINEL, default OFF).
+	// Immigration Deadline Sentinel (PAL_IMMIGRATION_SENTINEL, default OFF).
 	httpMux.HandleFunc("GET /v1/immigration/deadlines", authHandler.WithScope(handlers.ScopeRead, immigrationHandler.List))
 	httpMux.HandleFunc("POST /v1/immigration/scan", authHandler.WithScope(handlers.ScopeRunsExecute, immigrationHandler.Scan))
 
-	// Memory distillation (LANTERN_MEMORY_DISTILL, default OFF).
+	// Memory distillation (PAL_MEMORY_DISTILL, default OFF).
 	// LLM-distilled long-term facts/preferences extracted from session
 	// transcripts + timeline events.  Loop started below.
 	httpMux.HandleFunc("GET /v1/memory/distillates", authHandler.WithScope(handlers.ScopeRead, memoryDistillHandler.List))
@@ -851,7 +853,7 @@ func main() {
 		logger.Fatal("account lifecycle (ADR 0027)", zap.Error(err))
 	}
 
-	// Kiosk demo mode (ADR 0029): route + expiry sweep exist only when LANTERN_KIOSK=1.
+	// Kiosk demo mode (ADR 0029): route + expiry sweep exist only when PAL_KIOSK=1.
 	if handlers.KioskEnabled() {
 		kioskHandler := handlers.NewKioskHandler(srv, authHandler)
 		httpMux.HandleFunc("POST /v1/kiosk/session", kioskHandler.CreateSession)
@@ -863,7 +865,7 @@ func main() {
 	httpMux.HandleFunc("GET /v1/system/health", authHandler.WithScope(handlers.ScopeRead, healthSweeper.ServeHealth))
 
 	// Errand-runner v1: owner-confirmed outbound AI calls (FCC/TCPA compliant).
-	// Gated by LANTERN_ERRAND=1/true/on; all endpoints 404 when off (default).
+	// Gated by PAL_ERRAND=1/true/on; all endpoints 404 when off (default).
 	// confirm-and-call is the SOLE dial path and requires owner/admin role.
 	errandHandler := handlers.NewErrandHandler(srv, authHandler, llmProxyHandler)
 	httpMux.HandleFunc("POST /v1/errands", authHandler.WithScope(handlers.ScopeRunsExecute, errandHandler.Propose))
@@ -906,13 +908,13 @@ func main() {
 	httpMux.HandleFunc("POST /v1/egress/dlp-policy/rules", authHandler.WithScope(handlers.ScopeSettingsWrite, dlpPolicyHandler.UpsertRule))
 	httpMux.HandleFunc("DELETE /v1/egress/dlp-policy/rules/{ruleId}", authHandler.WithScope(handlers.ScopeSettingsWrite, dlpPolicyHandler.DeleteRule))
 	// Secret relay — service-to-service endpoint for the runtime-manager to
-	// resolve lantern.secret/... refs. Fail-closed when
-	// LANTERN_RUNTIME_SECRET_TOKEN is unset (see ADR 0008).
+	// resolve pal.secret/... refs. Fail-closed when
+	// PAL_RUNTIME_SECRET_TOKEN is unset (see ADR 0008).
 	runtimeSecretsHandler := handlers.NewRuntimeSecretsHandler(srv, authHandler)
 	httpMux.HandleFunc("POST /v1/runtime/secrets/resolve", runtimeSecretsHandler.ResolveSecrets)
 	// Internal API-key introspection — the Rust gateway validates X-API-Key
 	// here. Guarded by the shared gRPC service token (fail-closed in prod
-	// when LANTERN_GRPC_SERVICE_TOKEN is unset).
+	// when PAL_GRPC_SERVICE_TOKEN is unset).
 	httpMux.HandleFunc("POST /internal/auth/introspect-key", authHandler.IntrospectKey)
 	// Secure short-lived file links: bridges stage a file (service-token gated),
 	// contacts fetch it from the public capability URL until it expires.
@@ -972,12 +974,12 @@ func main() {
 	if regionCfg.ReadOnly {
 		logger.Info("read-only standby: background writers disabled")
 	} else {
-		// runtime_vm_logs retention: delete rows older than LANTERN_RUNTIME_LOG_RETENTION_DAYS
+		// runtime_vm_logs retention: delete rows older than PAL_RUNTIME_LOG_RETENTION_DAYS
 		// (default 14) once per hour. Stops cleanly when ctx is cancelled.
 		go runtimeReportHandler.RunLogRetentionJanitor(ctx)
 
 		// side_effect_receipts retention: delete rows older than
-		// LANTERN_SIDE_EFFECT_RETENTION_DAYS (default 30) once per hour.
+		// PAL_SIDE_EFFECT_RETENTION_DAYS (default 30) once per hour.
 		go handlers.RunSideEffectReceiptsJanitor(ctx, pool, logger)
 
 		// High-growth table retention: journal_events (90d), runtime_audit_events
@@ -994,11 +996,11 @@ func main() {
 		defer sched.Stop()
 
 		// Periodic crash-recovery watchdog: re-drives orphaned runs every
-		// LANTERN_RECOVERY_INTERVAL (default 30s). Non-blocking; first sweep
+		// PAL_RECOVERY_INTERVAL (default 30s). Non-blocking; first sweep
 		// fires 2s after the HTTP server starts so /readyz serves first.
 		handlers.RunRecoveryLoop(ctx, restHandler, logger, 0)
 
-		// Peer-service health sweep (LANTERN_HEALTH_SWEEP_INTERVAL, default 60s).
+		// Peer-service health sweep (PAL_HEALTH_SWEEP_INTERVAL, default 60s).
 		// Probes configured peer services via TCP dial; alerts the owner on
 		// up↔down transitions via sendSelfNote. Set to "0"/"off" to disable.
 		// Sweeper was created alongside the other handler declarations above so
@@ -1009,13 +1011,13 @@ func main() {
 		go handlers.NewMemoryIngestor(pool, logger, identityHandler).Run(ctx)
 
 		// Session-scoped microVM idle sweep: terminates VMs whose last_used_at
-		// is older than LANTERN_SESSION_VM_IDLE_TTL (default 30m).
+		// is older than PAL_SESSION_VM_IDLE_TTL (default 30m).
 		go handlers.RunSessionVMIdleSweep(ctx, runtimeHandler, logger)
 
-		// LLM-distilled long-term memory (LANTERN_MEMORY_DISTILL, default OFF).
+		// LLM-distilled long-term memory (PAL_MEMORY_DISTILL, default OFF).
 		go handlers.RunMemoryDistillLoop(ctx, memoryDistillHandler)
 
-		// Proactive Jarvis morning brief (opt-in via LANTERN_JARVIS_BRIEF_HOUR).
+		// Proactive Jarvis morning brief (opt-in via PAL_JARVIS_BRIEF_HOUR).
 		go jarvisHandler.RunBriefScheduler(ctx)
 	}
 
@@ -1118,10 +1120,10 @@ func insecureFlagsDecision(isProd bool, twilioWebhookAuth, useClaudeCode string)
 		return false, ""
 	}
 	if strings.EqualFold(twilioWebhookAuth, "off") {
-		return true, "LANTERN_TWILIO_WEBHOOK_AUTH=off is not allowed in production — Twilio webhooks would be accepted unsigned; unset it"
+		return true, "PAL_TWILIO_WEBHOOK_AUTH=off is not allowed in production — Twilio webhooks would be accepted unsigned; unset it"
 	}
 	if useClaudeCode == "1" {
-		return true, "LANTERN_USE_CLAUDE_CODE=1 is not allowed in production — it shells out to a local CLI; unset it"
+		return true, "PAL_USE_CLAUDE_CODE=1 is not allowed in production — it shells out to a local CLI; unset it"
 	}
 	return false, ""
 }
@@ -1129,9 +1131,9 @@ func insecureFlagsDecision(isProd bool, twilioWebhookAuth, useClaudeCode string)
 // runStartupGuards enforces fail-closed security checks before the server
 // starts accepting traffic.
 //
-// In production (LANTERN_ENV=prod/production/staging) any missing secret is
+// In production (PAL_ENV=prod/production/staging) any missing secret is
 // fatal — we refuse to boot rather than silently operate insecurely.
-// In dev (LANTERN_ENV unset) we WARN and continue so `make dev` still works
+// In dev (PAL_ENV unset) we WARN and continue so `make dev` still works
 // out-of-the-box with no env configuration.
 func runStartupGuards(logger *zap.Logger) {
 	prod := handlers.IsProd()
@@ -1157,23 +1159,23 @@ func runStartupGuards(logger *zap.Logger) {
 	// H1 — Receipt signing secret
 	receiptSecret := os.Getenv("PAL_RECEIPT_SECRET")
 	if prod && receiptSecret == "" {
-		logger.Fatal("LANTERN_RECEIPT_SECRET is unset — set a strong random secret to secure run receipts and marketplace invocation signatures")
+		logger.Fatal("PAL_RECEIPT_SECRET is unset — set a strong random secret to secure run receipts and marketplace invocation signatures")
 	}
 	if !prod && receiptSecret == "" {
-		logger.Warn("LANTERN_RECEIPT_SECRET is unset — using insecure dev default; set LANTERN_RECEIPT_SECRET in production")
+		logger.Warn("PAL_RECEIPT_SECRET is unset — using insecure dev default; set PAL_RECEIPT_SECRET in production")
 	}
 
 	// Secrets (connector keys / LLM API keys at rest)
 	encEnabled, encErr := secrets.EncryptionEnabled()
 	if encErr != nil {
 		// Malformed key — fatal in all environments.
-		logger.Fatal("LANTERN_CREDENTIAL_KEY is malformed", zap.Error(encErr))
+		logger.Fatal("PAL_CREDENTIAL_KEY is malformed", zap.Error(encErr))
 	}
 	if prod && !encEnabled {
-		logger.Fatal("LANTERN_CREDENTIAL_KEY is unset — connector tokens and LLM API keys would be stored in plaintext; set a 32-byte AES-256 key")
+		logger.Fatal("PAL_CREDENTIAL_KEY is unset — connector tokens and LLM API keys would be stored in plaintext; set a 32-byte AES-256 key")
 	}
 	if !prod && !encEnabled {
-		logger.Warn("LANTERN_CREDENTIAL_KEY is unset — connector credentials stored in plaintext (acceptable in dev, required in production)")
+		logger.Warn("PAL_CREDENTIAL_KEY is unset — connector credentials stored in plaintext (acceptable in dev, required in production)")
 	}
 
 	// G1 — RLS enforcement (multi-tenant isolation, invariant #7)
@@ -1205,10 +1207,10 @@ func runStartupGuards(logger *zap.Logger) {
 	// Without a token, any caller reachable to :50051 can set an arbitrary
 	// tenant_id and read/write that tenant's data. Production must require it.
 	if prod && os.Getenv("PAL_GRPC_SERVICE_TOKEN") == "" {
-		logger.Fatal("LANTERN_GRPC_SERVICE_TOKEN is unset — the control-plane gRPC port (:50051) would accept any caller-supplied tenant_id; set a strong random shared token (also set it on the gateway)")
+		logger.Fatal("PAL_GRPC_SERVICE_TOKEN is unset — the control-plane gRPC port (:50051) would accept any caller-supplied tenant_id; set a strong random shared token (also set it on the gateway)")
 	}
 	if !prod && os.Getenv("PAL_GRPC_SERVICE_TOKEN") == "" {
-		logger.Warn("LANTERN_GRPC_SERVICE_TOKEN is unset — control-plane gRPC accepts unauthenticated callers (acceptable in dev, required in production)")
+		logger.Warn("PAL_GRPC_SERVICE_TOKEN is unset — control-plane gRPC accepts unauthenticated callers (acceptable in dev, required in production)")
 	}
 
 	if fatal, msg := insecureFlagsDecision(prod, os.Getenv("PAL_TWILIO_WEBHOOK_AUTH"), os.Getenv("PAL_USE_CLAUDE_CODE")); fatal {
@@ -1232,7 +1234,7 @@ func runStartupGuards(logger *zap.Logger) {
 		logger.Fatal(schedulerMsg)
 	}
 	if !prod && os.Getenv("PAL_SCHEDULER_GRPC_ADDR") == "" {
-		logger.Warn("LANTERN_SCHEDULER_GRPC_ADDR is unset — using stub scheduler (acceptable in dev, required in production)")
+		logger.Warn("PAL_SCHEDULER_GRPC_ADDR is unset — using stub scheduler (acceptable in dev, required in production)")
 	}
 
 	// Runtime-manager dial credentials (logs/exec proxy + browser skill). The
@@ -1481,12 +1483,12 @@ func (w *wrappedStream) Context() context.Context {
 }
 
 // parsePgxPoolConfig parses DATABASE_URL into a *pgxpool.Config and applies
-// the env-driven tunables (LANTERN_PG_MAX_CONNS, LANTERN_PG_MAX_CONN_LIFETIME,
-// LANTERN_PG_MAX_CONN_IDLE_TIME). Sane defaults:
+// the env-driven tunables (PAL_PG_MAX_CONNS, PAL_PG_MAX_CONN_LIFETIME,
+// PAL_PG_MAX_CONN_IDLE_TIME). Sane defaults:
 //
-//	LANTERN_PG_MAX_CONNS           default 20
-//	LANTERN_PG_MAX_CONN_LIFETIME   default 1h
-//	LANTERN_PG_MAX_CONN_IDLE_TIME  default 30m
+//	PAL_PG_MAX_CONNS           default 20
+//	PAL_PG_MAX_CONN_LIFETIME   default 1h
+//	PAL_PG_MAX_CONN_IDLE_TIME  default 30m
 func parsePgxPoolConfig(databaseURL string) (*pgxpool.Config, error) {
 	cfg, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {

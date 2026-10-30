@@ -37,7 +37,7 @@ func TestInitTracer_NoOp(t *testing.T) {
 	span.End()
 }
 
-// TestInitTracer_EnabledDummyEndpoint checks that when LANTERN_OTEL_ENABLED=1
+// TestInitTracer_EnabledDummyEndpoint checks that when PAL_OTEL_ENABLED=1
 // is set with a dummy (unreachable) endpoint, InitTracer returns a real
 // provider and shutdown without panicking. We don't require the exporter to
 // actually connect — OTLP/HTTP exporters are lazy-connecting and

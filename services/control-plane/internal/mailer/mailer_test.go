@@ -23,11 +23,11 @@ func TestFromEnv(t *testing.T) {
 		want    string
 	}{
 		{name: "default log", want: "*mailer.LogMailer"},
-		{name: "smtp needs addr", env: map[string]string{"PAL_MAILER": "smtp"}, wantErr: "LANTERN_SMTP_ADDR"},
+		{name: "smtp needs addr", env: map[string]string{"PAL_MAILER": "smtp"}, wantErr: "PAL_SMTP_ADDR"},
 		{name: "smtp ok", env: map[string]string{"PAL_MAILER": "smtp", "PAL_SMTP_ADDR": "mx:587"}, want: "*mailer.SMTPMailer"},
-		{name: "http needs url", env: map[string]string{"PAL_MAILER": "http"}, wantErr: "LANTERN_MAIL_HTTP_URL"},
+		{name: "http needs url", env: map[string]string{"PAL_MAILER": "http"}, wantErr: "PAL_MAIL_HTTP_URL"},
 		{name: "http ok", env: map[string]string{"PAL_MAILER": "HTTP", "PAL_MAIL_HTTP_URL": "https://x"}, want: "*mailer.HTTPMailer"},
-		{name: "unknown", env: map[string]string{"PAL_MAILER": "carrier-pigeon"}, wantErr: "unknown LANTERN_MAILER"},
+		{name: "unknown", env: map[string]string{"PAL_MAILER": "carrier-pigeon"}, wantErr: "unknown PAL_MAILER"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -161,7 +161,7 @@ func fakeSMTP(t *testing.T) (addr string, data chan string) {
 
 func TestSMTPMailer(t *testing.T) {
 	addr, data := fakeSMTP(t)
-	m := &SMTPMailer{Addr: addr, From: "Lantern <no-reply@x.test>"}
+	m := &SMTPMailer{Addr: addr, From: "PAL <no-reply@x.test>"}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := m.Send(ctx, Message{To: "a@b.test", Subject: "Verify", Text: "click here"}); err != nil {

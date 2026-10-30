@@ -3,17 +3,17 @@ package handlers
 import "testing"
 
 func TestValidateGrantableScopes(t *testing.T) {
-	svc := func(scopes ...string) *LanternClaims { return &LanternClaims{Role: "service", Scopes: scopes} }
+	svc := func(scopes ...string) *PalClaims { return &PalClaims{Role: "service", Scopes: scopes} }
 	cases := []struct {
 		name      string
-		caller    *LanternClaims
+		caller    *PalClaims
 		requested []string
 		wantErr   bool
 	}{
-		{"owner jwt grants admin", &LanternClaims{Role: "owner"}, []string{"admin"}, false},
-		{"admin jwt grants empty", &LanternClaims{Role: "admin"}, nil, false},
-		{"member jwt denied", &LanternClaims{Role: "member"}, []string{"read"}, true},
-		{"unknown scope", &LanternClaims{Role: "owner"}, []string{"root"}, true},
+		{"owner jwt grants admin", &PalClaims{Role: "owner"}, []string{"admin"}, false},
+		{"admin jwt grants empty", &PalClaims{Role: "admin"}, nil, false},
+		{"member jwt denied", &PalClaims{Role: "member"}, []string{"read"}, true},
+		{"unknown scope", &PalClaims{Role: "owner"}, []string{"root"}, true},
 		{"subset allowed", svc("write"), []string{"agents:write", "read"}, false},
 		{"escalate read->write", svc("read"), []string{"write"}, true},
 		{"escalate to admin", svc("write"), []string{"admin"}, true},

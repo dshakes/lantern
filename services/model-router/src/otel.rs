@@ -3,7 +3,7 @@
 // # Design
 //
 // Only activated when `OTEL_EXPORTER_OTLP_ENDPOINT` (standard OTLP env var)
-// or `LANTERN_OTEL_ENABLED=1` is set.  When neither is present every function
+// or `PAL_OTEL_ENABLED=1` is set.  When neither is present every function
 // is a cheap no-op — the service behaves exactly as before with zero overhead.
 //
 // The exporter uses OTLP/gRPC (tonic) matching the runtime-manager convention.

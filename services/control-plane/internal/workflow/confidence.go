@@ -33,7 +33,7 @@ type ConfidenceEstimator interface {
 // ConfidenceGate holds the feature configuration for confidence-gated
 // execution. When nil in Deps, the feature is completely bypassed — no
 // existing workflow behaviour changes. Wired at the call site when
-// LANTERN_CONFIDENCE_GATE is set (see rest.go buildConfidenceGate).
+// PAL_CONFIDENCE_GATE is set (see rest.go buildConfidenceGate).
 type ConfidenceGate struct {
 	// Estimator produces a confidence score in [0, 1] for a step.
 	Estimator ConfidenceEstimator

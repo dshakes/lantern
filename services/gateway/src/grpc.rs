@@ -407,7 +407,7 @@ pub struct StreamEnd {
 pub struct ControlPlaneClient {
     channel: Channel,
     /// Shared service token presented to the control-plane on every outbound
-    /// call as `x-lantern-service-token`. Empty when LANTERN_GRPC_SERVICE_TOKEN
+    /// call as `x-pal-service-token`. Empty when PAL_GRPC_SERVICE_TOKEN
     /// is unset — no header is attached, so dev (where the control-plane also
     /// has no token configured) keeps working. Additive and not fail-closed on
     /// the client side; the control-plane is the side that fails closed in prod.
@@ -461,7 +461,7 @@ impl ControlPlaneClient {
         let service_token = pal_env::var("PAL_GRPC_SERVICE_TOKEN").unwrap_or_default();
         if service_token.is_empty() {
             tracing::warn!(
-                "control-plane channel: LANTERN_GRPC_SERVICE_TOKEN unset — no service token attached (acceptable in dev, required in production)"
+                "control-plane channel: PAL_GRPC_SERVICE_TOKEN unset — no service token attached (acceptable in dev, required in production)"
             );
         }
 
@@ -500,9 +500,14 @@ impl ControlPlaneClient {
         // Authenticate to the control-plane gRPC trust boundary. Only attached
         // when configured; the control-plane fails closed in prod if it expects
         // a token and the header is missing/wrong.
+        // Sent under the PAL name and the pre-PAL name, so a control plane
+        // that has not upgraded still authenticates the call (ADR 0032).
         if !self.service_token.is_empty()
-            && let Ok(val) = self.service_token.parse()
+            && let Ok(val) = self
+                .service_token
+                .parse::<tonic::metadata::MetadataValue<_>>()
         {
+            metadata.insert("x-pal-service-token", val.clone());
             metadata.insert("x-lantern-service-token", val);
         }
         Ok(())

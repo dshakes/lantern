@@ -1,6 +1,6 @@
 package handlers
 
-// AgentIdentityWellKnown handles GET /.well-known/lantern-agent-identity.
+// AgentIdentityWellKnown handles GET /.well-known/pal-agent-identity (and the legacy /.well-known/lantern-agent-identity).
 //
 // Ed25519 mode: publishes {algorithm, publicKey, keyFingerprint} so external
 // verifiers can confirm agent-instance JWT signatures without a shared secret.
@@ -8,7 +8,7 @@ package handlers
 // HS256 mode (dev / fallback): publishes {algorithm:"HS256"} only — no secret
 // material is ever emitted.
 //
-// No auth required (mirrors /.well-known/lantern-receipts).
+// No auth required (mirrors /.well-known/pal-receipts).
 
 import (
 	"encoding/base64"

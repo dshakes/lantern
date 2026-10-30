@@ -1,7 +1,7 @@
 // Row-Level Security helpers for the workflow engine.
 //
 // The engine writes run state for every tenant on the platform, and until now
-// it set `app.tenant_id` NOWHERE — so with LANTERN_RLS_ENFORCE=1 its queries
+// it set `app.tenant_id` NOWHERE — so with PAL_RLS_ENFORCE=1 its queries
 // were unprotected by the policies the rest of the platform relies on
 // (invariant #7). This is the missing primitive, deliberately identical in
 // shape to the control-plane's db.WithTenantConn so the two services behave the

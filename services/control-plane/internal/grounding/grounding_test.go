@@ -12,7 +12,7 @@ import (
 func TestEnabled_DefaultOn(t *testing.T) {
 	t.Setenv("PAL_CLAIM_VERIFY", "")
 	if !Enabled() {
-		t.Error("Enabled() must be true when LANTERN_CLAIM_VERIFY is unset (default on)")
+		t.Error("Enabled() must be true when PAL_CLAIM_VERIFY is unset (default on)")
 	}
 }
 

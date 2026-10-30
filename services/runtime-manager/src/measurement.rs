@@ -45,7 +45,7 @@ use sha2::{Digest, Sha256};
 
 use crate::backends::firecracker::SpawnContract;
 
-/// OID arc for the Lantern software-measurement X.509 extension.
+/// OID arc for the PAL software-measurement X.509 extension.
 ///
 /// `1.3.6.1.4.1.99999.3` — private arc under a placeholder PEN.
 /// PLACEHOLDER: 99999 is not ours. A registered IANA Private Enterprise

@@ -158,7 +158,7 @@ func (s *stubSchedulerClient) ListStates(_ context.Context, _ string) (map[strin
 // ---------- Real gRPC scheduler client ----------
 
 // grpcSchedulerClient dials the RuntimeScheduler service at the address
-// supplied via LANTERN_SCHEDULER_GRPC_ADDR (typically scheduler:50055).
+// supplied via PAL_SCHEDULER_GRPC_ADDR (typically scheduler:50055).
 // It also lazily dials per-node runtime-manager connections for the
 // Logs / Exec stream proxy paths.
 //
@@ -167,18 +167,18 @@ func (s *stubSchedulerClient) ListStates(_ context.Context, _ string) (map[strin
 // hops use the manager CA (PAL_RUNTIME_MANAGER_TLS_*).
 type grpcSchedulerClient struct {
 	logger       *zap.Logger
-	serviceToken string                           // sent to managers as x-lantern-service-token
-	mgrCreds     credentials.TransportCredentials // TLS when LANTERN_RUNTIME_MANAGER_TLS_CA is set
+	serviceToken string                           // sent to managers as x-pal-service-token
+	mgrCreds     credentials.TransportCredentials // TLS when PAL_RUNTIME_MANAGER_TLS_CA is set
 	conn         *grpc.ClientConn
 	client       lanternv1.RuntimeSchedulerClient
-	defaultMgr   string                      // LANTERN_DEFAULT_MANAGER_ADDR
+	defaultMgr   string                      // PAL_DEFAULT_MANAGER_ADDR
 	mgrMu        sync.Mutex                  // guards mgrConns
 	mgrConns     map[string]*grpc.ClientConn // nodeName -> conn
 	mgrClients   map[string]lanternv1.RuntimeManagerClient
 }
 
 // schedulerTokenCreds attaches the shared service token to every outbound gRPC
-// call as x-lantern-service-token metadata, matching the runtime-scheduler's
+// call as x-pal-service-token metadata, matching the runtime-scheduler's
 // UnaryServiceAuthInterceptor expectation. When the token is empty nothing is
 // attached (dev pass-through — the startup guard on the scheduler side aborts
 // in prod when the token is unset).
@@ -188,7 +188,7 @@ func (c schedulerTokenCreds) GetRequestMetadata(_ context.Context, _ ...string) 
 	if c.token == "" {
 		return nil, nil
 	}
-	return map[string]string{"x-lantern-service-token": c.token}, nil
+	return middleware.OutgoingServiceTokenMetadata(c.token), nil
 }
 
 // RequireTransportSecurity returns false so the token also rides dev
@@ -196,9 +196,9 @@ func (c schedulerTokenCreds) GetRequestMetadata(_ context.Context, _ ...string) 
 func (c schedulerTokenCreds) RequireTransportSecurity() bool { return false }
 
 // NewGRPCSchedulerClient dials the scheduler service. serviceToken, when
-// non-empty, is attached as x-lantern-service-token on every RPC so the
+// non-empty, is attached as x-pal-service-token on every RPC so the
 // scheduler's service-auth interceptor accepts the call. Read it from
-// LANTERN_GRPC_SERVICE_TOKEN at the call site.
+// PAL_GRPC_SERVICE_TOKEN at the call site.
 func NewGRPCSchedulerClient(addr, serviceToken string, logger *zap.Logger) (*grpcSchedulerClient, error) {
 	mgrCreds, err := ManagerTransportCreds(IsProd())
 	if err != nil {
@@ -251,7 +251,7 @@ func ManagerTransportCreds(isProd bool) (credentials.TransportCredentials, error
 
 // ManagerDialOptions returns the dial options every runtime-manager client in
 // the control-plane must use: ManagerTransportCreds + the shared service token
-// (LANTERN_GRPC_SERVICE_TOKEN), which the manager requires when it is set.
+// (PAL_GRPC_SERVICE_TOKEN), which the manager requires when it is set.
 func ManagerDialOptions(serviceToken string) ([]grpc.DialOption, error) {
 	creds, err := ManagerTransportCreds(IsProd())
 	if err != nil {
@@ -278,7 +278,7 @@ func withTenant(ctx context.Context, tenantID string) context.Context {
 // resolveManagerAddr maps a node name to a runtime-manager gRPC address.
 // Resolution order:
 //  1. LANTERN_NODE_ADDR_<node> (with dots/dashes replaced by underscores)
-//  2. LANTERN_DEFAULT_MANAGER_ADDR
+//  2. PAL_DEFAULT_MANAGER_ADDR
 //  3. node + ":50054" (the runtime-manager default port)
 func (c *grpcSchedulerClient) resolveManagerAddr(node string) string {
 	if node == "" {
@@ -392,7 +392,7 @@ func (c *grpcSchedulerClient) ExecStream(ctx context.Context, node, vmID, comman
 	// Dial the manager on the VM's OWN node — a workload placed on node-B is
 	// unreachable from node-A's manager, so a hardcoded default would misroute
 	// every exec in a multi-node deployment. resolveManagerAddr falls back to
-	// LANTERN_DEFAULT_MANAGER_ADDR when node is "" or has no explicit override,
+	// PAL_DEFAULT_MANAGER_ADDR when node is "" or has no explicit override,
 	// which keeps single-node dev working.
 	mgr, err := c.managerClient(node)
 	if err != nil {
@@ -679,7 +679,7 @@ func egressInjectFromMap(r map[string]any) []*lanternv1.CredentialInjection {
 
 // validateEgressInject rejects malformed credential-injection specs before
 // anything is scheduled: the header must be an RFC 7230 token, the ref a
-// parseable `lantern.secret/...` ref, the prefix free of CR/LF, the rule an
+// parseable `pal.secret/...` (or legacy `lantern.secret/...`) ref, the prefix free of CR/LF, the rule an
 // EXACT hostname (no wildcard, IP or CIDR), and the ref must not also be
 // declared in `secrets` (that would hand the very value injection keeps out
 // of the VM to the workload). Errors name indexes only — never the ref.
@@ -687,7 +687,7 @@ func validateEgressInject(rules []map[string]any, secrets []map[string]any) erro
 	declared := map[string]bool{}
 	for _, sr := range secrets {
 		if u, _ := firstOf(sr, "secret_uri", "secretUri").(string); u != "" {
-			declared[u] = true
+			declared[canonicalSecretRef(u)] = true
 		}
 	}
 	for i, r := range rules {
@@ -696,7 +696,7 @@ func validateEgressInject(rules []map[string]any, secrets []map[string]any) erro
 				return fmt.Errorf("egress rule %d inject %d: header must be a valid HTTP header name", i, j)
 			}
 			if parseRef(ci.SecretUri).scope == "" {
-				return fmt.Errorf("egress rule %d inject %d: secretRef must be a lantern.secret/... ref", i, j)
+				return fmt.Errorf("egress rule %d inject %d: secretRef must be a pal.secret/... ref", i, j)
 			}
 			if strings.ContainsAny(ci.ValuePrefix, "\r\n") {
 				return fmt.Errorf("egress rule %d inject %d: valuePrefix must not contain CR/LF", i, j)
@@ -704,7 +704,7 @@ func validateEgressInject(rules []map[string]any, secrets []map[string]any) erro
 			if pattern, _ := r["pattern"].(string); pattern == "" || strings.Contains(pattern, "*") || net.ParseIP(pattern) != nil || strings.Contains(pattern, "/") {
 				return fmt.Errorf("egress rule %d: credential injection requires an exact hostname pattern", i)
 			}
-			if declared[ci.SecretUri] {
+			if declared[canonicalSecretRef(ci.SecretUri)] {
 				return fmt.Errorf("egress rule %d inject %d: secretRef is also listed in secrets — an injected credential must not be vended into the VM", i, j)
 			}
 		}
@@ -1248,7 +1248,7 @@ func (h *RuntimeHandler) TerminateSessionVM(ctx context.Context, tenantID, sessi
 }
 
 // RunSessionVMIdleSweep terminates session VMs whose last_used_at is older
-// than LANTERN_SESSION_VM_IDLE_TTL (default 30m). Runs until ctx is cancelled.
+// than PAL_SESSION_VM_IDLE_TTL (default 30m). Runs until ctx is cancelled.
 // Start it as a goroutine alongside the other background loops in main.go.
 func RunSessionVMIdleSweep(ctx context.Context, h *RuntimeHandler, logger *zap.Logger) {
 	ttl := 30 * time.Minute
@@ -1361,7 +1361,7 @@ func (h *RuntimeHandler) SetSpawnLimiter(l *SpawnRateLimiter) { h.spawnLimiter =
 // RuntimeReportHandler so LiveMetrics can surface per-VM counters. nil-safe.
 func (h *RuntimeHandler) SetMetricsStore(s vmMetricsStore) { h.metricsStore = s }
 
-// NewRuntimeHandler constructs a RuntimeHandler. If LANTERN_SCHEDULER_GRPC_ADDR
+// NewRuntimeHandler constructs a RuntimeHandler. If PAL_SCHEDULER_GRPC_ADDR
 // is set the real gRPC client is dialed; otherwise the stub is used so a
 // solo control-plane stays exercisable.
 func NewRuntimeHandler(srv *server.Server, auth *AuthHandler) *RuntimeHandler {
@@ -1383,7 +1383,7 @@ func NewRuntimeHandler(srv *server.Server, auth *AuthHandler) *RuntimeHandler {
 			h.scheduler = c
 		}
 	} else {
-		logger.Info("runtime scheduler: stub client (set LANTERN_SCHEDULER_GRPC_ADDR to wire real gRPC)")
+		logger.Info("runtime scheduler: stub client (set PAL_SCHEDULER_GRPC_ADDR to wire real gRPC)")
 		h.scheduler = &stubSchedulerClient{logger: logger.Named("scheduler_stub")}
 	}
 	// State reconciler: the scheduler is authoritative for live VM state
@@ -1601,7 +1601,7 @@ type scheduleResponse struct {
 	Az        string    `json:"az"`
 	CreatedAt time.Time `json:"createdAt"`
 	// Stub is true when no real scheduler is wired
-	// (LANTERN_SCHEDULER_GRPC_ADDR unset) and this vmId was SYNTHESIZED —
+	// (PAL_SCHEDULER_GRPC_ADDR unset) and this vmId was SYNTHESIZED —
 	// nothing was spawned and no scheduler ever saw it. Without this flag a
 	// stubbed schedule is indistinguishable from a real one at the API and
 	// CLI, which turns a misconfiguration into silent data loss. The prod
@@ -1814,7 +1814,7 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 	// Start a span covering the scheduling work (after auth).
 	tracer := otel.Tracer("lantern.control-plane")
 	ctx, span := tracer.Start(ctx, "runtime.schedule")
-	span.SetAttributes(attribute.String("lantern.tenant_id", tenantID))
+	span.SetAttributes(attribute.String("pal.tenant_id", tenantID), attribute.String("lantern.tenant_id", tenantID))
 	defer span.End()
 
 	// Decode via a raw map so we accept both the camelCase REST convention
@@ -1857,9 +1857,9 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 	// Stamp known spec attributes immediately so they appear even if we
 	// return early (quota denial, identity failure, etc.).
 	span.SetAttributes(
-		attribute.String("lantern.run_id", spec.RunID),
-		attribute.String("lantern.agent_version_id", spec.AgentVersionID),
-		attribute.String("lantern.isolation_class", spec.Isolation),
+		attribute.String("pal.run_id", spec.RunID), attribute.String("lantern.run_id", spec.RunID),
+		attribute.String("pal.agent_version_id", spec.AgentVersionID), attribute.String("lantern.agent_version_id", spec.AgentVersionID),
+		attribute.String("pal.isolation_class", spec.Isolation), attribute.String("lantern.isolation_class", spec.Isolation),
 	)
 
 	// Quota enforcement BEFORE we touch the scheduler.
@@ -1893,8 +1893,8 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	span.SetAttributes(
-		attribute.String("lantern.vm_id", vmID),
-		attribute.String("lantern.agent_instance_id", instanceID),
+		attribute.String("pal.vm_id", vmID), attribute.String("lantern.vm_id", vmID),
+		attribute.String("pal.agent_instance_id", instanceID), attribute.String("lantern.agent_instance_id", instanceID),
 	)
 
 	span.SetStatus(codes.Ok, "")
@@ -1907,7 +1907,7 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 	if h.schedulerIsStub() {
 		resp.Stub = true
 		resp.Warning = stubScheduleWarning
-		span.SetAttributes(attribute.Bool("lantern.scheduler_stub", true))
+		span.SetAttributes(attribute.Bool("pal.scheduler_stub", true), attribute.Bool("lantern.scheduler_stub", true))
 		h.logger().Warn("scheduled against the STUB scheduler — no workload was spawned",
 			zap.String("vm_id", vmID), zap.String("tenant_id", tenantID))
 	}
@@ -2001,7 +2001,7 @@ func redactSpecJSON(raw []byte) []byte {
 
 // stubScheduleWarning is returned verbatim to API clients so the CLI and
 // dashboard can surface it without duplicating the wording.
-const stubScheduleWarning = "no scheduler wired (LANTERN_SCHEDULER_GRPC_ADDR unset): " +
+const stubScheduleWarning = "no scheduler wired (PAL_SCHEDULER_GRPC_ADDR unset): " +
 	"this vmId was synthesized and NO workload was spawned"
 
 // schedulerIsStub reports whether the handler is running against the
@@ -2816,7 +2816,7 @@ const (
 //     unscoped keys — they must not gain write or admin just by omission).
 //   - Role "member" → allowed for runtime:read only; denied for write/admin.
 //   - Any other unrecognised role → denied (fail-closed; not even read).
-func authorizeRuntimeScope(claims *LanternClaims, required string) bool {
+func authorizeRuntimeScope(claims *PalClaims, required string) bool {
 	switch claims.Role {
 	case "owner", "admin":
 		return true
@@ -2858,7 +2858,7 @@ func authorizeRuntimeScope(claims *LanternClaims, required string) bool {
 //
 // On denial for write/admin scopes, an audit event is also written so that
 // access-denial patterns are visible in the audit log.
-func (h *RuntimeHandler) requireRuntimeScope(w http.ResponseWriter, claims *LanternClaims, required string) bool {
+func (h *RuntimeHandler) requireRuntimeScope(w http.ResponseWriter, claims *PalClaims, required string) bool {
 	if authorizeRuntimeScope(claims, required) {
 		return true
 	}

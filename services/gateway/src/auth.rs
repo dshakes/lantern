@@ -59,7 +59,7 @@ pub struct AuthLayer {
 
 impl AuthLayer {
     /// `introspector` is `None` when API-key auth is unconfigured
-    /// (LANTERN_CONTROL_PLANE_URL / LANTERN_GRPC_SERVICE_TOKEN unset) — the
+    /// (PAL_CONTROL_PLANE_URL / PAL_GRPC_SERVICE_TOKEN unset) — the
     /// API-key path then stays fail-closed.
     pub fn new(jwt_secret: String, introspector: Option<Arc<ApiKeyIntrospector>>) -> Self {
         Self {

@@ -1,13 +1,13 @@
 // Package mailer sends transactional email (verification + password reset).
 //
-// One interface, three drivers selected by LANTERN_MAILER (ADR 0027):
+// One interface, three drivers selected by PAL_MAILER (ADR 0027):
 //
 //	log  (default) — writes the message to the server log. Dev prints the body
 //	                 (the link); prod prints recipient + subject only, never
 //	                 the body, so a token can never land in prod logs.
-//	smtp           — stdlib net/smtp; LANTERN_SMTP_ADDR/_USER/_PASSWORD.
+//	smtp           — stdlib net/smtp; PAL_SMTP_ADDR/_USER/_PASSWORD.
 //	http           — POST {from,to,subject,text} + bearer token to
-//	                 LANTERN_MAIL_HTTP_URL (Resend's /emails API shape).
+//	                 PAL_MAIL_HTTP_URL (Resend's /emails API shape).
 package mailer
 
 import (
@@ -39,7 +39,7 @@ type Mailer interface {
 	Send(ctx context.Context, m Message) error
 }
 
-// Driver names accepted by LANTERN_MAILER.
+// Driver names accepted by PAL_MAILER.
 const (
 	DriverLog  = "log"
 	DriverSMTP = "smtp"
@@ -58,10 +58,10 @@ func from() string {
 	if f := os.Getenv("PAL_MAIL_FROM"); f != "" {
 		return f
 	}
-	return "Lantern <no-reply@localhost>"
+	return "PAL <no-reply@localhost>"
 }
 
-// FromEnv builds the Mailer selected by LANTERN_MAILER. prod controls whether
+// FromEnv builds the Mailer selected by PAL_MAILER. prod controls whether
 // the log driver may print message bodies.
 func FromEnv(logger *zap.Logger, prod bool) (Mailer, error) {
 	switch d := Driver(); d {
@@ -70,17 +70,17 @@ func FromEnv(logger *zap.Logger, prod bool) (Mailer, error) {
 	case DriverSMTP:
 		addr := os.Getenv("PAL_SMTP_ADDR")
 		if addr == "" {
-			return nil, fmt.Errorf("mailer: LANTERN_MAILER=smtp needs LANTERN_SMTP_ADDR (host:port)")
+			return nil, fmt.Errorf("mailer: PAL_MAILER=smtp needs PAL_SMTP_ADDR (host:port)")
 		}
 		return &SMTPMailer{Addr: addr, User: os.Getenv("PAL_SMTP_USER"), Password: os.Getenv("PAL_SMTP_PASSWORD"), From: from()}, nil
 	case DriverHTTP:
 		url := os.Getenv("PAL_MAIL_HTTP_URL")
 		if url == "" {
-			return nil, fmt.Errorf("mailer: LANTERN_MAILER=http needs LANTERN_MAIL_HTTP_URL")
+			return nil, fmt.Errorf("mailer: PAL_MAILER=http needs PAL_MAIL_HTTP_URL")
 		}
 		return &HTTPMailer{URL: url, Token: os.Getenv("PAL_MAIL_HTTP_TOKEN"), From: from(), Client: &http.Client{Timeout: 15 * time.Second}}, nil
 	default:
-		return nil, fmt.Errorf("mailer: unknown LANTERN_MAILER %q (want log, smtp or http)", d)
+		return nil, fmt.Errorf("mailer: unknown PAL_MAILER %q (want log, smtp or http)", d)
 	}
 }
 
@@ -112,7 +112,7 @@ func (s *SMTPMailer) Send(ctx context.Context, m Message) error {
 	}
 	host, _, err := net.SplitHostPort(s.Addr)
 	if err != nil {
-		return fmt.Errorf("mailer smtp: bad LANTERN_SMTP_ADDR %q: %w", s.Addr, err)
+		return fmt.Errorf("mailer smtp: bad PAL_SMTP_ADDR %q: %w", s.Addr, err)
 	}
 	// Same steps as smtp.SendMail, but dialled with ctx and a deadline on the
 	// conn so a stalled relay can never pin the sending goroutine.

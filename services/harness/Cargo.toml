@@ -2,7 +2,7 @@
 name = "lantern-harness"
 version = "0.1.0"
 edition = "2024"
-description = "Lantern RuntimeHarness — PID 1 init process running inside every Lantern microVM"
+description = "PAL RuntimeHarness — PID 1 init process running inside every PAL microVM"
 
 [[bin]]
 name = "lantern-harness"

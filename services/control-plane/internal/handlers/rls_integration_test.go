@@ -10,7 +10,7 @@ package handlers
 // Postgres AS the non-superuser `lantern_app` role over its own DSN. That means
 // RLS is genuinely ENFORCED at the database for every query a handler routes
 // through s.srv.WithTenant, exactly as production behaves under
-// LANTERN_RLS_ENFORCE=1 + LANTERN_APP_DB_PASSWORD.
+// PAL_RLS_ENFORCE=1 + PAL_APP_DB_PASSWORD.
 //
 // The harness:
 //  1. Opens the privileged (superuser) pool from DATABASE_URL — used for schema
@@ -24,7 +24,7 @@ package handlers
 //  4. Builds the app-pool DSN by reusing the EXACT production logic
 //     (cmd/server.buildAppPoolConfig): parse DATABASE_URL, swap user→lantern_app
 //     and password, preserving every other DSN parameter. Replicated here as
-//     buildLanternAppPool because that helper lives in package main.
+//     buildAppPoolConfig because that helper lives in package main.
 //  5. Returns a *server.Server with Pool=superPool and AppPool=appPool, so
 //     s.srv.WithTenant(...) routes through the RLS-subject role.
 //

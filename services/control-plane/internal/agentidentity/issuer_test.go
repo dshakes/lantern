@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 // secret used for all tests — never use in production.
@@ -188,7 +190,7 @@ func TestVerify_WrongTyp(t *testing.T) {
 	}
 }
 
-// TestVerify_FallbackSecret verifies that when LANTERN_AGENT_IDENTITY_SECRET
+// TestVerify_FallbackSecret verifies that when PAL_AGENT_IDENTITY_SECRET
 // is unset, the issuer falls back to the provided secret and tokens verify
 // correctly against it.
 func TestVerify_FallbackSecret(t *testing.T) {
@@ -441,5 +443,40 @@ func TestAgentIdentityPublicKey_NoSeed(t *testing.T) {
 	fp := AgentIdentityKeyFingerprint()
 	if fp != "" {
 		t.Errorf("expected empty fingerprint when no seed configured, got %q", fp)
+	}
+}
+
+// ADR 0032: tokens are minted with the PAL issuer; tokens minted before the
+// rename (legacy issuer) still verify until they expire; any other issuer is
+// refused.
+func TestVerify_IssuerPALLegacyAndForeign(t *testing.T) {
+	iss := newTestIssuer(t)
+	if tokenIssuer != "pal-agent" || legacyTokenIssuer != "lantern-agent" {
+		t.Fatalf("issuers drifted: %q / %q", tokenIssuer, legacyTokenIssuer)
+	}
+	mint := func(issuer string) string {
+		now := time.Now()
+		c := Claims{
+			RegisteredClaims: jwt.RegisteredClaims{
+				Subject: "ai-1", Issuer: issuer,
+				IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
+			},
+			Typ: TokenTyp, AgentInstanceID: "ai-1", TenantID: "t1",
+		}
+		s, err := jwt.NewWithClaims(jwt.SigningMethodHS256, c).SignedString([]byte(testSecret))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	for _, ok := range []string{"pal-agent", "lantern-agent"} {
+		if _, err := iss.Verify(mint(ok)); err != nil {
+			t.Errorf("issuer %q rejected: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"", "pal", "someone-else"} {
+		if _, err := iss.Verify(mint(bad)); err == nil {
+			t.Errorf("issuer %q accepted", bad)
+		}
 	}
 }

@@ -37,7 +37,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
-	lanterndb "github.com/dshakes/lantern/services/workflow-engine/internal/db"
+	paldb "github.com/dshakes/lantern/services/workflow-engine/internal/db"
 
 	"github.com/dshakes/lantern/services/workflow-engine/internal/journal"
 )
@@ -99,7 +99,7 @@ func (e *Engine) runChild(
 
 	// 1. Cycle guard, before any row is written.
 	var depth int
-	err := lanterndb.WithTenant(ctx, e.tenantPool(), tenantID, func(tx pgx.Tx) error {
+	err := paldb.WithTenant(ctx, e.tenantPool(), tenantID, func(tx pgx.Tx) error {
 		var derr error
 		depth, derr = childRunDepth(ctx, tx, parentRunID, tenantID)
 		return derr
@@ -382,7 +382,7 @@ func (e *Engine) findOrCreateChild(
 // point in both the fresh and the resumed case.
 func (e *Engine) driveChild(ctx context.Context, childRunID, tenantID, agentVersionID string) error {
 	var status string
-	if err := lanterndb.WithTenant(ctx, e.tenantPool(), tenantID, func(tx pgx.Tx) error {
+	if err := paldb.WithTenant(ctx, e.tenantPool(), tenantID, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
 			SELECT status FROM runs WHERE id = $1 AND tenant_id = $2
 		`, childRunID, tenantID).Scan(&status)
@@ -399,7 +399,7 @@ func (e *Engine) driveChild(ctx context.Context, childRunID, tenantID, agentVers
 func (e *Engine) childOutcome(ctx context.Context, tenantID, childRunID string) (string, json.RawMessage, error) {
 	var status string
 	var output []byte
-	if err := lanterndb.WithTenant(ctx, e.tenantPool(), tenantID, func(tx pgx.Tx) error {
+	if err := paldb.WithTenant(ctx, e.tenantPool(), tenantID, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
 			SELECT status, COALESCE(output, 'null'::jsonb) FROM runs
 			WHERE id = $1 AND tenant_id = $2
@@ -472,7 +472,7 @@ func (e *Engine) beginTenantTx(ctx context.Context, tenantID string) (pgx.Tx, er
 	if err != nil {
 		return nil, err
 	}
-	if err := lanterndb.SetTenantOnTx(ctx, tx, tenantID); err != nil {
+	if err := paldb.SetTenantOnTx(ctx, tx, tenantID); err != nil {
 		_ = tx.Rollback(ctx)
 		return nil, err
 	}
@@ -486,7 +486,7 @@ func (se *StepExecutor) beginTenantTx(ctx context.Context, tenantID string) (pgx
 	if err != nil {
 		return nil, err
 	}
-	if err := lanterndb.SetTenantOnTx(ctx, tx, tenantID); err != nil {
+	if err := paldb.SetTenantOnTx(ctx, tx, tenantID); err != nil {
 		_ = tx.Rollback(ctx)
 		return nil, err
 	}

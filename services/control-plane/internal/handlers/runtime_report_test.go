@@ -10,7 +10,7 @@ package handlers
 //     a runtime_vm_logs row, vm/tenant mismatch returns 403.
 //
 // Security invariants verified:
-//   (a) LANTERN_RUNTIME_SECRET_TOKEN unset → 403 (relay disabled)
+//   (a) PAL_RUNTIME_SECRET_TOKEN unset → 403 (relay disabled)
 //   (b) Wrong token → 403
 //   (c) vm_id belonging to a different tenant → 403
 //   (d) A valid audit report persists a runtime_audit_events row
@@ -66,7 +66,7 @@ func doReport(h *RuntimeReportHandler, token string, body any) *httptest.Respons
 	return w
 }
 
-// setReportToken sets LANTERN_RUNTIME_SECRET_TOKEN for the duration of a test
+// setReportToken sets PAL_RUNTIME_SECRET_TOKEN for the duration of a test
 // and restores the original value in t.Cleanup.
 func setReportToken(t *testing.T, token string) {
 	t.Helper()
@@ -387,7 +387,7 @@ func TestReport_TerminalVM_Returns403(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Terminal-VM grace window tests (LANTERN_RUNTIME_TERMINAL_GRACE)
+// Terminal-VM grace window tests (PAL_RUNTIME_TERMINAL_GRACE)
 // ---------------------------------------------------------------------------
 
 // (a) kind=log for a VM terminated 1 minute ago → accepted + row persisted.

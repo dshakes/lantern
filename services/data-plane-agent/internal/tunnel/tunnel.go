@@ -1,5 +1,5 @@
 // Package tunnel manages the persistent gRPC connection between the data plane
-// agent and the Lantern control plane. It handles connection establishment,
+// agent and the PAL control plane. It handles connection establishment,
 // reconnection with exponential backoff, registration, heartbeats, metrics
 // reporting, token refresh, and bidirectional run-dispatch via RunStream.
 package tunnel

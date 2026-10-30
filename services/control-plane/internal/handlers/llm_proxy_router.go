@@ -30,7 +30,7 @@ import (
 )
 
 // modelRouterDefaultAddr is the in-cluster address the control-plane dials when
-// LANTERN_MODEL_ROUTER_ADDR is unset.
+// PAL_MODEL_ROUTER_ADDR is unset.
 const modelRouterDefaultAddr = "model-router:50053"
 
 // modelRouterTimeout caps a single router Complete call. On expiry tryModelRouter
@@ -51,7 +51,7 @@ type modelRouterDeps struct {
 	enabled *bool
 	// factory builds the gRPC client. nil → dialModelRouter.
 	factory modelRouterClientFactory
-	// addr overrides LANTERN_MODEL_ROUTER_ADDR (test seam).
+	// addr overrides PAL_MODEL_ROUTER_ADDR (test seam).
 	addr string
 
 	mu     sync.Mutex
@@ -63,7 +63,7 @@ type modelRouterDeps struct {
 }
 
 // modelRouterEnabled reports whether the model-router cutover is active.
-// Default OFF. ON only when LANTERN_USE_MODEL_ROUTER is a truthy value
+// Default OFF. ON only when PAL_USE_MODEL_ROUTER is a truthy value
 // ("1"/"true"/"on", case-insensitive). A test override takes precedence.
 func (h *LlmProxyHandler) modelRouterEnabled() bool {
 	if h.router.enabled != nil {
@@ -125,7 +125,7 @@ func dialModelRouter(addr string) (lanternv1.ModelServiceClient, func() error, e
 		grpc.WithTransportCredentials(creds),
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 	}
-	// The router requires x-lantern-service-token (invariant #7); reuse the
+	// The router requires x-pal-service-token (or the legacy x-lantern-service-token) (invariant #7); reuse the
 	// scheduler creds helper. Empty token → nothing attached (dev only).
 	if tok := os.Getenv("PAL_GRPC_SERVICE_TOKEN"); tok != "" {
 		opts = append(opts, grpc.WithPerRPCCredentials(schedulerTokenCreds{token: tok}))

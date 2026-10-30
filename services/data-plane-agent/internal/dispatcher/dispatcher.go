@@ -29,7 +29,13 @@ const tenantMetadataKey = "tenant_id"
 
 // serviceTokenMetadataKey mirrors control-plane middleware.ServiceTokenMetadataKey.
 // Kept local so the dispatcher does not take a build dep on the control-plane module.
-const serviceTokenMetadataKey = "x-lantern-service-token"
+const serviceTokenMetadataKey = "x-pal-service-token"
+
+// legacyServiceTokenMetadataKey is the pre-PAL name (ADR 0032). The token is
+// sent under both names so a control plane that predates the PAL name (the
+// customer data plane and the control plane upgrade independently) still
+// authenticates the call.
+const legacyServiceTokenMetadataKey = "x-lantern-service-token"
 
 var tracer = otel.Tracer("lantern.data-plane-agent.dispatcher")
 
@@ -37,7 +43,7 @@ var tracer = otel.Tracer("lantern.data-plane-agent.dispatcher")
 type Dispatcher struct {
 	workflowEngineAddr string
 	runtimeManagerAddr string
-	serviceToken       string // LANTERN_GRPC_SERVICE_TOKEN; empty means no token
+	serviceToken       string // PAL_GRPC_SERVICE_TOKEN; empty means no token
 	logger             *zap.Logger
 
 	mu         sync.Mutex
@@ -54,7 +60,7 @@ type runState struct {
 }
 
 // New creates a new Dispatcher. serviceToken is the value of
-// LANTERN_GRPC_SERVICE_TOKEN; pass an empty string in environments where the
+// PAL_GRPC_SERVICE_TOKEN; pass an empty string in environments where the
 // workflow engine does not require the token (e.g. local dev).
 func New(workflowEngineAddr, runtimeManagerAddr, serviceToken string, logger *zap.Logger) *Dispatcher {
 	return &Dispatcher{
@@ -66,7 +72,7 @@ func New(workflowEngineAddr, runtimeManagerAddr, serviceToken string, logger *za
 	}
 }
 
-// NewFromEnv is a convenience constructor that reads LANTERN_GRPC_SERVICE_TOKEN
+// NewFromEnv is a convenience constructor that reads PAL_GRPC_SERVICE_TOKEN
 // from the environment. Callers that read the token themselves should use New directly.
 func NewFromEnv(workflowEngineAddr, runtimeManagerAddr string, logger *zap.Logger) *Dispatcher {
 	return New(workflowEngineAddr, runtimeManagerAddr, os.Getenv("PAL_GRPC_SERVICE_TOKEN"), logger)
@@ -237,12 +243,12 @@ func (d *Dispatcher) driveRun(ctx context.Context, conn *grpc.ClientConn, assign
 	d.CompleteRun(runID, finalStatus)
 }
 
-// outgoingContext appends tenant_id (always) and x-lantern-service-token
+// outgoingContext appends tenant_id (always) and x-pal-service-token
 // (when non-empty) to the outgoing gRPC metadata on ctx.
 func (d *Dispatcher) outgoingContext(ctx context.Context, tenantID string) context.Context {
 	pairs := []string{tenantMetadataKey, tenantID}
 	if d.serviceToken != "" {
-		pairs = append(pairs, serviceTokenMetadataKey, d.serviceToken)
+		pairs = append(pairs, serviceTokenMetadataKey, d.serviceToken, legacyServiceTokenMetadataKey, d.serviceToken)
 	}
 	return metadata.AppendToOutgoingContext(ctx, pairs...)
 }

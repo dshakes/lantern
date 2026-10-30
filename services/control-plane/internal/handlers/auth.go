@@ -35,7 +35,7 @@ type AuthHandler struct {
 }
 
 // NewAuthHandler creates an AuthHandler using the given server and JWT secret.
-// Mail uses the LANTERN_MAILER driver; a misconfigured driver falls back to the
+// Mail uses the PAL_MAILER driver; a misconfigured driver falls back to the
 // log driver here and is refused at startup by CheckSignupConfig.
 func NewAuthHandler(srv *server.Server, jwtSecret string) *AuthHandler {
 	m, err := mailer.FromEnv(srv.Logger.Named("mailer"), isProd())
@@ -95,8 +95,8 @@ type userJSON struct {
 
 // ---------- JWT claims ----------
 
-// LanternClaims extends the standard JWT claims with Lantern-specific fields.
-type LanternClaims struct {
+// PalClaims extends the standard JWT claims with PAL-specific fields.
+type PalClaims struct {
 	jwt.RegisteredClaims
 	TenantID string `json:"tenant_id"`
 	Email    string `json:"email"`
@@ -330,7 +330,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// checked; a single breach from either triggers 429. This defends
 	// against both credential-stuffing (many IPs targeting one account)
 	// and password-spray (one IP targeting many accounts).
-	// remoteIP trusts X-Forwarded-For only from LANTERN_TRUSTED_PROXIES; the
+	// remoteIP trusts X-Forwarded-For only from PAL_TRUSTED_PROXIES; the
 	// raw leftmost XFF used before let any client rotate its "IP".
 	clientIP := remoteIP(r)
 	if h.authRateLimited(ctx, "login:ip:"+clientIP, loginRateLimitMax, loginRateLimitWindow) ||
@@ -969,12 +969,12 @@ func (h *AuthHandler) fetchGitHubEmail(ctx context.Context, accessToken string) 
 
 func (h *AuthHandler) generateToken(userID, tenantID, email, name, role string) (string, error) {
 	now := time.Now()
-	claims := LanternClaims{
+	claims := PalClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID,
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(30 * 24 * time.Hour)),
-			Issuer:    "lantern",
+			Issuer:    "pal",
 		},
 		TenantID: tenantID,
 		Email:    email,
@@ -987,8 +987,8 @@ func (h *AuthHandler) generateToken(userID, tenantID, email, name, role string) 
 }
 
 // ValidateToken parses and validates a JWT string, returning the claims.
-func (h *AuthHandler) ValidateToken(tokenStr string) (*LanternClaims, error) {
-	token, err := jwt.ParseWithClaims(tokenStr, &LanternClaims{}, func(token *jwt.Token) (any, error) {
+func (h *AuthHandler) ValidateToken(tokenStr string) (*PalClaims, error) {
+	token, err := jwt.ParseWithClaims(tokenStr, &PalClaims{}, func(token *jwt.Token) (any, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
@@ -998,7 +998,7 @@ func (h *AuthHandler) ValidateToken(tokenStr string) (*LanternClaims, error) {
 		return nil, err
 	}
 
-	claims, ok := token.Claims.(*LanternClaims)
+	claims, ok := token.Claims.(*PalClaims)
 	if !ok || !token.Valid {
 		return nil, fmt.Errorf("invalid token claims")
 	}
@@ -1008,7 +1008,7 @@ func (h *AuthHandler) ValidateToken(tokenStr string) (*LanternClaims, error) {
 
 // validateRequest extracts and validates credentials from the Authorization
 // header. Accepts either a JWT or a long-lived API key (prefix hlx_live_).
-func (h *AuthHandler) validateRequest(r *http.Request) (*LanternClaims, error) {
+func (h *AuthHandler) validateRequest(r *http.Request) (*PalClaims, error) {
 	auth := r.Header.Get("Authorization")
 	if auth == "" {
 		return nil, fmt.Errorf("missing authorization header")
@@ -1032,7 +1032,7 @@ func (h *AuthHandler) validateRequest(r *http.Request) (*LanternClaims, error) {
 //
 // L1: scopes are fetched and stored in the returned claims. The middleware
 // layer can call HasScope to enforce per-endpoint access.
-func (h *AuthHandler) validateAPIKey(ctx context.Context, rawKey string) (*LanternClaims, error) {
+func (h *AuthHandler) validateAPIKey(ctx context.Context, rawKey string) (*PalClaims, error) {
 	hash := sha256.Sum256([]byte(rawKey))
 	keyHash := hex.EncodeToString(hash[:])
 
@@ -1053,7 +1053,7 @@ func (h *AuthHandler) validateAPIKey(ctx context.Context, rawKey string) (*Lante
 	// rls-exempt: pre-auth API-key bookkeeping by key id.
 	_, _ = h.srv.Pool.Exec(ctx, `UPDATE api_keys SET last_used_at = now() WHERE id = $1`, keyID)
 
-	return &LanternClaims{
+	return &PalClaims{
 		TenantID: tenantID,
 		Role:     "service",
 		Scopes:   scopes,
@@ -1151,9 +1151,9 @@ func isWriteScope(s Scope) bool {
 //     interactive users, not machine tokens.
 //   - API key with empty scopes list: always allowed (legacy / unrestricted key).
 //   - API key with non-empty scopes: see scopeImplies for the full lattice.
-func HasScope(claims *LanternClaims, required Scope) bool {
+func HasScope(claims *PalClaims, required Scope) bool {
 	// Role "kiosk" (ADR 0029) is scope-limited like a service key, so
-	// LANTERN_AUTHZ_ENFORCE=1 actually constrains an anonymous demo visitor.
+	// PAL_AUTHZ_ENFORCE=1 actually constrains an anonymous demo visitor.
 	if claims.Role != "service" && claims.Role != kioskRole {
 		return true
 	}
@@ -1170,29 +1170,29 @@ func HasScope(claims *LanternClaims, required Scope) bool {
 
 // ---------- Claims context caching ----------
 //
-// WithScope validates the token once and stores the resulting *LanternClaims
+// WithScope validates the token once and stores the resulting *PalClaims
 // in the request context. contextWithTenant (rest.go) reads them back so the
 // same token is never validated twice in one request (avoids a second DB hit
 // for API key requests).
 
 type claimsCtxKey struct{}
 
-func storeClaimsInCtx(ctx context.Context, c *LanternClaims) context.Context {
+func storeClaimsInCtx(ctx context.Context, c *PalClaims) context.Context {
 	return context.WithValue(ctx, claimsCtxKey{}, c)
 }
 
 // claimsFromCtx returns claims stored by WithScope, or nil if absent.
-func claimsFromCtx(ctx context.Context) *LanternClaims {
-	c, _ := ctx.Value(claimsCtxKey{}).(*LanternClaims)
+func claimsFromCtx(ctx context.Context) *PalClaims {
+	c, _ := ctx.Value(claimsCtxKey{}).(*PalClaims)
 	return c
 }
 
 // WithScope wraps handler with per-resource scope authorization.
 //
-// Flag gate: when LANTERN_AUTHZ_ENFORCE is off (default), a missing scope is
+// Flag gate: when PAL_AUTHZ_ENFORCE is off (default), a missing scope is
 // logged at debug and the request is ALLOWED — zero behavior change, safe to
-// merge at any time. When LANTERN_AUTHZ_ENFORCE=1, a missing scope returns
-// HTTP 403. This staged pattern mirrors LANTERN_RLS_ENFORCE (ADR 0011).
+// merge at any time. When PAL_AUTHZ_ENFORCE=1, a missing scope returns
+// HTTP 403. This staged pattern mirrors PAL_RLS_ENFORCE (ADR 0011).
 //
 // JWT-authenticated requests (interactive users) and API keys with an empty
 // scopes list always pass regardless of the flag.
@@ -1218,7 +1218,7 @@ func (h *AuthHandler) WithScope(required Scope, next http.HandlerFunc) http.Hand
 				})
 				return
 			}
-			// ponytail: enforce-off is the default; flip LANTERN_AUTHZ_ENFORCE=1 to enable.
+			// ponytail: enforce-off is the default; flip PAL_AUTHZ_ENFORCE=1 to enable.
 			h.logger().Debug("authz: scope missing, enforcement off",
 				zap.String("required", required),
 				zap.Strings("held", claims.Scopes))
@@ -1291,10 +1291,10 @@ func randomHex(n int) (string, error) {
 // GetJWTSecret returns the JWT secret from the environment.
 //
 // Behaviour by environment:
-//   - Dev (LANTERN_ENV unset): returns the well-known dev fallback so
+//   - Dev (PAL_ENV unset): returns the well-known dev fallback so
 //     `make dev` works out of the box, but logs a WARN so developers
 //     notice. The warn is printed to stderr (no zap at call time).
-//   - Prod (LANTERN_ENV=prod/production/staging): returns "" when the
+//   - Prod (PAL_ENV=prod/production/staging): returns "" when the
 //     secret is unset or equals the dev default, signalling to main.go
 //     that it must call logger.Fatal before serving any traffic.
 //

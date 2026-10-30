@@ -65,7 +65,7 @@ type TriggerHandler struct {
 }
 
 // NewTriggerHandler creates a TriggerHandler. Per-trigger delivery rate is
-// LANTERN_HOOK_RATE_PER_MIN (default 60) with burst LANTERN_HOOK_BURST (default 10).
+// PAL_HOOK_RATE_PER_MIN (default 60) with burst PAL_HOOK_BURST (default 10).
 func NewTriggerHandler(srv *server.Server, auth *AuthHandler, rest *RESTHandler) *TriggerHandler {
 	// ponytail: per-replica in-memory buckets; SetRedis on this limiter if one
 	// replica's allowance ever proves too loose.
@@ -117,7 +117,7 @@ type triggerJSON struct {
 	HookPath       string          `json:"hookPath"`
 	LastDeliveryAt string          `json:"lastDeliveryAt,omitempty"`
 	CreatedAt      string          `json:"createdAt"`
-	// Secret is returned only by create, and only when Lantern generated it
+	// Secret is returned only by create, and only when PAL generated it
 	// or the caller rotated it. Never by list/get.
 	Secret string `json:"secret,omitempty"`
 }
@@ -445,16 +445,27 @@ func hmacMatches(secret string, msg []byte, gotHex string) bool {
 	return hmac.Equal(m.Sum(nil), got)
 }
 
+// palOrLegacyHeader reads X-Pal-<name>, falling back to the pre-PAL
+// X-Lantern-<name> when the PAL header is absent (ADR 0032).
+func palOrLegacyHeader(h http.Header, name string) string {
+	if v := h.Get("X-Pal-" + name); v != "" {
+		return v
+	}
+	return h.Get("X-Lantern-" + name)
+}
+
 // verifyHookDelivery checks the request signature in the provider's format and
 // extracts the delivery id. Pure: unit-tested per provider.
 func verifyHookDelivery(provider, secret string, hdr http.Header, body []byte, now time.Time) (hookDelivery, error) {
 	d := hookDelivery{}
 	switch provider {
 	case "generic":
-		// X-Lantern-Signature: t=<unix>,v1=<hex>[,v1=<hex>] over "<t>.<body>".
+		// X-Pal-Signature: t=<unix>,v1=<hex>[,v1=<hex>] over "<t>.<body>".
+		// Senders configured before the rename use the X-Lantern-* names;
+		// both are read (ADR 0032), PAL first.
 		var ts string
 		var sigs []string
-		for _, kv := range strings.Split(hdr.Get("X-Lantern-Signature"), ",") {
+		for _, kv := range strings.Split(palOrLegacyHeader(hdr, "Signature"), ",") {
 			k, v, _ := strings.Cut(strings.TrimSpace(kv), "=")
 			switch k {
 			case "t":
@@ -475,8 +486,8 @@ func verifyHookDelivery(provider, secret string, hdr http.Header, body []byte, n
 			return d, errHookSignature
 		}
 		d.ReplayKey = hookDigest(signed)
-		d.ID = hdr.Get("X-Lantern-Delivery")
-		d.Event = hdr.Get("X-Lantern-Event")
+		d.ID = palOrLegacyHeader(hdr, "Delivery")
+		d.Event = palOrLegacyHeader(hdr, "Event")
 	case "github":
 		sig, ok := strings.CutPrefix(hdr.Get("X-Hub-Signature-256"), "sha256=")
 		if !ok || !hmacMatches(secret, body, sig) {
@@ -778,7 +789,7 @@ func (h *TriggerHandler) startRun(ctx context.Context, tenantID, agentName strin
 	if err != nil {
 		return http.StatusInternalServerError, map[string]any{"error": "internal error"}
 	}
-	ctx = storeClaimsInCtx(ctx, &LanternClaims{TenantID: tenantID, Role: "service"})
+	ctx = storeClaimsInCtx(ctx, &PalClaims{TenantID: tenantID, Role: "service"})
 	ctx = context.WithValue(ctx, runTriggerKindKey{}, lanternv1.TriggerKind_TRIGGER_KIND_WEBHOOK)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/v1/runs", bytes.NewReader(b))
 	if err != nil {

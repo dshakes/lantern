@@ -1414,7 +1414,7 @@ fn parse_memory_quantity_to_bytes(mem: &str) -> i64 {
     }
 }
 
-/// Parse a container log line, looking for structured Lantern events.
+/// Parse a container log line, looking for structured PAL events.
 fn parse_event_line(line: &str) -> RuntimeEvent {
     const EVENT_PREFIX: &str = "__LANTERN_EVENT__:";
 

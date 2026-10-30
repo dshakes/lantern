@@ -4,21 +4,25 @@
 //! handshake alone cannot tell a guest from the scheduler. This interceptor
 //! closes that gap:
 //!
-//! 1. A peer presenting a **VM cert** (`OU=lantern-vm`) is refused outright —
+//! 1. A peer presenting a **VM cert** (`OU=pal-vm`, or the pre-PAL
+//!    `OU=lantern-vm`) is refused outright —
 //!    guests may only reach `RuntimeHarness`, whose methods bind the cert
 //!    CN/SAN to the request's `vm_id` per message.
-//! 2. Everyone else must present `x-lantern-service-token` ==
-//!    `LANTERN_GRPC_SERVICE_TOKEN` (constant-time compare) — the same shared
+//! 2. Everyone else must present `x-pal-service-token` (or the pre-PAL
+//!    `x-lantern-service-token`) == `PAL_GRPC_SERVICE_TOKEN` (constant-time
+//!    compare) — the same shared
 //!    token the Go services use for their trust boundaries (invariant #7).
 //!
-//! Token unset: prod (`LANTERN_ENV` prod/production/staging) refuses to start;
+//! Token unset: prod (`PAL_ENV` prod/production/staging) refuses to start;
 //! dev warns and allows, matching the Go services.
 
 use std::sync::Arc;
 
 use tonic::{Request, Status};
 
-pub const SERVICE_TOKEN_HEADER: &str = "x-lantern-service-token";
+pub const SERVICE_TOKEN_HEADER: &str = "x-pal-service-token";
+/// Pre-PAL name of the same header (ADR 0032). Accepted; callers send both.
+pub const LEGACY_SERVICE_TOKEN_HEADER: &str = "x-lantern-service-token";
 pub const ENV_SERVICE_TOKEN: &str = "PAL_GRPC_SERVICE_TOKEN";
 
 /// Interceptor state. Cheap to clone (tonic clones it per connection).
@@ -59,7 +63,7 @@ impl ManagerAuth {
     }
 
     /// The pure decision: `peer_is_vm` = the TLS peer presented a VM cert;
-    /// `presented` = the raw `x-lantern-service-token` header value.
+    /// `presented` = the raw service-token header value (see [`presented_token`]).
     // `Status` is large by design; this runs once per call.
     #[allow(clippy::result_large_err)]
     pub fn check(&self, peer_is_vm: bool, presented: Option<&[u8]>) -> Result<(), Status> {
@@ -74,7 +78,7 @@ impl ManagerAuth {
         match presented {
             Some(p) if ct_eq(p, expected.as_bytes()) => Ok(()),
             _ => Err(Status::unauthenticated(
-                "missing or invalid x-lantern-service-token",
+                "missing or invalid x-pal-service-token",
             )),
         }
     }
@@ -90,13 +94,19 @@ impl tonic::service::Interceptor for ManagerAuth {
                     .map(|c| crate::tls::is_vm_client_cert(c.as_ref()))
             })
             .unwrap_or(false);
-        let presented = req
-            .metadata()
-            .get(SERVICE_TOKEN_HEADER)
-            .map(|v| v.as_bytes());
-        self.check(peer_is_vm, presented)?;
+        self.check(peer_is_vm, presented_token(req.metadata()))?;
         Ok(req)
     }
+}
+
+/// The token under the PAL header, else under the legacy header. An empty
+/// value counts as absent. Exactly one value is compared, so two names never
+/// give a caller a second guess per call.
+pub fn presented_token(md: &tonic::metadata::MetadataMap) -> Option<&[u8]> {
+    [SERVICE_TOKEN_HEADER, LEGACY_SERVICE_TOKEN_HEADER]
+        .into_iter()
+        .filter_map(|k| md.get(k).map(|v| v.as_bytes()))
+        .find(|v| !v.is_empty())
 }
 
 /// Constant-time byte comparison (length is not secret).
@@ -168,6 +178,46 @@ mod tests {
         assert!(auth.call(ok).is_ok());
         assert_eq!(
             auth.call(Request::new(())).unwrap_err().code(),
+            Code::Unauthenticated
+        );
+    }
+
+    /// ADR 0032: the legacy header still authenticates; a wrong PAL token is
+    /// not rescued by a right legacy one.
+    #[test]
+    fn interceptor_accepts_pal_and_legacy_header_names() {
+        let mut auth = ManagerAuth::new(Some("tok".into()));
+        let req = |pairs: &[(&'static str, &str)]| {
+            let mut r = Request::new(());
+            for (k, v) in pairs {
+                r.metadata_mut().insert(*k, v.parse().unwrap());
+            }
+            r
+        };
+        assert!(
+            auth.call(req(&[(LEGACY_SERVICE_TOKEN_HEADER, "tok")]))
+                .is_ok()
+        );
+        assert!(
+            auth.call(req(&[
+                (SERVICE_TOKEN_HEADER, "tok"),
+                (LEGACY_SERVICE_TOKEN_HEADER, "tok")
+            ]))
+            .is_ok()
+        );
+        assert_eq!(
+            auth.call(req(&[
+                (SERVICE_TOKEN_HEADER, "bad"),
+                (LEGACY_SERVICE_TOKEN_HEADER, "tok")
+            ]))
+            .unwrap_err()
+            .code(),
+            Code::Unauthenticated
+        );
+        assert_eq!(
+            auth.call(req(&[(LEGACY_SERVICE_TOKEN_HEADER, "bad")]))
+                .unwrap_err()
+                .code(),
             Code::Unauthenticated
         );
     }

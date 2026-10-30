@@ -29,9 +29,9 @@ import (
 // environment. It mirrors the control-plane's IsProd() logic so the guard
 // rules are consistent across services.
 //
-// Dev (LANTERN_ENV unset) is the default so `make dev` / local runs work
+// Dev (PAL_ENV unset) is the default so `make dev` / local runs work
 // without any configuration. Operators opt into prod behaviour by setting
-// LANTERN_ENV to "prod", "production", or "staging".
+// PAL_ENV to "prod", "production", or "staging".
 func IsProd() bool {
 	e := strings.ToLower(strings.TrimSpace(os.Getenv("PAL_ENV")))
 	return e == "prod" || e == "production" || e == "staging"
@@ -45,19 +45,19 @@ func IsProd() bool {
 // the function pure and testable without triggering os.Exit in tests.
 //
 // Rules:
-//   - prod (LANTERN_ENV=prod/production/staging): FATAL when defaultAddr is
+//   - prod (PAL_ENV=prod/production/staging): FATAL when defaultAddr is
 //     empty OR dialerOverride is "stub". The LogOnlyDialer spawns nothing and
 //     returns synthetic OK responses — in prod that is silent data loss.
-//   - dev (LANTERN_ENV unset): stub is intentional; returns fatal=false.
+//   - dev (PAL_ENV unset): stub is intentional; returns fatal=false.
 func CheckManagerDialer(isProd bool, defaultAddr, dialerOverride string) (fatal bool, message string) {
 	if !isProd {
 		return false, ""
 	}
 	if dialerOverride == "stub" {
-		return true, "LANTERN_DIALER=stub is set — production refuses to start with the stub manager dialer (it spawns nothing and returns fake success); unset LANTERN_DIALER to use the real gRPC dialer"
+		return true, "PAL_DIALER=stub is set — production refuses to start with the stub manager dialer (it spawns nothing and returns fake success); unset PAL_DIALER to use the real gRPC dialer"
 	}
 	if defaultAddr == "" {
-		return true, "LANTERN_DEFAULT_MANAGER_ADDR is unset — production refuses to start with the stub manager dialer (it spawns nothing and returns fake success); set LANTERN_DEFAULT_MANAGER_ADDR to the runtime-manager gRPC address"
+		return true, "PAL_DEFAULT_MANAGER_ADDR is unset — production refuses to start with the stub manager dialer (it spawns nothing and returns fake success); set PAL_DEFAULT_MANAGER_ADDR to the runtime-manager gRPC address"
 	}
 	return false, ""
 }
@@ -92,15 +92,16 @@ func ServerTransportCreds(isProd bool) (credentials.TransportCredentials, error)
 }
 
 // serviceTokenCreds attaches the shared service token as
-// x-lantern-service-token on every RPC (the manager requires it when
-// LANTERN_GRPC_SERVICE_TOKEN is set). Empty token → nothing attached.
+// x-pal-service-token on every RPC (the manager requires it when
+// PAL_GRPC_SERVICE_TOKEN is set). Empty token → nothing attached.
 type serviceTokenCreds struct{ token string }
 
 func (c serviceTokenCreds) GetRequestMetadata(context.Context, ...string) (map[string]string, error) {
 	if c.token == "" {
 		return nil, nil
 	}
-	return map[string]string{"x-lantern-service-token": c.token}, nil
+	// Both names (ADR 0032): a manager that predates the PAL header still authenticates.
+	return map[string]string{"x-pal-service-token": c.token, "x-lantern-service-token": c.token}, nil
 }
 
 // RequireTransportSecurity is false so the token also rides dev plaintext links.
@@ -194,11 +195,11 @@ func (d *LogOnlyDialer) Close() {}
 // Per-node address resolution rules, in order:
 //  1. If env LANTERN_NODE_ADDR_<NODE-UPPERCASED> is set, use that.
 //  2. If nodeAddr is "node-local", "node-stub", or empty, fall back to
-//     env LANTERN_DEFAULT_MANAGER_ADDR.
+//     env PAL_DEFAULT_MANAGER_ADDR.
 //  3. If nodeAddr already contains a ':' (has a port), use as-is.
 //  4. Otherwise append the default runtime-manager port (:50054).
 //
-// Transport is TLS when LANTERN_RUNTIME_MANAGER_TLS_CA is set (see
+// Transport is TLS when PAL_RUNTIME_MANAGER_TLS_CA is set (see
 // ManagerTransportCreds), cleartext otherwise (dev only). Every RPC carries
 // the shared service token.
 type GRPCDialer struct {
@@ -212,7 +213,7 @@ type GRPCDialer struct {
 
 // NewGRPCDialer returns a dialer with no eager connections; conns are
 // established on the first Spawn/Stop call per node. creds nil means insecure
-// (tests); serviceToken is attached as x-lantern-service-token on every RPC.
+// (tests); serviceToken is attached as x-pal-service-token on every RPC.
 func NewGRPCDialer(logger *zap.Logger, creds credentials.TransportCredentials, serviceToken string) *GRPCDialer {
 	if creds == nil {
 		creds = insecure.NewCredentials()

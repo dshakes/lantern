@@ -19,7 +19,7 @@
 //
 // Provisioning is EXTERNAL and gated: an RBM agent + an RCS sender attached
 // to a Messaging Service must be approved by Google before a single RCS
-// message can flow. Until the operator has that and flips LANTERN_RCS_INBOUND
+// message can flow. Until the operator has that and flips PAL_RCS_INBOUND
 // on, this endpoint verifies + drops so a misconfigured Twilio webhook can
 // never make the agent speak to a stranger.
 //
@@ -85,7 +85,7 @@ func NewMessagingHandler(logger *zap.Logger, pool *pgxpool.Pool, llm *LlmProxyHa
 		enabled:       strings.ToLower(strings.TrimSpace(os.Getenv("PAL_RCS_INBOUND"))) == "on",
 	}
 	if !h.enabled {
-		h.logger.Info("contact RCS/SMS lane disabled — set LANTERN_RCS_INBOUND=on after the Twilio RBM agent is approved")
+		h.logger.Info("contact RCS/SMS lane disabled — set PAL_RCS_INBOUND=on after the Twilio RBM agent is approved")
 	}
 	return h
 }

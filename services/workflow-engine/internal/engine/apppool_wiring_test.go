@@ -28,8 +28,8 @@ func TestAppPoolIsWiredInMain(t *testing.T) {
 		t.Fatal("cmd/server/main.go never calls SetAppPool — the engine will run tenant " +
 			"queries on the privileged pool, which BYPASSES RLS entirely")
 	}
-	if !strings.Contains(main, "LANTERN_APP_DB_PASSWORD") {
-		t.Error("main.go does not read LANTERN_APP_DB_PASSWORD, so the lantern_app pool " +
+	if !strings.Contains(main, "PAL_APP_DB_PASSWORD") {
+		t.Error("main.go does not read PAL_APP_DB_PASSWORD, so the lantern_app pool " +
 			"can never be built")
 	}
 	if !strings.Contains(main, "lantern_app") {
