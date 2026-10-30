@@ -38,7 +38,7 @@ export const CAPABILITIES: Capability[] = [
   { product: 'rt', group: 'Reliable', title: 'Durable execution', icon: 'approve-check', featured: true,
     line: 'A crash mid-run resumes from the journal; finished steps are not re-run.', href: '/docs/runtime/durable-execution/', seq: CHECKPOINT_SEQUENCE },
   { product: 'rt', group: 'Safe', title: 'microVM isolation', icon: 'laptop', featured: true,
-    line: 'Untrusted code runs in its own VM; a missing hardened runtime is refused, not downgraded.', href: '/docs/runtime/isolation/', def: X.ISOLATION_CLASSES },
+    line: 'Untrusted code runs in its own microVM; untrusted and hostile classes are never downgraded to runc.', href: '/docs/runtime/isolation/', def: X.ISOLATION_CLASSES },
   { product: 'rt', group: 'Safe', title: 'Egress broker', icon: 'external', featured: true,
     line: 'Network calls pass an allowlist; credentials are added outside the VM.', href: '/docs/security/egress/', seq: EGRESS_SEQUENCE },
   { product: 'rt', group: 'Build', title: 'Model routing', icon: 'random', featured: true,
