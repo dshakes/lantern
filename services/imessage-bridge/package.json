@@ -1,5 +1,5 @@
 {
-  "name": "@lantern/imessage-bridge",
+  "name": "@pal/imessage-bridge",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -13,7 +13,7 @@
     "postinstall": "npm --prefix ../../packages/bridge-core install --no-audit --no-fund"
   },
   "dependencies": {
-    "@lantern/bridge-core": "file:../../packages/bridge-core",
+    "@pal/bridge-core": "file:../../packages/bridge-core",
     "better-sqlite3": "^11.3.0",
     "cors": "^2.8.5",
     "express": "^4.21.0",

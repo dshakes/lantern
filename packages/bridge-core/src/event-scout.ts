@@ -480,7 +480,7 @@ export function calendarSpecFor(ev: ScoutEvent): {
     ev.category && `Category: ${ev.category}`,
     ev.cost && `Cost: ${ev.cost}`,
     ev.url,
-    "(booked by Lantern event scout)",
+    "(booked by pal event scout)",
   ]
     .filter(Boolean)
     .join("\n");

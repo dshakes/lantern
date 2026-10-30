@@ -1,6 +1,6 @@
 // Read-only reader for the local Apple Mail "Envelope Index" SQLite — the
 // I/O side of the owner's local-mailbox search (pure query building /
-// formatting lives in @lantern/bridge-core/mail-index).
+// formatting lives in @pal/bridge-core/mail-index).
 //
 // Why this exists: the live `gmail_search` connector tool depends on a
 // Google OAuth token that expires; the Envelope Index is Mail.app's own
@@ -15,7 +15,7 @@
 //     readers; we never copy the 1.6GB file, so results are never stale).
 //   * FAILS CLOSED. No Full Disk Access / schema drift / lock → a
 //     structured error the LLM can relay, one debug log, never a throw.
-//   * Disable entirely with LANTERN_MAIL_INDEX=0.
+//   * Disable entirely with PAL_MAIL_INDEX=0.
 
 import { existsSync, readdirSync, readFileSync, realpathSync } from "fs";
 import { execFileSync } from "child_process";
@@ -30,7 +30,7 @@ import {
   buildRecentMailQuery,
   type MailHit,
   type MailSearchParams,
-} from "@lantern/bridge-core/mail-index";
+} from "@pal/bridge-core/mail-index";
 
 export type MailReadOutcome =
   | { ok: true; text: string; from?: string; subject?: string }
@@ -60,7 +60,7 @@ export function envelopeIndexPath(mailRoot = join(homedir(), "Library", "Mail"))
 }
 
 export function searchMailIndex(params: MailSearchParams, log: Logger): MailSearchOutcome {
-  if (!mailIndexEnabled()) return { ok: false, error: "local mail index disabled (LANTERN_MAIL_INDEX=0)" };
+  if (!mailIndexEnabled()) return { ok: false, error: "local mail index disabled (PAL_MAIL_INDEX=0)" };
   const indexPath = envelopeIndexPath();
   if (!indexPath) {
     return { ok: false, error: "no Apple Mail envelope index on this Mac (Mail.app not set up?)" };
@@ -85,7 +85,7 @@ export function searchMailIndex(params: MailSearchParams, log: Logger): MailSear
  *  fail-closed, read-only posture as searchMailIndex. Feeds the owner
  *  world-model refresh; subjects are never logged. */
 export function listRecentMail(since: string, limit: number, log: Logger): MailSearchOutcome {
-  if (!mailIndexEnabled()) return { ok: false, error: "local mail index disabled (LANTERN_MAIL_INDEX=0)" };
+  if (!mailIndexEnabled()) return { ok: false, error: "local mail index disabled (PAL_MAIL_INDEX=0)" };
   const indexPath = envelopeIndexPath();
   if (!indexPath) return { ok: false, error: "no Apple Mail envelope index on this Mac" };
   let db: InstanceType<typeof Database> | null = null;
@@ -108,7 +108,7 @@ export function listRecentMail(since: string, limit: number, log: Logger): MailS
 // owner-only, read-only, kill-switch posture as searchMailIndex; body text is
 // NEVER logged (PII).
 export function readMailBody(rowid: number, log: Logger, mailRoot = join(homedir(), "Library", "Mail")): MailReadOutcome {
-  if (!mailIndexEnabled()) return { ok: false, reason: "local mail index disabled (LANTERN_MAIL_INDEX=0)" };
+  if (!mailIndexEnabled()) return { ok: false, reason: "local mail index disabled (PAL_MAIL_INDEX=0)" };
   if (!Number.isInteger(rowid) || rowid <= 0) return { ok: false, reason: "invalid rowid" };
   try {
     const root = realpathSync(mailRoot);

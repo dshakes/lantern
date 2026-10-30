@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { shouldFireDropNotice } from "./session.js";
-import { mutedNoticeBucket } from "@lantern/bridge-core/natural";
+import { mutedNoticeBucket } from "@pal/bridge-core/natural";
 
 // The failure these guard: auto-reply was globally muted for WEEKS. 300+ real
 // contact messages were dropped and the ONLY owner-facing signal was a single

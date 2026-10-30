@@ -17,8 +17,8 @@ const EMAIL_LABEL = "lantern";
 
 export interface EmailMirrorOptions {
   // Optional prefix to disambiguate which bridge a status came from
-  // (e.g., "iMessage" or "WhatsApp"). Renders as "Lantern iMessage:
-  // ...". Skip to use the generic "Lantern: ..." prefix.
+  // (e.g., "iMessage" or "WhatsApp"). Renders as "pal iMessage:
+  // ...". Skip to use the generic "pal: ..." prefix.
   subjectPrefix?: string;
 }
 
@@ -29,11 +29,11 @@ export class EmailMirror {
 
   constructor(logger: Logger, opts: EmailMirrorOptions = {}) {
     this.logger = logger.child({ component: "email-mirror" });
-    this.subjectPrefix = opts.subjectPrefix || "Lantern";
+    this.subjectPrefix = opts.subjectPrefix || "pal";
   }
 
   // Send `text` as an email to the configured owner address. No-op
-  // when LANTERN_OWNER_EMAIL isn't set. Fire-and-forget safe.
+  // when PAL_OWNER_EMAIL isn't set. Fire-and-forget safe.
   async send(text: string): Promise<void> {
     const to = process.env.PAL_OWNER_EMAIL;
     if (!to) return;

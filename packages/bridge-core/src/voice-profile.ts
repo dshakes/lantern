@@ -8,7 +8,7 @@
 // and produce EXPLICIT guidance — "terse, direct, switches to Telugu for
 // warmth, 🙏 for thanks only" — so the reply LLM doesn't have to guess.
 //
-// Flag-gated: LANTERN_VOICE_REASONING=1. When unset/0 the inferStyle
+// Flag-gated: PAL_VOICE_REASONING=1. When unset/0 the inferStyle
 // heuristic path is entirely unchanged and this module is never called.
 //
 // Fail-safe contract (enforced throughout):
@@ -26,7 +26,7 @@ import { join, dirname } from "node:path";
 
 // ── Flag gate ────────────────────────────────────────────────────────────────
 
-/** Returns true when LANTERN_VOICE_REASONING is "1", "true", or "on". */
+/** Returns true when PAL_VOICE_REASONING is "1", "true", or "on". */
 export function isVoiceReasoningEnabled(): boolean {
   const v = (process.env["PAL_VOICE_REASONING"] ?? "").toLowerCase();
   return v === "1" || v === "true" || v === "on";

@@ -11,7 +11,7 @@
 //   "status" / "how are you?"   → status report
 //   "what's paused?"            → list paused contacts
 //   "pause for tonight"         → mute until 9am tomorrow
-//   "lantern, hush"             → mute (the comma makes it obvious)
+//   "pal, hush"             → mute (the comma makes it obvious)
 //
 // Slash commands still work as power-user shortcuts; this layer
 // adds a softer interface for everyone else. Parsing is regex +
@@ -20,7 +20,7 @@
 // Design notes:
 //   - We DON'T want to misfire on regular owner-typed messages
 //     ("I'll stop by your place at 5"). The parser only fires when:
-//       a) the message starts with "lantern" / "lantern," / "hey lantern"
+//       a) the message starts with "pal" / "pal," / "hey pal"
 //          (explicit invocation), OR
 //       b) the message IS short (≤ 6 words) AND contains a strong
 //          command verb at the start ("pause", "mute", "stop replying").
@@ -64,7 +64,7 @@ export interface ParsedCommand {
   // becomes "muting auto-reply for 2 hours"). The bridge uses this in
   // its acknowledgement reply.
   echo: string;
-  // True when the user used explicit "lantern, ..." invocation rather
+  // True when the user used explicit "pal, ..." invocation rather
   // than a bare verb. Mostly informational — the bridge can choose to
   // be more verbose in its reply when it's not invoked explicitly.
   explicit: boolean;
@@ -81,7 +81,9 @@ export interface ParsedCommand {
   callReason?: string;
 }
 
-const INVOCATION_PREFIX = /^(?:hey\s+)?lantern[,!:\s]+/i;
+// "pal" is an everyday word ("hey pal, how are you"), so it needs punctuation
+// right after it; the legacy "pal" form keeps its looser match.
+const INVOCATION_PREFIX = /^(?:(?:hey\s+)?lantern[,!:\s]+|(?:hey\s+)?pal[,!:]\s*)/i;
 
 // Full-body anchored: the verb must BE the message (optionally + a recognized
 // scope/duration), never just appear inside a sentence. "pause and tell me how
@@ -90,7 +92,7 @@ const MUTE_VERBS = /^(?:pause|mute|stop\s+replying|hush|quiet|silence|go\s+to\s+
 // Bare "on" / "off" / "stop" used to be in here but tripped on
 // natural phrases like "what's on my calendar". Now we only accept
 // explicit forms — bare verbs at the start of message body, full
-// phrases, or the "lantern, on" / slash forms.
+// phrases, or the "pal, on" / slash forms.
 // All full-body anchored: the command word must BE the message (the codebase's
 // established convention for terse commands) — never a word inside a sentence.
 // "resume the meeting notes", "status of the deal", "help me draft this" must
@@ -113,7 +115,7 @@ const DOCS_ON_VERBS = /^(?:personal\s+)?docs?\s+(?:on|enable|enabled|allow)$/i;
 const DOCS_OFF_VERBS = /^(?:personal\s+)?docs?\s+(?:off|disable|disabled|deny)$/i;
 // Kill switch — master OFF for the entire bot. Both bridges check this
 // before doing anything else. Recognized forms: "killswitch on",
-// "kill switch off", "kill all", "lantern off", "shut down".
+// "kill switch off", "kill all", "pal off", "shut down".
 const KILLSWITCH_ON_VERBS =
   /^(?:kill\s*switch\s+on|kill\s+(?:all|everything|the\s+bot)|emergency\s+stop|shut\s*down|panic)$/i;
 const KILLSWITCH_OFF_VERBS =
@@ -208,7 +210,7 @@ function parseDuration(text: string): { ms?: number; phrase?: string } {
 // conversational text ("can you call me back later?"), so we require
 // a recognizable target word after the verb.
 //
-//   "lantern, call Madhu"
+//   "pal, call Madhu"
 //   "call mom and tell her i'll be late"
 //   "ring CVS to refill metformin"
 //   "leave a voicemail for Sarika saying happy birthday"
@@ -221,11 +223,11 @@ function parseDuration(text: string): { ms?: number; phrase?: string } {
 //   callMessage:  the spoken body (for voicemail/task)
 //   callReason:   1-line context for risk-tier classifier
 const CALL_CONFERENCE_RE =
-  /^(?:lantern,?\s+)?(?:(?:get|put)\s+me\s+on\s+(?:a\s+)?(?:call|line)\s+with|conference\s+me\s+with|(?:three[-\s]?way|3[-\s]?way)\s+(?:me\s+)?with|bridge\s+me\s+with|connect\s+me\s+(?:with|to)|dial\s+me\s+in\s+with)\s+(\S.+)$/i;
+  /^(?:(?:lantern|pal),?\s+)?(?:(?:get|put)\s+me\s+on\s+(?:a\s+)?(?:call|line)\s+with|conference\s+me\s+with|(?:three[-\s]?way|3[-\s]?way)\s+(?:me\s+)?with|bridge\s+me\s+with|connect\s+me\s+(?:with|to)|dial\s+me\s+in\s+with)\s+(\S.+)$/i;
 const CALL_VOICEMAIL_RE =
-  /^(?:lantern,?\s+)?leave\s+(?:a\s+)?(?:voice\s*mail|voicemail|message|note)\s+(?:for|to|with)\s+([\w'.\s+-]+?)\s+(?:saying|that\s+says|with|telling|that|—|-)\s+(.+)$/i;
+  /^(?:(?:lantern|pal),?\s+)?leave\s+(?:a\s+)?(?:voice\s*mail|voicemail|message|note)\s+(?:for|to|with)\s+([\w'.\s+-]+?)\s+(?:saying|that\s+says|with|telling|that|—|-)\s+(.+)$/i;
 const CALL_TASK_RE =
-  /^(?:lantern,?\s+)?(?:call|ring|dial|phone)\s+([\w'.\s+-]+?)(?:\s+(?:and|to|about|for|regarding|saying|that|—|-)\s+(.+))?$/i;
+  /^(?:(?:lantern|pal),?\s+)?(?:call|ring|dial|phone)\s+([\w'.\s+-]+?)(?:\s+(?:and|to|about|for|regarding|saying|that|—|-)\s+(.+))?$/i;
 
 function parseCallCommands(body: string): ParsedCommand | null {
   // Conference takes priority — most specific phrasing.
@@ -282,7 +284,7 @@ export function parseNLCommand(input: string): ParsedCommand | null {
   const raw = input.trim();
 
   // First: check the slash forms (backward-compatible).
-  if (/^\/(?:bot|lantern)\b/i.test(raw)) {
+  if (/^\/(?:bot|pal|lantern)\b/i.test(raw)) {
     return parseSlash(raw);
   }
 
@@ -294,7 +296,7 @@ export function parseNLCommand(input: string): ParsedCommand | null {
   if (callCmd) return callCmd;
 
   // Natural language path. Two acceptance modes:
-  //   (a) explicit "lantern, ..." invocation — strip the prefix and
+  //   (a) explicit "pal, ..." invocation — strip the prefix and
   //       parse what's left
   //   (b) short, command-like phrase ("pause", "mute everyone", "status")
   //       — accept without the prefix
@@ -382,8 +384,8 @@ export function parseNLCommand(input: string): ParsedCommand | null {
   if (HELP_VERBS.test(body)) {
     return { action: "help", echo: "available commands", explicit };
   }
-  // Bare "on" / "off" only when invoked explicitly via "lantern, on" /
-  // "lantern, off". Without the prefix they false-positive on
+  // Bare "on" / "off" only when invoked explicitly via "pal, on" /
+  // "pal, off". Without the prefix they false-positive on
   // conversational phrases like "what's on my calendar" or "the lights
   // are off". The slash form (/bot on, /bot off) goes through
   // parseSlash and is unaffected.
@@ -424,7 +426,7 @@ function parseSlash(raw: string): ParsedCommand | null {
         return { action: "help", echo: "help", explicit };
     }
   }
-  if (cmd === "/lantern") {
+  if (cmd === "/pal" || cmd === "/lantern") {
     switch (sub) {
       case "ping":
         return { action: "ping", echo: "pong", explicit };
@@ -463,11 +465,11 @@ function parseSlash(raw: string): ParsedCommand | null {
         return { action: "status", echo: "status (with pushover state)", explicit };
       }
       case "call": case "ring": case "dial": case "phone": {
-        // /lantern call <target> [reason...]
-        // /lantern call-vm <target> | <message>
-        // /lantern conference <target>
+        // /pal call <target> [reason...]
+        // /pal call-vm <target> | <message>
+        // /pal conference <target>
         const target = rest[0];
-        if (!target) return { action: "help", echo: "usage: /lantern call <name>", explicit };
+        if (!target) return { action: "help", echo: "usage: /pal call <name>", explicit };
         const reason = rest.slice(1).join(" ");
         return reason
           ? { action: "call-task", callTarget: target, callMessage: reason, callReason: reason, echo: `📞 call ${target}`, explicit }
@@ -475,17 +477,17 @@ function parseSlash(raw: string): ParsedCommand | null {
       }
       case "conference": {
         const target = rest.join(" ").trim();
-        if (!target) return { action: "help", echo: "usage: /lantern conference <name>", explicit };
+        if (!target) return { action: "help", echo: "usage: /pal conference <name>", explicit };
         return { action: "call-conference", callTarget: target, echo: `📞 conference with ${target}`, explicit };
       }
       case "voicemail": case "vm": {
-        // /lantern vm <target> | <message>
+        // /pal vm <target> | <message>
         const joined = rest.join(" ");
         const split = joined.indexOf("|");
-        if (split === -1) return { action: "help", echo: "usage: /lantern vm <name> | <message>", explicit };
+        if (split === -1) return { action: "help", echo: "usage: /pal vm <name> | <message>", explicit };
         const target = joined.slice(0, split).trim();
         const message = joined.slice(split + 1).trim();
-        if (!target || !message) return { action: "help", echo: "usage: /lantern vm <name> | <message>", explicit };
+        if (!target || !message) return { action: "help", echo: "usage: /pal vm <name> | <message>", explicit };
         return { action: "call-voicemail", callTarget: target, callMessage: message, echo: `📞 voicemail for ${target}`, explicit };
       }
       case "killswitch": case "kill": {
@@ -515,7 +517,7 @@ export function renderHelp(): string {
     "",
     "*personal docs* (self-chat only — never replies in DMs or groups)",
     "• *docs on* / *docs off* — toggle local-file Q&A",
-    "• `/lantern docs on|off` — slash form",
+    "• `/pal docs on|off` — slash form",
     "",
     "*VIP + approval queue*",
     "• *approvals on* — VIPs + unfamiliar contacts queue drafts for your approval (instead of auto-reply)",
@@ -523,17 +525,17 @@ export function renderHelp(): string {
     "• *vips* / *list vips* — show your VIP list",
     "• *vips clear* — remove every VIP",
     "• tap ❤️ on a contact's message to mark them VIP; 🗑 to remove",
-    "• `/lantern approvals on|off`, `/lantern vips clear` — slash forms",
+    "• `/pal approvals on|off`, `/pal vips clear` — slash forms",
     "",
     "*safety*",
     "• *kill switch on* — 🚨 emergency stop (mutes ALL bot activity until released)",
     "• *kill switch off* — release the kill switch",
-    "• `/lantern killswitch on|off` — slash form",
+    "• `/pal killswitch on|off` — slash form",
     "",
     "*life-threat escalation channels*",
     "• *escalation on* / *escalation off* — master switch for panic channels (pushover + voice + macOS notif). Primary alerts (WA/iM/email) always fire regardless.",
     "• *pushover on* / *pushover off* — just the Pushover siren channel",
-    "• `/lantern escalation on|off`, `/lantern pushover on|off` — slash forms",
+    "• `/pal escalation on|off`, `/pal pushover on|off` — slash forms",
     "",
     "*diagnostics*",
     "• *status* — current state (incl. docs + killswitch toggles)",
@@ -541,7 +543,7 @@ export function renderHelp(): string {
     "• *list chats* — show monitored group chats",
     "• *ping* — liveness check",
     "",
-    "starting messages with *lantern,* is the explicit way (e.g. *lantern, pause for 2h*).",
+    "starting messages with *pal,* is the explicit way (e.g. *pal, pause for 2h*).",
   ].join("\n");
 }
 
@@ -580,12 +582,12 @@ const QUICK_STATUS: Array<{
 ];
 
 const PRESENCE_CLEAR_RE =
-  /^(?:lantern,?\s+)?(?:i'?m\s+back|back\s+now|status\s+off|clear\s+(?:my\s+)?status|i'?m\s+(?:free|available|around)|presence\s+off|status\s+clear)\s*[!.]?$/i;
+  /^(?:(?:lantern|pal),?\s+)?(?:i'?m\s+back|back\s+now|status\s+off|clear\s+(?:my\s+)?status|i'?m\s+(?:free|available|around)|presence\s+off|status\s+clear)\s*[!.]?$/i;
 
 // "I'm at the temple", "I'm in a meeting", "I'm driving", "set status: at the gym",
 // "away: lunch", "status: at the dentist" — optionally "for 2h" / "until 5pm".
 const PRESENCE_SET_RE =
-  /^(?:lantern,?\s+)?(?:(?:set\s+)?status\s*[:=]\s*|away\s*[:=]\s*|presence\s*[:=]\s*|(?:i'?m|i\s+am|i'?ll\s+be|i\s+will\s+be)\s+(?:at\s+|in\s+|on\s+)?)(.+?)(?:\s+(?:for\s+(\d+)\s*(h|hr|hrs|hours?|m|min|mins|minutes?)|(?:until|till|til)\s+(.+?)))?\s*[!.]?$/i;
+  /^(?:(?:lantern|pal),?\s+)?(?:(?:set\s+)?status\s*[:=]\s*|away\s*[:=]\s*|presence\s*[:=]\s*|(?:i'?m|i\s+am|i'?ll\s+be|i\s+will\s+be)\s+(?:at\s+|in\s+|on\s+)?)(.+?)(?:\s+(?:for\s+(\d+)\s*(h|hr|hrs|hours?|m|min|mins|minutes?)|(?:until|till|til)\s+(.+?)))?\s*[!.]?$/i;
 
 function parseDurationMs(num?: string, unit?: string, untilText?: string): number | undefined {
   if (num && unit) {

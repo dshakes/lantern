@@ -12,11 +12,11 @@
 import { readFileSync, existsSync } from "fs";
 import type { Logger } from "pino";
 
-import { authedFetch } from "@lantern/bridge-core/auth";
+import { authedFetch } from "@pal/bridge-core/auth";
 import {
   voiceTranscriptionLangHint,
   looksGarbledTranscript,
-} from "@lantern/bridge-core/language";
+} from "@pal/bridge-core/language";
 import type { Attachment } from "./chat-db.js";
 
 export interface MediaAnnotation {
