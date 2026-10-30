@@ -110,14 +110,14 @@ func (h *SignalHandler) authorize(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-// signalsFilePath returns ~/.lantern/device-signals.jsonl, honoring HOME so
-// tests can isolate writes to a temp dir.
+// signalsFilePath returns <state dir>/device-signals.jsonl (see palStateDir;
+// ~/.lantern on existing installs), honoring HOME so tests can isolate writes
+// to a temp dir.
 func signalsFilePath() (dir, path string, err error) {
-	home, err := os.UserHomeDir()
+	dir, err = palStateDir()
 	if err != nil {
 		return "", "", err
 	}
-	dir = filepath.Join(home, ".lantern")
 	return dir, filepath.Join(dir, "device-signals.jsonl"), nil
 }
 

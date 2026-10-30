@@ -26,6 +26,8 @@ func newSignalHandlerForTest(t *testing.T) *SignalHandler {
 func isolateHome(t *testing.T) string {
 	t.Helper()
 	tmp := t.TempDir()
+	t.Setenv("PAL_STATE_DIR", "") // an operator override must not redirect test writes
+	t.Setenv("LANTERN_STATE_DIR", "")
 	t.Setenv("HOME", tmp)
 	return tmp
 }

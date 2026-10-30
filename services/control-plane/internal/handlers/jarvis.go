@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -534,12 +535,12 @@ func (h *JarvisHandler) deliverBrief(ctx context.Context, tenantID, brief string
 }
 
 // briefChannel resolves the preferred delivery channel. A runtime override
-// file (~/.lantern/brief-channel, written by the A2P watcher on approval)
+// file (<state dir>/brief-channel, see palStateDir; written by the A2P watcher on approval)
 // wins over the PAL_JARVIS_BRIEF_CHANNEL env — so the channel can flip
 // without restarting the control-plane.
 func (h *JarvisHandler) briefChannel() string {
-	if home := os.Getenv("HOME"); home != "" {
-		if b, err := os.ReadFile(home + "/.lantern/brief-channel"); err == nil {
+	if dir, err := palStateDir(); err == nil {
+		if b, err := os.ReadFile(filepath.Join(dir, "brief-channel")); err == nil {
 			if c := strings.ToLower(strings.TrimSpace(string(b))); c != "" {
 				return c
 			}
