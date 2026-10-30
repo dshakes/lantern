@@ -24,7 +24,10 @@ side=""
 reply() { if [[ $wcode == 1 ]]; then printf '%s' "$1"; else printf '%s' "$2"; fi; exit 0; }
 [[ -z "$side" ]] && { [[ $wcode == 1 ]] && printf '000'; exit 7; }
 if [[ $side == new ]]; then envf="$HOME/.pal/bridge.env"; pre=PAL_; else envf="$HOME/.lantern/bridge.env"; pre=LANTERN_; fi
-want() { python3 -I "$STUB_HELPER" env-get "$envf" "$1" 2>/dev/null; }
+# expected token = what a real shell gets from the file (export, quotes, inline
+# comments), NOT the tool's own parser — otherwise a parser bug cancels out
+# shellcheck disable=SC1090  # the env file under test, chosen at runtime
+want() { ( set -a; . "$envf" >/dev/null 2>&1; printenv "$1" ) }
 authed() { local t; t="$(want "$1")"; [[ -n "$t" && "$hdr" == "Authorization: Bearer $t" ]]; }
 case "$svc:$path" in
   api:/healthz|dashboard:/*|*-bridge:/health) reply 200 '{"status":"ok"}' ;;
