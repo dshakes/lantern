@@ -1091,8 +1091,11 @@ const (
 	ScopeRunsRead        Scope = "runs:read"
 	ScopeRunsWrite       Scope = "runs:write"
 	ScopeRunsExecute     Scope = "runs:execute"
+	ScopeConnectorsRead  Scope = "connectors:read"
 	ScopeConnectorsWrite Scope = "connectors:write"
+	ScopeBudgetsRead     Scope = "budgets:read"
 	ScopeBudgetsWrite    Scope = "budgets:write"
+	ScopeSettingsRead    Scope = "settings:read"
 	ScopeSettingsWrite   Scope = "settings:write"
 )
 
@@ -1113,12 +1116,23 @@ func scopeImplies(s, required Scope) bool {
 	case ScopeRunsExecute:
 		// Executing a run implies the ability to read its status and events.
 		return required == ScopeRunsRead || required == ScopeRunsWrite
+	case ScopeConnectorsWrite:
+		return required == ScopeConnectorsRead
+	case ScopeBudgetsWrite:
+		return required == ScopeBudgetsRead
+	case ScopeSettingsWrite:
+		return required == ScopeSettingsRead
 	}
 	return false
 }
 
 func isReadScope(s Scope) bool {
-	return s == ScopeRead || s == ScopeAgentsRead || s == ScopeRunsRead
+	switch s {
+	case ScopeRead, ScopeAgentsRead, ScopeRunsRead,
+		ScopeConnectorsRead, ScopeBudgetsRead, ScopeSettingsRead:
+		return true
+	}
+	return false
 }
 
 func isWriteScope(s Scope) bool {

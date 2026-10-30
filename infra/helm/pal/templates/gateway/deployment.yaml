@@ -15,6 +15,10 @@ spec:
     metadata:
       labels:
         {{- include "pal.componentLabels" (dict "root" . "component" "gateway") | nindent 8 }}
+      {{- with include "pal.mtls.podAnnotations" (dict "root" . "name" "gateway") }}
+      annotations:
+        {{- . | nindent 8 }}
+      {{- end }}
     spec:
       serviceAccountName: {{ include "pal.serviceAccountName" . }}
       affinity:
@@ -81,6 +85,18 @@ spec:
                 secretKeyRef:
                   name: {{ include "pal.fullname" . }}-secrets
                   key: jwt-secret
+            # The control-plane's :50051 requires the shared service token
+            # (invariant #7) — and, with mTLS on, the gateway's client cert.
+            - name: PAL_GRPC_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "pal.fullname" . }}-secrets
+                  key: grpc-service-token
+            {{- include "pal.mtls.env" (dict "root" . "name" "gateway") | nindent 12 }}
+          {{- if .Values.mtls.enabled }}
+          volumeMounts:
+            {{- include "pal.mtls.volumeMounts" (dict "root" . "manager" false) | nindent 12 }}
+          {{- end }}
           livenessProbe:
             httpGet:
               path: /healthz
@@ -99,3 +115,7 @@ spec:
             failureThreshold: 3
           resources:
             {{- toYaml .Values.gateway.resources | nindent 12 }}
+      {{- if .Values.mtls.enabled }}
+      volumes:
+        {{- include "pal.mtls.volumes" (dict "root" . "name" "gateway" "manager" false) | nindent 8 }}
+      {{- end }}

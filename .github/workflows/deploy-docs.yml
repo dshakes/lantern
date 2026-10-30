@@ -1,7 +1,7 @@
 # Build the public site (site/, Astro + Starlight) and deploy it to GitHub Pages
 # as one artifact:
-#   https://dshakes.github.io/lantern/       <- landing, /pal, /runtime, /compare, /about
-#   https://dshakes.github.io/lantern/docs/  <- Starlight docs
+#   https://dshakes.github.io/pal/       <- landing, /pal, /runtime, /compare, /about
+#   https://dshakes.github.io/pal/docs/  <- Starlight docs
 # Plain static HTML, no server. The build fails on any broken docs link.
 name: "deploy site (github pages)"
 

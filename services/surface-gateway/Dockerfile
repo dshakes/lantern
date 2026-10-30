@@ -5,6 +5,7 @@ WORKDIR /app
 # Context is the repo root (see build-images.yml): pal_env is a path dependency
 # at ../../packages/pal-env-rs, so the repo layout is preserved.
 COPY packages/pal-env-rs packages/pal-env-rs
+COPY packages/pal-grpc-tls-rs packages/pal-grpc-tls-rs
 COPY services/surface-gateway services/surface-gateway
 WORKDIR /app/services/surface-gateway
 RUN cargo build --release

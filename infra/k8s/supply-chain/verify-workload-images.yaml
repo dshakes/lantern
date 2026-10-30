@@ -70,7 +70,7 @@ spec:
             - count: 1
               entries:
                 - keyless:
-                    subject: "https://github.com/dshakes/lantern/.github/workflows/build-images.yml@refs/heads/master"
+                    subject: "https://github.com/dshakes/pal/.github/workflows/build-images.yml@refs/heads/master"
                     issuer: "https://token.actions.githubusercontent.com"
                     rekor:
                       url: "https://rekor.sigstore.dev"
