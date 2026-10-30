@@ -17,11 +17,13 @@ import (
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	"github.com/dshakes/lantern/packages/grpctls"
 )
 
 // tenantMetadataKey is the gRPC metadata key the control-plane's tenant
@@ -50,13 +52,19 @@ type Client struct {
 // on every CreateRun so the control-plane's optional service-token interceptor
 // accepts the call. When empty, nothing extra is attached (additive).
 //
-// Transport is insecure (cleartext): the scheduler<->control-plane link is an
-// in-cluster/private-network hop, matching how the runtime-scheduler dials the
-// runtime-manager.
+// Transport is service-mesh mTLS (PAL_GRPC_TLS_*, ADR 0043) — the
+// control-plane demands a client cert for RunService when it runs mTLS.
+// Plaintext only in dev or with PAL_GRPC_INSECURE=1.
 func New(addr, serviceToken string, logger *zap.Logger) (*Client, error) {
-	conn, err := grpc.NewClient(addr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	tlsCfg, err := grpctls.ClientConfig(grpctls.FromEnv(grpctls.ServicePrefix), grpctls.IsProd(), grpctls.InsecureOverride())
+	if err != nil {
+		return nil, fmt.Errorf("runclient: control-plane TLS: %w", err)
+	}
+	creds := insecure.NewCredentials()
+	if tlsCfg != nil {
+		creds = credentials.NewTLS(tlsCfg)
+	}
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))
 	if err != nil {
 		return nil, fmt.Errorf("runclient: dial control-plane %q: %w", addr, err)
 	}

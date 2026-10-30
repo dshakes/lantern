@@ -28,6 +28,7 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	"github.com/dshakes/lantern/packages/grpctls"
 	"github.com/dshakes/lantern/packages/palenv"
 	"github.com/dshakes/lantern/services/control-plane/internal/agentidentity"
 	"github.com/dshakes/lantern/services/control-plane/internal/db"
@@ -246,23 +247,34 @@ func main() {
 	// Service-token auth must run BEFORE tenant extraction: only callers holding
 	// the shared token may set a tenant_id. Empty token → pass-through (dev);
 	// runStartupGuards already refused to boot with an empty token in prod.
+	// mTLS (ADR 0043) is required ON TOP OF the token: with PAL_GRPC_TLS_* set,
+	// every non-exempt call needs a CA-verified, allowlisted client cert.
 	grpcServiceToken := os.Getenv("PAL_GRPC_SERVICE_TOKEN")
-	grpcOpts := []grpc.ServerOption{
-		grpc.ChainUnaryInterceptor(
-			middleware.UnaryServiceAuthInterceptor(logger, grpcServiceToken),
-			regionCfg.UnaryReadOnly(),
-			middleware.UnaryTenantInterceptor(logger),
-			unaryTracingInterceptor(),
-		),
-		grpc.ChainStreamInterceptor(
-			middleware.StreamServiceAuthInterceptor(logger, grpcServiceToken),
-			regionCfg.StreamReadOnly(),
-			middleware.StreamTenantInterceptor(logger),
-			streamTracingInterceptor(),
-		),
+	tlsCreds, mtls := grpcTLSCreds(logger)
+	var unary []grpc.UnaryServerInterceptor
+	var stream []grpc.StreamServerInterceptor
+	if mtls {
+		unary = append(unary, middleware.UnaryRequireServiceCert(logger))
+		stream = append(stream, middleware.StreamRequireServiceCert(logger))
 	}
-	if creds := grpcTLSCreds(logger); creds != nil {
-		grpcOpts = append(grpcOpts, grpc.Creds(creds))
+	unary = append(unary,
+		middleware.UnaryServiceAuthInterceptor(logger, grpcServiceToken),
+		regionCfg.UnaryReadOnly(),
+		middleware.UnaryTenantInterceptor(logger),
+		unaryTracingInterceptor(),
+	)
+	stream = append(stream,
+		middleware.StreamServiceAuthInterceptor(logger, grpcServiceToken),
+		regionCfg.StreamReadOnly(),
+		middleware.StreamTenantInterceptor(logger),
+		streamTracingInterceptor(),
+	)
+	grpcOpts := []grpc.ServerOption{
+		grpc.ChainUnaryInterceptor(unary...),
+		grpc.ChainStreamInterceptor(stream...),
+	}
+	if tlsCreds != nil {
+		grpcOpts = append(grpcOpts, grpc.Creds(tlsCreds))
 	}
 	grpcServer := grpc.NewServer(grpcOpts...)
 
@@ -1228,29 +1240,42 @@ func runStartupGuards(logger *zap.Logger) {
 	if _, err := handlers.ManagerTransportCreds(prod); err != nil {
 		logger.Fatal("runtime-manager client TLS", zap.Error(err))
 	}
+	// Service-mesh client identity (scheduler + model-router hops, ADR 0043).
+	// Without this the scheduler dial would fail and silently fall back to
+	// the stub, which prod must never do.
+	if _, err := handlers.ServiceClientCreds(prod); err != nil {
+		logger.Fatal("service-mesh client TLS", zap.Error(err))
+	}
 }
 
 // grpcTLSCreds resolves server-side TLS credentials for the gRPC server,
-// applying the prod-vs-dev fail-closed policy (audit H2, gateway→control-plane).
+// applying the prod-vs-dev fail-closed policy (audit H2, ADR 0043).
 //
-//   - configured + valid → returns creds; the server serves over TLS.
-//   - misconfigured (half-set or unloadable cert/key) → Fatal in all envs.
-//   - unset in prod → Fatal: the gateway hop must be encryptable.
-//   - unset in dev → WARN + returns nil: plaintext, so `make dev` still works.
-func grpcTLSCreds(logger *zap.Logger) credentials.TransportCredentials {
-	creds, err := handlers.GRPCServerTLS()
+//   - PAL_GRPC_TLS_* → mTLS (mtls=true; caller installs RequireServiceCert).
+//   - legacy PAL_CONTROL_PLANE_TLS_CERT/KEY → server-only TLS; WARN in prod.
+//   - misconfigured (half-set or unloadable) → Fatal in all envs.
+//   - unset in prod → Fatal, unless PAL_GRPC_INSECURE=1 (loud WARN).
+//   - unset in dev → WARN + plaintext, so `make dev` still works.
+func grpcTLSCreds(logger *zap.Logger) (credentials.TransportCredentials, bool) {
+	creds, mtls, err := handlers.GRPCServerTLS()
 	if err != nil {
 		logger.Fatal("control-plane gRPC TLS is misconfigured", zap.Error(err))
 	}
-	if creds != nil {
-		logger.Info("control-plane gRPC server: TLS enabled (LANTERN_CONTROL_PLANE_TLS_CERT/KEY)")
-		return creds
+	switch {
+	case mtls:
+		logger.Info("control-plane gRPC server: mTLS enabled (PAL_GRPC_TLS_*; client cert required except DataPlaneService/health)")
+	case creds != nil && handlers.IsProd():
+		logger.Warn("control-plane gRPC server: server-only TLS (legacy PAL_CONTROL_PLANE_TLS_CERT/KEY) — callers are NOT authenticated by certificate; set PAL_GRPC_TLS_CA/_CERT/_KEY for mTLS (ADR 0043)")
+	case creds != nil:
+		logger.Info("control-plane gRPC server: server-only TLS (PAL_CONTROL_PLANE_TLS_CERT/KEY)")
+	case handlers.IsProd() && grpctls.InsecureOverride():
+		logger.Warn("SECURITY: PAL_GRPC_INSECURE=1 — control-plane gRPC (:50051) serves PLAINTEXT in production; remove it once PAL_GRPC_TLS_CA/_CERT/_KEY are mounted")
+	case handlers.IsProd():
+		logger.Fatal("control-plane gRPC TLS is unset — set PAL_GRPC_TLS_CA/_CERT/_KEY (mTLS, ADR 0043), or PAL_GRPC_INSECURE=1 to accept plaintext explicitly")
+	default:
+		logger.Warn("control-plane gRPC server: TLS unset — serving plaintext (acceptable in dev, required in production)")
 	}
-	if handlers.IsProd() {
-		logger.Fatal("control-plane gRPC TLS is unset — set LANTERN_CONTROL_PLANE_TLS_CERT and LANTERN_CONTROL_PLANE_TLS_KEY to encrypt the gateway→control-plane channel")
-	}
-	logger.Warn("control-plane gRPC server: TLS unset — serving plaintext (acceptable in dev, required in production)")
-	return nil
+	return creds, mtls
 }
 
 // config holds values read from environment variables.

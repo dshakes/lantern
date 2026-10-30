@@ -67,7 +67,7 @@ func TestGRPCServerTLS_UnsetReturnsNilNoError(t *testing.T) {
 	t.Setenv("PAL_CONTROL_PLANE_TLS_CERT", "")
 	t.Setenv("PAL_CONTROL_PLANE_TLS_KEY", "")
 
-	creds, err := GRPCServerTLS()
+	creds, _, err := GRPCServerTLS()
 	if err != nil {
 		t.Fatalf("unset should not error, got %v", err)
 	}
@@ -83,7 +83,7 @@ func TestGRPCServerTLS_BuildsFromGeneratedCert(t *testing.T) {
 	t.Setenv("PAL_CONTROL_PLANE_TLS_CERT", certPath)
 	t.Setenv("PAL_CONTROL_PLANE_TLS_KEY", keyPath)
 
-	creds, err := GRPCServerTLS()
+	creds, _, err := GRPCServerTLS()
 	if err != nil {
 		t.Fatalf("valid cert/key should build creds, got %v", err)
 	}
@@ -112,7 +112,7 @@ func TestGRPCServerTLS_HalfConfiguredErrors(t *testing.T) {
 			t.Setenv("PAL_CONTROL_PLANE_TLS_CERT", tc.cert)
 			t.Setenv("PAL_CONTROL_PLANE_TLS_KEY", tc.key)
 
-			creds, err := GRPCServerTLS()
+			creds, _, err := GRPCServerTLS()
 			if err == nil {
 				t.Fatalf("half-configured TLS should error")
 			}
@@ -127,7 +127,7 @@ func TestGRPCServerTLS_UnloadablePathErrors(t *testing.T) {
 	t.Setenv("PAL_CONTROL_PLANE_TLS_CERT", "/nonexistent/tls.crt")
 	t.Setenv("PAL_CONTROL_PLANE_TLS_KEY", "/nonexistent/tls.key")
 
-	creds, err := GRPCServerTLS()
+	creds, _, err := GRPCServerTLS()
 	if err == nil {
 		t.Fatalf("missing cert files should error")
 	}
@@ -147,7 +147,7 @@ func TestGRPCServerTLS_ProdGating(t *testing.T) {
 
 	t.Run("prod unset is fatal-worthy (creds nil)", func(t *testing.T) {
 		t.Setenv("PAL_ENV", "prod")
-		creds, err := GRPCServerTLS()
+		creds, _, err := GRPCServerTLS()
 		if err != nil || creds != nil {
 			t.Fatalf("unset returns nil,nil regardless of env; got creds=%v err=%v", creds, err)
 		}
@@ -159,7 +159,7 @@ func TestGRPCServerTLS_ProdGating(t *testing.T) {
 
 	t.Run("dev unset is plaintext fallback", func(t *testing.T) {
 		t.Setenv("PAL_ENV", "")
-		creds, err := GRPCServerTLS()
+		creds, _, err := GRPCServerTLS()
 		if err != nil || creds != nil {
 			t.Fatalf("unset returns nil,nil; got creds=%v err=%v", creds, err)
 		}
