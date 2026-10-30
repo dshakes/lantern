@@ -459,20 +459,11 @@ func (h *BatchHandler) dispatchBatch(batchID, tenantID string, body createBatchR
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 
-	for i, item := range body.Items {
+	for _, item := range body.Items {
 		item := item
-		_ = i
-		// Stop dispatching new runs if the batch was cancelled while in-flight.
-		select {
-		case <-ctx.Done():
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				h.incrementBatchCounter(ctx, tenantID, batchID, "cancelled_count", 0, log)
-			}()
-			continue
-		default:
-		}
+		// Check if the batch was cancelled externally (CancelBatch) before
+		// dispatching this item. ctx is context.Background() (never cancelled)
+		// so we poll the DB instead of checking ctx.Done().
 		var batchCancelled bool
 		// rls-exempt: keyed by the authorised batch id.
 		_ = h.srv.Pool.QueryRow(ctx, `SELECT status = 'cancelled' FROM batches WHERE id = $1`, batchID).Scan(&batchCancelled)

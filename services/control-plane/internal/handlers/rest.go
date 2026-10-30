@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/metadata"
@@ -779,15 +780,43 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Store the idempotency key so future replays with the same key return
-	// this run instead of creating a duplicate. Non-fatal: a uniqueness
-	// conflict here (two racing requests with the same key both completed
-	// creation before the SELECT above could short-circuit one) is harmless
-	// in practice — the run is already created; just log and continue.
+	// this run instead of creating a duplicate. Uses the unique index on
+	// (tenant_id, idempotency_key) as the race-safe dedup gate:
+	//   - If two concurrent requests with the same key both passed the SELECT
+	//     check above (check-then-act window), the first to UPDATE wins the
+	//     unique constraint; the second's UPDATE triggers a 23505 violation.
+	//   - On violation: cancel the ghost run (avoid billing it), look up the
+	//     winner, and return the winner's ID to the caller.
 	// rls-exempt: keyed by the just-created authorized run id.
 	if idemKey != "" {
-		if _, ikErr := h.srv.Pool.Exec(ctx,
+		tenantIDForIdem, _ := middleware.TenantIDFromContext(ctx)
+		_, ikErr := h.srv.Pool.Exec(ctx,
 			`UPDATE runs SET idempotency_key = $2 WHERE id = $1`, run.GetId(), idemKey,
-		); ikErr != nil {
+		)
+		if ikErr != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(ikErr, &pgErr) && pgErr.Code == "23505" {
+				// Race: another concurrent request already claimed this key.
+				// Cancel our ghost run to avoid billing it and return the winner.
+				// rls-exempt: keyed by the just-created run id (our ghost).
+				if _, cancelErr := h.srv.Pool.Exec(ctx,
+					`UPDATE runs SET status = 'cancelled', finished_at = now() WHERE id = $1`,
+					run.GetId(),
+				); cancelErr != nil {
+					h.logger().Warn("CreateRun: failed to cancel ghost run after idem race",
+						zap.String("run_id", run.GetId()), zap.Error(cancelErr))
+				}
+				// Look up the winner (the run that holds this key).
+				// rls-exempt: keyed by (tenant_id, idempotency_key).
+				var winnerID string
+				if lookupErr := h.srv.Pool.QueryRow(ctx,
+					`SELECT id FROM runs WHERE tenant_id = $1 AND idempotency_key = $2`,
+					tenantIDForIdem, idemKey,
+				).Scan(&winnerID); lookupErr == nil && winnerID != "" {
+					writeJSON(w, http.StatusCreated, map[string]any{"id": winnerID})
+					return
+				}
+			}
 			h.logger().Warn("CreateRun: failed to persist idempotency_key",
 				zap.String("run_id", run.GetId()), zap.Error(ikErr))
 		}
