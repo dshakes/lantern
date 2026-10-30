@@ -17,7 +17,7 @@
 global:
   image:
     registry: ghcr.io
-    repository: dshakes/lantern
+    repository: dshakes/pal
     tag: "0.1.0"
     pullPolicy: IfNotPresent
   logLevel: info

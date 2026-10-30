@@ -9,7 +9,7 @@ See the [README](README.md#try-it-in-60-seconds). The fastest path needs only Do
 
 ```bash
 git clone https://github.com/dshakes/pal.git
-cd lantern
+cd pal
 make dev        # full platform stack in Docker
 # or: lantern dev   (host hot-reload — see README Option B)
 ```
