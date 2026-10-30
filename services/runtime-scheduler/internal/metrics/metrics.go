@@ -77,7 +77,7 @@ func New() *Registry {
 	reg.MustRegister(m.ScheduleErrorsTotal)
 
 	m.ScheduleDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "lantern_scheduler_schedule_duration_seconds",
+		Name:    metricPrefix + "schedule_duration_seconds",
 		Help:    "Schedule RPC latency (placement; spawn dispatch is async), partitioned by result (ok|error).",
 		Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
 	}, []string{"result"})
