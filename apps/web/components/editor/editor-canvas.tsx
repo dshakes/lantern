@@ -524,7 +524,7 @@ export function EditorCanvas({
 
     // Save to localStorage as immediate fallback
     try {
-      localStorage.setItem(`lantern_workflow_${agentName}`, JSON.stringify(workflow));
+      localStorage.setItem(`pal_workflow_${agentName}`, JSON.stringify(workflow));
     } catch {
       // localStorage full or unavailable
     }

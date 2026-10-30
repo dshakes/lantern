@@ -18,11 +18,11 @@ const PROVIDERS: { value: TriggerProvider; label: string; hint: string }[] = [
   { value: "github", label: "GitHub", hint: "Paste the URL and secret into Settings → Webhooks (content type: application/json)." },
   { value: "sentry", label: "Sentry", hint: "Sentry generates its own client secret — paste it below." },
   { value: "pagerduty", label: "PagerDuty", hint: "PagerDuty shows a signing secret after you create the subscription — create the trigger first, then use Replace secret." },
-  { value: "generic", label: "Generic HMAC", hint: "Sign t.<body> with HMAC-SHA256; send X-Lantern-Signature: t=<unix>,v1=<hex>." },
+  { value: "generic", label: "Generic HMAC", hint: "Sign t.<body> with HMAC-SHA256; send X-PAL-Signature: t=<unix>,v1=<hex>." },
 ];
 
 const inputCls =
-  "w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500/50";
+  "w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-pal-500/50";
 
 export default function AgentTriggersPage({ params }: { params: Promise<{ name: string }> }) {
   const { name: rawName } = use(params);

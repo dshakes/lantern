@@ -33,7 +33,7 @@ const TEMPLATES = [
 
 function ModelSelect({ value, onChange, className }: { value: string; onChange: (v: string) => void; className?: string }) {
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} className={clsx("rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500/50", className)}>
+    <select value={value} onChange={(e) => onChange(e.target.value)} className={clsx("rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-pal-500/50", className)}>
       <option value="auto">Auto (recommended)</option>
       <optgroup label="Anthropic">
         <option value="reasoning-frontier">Reasoning Frontier -- Claude Opus 4</option>
@@ -153,15 +153,15 @@ function CreatePage() {
       const agent = await api.createAgent({ name: agentName, description, model });
       // Save all config to localStorage (mirrors what the agent detail page reads)
       if (systemPrompt) {
-        const prompts = JSON.parse(localStorage.getItem("lantern_agent_prompts") || "{}");
+        const prompts = JSON.parse(localStorage.getItem("pal_agent_prompts") || "{}");
         prompts[agentName] = systemPrompt;
-        localStorage.setItem("lantern_agent_prompts", JSON.stringify(prompts));
+        localStorage.setItem("pal_agent_prompts", JSON.stringify(prompts));
       }
       if (instructions) {
-        localStorage.setItem(`lantern_instructions_${agentName}`, instructions);
+        localStorage.setItem(`pal_instructions_${agentName}`, instructions);
       }
       // Save settings (model, environment, guardrails, privacy, connectors)
-      localStorage.setItem(`lantern_agent_settings_${agentName}`, JSON.stringify({
+      localStorage.setItem(`pal_agent_settings_${agentName}`, JSON.stringify({
         model, privacy, environment, guardrails, connectors: selectedConnectors,
       }));
       try { await api.updateAgent(agentName, { systemPrompt, description }); } catch { /* saved locally */ }
@@ -299,13 +299,13 @@ function CreatePage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <div className="mb-1 flex items-center justify-between"><label className="text-xs font-medium text-zinc-400">Name</label><AiAssistButton mode="name" value={name} onChange={setName} placeholder="e.g., build me a support bot" /></div>
-                  <input type="text" value={name} onChange={(e) => setName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-"))} placeholder="my-agent" className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500/50" />
+                  <input type="text" value={name} onChange={(e) => setName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-"))} placeholder="my-agent" className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-pal-500/50" />
                 </div>
                 <div><label className="mb-1 block text-xs font-medium text-zinc-400">Model</label><ModelSelect value={model} onChange={setModel} className="w-full" /></div>
               </div>
               <div>
                 <div className="mb-1 flex items-center justify-between"><label className="text-xs font-medium text-zinc-400">Description</label><AiAssistButton mode="description" value={description} onChange={setDescription} context={name} /></div>
-                <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What does this agent do?" className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500/50" />
+                <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What does this agent do?" className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-pal-500/50" />
               </div>
             </div>
 
@@ -334,7 +334,7 @@ function CreatePage() {
             <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/[0.02] p-5 space-y-2">
               <div className="flex items-center justify-between">
                 <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-indigo-400"><FileText className="h-3.5 w-3.5" /> System Prompt</h3>
-                <button onClick={handleGeneratePrompt} disabled={generatingPrompt} className="inline-flex items-center gap-1 rounded-md bg-lantern-500/10 px-2 py-1 text-[12px] font-medium text-lantern-400 hover:bg-lantern-500/20 disabled:opacity-50">{generatingPrompt ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />} Generate</button>
+                <button onClick={handleGeneratePrompt} disabled={generatingPrompt} className="inline-flex items-center gap-1 rounded-md bg-pal-500/10 px-2 py-1 text-[12px] font-medium text-pal-400 hover:bg-pal-500/20 disabled:opacity-50">{generatingPrompt ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />} Generate</button>
               </div>
               <span className="text-[11px] text-zinc-600">Personality, tone, output format</span>
               <textarea value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} rows={5} spellCheck={false} placeholder="You are a helpful assistant that..." className="w-full resize-y rounded-lg border border-zinc-800 bg-surface-0 p-3 font-mono text-sm leading-relaxed text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-indigo-500/30" />
@@ -344,16 +344,16 @@ function CreatePage() {
             <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5 space-y-3">
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Connectors</h3>
-                <a href="/connectors" className="text-[11px] text-lantern-400 hover:text-lantern-300">+ Connect more</a>
+                <a href="/connectors" className="text-[11px] text-pal-400 hover:text-pal-300">+ Connect more</a>
               </div>
               {(() => {
-                const stored = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("lantern_connectors") || "{}") : {};
+                const stored = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("pal_connectors") || "{}") : {};
                 const connected = Object.entries(stored).filter(([, v]: [string, any]) => v.installed).map(([k]) => k.charAt(0).toUpperCase() + k.slice(1));
                 if (connected.length === 0) {
                   return (
                     <div className="rounded-lg border border-dashed border-zinc-700 py-4 text-center">
                       <p className="text-xs text-zinc-500">No connectors configured yet</p>
-                      <a href="/connectors" className="mt-1 inline-block text-[12px] text-lantern-400 hover:text-lantern-300">Go to Connectors to set up Gmail, Slack, GitHub, etc.</a>
+                      <a href="/connectors" className="mt-1 inline-block text-[12px] text-pal-400 hover:text-pal-300">Go to Connectors to set up Gmail, Slack, GitHub, etc.</a>
                     </div>
                   );
                 }
@@ -390,8 +390,8 @@ function CreatePage() {
               <div className="rounded-xl border border-zinc-800 bg-surface-1 p-4 space-y-2">
                 <h3 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">Privacy</h3>
                 {PRIVACY_LEVELS.map(lv => (
-                  <label key={lv.value} className={clsx("flex items-center gap-2 rounded px-2 py-1 text-[12px] cursor-pointer", privacy === lv.value ? "text-lantern-400 bg-lantern-500/5" : "text-zinc-500 hover:text-zinc-300")}>
-                    <input type="radio" name="priv" value={lv.value} checked={privacy === lv.value} onChange={(e) => setPrivacy(e.target.value)} className="accent-lantern-500 h-3 w-3" />
+                  <label key={lv.value} className={clsx("flex items-center gap-2 rounded px-2 py-1 text-[12px] cursor-pointer", privacy === lv.value ? "text-pal-400 bg-pal-500/5" : "text-zinc-500 hover:text-zinc-300")}>
+                    <input type="radio" name="priv" value={lv.value} checked={privacy === lv.value} onChange={(e) => setPrivacy(e.target.value)} className="accent-pal-500 h-3 w-3" />
                     {lv.badge}{lv.label}
                   </label>
                 ))}
@@ -399,8 +399,8 @@ function CreatePage() {
               {/* Guardrails */}
               <div className="rounded-xl border border-zinc-800 bg-surface-1 p-4 space-y-2">
                 <h3 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">Guardrails</h3>
-                <label className="flex items-center gap-2 text-[12px] text-zinc-400 cursor-pointer"><input type="checkbox" checked={guardrails.contentFilter} onChange={(e) => setGuardrails({...guardrails, contentFilter: e.target.checked})} className="accent-lantern-500 h-3 w-3" /> Content filter</label>
-                <label className="flex items-center gap-2 text-[12px] text-zinc-400 cursor-pointer"><input type="checkbox" checked={guardrails.blockPII} onChange={(e) => setGuardrails({...guardrails, blockPII: e.target.checked})} className="accent-lantern-500 h-3 w-3" /> Block PII</label>
+                <label className="flex items-center gap-2 text-[12px] text-zinc-400 cursor-pointer"><input type="checkbox" checked={guardrails.contentFilter} onChange={(e) => setGuardrails({...guardrails, contentFilter: e.target.checked})} className="accent-pal-500 h-3 w-3" /> Content filter</label>
+                <label className="flex items-center gap-2 text-[12px] text-zinc-400 cursor-pointer"><input type="checkbox" checked={guardrails.blockPII} onChange={(e) => setGuardrails({...guardrails, blockPII: e.target.checked})} className="accent-pal-500 h-3 w-3" /> Block PII</label>
                 <input type="text" value={guardrails.blockedTopics} onChange={(e) => setGuardrails({...guardrails, blockedTopics: e.target.value})} placeholder="Blocked topics..." className="w-full rounded border border-zinc-800 bg-surface-0 px-2 py-1 text-[11px] text-zinc-300 outline-none" />
               </div>
             </div>
@@ -440,7 +440,7 @@ function CreatePage() {
               <p className="text-[12px] text-zinc-600 mb-3">Skip this step or type a message to verify your agent works. You can always test later.</p>
               <textarea value={testInput} onChange={(e) => setTestInput(e.target.value)} rows={2}
                 placeholder={description ? `e.g., "${description.slice(0, 60)}${description.length > 60 ? "..." : ""}"` : "Type a test message (or skip and create the agent directly)"}
-                className="w-full resize-none rounded-lg border border-zinc-800 bg-surface-0 p-3 text-sm text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50" />
+                className="w-full resize-none rounded-lg border border-zinc-800 bg-surface-0 p-3 text-sm text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-pal-500/50" />
               <div className="mt-2 flex items-center gap-2">
                 {testRunning ? (<button onClick={() => { setTestRunning(false); setTestDone(true); }} className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-red-500"><Square className="h-3 w-3" /> Stop</button>
                 ) : (<button onClick={handleTestRun} disabled={!testInput.trim()} className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3.5 py-1.5 text-xs font-medium text-zinc-300 hover:bg-surface-3 disabled:opacity-50"><Play className="h-3 w-3" /> Run Test</button>)}
@@ -448,7 +448,7 @@ function CreatePage() {
               {(testOutput || testRunning || testError) && (
                 <div className="mt-3 rounded-lg border border-zinc-800 bg-surface-0">
                   {testError ? (<div className="p-3"><div className="flex items-center gap-2 text-xs font-medium text-red-400"><AlertCircle className="h-3 w-3" /> Error</div><p className="mt-1 text-xs text-red-300/70">{testError}</p></div>
-                  ) : (<div ref={testRef} className="max-h-48 overflow-auto p-3"><div className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-200">{testOutput}{testRunning && <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-lantern-400" />}</div></div>)}
+                  ) : (<div ref={testRef} className="max-h-48 overflow-auto p-3"><div className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-200">{testOutput}{testRunning && <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-pal-400" />}</div></div>)}
                   {testDone && !testError && (<div className="border-t border-zinc-800 px-3 py-2"><span className="inline-flex items-center gap-1 text-[12px] font-medium text-emerald-400"><CheckCircle2 className="h-3 w-3" /> Test passed</span></div>)}
                 </div>
               )}

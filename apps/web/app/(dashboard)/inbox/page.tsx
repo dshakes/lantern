@@ -408,7 +408,7 @@ function FleetHealth({
             Trigger a run and your agents&apos; health, spend, and trends populate here automatically.
           </p>
         </div>
-        <Link href="/agents" className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-lantern-400 transition-colors duration-150 hover:text-lantern-300">
+        <Link href="/agents" className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-pal-400 transition-colors duration-150 hover:text-pal-300">
           Go to Agents →
         </Link>
       </div>
@@ -562,7 +562,7 @@ function AgentHealthRow({ health, runs }: { health: AgentHealth; runs: Run[] }) 
             <span className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">Recent runs</span>
             <Link
               href={`/agents/${encodeURIComponent(health.agentName)}`}
-              className="text-[12px] font-medium text-lantern-400 transition-colors duration-150 hover:text-lantern-300"
+              className="text-[12px] font-medium text-pal-400 transition-colors duration-150 hover:text-pal-300"
             >
               Open agent →
             </Link>
@@ -592,7 +592,7 @@ function AlertsPanel({ alerts, fleet, totalCostToday }: { alerts: Alert[]; fleet
   const softBudget = Math.max(DEFAULT_DAILY_BUDGET_USD, fleet.length * DEFAULT_DAILY_BUDGET_USD);
   const budgetPct = Math.min(100, (totalCostToday / softBudget) * 100);
   // Calm fill: the accent for normal spend, a muted red only at true saturation.
-  const budgetTone = budgetPct >= 90 ? "bg-red-500/70" : budgetPct >= 70 ? "bg-zinc-400" : "bg-lantern-400/80";
+  const budgetTone = budgetPct >= 90 ? "bg-red-500/70" : budgetPct >= 70 ? "bg-zinc-400" : "bg-pal-400/80";
 
   return (
     <div className="mc-glass rounded-xl border border-white/[0.07] bg-white/[0.024] backdrop-blur-xl">
@@ -784,7 +784,7 @@ function SessionEntry({ group, groupedWithPrev }: { group: SessionGroup; grouped
       >
         {expanded ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-zinc-600" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-600" />}
         <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-surface-2">
-          <Layers className="h-3.5 w-3.5 text-lantern-400/90" />
+          <Layers className="h-3.5 w-3.5 text-pal-400/90" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
@@ -850,7 +850,7 @@ function statusDotFor(status: RunStatus) {
   const map: Record<string, { label: string; cls: string }> = {
     succeeded: { label: "✓", cls: "text-emerald-400" },
     failed: { label: "✕", cls: "text-red-400" },
-    running: { label: "●", cls: "text-lantern-400 animate-pulse" },
+    running: { label: "●", cls: "text-pal-400 animate-pulse" },
     paused: { label: "◐", cls: "text-amber-400" },
     queued: { label: "○", cls: "text-zinc-500" },
     cancelled: { label: "—", cls: "text-zinc-500" },

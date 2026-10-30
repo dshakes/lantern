@@ -90,7 +90,7 @@ export function AvailableConnectors() {
         </div>
         <Link
           href="/connectors"
-          className="text-xs font-medium text-lantern-400 transition-colors hover:text-lantern-300"
+          className="text-xs font-medium text-pal-400 transition-colors hover:text-pal-300"
         >
           See all 17 →
         </Link>
@@ -123,7 +123,7 @@ export function AvailableConnectors() {
                   ) : ok ? (
                     <Check className="h-3 w-3 text-emerald-400" />
                   ) : (
-                    <Plus className="h-3 w-3 text-zinc-600 transition-colors group-hover:text-lantern-400" />
+                    <Plus className="h-3 w-3 text-zinc-600 transition-colors group-hover:text-pal-400" />
                   )}
                 </p>
                 <p className="truncate text-[12px] text-zinc-500">{c.description}</p>

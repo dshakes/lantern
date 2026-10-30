@@ -31,8 +31,8 @@ WhatsApp's `X-Hub-Signature-256` negatives: `cargo test` in `services/surface-ga
    ```bash
    LISTEN_ADDR=0.0.0.0:8444 REDIS_URL=redis://localhost:6379 CONTROL_PLANE_ADDR=http://localhost:50051 \
    TELEGRAM_BOT_TOKEN=123:abc TELEGRAM_SECRET_TOKEN=... \
-   LANTERN_TENANT_ID=<your tenant uuid> LANTERN_AGENT_NAME=telegram-assistant \
-   LANTERN_GRPC_SERVICE_TOKEN=<same as the control-plane> \
+   PAL_TENANT_ID=<your tenant uuid> PAL_AGENT_NAME=telegram-assistant \
+   PAL_GRPC_SERVICE_TOKEN=<same as the control-plane> \
    cargo run --release   # in services/surface-gateway
    ```
 4. Point Telegram at it: `curl https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook -d url=https://<public-host>/webhooks/telegram -d secret_token=$TELEGRAM_SECRET_TOKEN`
@@ -44,10 +44,10 @@ For WhatsApp Cloud set `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET`, `WHATSAPP
 ## Reference and limits
 
 - The reply is plain text, sent once when the run ends (no streaming to the chat), within 3 minutes or not at all.
-- The gateway only creates the run; the control-plane recovery sweep (`LANTERN_RECOVERY_INTERVAL`, default 30 s) or the
+- The gateway only creates the run; the control-plane recovery sweep (`PAL_RECOVERY_INTERVAL`, default 30 s) or the
   workflow engine drives it, so a reply can take up to ~30 s on a single-process dev stack.
 - The agent needs a promoted version first (see step 2) or the gateway logs `agent has no promoted version`.
 - Live facts like "is it raining" need a `web_search` tool node in the `workflow` of `agent.yaml` (workflow tool nodes support it);
   it is not included because it cannot run on the fixture stack.
-- One agent and one tenant per gateway (`LANTERN_AGENT_NAME`, `LANTERN_TENANT_ID`); every chat message starts a new run
+- One agent and one tenant per gateway (`PAL_AGENT_NAME`, `PAL_TENANT_ID`); every chat message starts a new run
   (no conversation memory).

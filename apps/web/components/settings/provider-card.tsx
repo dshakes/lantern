@@ -56,7 +56,7 @@ export function ProviderCard({
             value={apiKey}
             onChange={(e) => onApiKeyChange(e.target.value)}
             placeholder={`Enter ${name} API key`}
-            className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 pr-10 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30 font-mono"
+            className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 pr-10 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-pal-500 focus:ring-1 focus:ring-pal-500/30 font-mono"
           />
           <button
             type="button"

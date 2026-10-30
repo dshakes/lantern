@@ -120,7 +120,7 @@ export default function MarketplacePage() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search by name, description, or tag..."
-              className="w-full rounded-lg border border-zinc-800 bg-surface-1 py-2.5 pl-10 pr-4 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50 focus:ring-1 focus:ring-lantern-500/30"
+              className="w-full rounded-lg border border-zinc-800 bg-surface-1 py-2.5 pl-10 pr-4 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-pal-500/50 focus:ring-1 focus:ring-pal-500/30"
             />
           </div>
 
@@ -210,7 +210,7 @@ function CategoryChip({
       className={clsx(
         "shrink-0 rounded-full border px-3 py-1 text-[12px] font-medium capitalize transition-all",
         active
-          ? "border-lantern-500/40 bg-lantern-500/10 text-lantern-300"
+          ? "border-pal-500/40 bg-pal-500/10 text-pal-300"
           : "border-zinc-800 bg-surface-1 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200",
       )}
     >

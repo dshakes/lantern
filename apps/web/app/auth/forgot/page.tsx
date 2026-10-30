@@ -50,7 +50,7 @@ export default function ForgotPasswordPage() {
         </form>
       )}
       <div className="mt-4 text-center text-xs text-zinc-500">
-        <Link href="/login" className="text-lantern-400 transition-colors hover:text-lantern-300">Back to sign in</Link>
+        <Link href="/login" className="text-pal-400 transition-colors hover:text-pal-300">Back to sign in</Link>
       </div>
     </AuthShell>
   );
