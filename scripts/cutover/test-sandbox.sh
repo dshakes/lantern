@@ -91,7 +91,7 @@ umask 022
 cat > "$L/bridge.env" <<'EOF'
 # bridge overrides (fake values)
 LANTERN_PERSONAL_DOCS_ROOTS=~/Documents:~/.lantern/docs
-export LANTERN_BRIDGE_TOKEN=fake-wa-token-123
+export LANTERN_BRIDGE_TOKEN="fake-wa-token-123"   # live format: export + quotes + inline comment
 LANTERN_IMESSAGE_BRIDGE_TOKEN="fake im token with spaces"
 LANTERN_CONFIDENCE_GATE=1
 LANTERN_WEIRD=a=b=c
@@ -108,6 +108,11 @@ echo '{"pausedUntil":0}' > "$L/agent state with spaces.json"
 echo "log" > "$L/logs/introspect.log"; : > "$L/whatsapp-overnight-queue.jsonl"; chmod 600 "$L/whatsapp-overnight-queue.jsonl"
 chmod 700 "$L/ocr-cache"
 
+mkdir -p "$HOME/fake-x64-bin" "$HOME/.nvm/versions/node/v99.0.0/bin"
+printf '#!/bin/sh\necho fake-x64-node\n' > "$HOME/fake-x64-bin/node"
+printf '#!/bin/sh\necho fake-nvm-node\n' > "$HOME/.nvm/versions/node/v99.0.0/bin/node"
+chmod +x "$HOME/fake-x64-bin/node" "$HOME/.nvm/versions/node/v99.0.0/bin/node"
+
 # ------------------------------------------------------------------ fake checkout
 say "setup: synthetic repo (old commit + release commit)"
 mkdir -p "$SB/remote" && git init -q --bare "$SB/remote/pal.git" && ln -s pal.git "$SB/remote/lantern.git"
@@ -117,12 +122,15 @@ mkdir -p scripts/launchd infra/docker packages/bridge-core/src services/control-
 for s in api dashboard whatsapp-bridge imessage-bridge infra; do cp "$REPO_SRC/scripts/launchd/dev.lantern.$s.plist" scripts/launchd/; done
 cp "$REPO_SRC/infra/docker/docker-compose.yml" infra/docker/
 plutil -replace EnvironmentVariables.DATABASE_URL -string 'postgres://lantern_test:oldpw-test@localhost:5432/cutover_test?sslmode=disable' scripts/launchd/dev.lantern.api.plist
+# live: the dashboard resolves an x64 node (Rosetta) from its plist PATH; the bridges use the newest nvm node
+plutil -replace EnvironmentVariables.PATH -string '__HOME__/fake-x64-bin:/usr/bin:/bin' scripts/launchd/dev.lantern.dashboard.plist
 echo 'export const dir = join(homedir(), ".lantern");' > packages/bridge-core/src/state-dir.ts
 echo 'cfg.ConnConfig.User = "lantern_app_test"' > services/control-plane/cmd/server/main.go
 echo 'const BRIDGE_TOKEN = process.env.LANTERN_BRIDGE_TOKEN || "";' > services/whatsapp-bridge/src/index.ts
 printf 'bridge_state/\nauth_sessions/\nnode_modules/\n' > services/whatsapp-bridge/.gitignore
 printf 'bridge_state/\nnode_modules/\n' > services/imessage-bridge/.gitignore
 echo '{}' > apps/web/package.json
+cp "$REPO_SRC/scripts/launchd/run-bridge-wrapper.sh" scripts/launchd/
 mkdir -p services/control-plane/internal/db/migrations
 echo 'select 1;' > services/control-plane/internal/db/migrations/0001_baseline.up.sql
 echo 'select 2;' > services/control-plane/internal/db/migrations/0002_second.up.sql
@@ -250,6 +258,8 @@ check "checkout at the release commit" test "$(git -C "$REPO_DIR" rev-parse HEAD
 check "origin points at the renamed repo" test "$(git -C "$REPO_DIR" remote get-url origin)" = "$SB/remote/pal.git"
 check "owner's uncommitted change stashed, untracked file left alone" bash -c "git -C '$REPO_DIR' stash list | grep -q pal-cutover && [ -f '$REPO_DIR/notes.txt' ]"
 check "WhatsApp creds untouched" bash -c "diff <(grep -A99 '# services/whatsapp-bridge/auth_sessions' '$SB/S0' | sed '/^## /q') <('$CUT' snapshot /dev/stdout old 2>/dev/null | grep -A99 '# services/whatsapp-bridge/auth_sessions' | sed '/^## /q')"
+check "dashboard deps + next build ran under the node its plist PATH resolves (x64 fake)" bash -c "grep -q 'npm install --no-audit --no-fund (cwd=workspace/lantern/apps/web) node=fake-x64-bin/node' '$STUB_STATE/calls.log' && grep -q 'npm run build (cwd=workspace/lantern/apps/web) node=fake-x64-bin/node' '$STUB_STATE/calls.log'"
+check "bridge deps installed under the newest nvm node (what run-bridge-wrapper.sh execs)" grep -q 'npm install --no-audit --no-fund (cwd=workspace/lantern/services/whatsapp-bridge) node=.nvm/versions/node/v99.0.0/bin/node' "$STUB_STATE/calls.log"
 check "apply output never prints a secret value" bash -c "! grep -qE 'fake-google-secret|fake-wa-token|fake im token|fake-signal-token|oldpw-test|newpw-test|apppw|kkkkkkkk' '$SB/apply.out'"
 
 # ------------------------------------------------------------------ 4. verify
@@ -335,6 +345,27 @@ check "[v3/rfo] rollback names the unstartable checkout" grep -q 'rollback check
 "$CUT" verify --old > "$SB/verify-v3b.out" 2>&1; rc=$?
 check "[v3/rfo] verify --old fails on the schema check" bash -c "[ $rc != 0 ] && grep -q 'FAIL  running checkout' '$SB/verify-v3b.out'"
 setver 2
+
+# ------------------------------------------------------------------ 9. live-found: target state dir appears mid-cutover
+say "9a. something writes ~/.pal/credentials.json while services stop (the 08:05 live race)"
+sleep 1; S9="$SB/S9"; snap "$S9"
+STUB_ON_BOOTOUT_CREATE="$HOME/.pal/credentials.json" "$CUT" apply > "$SB/race.out" 2>&1; rc=$?
+grep -E 'NOT empty|rename|NESTED|IDENTICAL|left .* alone' "$SB/race.out" | cut -c12-220 | sed 's/^/    /'
+check "[race] apply refuses (non-zero)" test "$rc" != 0
+check "[race] refusal names the non-empty target" grep -q 'is NOT empty (credentials.json' "$SB/race.out"
+check "[race] state never nested" test ! -e "$HOME/.pal/.lantern"
+check "[race] the foreign ~/.pal/credentials.json is left where it was" test -f "$HOME/.pal/credentials.json"
+check "[race] old state intact and byte-identical (auto-rollback)" bash -c "'$CUT' snapshot '$SB/S9b' old >/dev/null 2>&1; diff -q '$S9' '$SB/S9b' >/dev/null"
+rm -rf "$HOME/.pal"
+
+say "9b. an EMPTY ~/.pal appears mid-cutover: replaced, cutover succeeds, then rollback"
+sleep 1
+STUB_ON_BOOTOUT_MKDIR="$HOME/.pal" "$CUT" apply > "$SB/race-empty.out" 2>&1; rc=$?
+check "[empty-target] apply succeeds" test "$rc" = 0
+check "[empty-target] sentinel at the top of ~/.pal, nothing nested" bash -c "[ -f '$HOME/.pal/bridge.env' ] && [ ! -e '$HOME/.pal/.lantern' ]"
+check "[empty-target] env step saw every env file" bash -c "! grep -q 'env file(s) in' '$SB/race-empty.out'"
+"$CUT" rollback > "$SB/race-empty-rb.out" 2>&1; rc=$?
+check "[empty-target] rollback IDENTICAL" bash -c "[ $rc = 0 ] && grep -q 'snapshot IDENTICAL' '$SB/race-empty-rb.out'"
 
 say "RESULT: $PASS passed, $FAILS failed"
 echo "launchctl/docker/build calls recorded: $(wc -l < "$STUB_STATE/calls.log" | tr -d ' ')"

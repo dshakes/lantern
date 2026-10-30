@@ -72,6 +72,8 @@ WA_TOKEN_KEY="${WA_TOKEN_KEY:-PAL_BRIDGE_TOKEN}"
 IM_TOKEN_KEY="${IM_TOKEN_KEY:-PAL_IMESSAGE_BRIDGE_TOKEN}"
 SIGNAL_TOKEN_KEY="${SIGNAL_TOKEN_KEY:-PAL_SIGNAL_TOKEN}"
 HEALTH_TIMEOUT_SECS="${HEALTH_TIMEOUT_SECS:-420}"
+# the dashboard can need a full `next build` on first boot; give it longer
+DASHBOARD_TIMEOUT_SECS="${DASHBOARD_TIMEOUT_SECS:-900}"
 
 # start order (agents not listed start last, in name order). Bridges stop first.
 START_ORDER="${START_ORDER:-infra api runtime-scheduler workflow-engine model-router runtime-manager gateway surface-gateway dashboard dashboard-reload whatsapp-bridge imessage-bridge}"
