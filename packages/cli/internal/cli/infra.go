@@ -180,7 +180,7 @@ func newInfraUpgradeCommand() *cobra.Command {
 			printWarning("This is a spike -- upgrade not yet wired to the backend.")
 			fmt.Fprintln(os.Stderr)
 			printInfo("To upgrade manually:")
-			fmt.Fprintf(os.Stderr, "  helm upgrade lantern-dp infra/helm/lantern-data-plane \\\n")
+			fmt.Fprintf(os.Stderr, "  helm upgrade lantern-dp infra/helm/pal-data-plane \\\n")
 			fmt.Fprintf(os.Stderr, "    --set global.image.tag=%s \\\n", version)
 			fmt.Fprintf(os.Stderr, "    -n lantern\n")
 
@@ -281,7 +281,7 @@ module "lantern_data_plane" {
   instance_type                  = var.instance_type
   node_count                     = var.node_count
   existing_cluster_name          = var.existing_cluster_name
-  lantern_control_plane_endpoint = var.lantern_control_plane_endpoint
+  pal_control_plane_endpoint = var.pal_control_plane_endpoint
   tenant_id                      = var.tenant_id
   agent_token                    = var.agent_token
   firecracker_enabled            = var.firecracker_enabled
@@ -312,7 +312,7 @@ variable "existing_cluster_name" {
   default = ""
 }
 
-variable "lantern_control_plane_endpoint" {
+variable "pal_control_plane_endpoint" {
   type    = string
   default = "https://api.lantern.run"
 }
@@ -359,7 +359,7 @@ module "lantern_data_plane" {
   machine_type                   = var.machine_type
   node_count                     = var.node_count
   existing_cluster_name          = var.existing_cluster_name
-  lantern_control_plane_endpoint = var.lantern_control_plane_endpoint
+  pal_control_plane_endpoint = var.pal_control_plane_endpoint
   tenant_id                      = var.tenant_id
   agent_token                    = var.agent_token
   firecracker_enabled            = var.firecracker_enabled
@@ -394,7 +394,7 @@ variable "existing_cluster_name" {
   default = ""
 }
 
-variable "lantern_control_plane_endpoint" {
+variable "pal_control_plane_endpoint" {
   type    = string
   default = "https://api.lantern.run"
 }
@@ -440,7 +440,7 @@ module "lantern_data_plane" {
   vm_size                        = var.vm_size
   node_count                     = var.node_count
   existing_cluster_name          = var.existing_cluster_name
-  lantern_control_plane_endpoint = var.lantern_control_plane_endpoint
+  pal_control_plane_endpoint = var.pal_control_plane_endpoint
   tenant_id                      = var.tenant_id
   agent_token                    = var.agent_token
   firecracker_enabled            = var.firecracker_enabled
@@ -476,7 +476,7 @@ variable "existing_resource_group" {
   default = ""
 }
 
-variable "lantern_control_plane_endpoint" {
+variable "pal_control_plane_endpoint" {
   type    = string
   default = "https://api.lantern.run"
 }
@@ -552,7 +552,7 @@ func generateTFVars(cloud, region, clusterName, existingCluster, instanceType st
 	b.WriteString(fmt.Sprintf("tenant_id = %q\n", tenantID))
 	b.WriteString("# agent_token = \"<set via TF_VAR_agent_token or here>\"\n")
 	b.WriteString("\n")
-	b.WriteString(fmt.Sprintf("lantern_control_plane_endpoint = %q\n", "https://api.lantern.run"))
+	b.WriteString(fmt.Sprintf("pal_control_plane_endpoint = %q\n", "https://api.lantern.run"))
 	b.WriteString(fmt.Sprintf("firecracker_enabled = %t\n", firecrackerEnabled))
 
 	return b.String()
