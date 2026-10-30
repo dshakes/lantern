@@ -2,6 +2,8 @@ mod auth;
 mod cache;
 mod config;
 mod error;
+#[cfg(test)]
+mod mtls;
 mod otel;
 mod proto;
 mod provider;
@@ -102,9 +104,50 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    info!(listen_addr = %config.listen_addr, "gRPC server starting");
+    // Service-mesh mTLS (ADR 0043). This port carries tenant provider keys, so
+    // prod refuses plaintext unless PAL_GRPC_INSECURE=1. Both mTLS AND the
+    // service token are required; neither replaces the other.
+    let is_prod = pal_grpc_tls::is_prod();
+    let tls = pal_grpc_tls::server_tls(
+        &pal_grpc_tls::Files::from_env(),
+        is_prod,
+        pal_grpc_tls::insecure_override(),
+    )?;
 
-    tonic::transport::Server::builder()
+    info!(listen_addr = %config.listen_addr, mtls = tls.is_some(), "gRPC server starting");
+
+    let mut builder = tonic::transport::Server::builder();
+    let peers = match tls {
+        Some(tls) => {
+            builder = builder.tls_config(tls)?;
+            let peers = pal_grpc_tls::allowed_peers();
+            info!(allowed_peers = ?peers, "model-router gRPC: mTLS enabled (client certificates required)");
+            Some(peers)
+        }
+        None if is_prod => {
+            tracing::warn!(
+                "SECURITY: PAL_GRPC_INSECURE=1 — model-router gRPC (:50053, tenant provider keys) \
+                 serves PLAINTEXT in production; remove it once PAL_GRPC_TLS_CA/_CERT/_KEY are mounted"
+            );
+            None
+        }
+        None => {
+            tracing::warn!(
+                "model-router gRPC: TLS unset — serving plaintext (acceptable in dev; production \
+                 requires PAL_GRPC_TLS_CA/_CERT/_KEY)"
+            );
+            None
+        }
+    };
+    // The identity gate is a no-op when TLS is off (dev / explicit override).
+    #[allow(clippy::result_large_err)] // tonic::Status is the mandated interceptor error
+    let peer_gate = move |req: tonic::Request<()>| match &peers {
+        Some(p) => pal_grpc_tls::peer_interceptor(p.clone())(req),
+        None => Ok(req),
+    };
+
+    builder
+        .layer(tonic::service::interceptor(peer_gate))
         .layer(tonic::service::interceptor(auth::interceptor(token)))
         .add_service(ModelServiceServer::new(svc))
         .serve_with_shutdown(config.listen_addr, shutdown_signal())

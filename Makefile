@@ -196,6 +196,7 @@ test-rust: ## Run Rust tests
 	cd services/model-router && cargo test
 	cd services/runtime-manager && cargo test
 	cd packages/pal-env-rs && cargo test
+	cd packages/pal-grpc-tls-rs && cargo test
 
 test-ts: ## Run TypeScript tests
 	cd packages/sdk-ts && npx vitest run
@@ -280,6 +281,7 @@ lint-rust: lint-rust-fmt ## Lint Rust code
 	cd services/surface-gateway && cargo clippy -- -D warnings
 	cd services/harness && cargo clippy -- -D warnings
 	cd packages/pal-env-rs && cargo clippy --all-targets -- -D warnings
+	cd packages/pal-grpc-tls-rs && cargo clippy --all-targets -- -D warnings
 
 lint-rust-fmt: ## Check rustfmt on every Rust crate (matches CI sdlc-lint)
 	@fail=0; for m in services/*/Cargo.toml packages/*/Cargo.toml; do \

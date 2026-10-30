@@ -6,7 +6,9 @@ edition = "2024"
 [dependencies]
 pal_env = { path = "../../packages/pal-env-rs" }
 tokio = { version = "1", features = ["full"] }
-tonic = "0.12"
+tonic = { version = "0.12", features = ["tls"] }
+# Service-mesh mTLS on :50053 (ADR 0043), shared with gateway/surface-gateway.
+pal_grpc_tls = { path = "../../packages/pal-grpc-tls-rs" }
 prost = "0.13"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -31,3 +33,10 @@ pin-project-lite = "0.2"
 sha2 = "0.10"
 hex = "0.4"
 subtle = "2"
+
+[dev-dependencies]
+# Test-time PKI for the mTLS handshake tests (never in production code).
+rcgen = "0.13"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+http = "1"
+tokio-stream = { version = "0.1", features = ["net"] }

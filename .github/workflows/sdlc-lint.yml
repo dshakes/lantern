@@ -133,6 +133,9 @@ jobs:
       - name: cargo clippy (pal-env-rs)
         run: cd packages/pal-env-rs && cargo clippy --all-targets -- -D warnings
 
+      - name: cargo clippy (pal-grpc-tls-rs)
+        run: cd packages/pal-grpc-tls-rs && cargo clippy --all-targets -- -D warnings
+
       # ---- TypeScript -------------------------------------------------------
       # ESLint 9 needs a flat eslint.config.js the packages don't have yet (own
       # task), but typecheck is live: bridge-core is now tsc-clean (@types/node +
