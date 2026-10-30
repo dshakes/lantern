@@ -28,7 +28,7 @@ echo "$TOKEN" | head -c 40 ; echo …
 Build the CLI once:
 
 ```bash
-cd packages/cli && go build -o /usr/local/bin/lantern ./cmd/lantern
+cd packages/cli && go build -o /usr/local/bin/pal ./cmd/pal
 export PAL_API_URL=http://localhost:8080
 export PAL_API_TOKEN="$TOKEN"
 ```
@@ -81,7 +81,7 @@ hacking on dashboard styling and don't need real placement.
 ### Option A — CLI (recommended)
 
 ```bash
-lantern run examples/headless-agents/01-hello/agent.yaml \
+pal run examples/headless-agents/01-hello/agent.yaml \
   --input '{"name":"Ada"}'
 ```
 
@@ -89,7 +89,7 @@ Expected output:
 
 ```
 scheduled vm_id=vm-7f3e9c2a-1234-…
-follow with: lantern vm logs vm-7f3e9c2a-1234-… --follow
+follow with: pal vm logs vm-7f3e9c2a-1234-… --follow
 ```
 
 ### Option B — raw curl
@@ -107,9 +107,9 @@ curl -s -X POST http://localhost:8080/v1/runtime/schedule \
 ## 2. List + inspect
 
 ```bash
-lantern vm list                         # table view
-lantern vm list --state running         # filter
-lantern vm get <vm-id>                  # full JSON: spec + audit events
+pal vm list                         # table view
+pal vm list --state running         # filter
+pal vm get <vm-id>                  # full JSON: spec + audit events
 ```
 
 In the dashboard: open <http://localhost:3001/runtime>. You'll see:
@@ -178,7 +178,7 @@ Expected: `attempt 2 → HTTP 402`.
 Inspect via CLI:
 
 ```bash
-lantern vm quota get
+pal vm quota get
 ```
 
 ---
@@ -200,7 +200,7 @@ The dashboard's per-VM debug view renders the same data in the
 ## 5. Termination
 
 ```bash
-lantern vm stop <vm-id> --grace 5
+pal vm stop <vm-id> --grace 5
 ```
 
 Confirms the row state moves to `terminated` and `terminated_at` is set.
@@ -211,7 +211,7 @@ Dashboard list reflects within 5s (the poll interval).
 ## 6. Cluster view (owner-only)
 
 ```bash
-lantern vm cluster
+pal vm cluster
 ```
 
 Returns per-node load + warm-pool capacity. With the two-tier run setup
@@ -224,7 +224,7 @@ stub topology marked `"stub": true`.
 ## 7. Logs SSE
 
 ```bash
-lantern vm logs <vm-id> --follow
+pal vm logs <vm-id> --follow
 ```
 
 Or in the browser: the per-VM debug view opens an EventSource on
@@ -265,7 +265,7 @@ documents what it proves about the platform:
 - Quota CRUD + 402 enforcement.
 - Audit events on every operation.
 - Dashboard `/runtime` list + per-VM debug view with live SSE logs.
-- All CLI subcommands (`lantern run`, `lantern vm
+- All CLI subcommands (`pal run`, `pal vm
   {list,get,logs,exec,stop,cluster,quota}`) — `vm exec` supports
   interactive TTY via `-it` (CLI raw mode, real PTY in the guest).
 - Rust `harness` compiles + has unit-tested subsystems (egress proxy,

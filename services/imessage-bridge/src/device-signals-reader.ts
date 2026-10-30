@@ -1,6 +1,6 @@
 // Read-only reader for the iPhone device-context signal stream — the I/O side
 // of the device-signals feature (the pure parsing/summarization lives in
-// @lantern/bridge-core/device-signals).
+// @pal/bridge-core/device-signals).
 //
 // Rich signals (location, focus, device state, health steps/sleep/workout,
 // now-playing, wake/sleep/screenshot) flow straight through: this reader does
@@ -10,7 +10,7 @@
 //
 // The owner's iOS Shortcuts automations POST events to the dashboard's
 // /api/signals route, which appends them as JSON lines to
-//   ~/.lantern/device-signals.jsonl  (mode 0600)
+//   ~/.pal/device-signals.jsonl  (mode 0600)
 // This reader tails the recent lines and hands them to the pure summarizer.
 //
 // PRIVACY / SAFETY (HARD RULES — see device-signals.ts header):
@@ -20,7 +20,7 @@
 //     and turned into an EMPTY summary + a single debug log. NEVER throws.
 //   * SUMMARIES ONLY. Returns the distilled DeviceSummary, not raw lines.
 
-import { homedir } from "node:os";
+import { palStateDir } from "@pal/bridge-core/state-dir";
 import { join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import type { Logger } from "pino";
@@ -32,11 +32,11 @@ import {
   type DeviceSummary,
   type SignalPresence,
   type KnownLocation,
-} from "@lantern/bridge-core/device-signals";
+} from "@pal/bridge-core/device-signals";
 
 /** Default device-signals JSONL location for the current user. */
 export function defaultDeviceSignalsPath(): string {
-  return join(homedir(), ".lantern", "device-signals.jsonl");
+  return join(palStateDir(), "device-signals.jsonl");
 }
 
 export interface ReadDeviceSignalsOpts {

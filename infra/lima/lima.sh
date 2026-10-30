@@ -14,6 +14,9 @@
 #   measurement-e2e  measurement-e2e.sh (ADR 0031 software measurement, jailed)
 #   bench       scripts/bench/microvm-latency.sh (jailed); results copied to
 #               BENCH_OUT on the Mac (default ./bench-out)
+#   runtime     long-running Firecracker runtime-manager for `dev` (ADR 0045):
+#               listens on :52054 in the VM (Lima forwards it to the Mac's
+#               localhost:52054) and self-registers with the host scheduler
 #   down        stop the VM
 #   clean       drop the VM's build caches (cargo clean + the cached image)
 #
@@ -80,7 +83,9 @@ host_up() {
 # ---------------------------------------------------------------------------
 # Guest side (Linux, inside the VM).
 # ---------------------------------------------------------------------------
-CACHE="${HOME}/.cache/lantern-lima"
+CACHE="${HOME}/.cache/pal-lima"
+# ADR 0032: cache dir renamed; carry an existing cache over (no image rebuild).
+if [[ -d "${HOME}/.cache/lantern-lima" && ! -e "${CACHE}" ]]; then mv "${HOME}/.cache/lantern-lima" "${CACHE}"; fi
 TARGET="${CACHE}/target"   # shared cargo target dir: harness (musl) + manager
 IMG="${CACHE}/image"
 TIMING="${CACHE}/timing"
@@ -198,7 +203,7 @@ guest_e2e() {
   local before rc=0
   before="$(leak_snapshot)"
   sudo FC_KERNEL_PATH="${IMG}/vmlinux" FC_ROOTFS_PATH="${IMG}/rootfs.ext4" \
-    RUNTIME_BACKEND=firecracker LANTERN_RUNTIME_BACKEND=firecracker \
+    RUNTIME_BACKEND=firecracker PAL_RUNTIME_BACKEND=firecracker \
     MANAGER_BIN="${MANAGER_BIN}" EXPECT_VENDSECRET=1 \
     FIRECRACKER_JAILER_PATH="$(command -v jailer)" FIRECRACKER_JAILER_UID=123 \
     FIRECRACKER_JAILER_GID=100 FIRECRACKER_CHROOT_BASE=/srv/jailer \
@@ -270,6 +275,30 @@ host_bench() {
   log "results copied to ${out}"
 }
 
+# Design-time runtime for `dev` (ADR 0045). Foreground; Ctrl-C stops it.
+# DEV ONLY: plaintext gRPC and no service token (the manager's dev defaults);
+# LANTERN_ENV is never set here. Jailed exactly like guest_e2e. :52054, not
+# :50054, so it never blocks `make lima-e2e` nor collides with a host manager.
+guest_runtime() {
+  guest_image
+  build_manager
+  sudo mkdir -p /srv/jailer /var/lib/lantern/snapshots
+  local port="${LISTEN_PORT:-52054}"
+  wait_port_free "${port}"
+  log "runtime-manager (firecracker, jailed) on :${port} -> Mac localhost:${port}; registering with http://host.lima.internal:8085"
+  log "on the Mac: pal dev (or make run-scheduler + PAL_SCHEDULER_GRPC_ADDR=localhost:50055 make run-api)"
+  exec sudo env \
+    RUNTIME_BACKEND=firecracker LANTERN_RUNTIME_BACKEND=firecracker \
+    LISTEN_ADDR="0.0.0.0:${port}" LOG_LEVEL="${LOG_LEVEL:-info}" \
+    FC_KERNEL_PATH="${IMG}/vmlinux" FC_ROOTFS_PATH="${IMG}/rootfs.ext4" \
+    FIRECRACKER_JAILER_PATH="$(command -v jailer)" FIRECRACKER_JAILER_UID=123 \
+    FIRECRACKER_JAILER_GID=100 FIRECRACKER_CHROOT_BASE=/srv/jailer \
+    SCHEDULER_URL="${SCHEDULER_URL:-http://host.lima.internal:8085}" \
+    NODE_NAME="lima-${VM}" NODE_ADVERTISE_ADDR="localhost:${port}" \
+    NODE_REGION=local NODE_ZONE=lima \
+    "${MANAGER_BIN}"
+}
+
 guest_clean() {
   guest_env
   if [ -d "${TARGET}" ]; then
@@ -291,6 +320,7 @@ if [ "${cmd}" = "_in" ]; then
     broker-e2e) guest_broker_e2e ;;
     measurement-e2e) guest_measurement_e2e ;;
     bench)      guest_bench ;;
+    runtime)    guest_runtime ;;
     clean)      guest_clean ;;
     *)          die "unknown guest command: ${2:-}" ;;
   esac
@@ -300,7 +330,7 @@ fi
 case "${cmd}" in
   up)                     host_up ;;
   bench)                  host_preflight; require_running; host_bench ;;
-  image|e2e|broker-e2e|measurement-e2e|clean) host_preflight; require_running; in_vm "${cmd}" ;;
+  image|e2e|broker-e2e|measurement-e2e|runtime|clean) host_preflight; require_running; in_vm "${cmd}" ;;
   down)                   command -v limactl >/dev/null || die "limactl not found"; limactl stop "${VM}" ;;
-  *) die "usage: $0 up|image|e2e|broker-e2e|measurement-e2e|bench|down|clean" ;;
+  *) die "usage: $0 up|image|e2e|broker-e2e|measurement-e2e|bench|runtime|down|clean" ;;
 esac

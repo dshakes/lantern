@@ -290,7 +290,7 @@ describe("VoiceProfileCache", () => {
     assert.equal(callCount, 1);
   });
 
-  it("flag-off proof: when LANTERN_VOICE_REASONING is unset, isVoiceReasoningEnabled() is false and the cache is never needed", () => {
+  it("flag-off proof: when PAL_VOICE_REASONING is unset, isVoiceReasoningEnabled() is false and the cache is never needed", () => {
     const saved = process.env["PAL_VOICE_REASONING"];
     delete process.env["PAL_VOICE_REASONING"];
     // The bridge checks isVoiceReasoningEnabled() before calling the cache.

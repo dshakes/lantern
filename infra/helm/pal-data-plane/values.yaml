@@ -1,0 +1,373 @@
+# Env vars are emitted as PAL_* (ADR 0032). The binaries still accept the legacy
+# LANTERN_* names, so existing overrides keep working; PAL_* wins if both are set.
+#
+# Upgrading a release created before the PAL rename (ADR 0032): the chart name changed, so
+# resource names change with it (release "lantern" -> "lantern-<chart>"). To keep the old
+# names, and the Postgres/MinIO PVCs bound to them, pass --set fullnameOverride=<old fullname>.
+#
+# pal-data-plane values
+#
+# This chart deploys the PAL Runtime data plane into the customer's Kubernetes
+# cluster. It connects outbound to the PAL Runtime control plane via gRPC tunnel.
+# Agent code and data never leave this cluster.
+#
+# For the control plane chart, see pal-control-plane.
+# For an all-in-one local dev deployment, see the pal chart.
+
+global:
+  image:
+    registry: ghcr.io
+    repository: dshakes/lantern
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  logLevel: info
+  # Bitnami subcharts (postgresql/redis/minio, v1.5.x+ image-verification guard)
+  # refuse to render when their image is overridden to a non-Bitnami container.
+  # PAL Runtime intentionally runs `pgvector/pgvector` for the Postgres subchart (the
+  # pgvector extension is a hard requirement), so the guard must be relaxed for
+  # the in-cluster dev/self-host path. Has no effect on managed-infra deployments
+  # (postgresql.enabled=false etc.).
+  security:
+    allowInsecureImages: true
+
+# ---------------------------------------------------------------------------
+# Control plane connection settings
+# ---------------------------------------------------------------------------
+controlPlane:
+  # The control plane gRPC endpoint. For PAL Runtime SaaS, use the default.
+  # For self-hosted, set to your control plane's address.
+  endpoint: "https://api.lantern.run"
+  # Multi-region (ADR 0046): ordered control-plane endpoints, one per region,
+  # primary first. Empty = use `endpoint` only (single-region, no health probe).
+  # e.g. ["api.us-east-1.example.com:443", "api.us-west-2.example.com:443"]
+  endpoints: []
+
+  # Tenant ID provisioned by PAL Runtime during onboarding.
+  tenantId: ""
+
+  # Short-lived agent token for initial registration and mTLS bootstrap.
+  # Provisioned by `pal infra install` or via the dashboard.
+  agentToken: ""
+
+  # TLS verification. Disable only for development with self-signed certs.
+  tlsInsecureSkipVerify: false
+
+# ---------------------------------------------------------------------------
+# Workflow Engine (Go) — durable execution, event sourcing, replay
+# ---------------------------------------------------------------------------
+workflowEngine:
+  replicas: 2
+  image:
+    name: workflow-engine
+  service:
+    type: ClusterIP
+    port: 50052
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+# ---------------------------------------------------------------------------
+# Runtime Manager (Rust) — Firecracker, Kata, K8s Jobs, Wasm
+# ---------------------------------------------------------------------------
+runtimeManager:
+  replicas: 1
+  image:
+    name: runtime-manager
+  service:
+    type: ClusterIP
+    port: 50054
+
+  # Default execution substrate. Kubernetes is the default (ADR 0009); isolation
+  # is expressed as a RuntimeClass tier on the pod. Override only for dedicated
+  # microVM nodes (e.g. "firecracker").
+  backend: k8s
+
+  # Hardened RuntimeClasses for the isolation tiers (ADR 0009). Leave a value
+  # EMPTY to mark that class UNAVAILABLE on this cluster — UNTRUSTED/HOSTILE then
+  # FAIL CLOSED (refuse to schedule) rather than silently downgrade to runc.
+  # Install the matching node runtime (gVisor/containerd-runsc, Kata Containers)
+  # BEFORE setting these. Secure default below: empty → only TRUSTED/STANDARD run.
+  runtimeClasses:
+    gvisor: ""      # e.g. "gvisor"        — REQUIRED for UNTRUSTED agents
+    kata: ""        # e.g. "kata-qemu"     — REQUIRED for HOSTILE agents
+    wasm: ""        # optional             — for the WASM isolation class
+    # Confidential compute (SEV-SNP/TDX under Kata-CC). REQUIRED for agents that
+    # request `confidential: true`; when empty, confidential workloads FAIL
+    # CLOSED (refused, never downgraded). Opt-in — leave empty unless you run a
+    # CC-capable node pool. See ADR 0023. Operators must ALSO label + taint the
+    # CC nodes `lantern.dev/confidential-compute=<tech>` (mirrors the NFD
+    # sev-snp/tdx feature labels) so confidential pods land only there.
+    kataCc: ""      # e.g. "kata-qemu-snp" — REQUIRED for confidential agents
+  # CC hardware technology advertised to the scheduler in the manager heartbeat
+  # (e.g. "sev-snp"/"tdx"); "" when unknown. Recording only.
+  ccTech: ""
+
+  # When true, render RuntimeClass objects for the names above (handler = the
+  # name). Only enable once the node runtime handlers are installed; a
+  # RuntimeClass pointing at a missing handler makes pods unschedulable
+  # (fail-safe, but visible). Default false — manage RuntimeClasses out of band.
+  createRuntimeClasses: false
+
+  # Firecracker requires bare-metal instances or nested virtualization.
+  # Set to false on standard cloud VMs without nested virt support.
+  firecrackerEnabled: false
+
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 1Gi
+
+# ---------------------------------------------------------------------------
+# Data Plane Agent (Go) — tunnel connector to control plane
+# ---------------------------------------------------------------------------
+dataPlaneAgent:
+  replicas: 1
+  image:
+    name: data-plane-agent
+  service:
+    type: ClusterIP
+    port: 8090
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+  # Heartbeat interval in seconds.
+  heartbeatIntervalSeconds: 30
+
+  # Reconnection settings.
+  reconnect:
+    initialDelayMs: 1000
+    maxDelayMs: 60000
+    jitterPercent: 20
+
+# ---------------------------------------------------------------------------
+# Infrastructure dependencies (in the customer's VPC)
+# ---------------------------------------------------------------------------
+postgresql:
+  # Set to false if using an external database (e.g., RDS, Cloud SQL).
+  enabled: true
+  auth:
+    username: lantern
+    password: ""  # set via secret
+    database: lantern
+  primary:
+    persistence:
+      size: 20Gi
+  image:
+    repository: pgvector/pgvector
+    tag: pg16
+
+  # External database settings (used when postgresql.enabled=false).
+  external:
+    host: ""
+    port: 5432
+    database: lantern
+    username: lantern
+    # Password should be set via secret, not in values.
+    existingSecret: ""
+    existingSecretKey: "postgres-password"
+
+redis:
+  # Set to false if using an external Redis (e.g., ElastiCache, Memorystore).
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false
+
+  # External Redis settings (used when redis.enabled=false).
+  external:
+    host: ""
+    port: 6379
+
+minio:
+  # Set to false if using cloud-native object storage (S3, GCS, Azure Blob).
+  enabled: true
+  auth:
+    rootUser: lantern
+    rootPassword: ""  # set via secret
+  defaultBuckets: "lantern-bundles,lantern-snapshots"
+  persistence:
+    size: 20Gi
+
+  # External object storage settings (used when minio.enabled=false).
+  external:
+    endpoint: ""
+    bucket: "lantern-bundles"
+    accessKeyId: ""
+    # Secret key should be set via secret, not in values.
+    existingSecret: ""
+    existingSecretKey: "s3-secret-key"
+
+# ---------------------------------------------------------------------------
+# Secrets — override via --set or external secrets operator
+# ---------------------------------------------------------------------------
+secrets:
+  postgresPassword: "lantern"
+  minioPassword: "lanternsecret"
+
+# ---------------------------------------------------------------------------
+# RuntimeClasses (top-level) — gVisor/Kata isolation tiers (ADR 0009)
+# ---------------------------------------------------------------------------
+# The RuntimeClass *names* live under runtimeManager.runtimeClasses (above);
+# this toggle controls whether the chart RENDERS RuntimeClass objects for them.
+# `create: true` is honored alongside the legacy
+# runtimeManager.createRuntimeClasses flag. Only enable once the node runtime
+# handlers (gVisor/runsc, Kata) are installed AND the nodes are labelled
+# `lantern.dev/runtimeclass=gvisor|kata` (+ tainted) so untrusted/hostile pods
+# land only on hardened nodes. See README.md. Default false.
+runtimeClasses:
+  create: false
+
+# ---------------------------------------------------------------------------
+# Tenant-namespace baseline policies (Kyverno) — OPT-IN, default OFF
+# ---------------------------------------------------------------------------
+# Requires Kyverno installed in the cluster. On creation of any namespace
+# matching namespaceSelector, Kyverno stamps PSA restricted labels and
+# generates a default-deny NetworkPolicy + ResourceQuota + LimitRange — so every
+# tenant namespace is locked down even though the control-plane creates them at
+# runtime. See README.md "Tenant baseline (Kyverno)".
+policies:
+  enabled: false
+  # Glob the generate/mutate rules match against. Tenant namespaces only.
+  namespaceSelector: "lantern-t-*"
+  # Apply the generated objects to namespaces that ALREADY exist when the policy
+  # is installed (Kyverno generateExisting). Default false = future namespaces.
+  generateExisting: false
+  # ResourceQuota caps generated into each tenant namespace.
+  resourceQuota:
+    requestsCpu: "8"
+    requestsMemory: "16Gi"
+    limitsCpu: "16"
+    limitsMemory: "32Gi"
+    pods: "50"
+  # LimitRange defaults applied to containers with no explicit limits.
+  limitRange:
+    defaultCpu: "500m"
+    defaultMemory: "512Mi"
+    defaultRequestCpu: "100m"
+    defaultRequestMemory: "128Mi"
+
+# ---------------------------------------------------------------------------
+# Image-signature verification (Kyverno verifyImages + cosign) — OPT-IN, OFF
+# ---------------------------------------------------------------------------
+# Requires Kyverno (with the image-verification webhook). Blocks any PAL Runtime
+# image without a valid cosign signature. Fails CLOSED. Default keyless mode
+# trusts the GitHub Actions OIDC identity that .github/workflows/build-images.yml
+# uses to sign. See README.md "Image verification (cosign)".
+imageVerification:
+  enabled: false
+  # Audit | Enforce. Enforce = block unsigned (recommended once signing is live).
+  failureAction: "Enforce"
+  # keyless (default, Sigstore/Fulcio/Rekor) | key (static publicKey below).
+  mode: "keyless"
+  # Image glob to require signatures on. Defaults to this chart's own
+  # registry/repository so third-party images aren't forced to be signed.
+  imageReferences: ""
+  keyless:
+    # The GitHub Actions workflow OIDC identity that signs the images. Update
+    # the org/repo to match your fork before enabling Enforce.
+    subject: "https://github.com/dshakes/lantern/.github/workflows/build-images.yml@refs/heads/master"
+    issuer: "https://token.actions.githubusercontent.com"
+    rekorURL: "https://rekor.sigstore.dev"
+  # Static cosign public key (PEM). Only used when mode: "key".
+  publicKey: ""
+
+# ---------------------------------------------------------------------------
+# Host-level egress (Cilium) + credential-injecting egress proxy — OPT-IN, OFF
+# ---------------------------------------------------------------------------
+# A defense-in-depth layer ON TOP OF the runtime-manager's per-pod
+# NetworkPolicy. Requires Cilium CNI for the policy; the proxy is portable.
+# See README.md "Host-level egress (Cilium + proxy)" for the trust model.
+egress:
+  cilium:
+    enabled: false
+    # cluster (CiliumClusterwideNetworkPolicy, covers all lantern-t-* ns) |
+    # namespaced (CiliumNetworkPolicy in `namespace`).
+    scope: "cluster"
+    namespace: "lantern-system"
+    # Namespace housing the runtime-manager/control-plane (allowed :50054).
+    systemNamespace: "lantern-system"
+    # Pods this default-deny-egress policy applies to. The runtime-manager
+    # stamps agent workload pods; match its label here.
+    podSelector:
+      lantern.dev/agent: "true"
+    # Extra verbatim Cilium egress entries appended to the allow list.
+    extraEgress: []
+  proxy:
+    enabled: false
+    namespace: "lantern-system"
+    # Well-known forward-proxy image (swap as needed). The credential-injection
+    # logic itself lives in `config` (squid.conf) — see README.md.
+    image: "ubuntu/squid:6.6-24.04_beta"
+    replicas: 1
+    port: 3128
+    # squid.conf contents. Default is DENY-ALL (permits nothing — NOT even
+    # RFC1918/localnet, since pod & Service IPs are RFC1918 and allowing them
+    # enables internal SSRF / lateral movement; cloud metadata is denied too).
+    # The proxy is inert until you supply a full squid.conf here with an explicit
+    # destination allowlist (dstdomain/dst ACLs + http_access allow, ending in
+    # http_access deny all) plus your upstream credential injection.
+    config: ""
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+
+# ---------------------------------------------------------------------------
+# External Secrets Operator (ESO) — OPT-IN, OFF (operator/platform secrets only)
+# ---------------------------------------------------------------------------
+# NOT the agent secret path (that is the in-VM mTLS vend — refs never hit env).
+# ESO syncs OPERATOR-managed platform secrets from Vault/AWS/GCP. Requires ESO
+# installed. See README.md "External Secrets (ESO)".
+externalSecrets:
+  enabled: false
+  # vault (default) | aws | gcp
+  provider: "vault"
+  # true => ClusterSecretStore (cluster-scoped); false => namespaced SecretStore.
+  clusterScope: false
+  refreshInterval: "1h"
+  vault:
+    server: "https://vault.example.com:8200"
+    path: "secret"
+    version: "v2"
+    authMountPath: "kubernetes"
+    role: "pal-data-plane"
+  aws:
+    region: "us-east-1"
+  gcp:
+    projectID: ""
+    clusterLocation: ""
+    clusterName: ""
+  # Example ExternalSecret mapping (adapt to your backend layout).
+  example:
+    targetSecretName: ""
+    postgresPasswordRef: "lantern/data-plane"
+    postgresPasswordProperty: "postgres-password"
+
+# ---------------------------------------------------------------------------
+# Service account
+# ---------------------------------------------------------------------------
+serviceAccount:
+  create: true
+  name: "pal-data-plane"
+  annotations: {}
+  # For AWS EKS with IRSA:
+  #   annotations:
+  #     eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/pal-data-plane
+  # For GKE with Workload Identity:
+  #   annotations:
+  #     iam.gke.io/gcp-service-account: pal-data-plane@project.iam.gserviceaccount.com

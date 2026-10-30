@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# runtime-latency.sh — benchmark runtime operations against a live Lantern stack.
+# runtime-latency.sh — benchmark runtime operations against a live PAL Runtime stack.
 #
 # Measures p50/p95 latency (milliseconds) and host RSS delta (MiB) for:
 #   - cold schedule → RUNNING
@@ -15,13 +15,13 @@
 # PREREQUISITES (Linux + KVM only)
 # ─────────────────────────────────
 # • /dev/kvm readable                      (firecracker requires KVM)
-# • LANTERN_API_URL env var                (default: http://localhost:8080)
-# • LANTERN_API_TOKEN env var              (Bearer token for an admin account)
+# • PAL_API_URL env var                (default: http://localhost:8080)
+# • PAL_API_TOKEN env var              (Bearer token for an admin account)
 # • jq, curl, awk, /proc/meminfo present
 #
 # Usage:
-#   export LANTERN_API_URL=http://localhost:8080
-#   export LANTERN_API_TOKEN=<bearer-token>
+#   export PAL_API_URL=http://localhost:8080
+#   export PAL_API_TOKEN=<bearer-token>
 #   bash scripts/bench/runtime-latency.sh [--iterations N] [--image-digest sha256:...]
 #
 # On non-Linux hosts or without KVM this script prints a SKIP notice and exits 0.
@@ -64,7 +64,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$TOKEN" ]]; then
-  echo "ERROR: LANTERN_API_TOKEN is not set." >&2
+  echo "ERROR: PAL_API_TOKEN is not set." >&2
   exit 1
 fi
 
@@ -176,7 +176,7 @@ bench_fork() {
 
 # ── main ─────────────────────────────────────────────────────────────────────
 
-echo "Lantern runtime-latency bench  $(date -u +%Y-%m-%dT%H:%M:%SZ)" >&2
+echo "PAL Runtime runtime-latency bench  $(date -u +%Y-%m-%dT%H:%M:%SZ)" >&2
 echo "API: $API_URL | iterations: $ITERATIONS" >&2
 
 results=()

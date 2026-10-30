@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Send the signed pull_request.opened fixture to a Lantern webhook trigger.
+# Send the signed pull_request.opened fixture to a PAL webhook trigger.
 #   ./send-fixture.sh <hook-url> <trigger-secret> [delivery-id]
 # Same bytes and headers GitHub sends; re-running with the same delivery id is
 # deduplicated (no second run).

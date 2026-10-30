@@ -1,0 +1,27 @@
+---
+title: Durability
+description: Checkpointing through the journal, lease-based recovery, and idempotent side effects.
+glance:
+  what: "Every step is journaled before and after; a recovery sweep reclaims runs whose worker died."
+  why: "A restart mid-run must neither lose the run nor repeat an email or a paid model call."
+  how: "Play the crash scenario; the reference below lists the knobs."
+sidebar:
+  order: 5
+---
+
+import { CheckpointSequence } from '../../../../components/diagrams';
+
+<CheckpointSequence client:visible />
+
+## Reference
+
+| Mechanism | Where | Guarantee |
+| --- | --- | --- |
+| `journal_events` | Postgres, PK `(run_id, seq)` | Ordered, replayable event log |
+| Run lease | `run_locks` | One worker per run |
+| Recovery sweep | every 30 s (`PAL_RECOVERY_INTERVAL`) | Steals only expired locks |
+| `CompletedStep` | workflow interpreter | Completed nodes are skipped on re-drive |
+| `claimSideEffect` | before external deliveries | Keyed `run:step:attempt`; no double send |
+| Subagent depth | child runs | Capped at 5 |
+
+See also [Durable execution](/docs/runtime/durable-execution/).

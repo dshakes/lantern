@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Lantern regression test — exercises the critical paths an alpha
+# PAL Runtime regression test — exercises the critical paths an alpha
 # user depends on. Designed to run nightly via cron / CI, with a
 # non-zero exit on failure.
 #
@@ -92,7 +92,7 @@ fi
 log "[6/8] nl-commands parser"
 cd "$(dirname "$0")/.." 2>/dev/null
 PARSE_OUT=$(cd services/imessage-bridge 2>/dev/null && npx tsx -e '
-import { parseNLCommand } from "@lantern/bridge-core/nl-commands";
+import { parseNLCommand } from "@pal/bridge-core/nl-commands";
 const tests = [
   ["pause", "mute"],
   ["status", "status"],
@@ -153,7 +153,7 @@ if [[ $SKIP_EMAIL -eq 0 && -n "$TOKEN" ]]; then
     code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
       "$API_URL/v1/connectors/gmail/execute?action=send_message" \
       -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-      -d "{\"to\":\"$OWNER_EMAIL\",\"subject\":\"Lantern regression $(date +%H%M)\",\"body\":\"Test from scripts/regression.sh\",\"label\":\"lantern\",\"skipInbox\":true}" --max-time 10)
+      -d "{\"to\":\"$OWNER_EMAIL\",\"subject\":\"PAL Runtime regression $(date +%H%M)\",\"body\":\"Test from scripts/regression.sh\",\"label\":\"lantern\",\"skipInbox\":true}" --max-time 10)
     [[ "$code" == "200" ]] && pass "email sent" || fail "email" "HTTP $code"
   fi
 else

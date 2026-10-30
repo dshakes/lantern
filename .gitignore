@@ -30,6 +30,7 @@ gen/ts/
 owner-profile.md
 **/owner-profile.md
 .lantern/
+.pal/
 
 # Env / secrets
 .env

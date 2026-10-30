@@ -15,7 +15,7 @@ func newAgentsCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "agents",
 		Aliases: []string{"agent"},
-		Short:   "Manage agents",
+		Short:   "Manage agents; `agent dev <name>` is the hot-reload inner loop",
 	}
 
 	cmd.AddCommand(newAgentsCreateCommand())

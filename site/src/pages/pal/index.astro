@@ -1,106 +1,90 @@
 ---
 import Page from '../../layouts/Page.astro';
-import Phone from '../../components/Phone.astro';
 import Glyph from '../../components/Glyph.astro';
+import Logo from '../../components/Logo.astro';
+import ChatDemo from '../../components/landing/ChatDemo.astro';
+import Media from '../../components/landing/Media.astro';
 import { PROMISE } from '../../data/promise';
 import { u } from '../../data/site';
-// Every capability below maps to a shipped bridge feature (CLAUDE.md, "Personal-docs + agentic Mac actions").
-const CAPS = [
-  { t: 'Voice', h: 'Replies the way you would.', b: 'pal learns your style from the messages you have actually sent: your length, your slang, your languages. A reply that doesn’t sound like you is rewritten before it goes out.' },
-  { t: 'People', h: 'Remembers who is who.', b: 'One memory of each person across iMessage and WhatsApp, so a plan made on one app is known on the other.' },
-  { t: 'Brief', h: 'Brings you the moments.', b: 'Ask “what’s up” and pal ranks what needs you: people waiting on an answer, held replies, things you said you’d do.' },
-  { t: 'Holds', h: 'Asks before it promises.', b: 'Money, commitments, dates it can’t check and replies to sad news wait for your yes. pal held it for you.' },
-  { t: 'Actions', h: 'Books it. Notes it.', b: 'Say yes to a follow-up and pal adds the event to Calendar, saves a note or drafts the email on your Mac.' },
-  { t: 'Docs', h: 'Finds your documents.', b: 'Ask for a document and pal searches the folders you allow on your Mac, reads it and answers. Nothing outside those folders.' },
-  { t: 'Watch', h: 'Keeps an eye on things.', b: 'A friend mentions a flight in the air or a game on tonight; pal checks back and sends one short update when it lands.' },
-  { t: 'Learns', h: 'Gets better when you say so.', b: 'Thumbs-down a reply and pal keeps it. Patterns you reject again and again become style lessons for every chat.' },
+// Every capability maps to a shipped bridge feature (CLAUDE.md, "Personal-docs + agentic Mac actions").
+const FEATURES = [
+  { id: 'brief', m: 'pal-brief', k: 'Brief', h: 'What needs you, ranked.', b: 'Type ? in your self-chat and pal ranks what is waiting on you across every thread: people you haven’t answered, drafts it wrote, things you said you’d do. Each item says why it’s there.', f: ['Reply with a number to draft, review or skip.', 'React instead: 👍 do it, 👎 skip, ⏰ snooze, ❓ show me.', '“What did I miss” gets a short recap of the hours you were away.'] },
+  { id: 'holds', m: 'pal-holds', k: 'Holds', h: 'Never says yes for you.', b: 'An agent that talks for you should never spend your money or your word on a guess. When a reply matters, pal holds it and asks you first.', f: ['Money: someone asks for it or the reply would promise it, in any language.', 'Promises, dates it can’t check, and replies to hard news.', 'A backstop check keeps holding even if the AI model is down.'] },
+  { id: 'voice', m: 'pal-voice', k: 'Voice', h: 'Sounds like you.', b: 'pal learns your style from messages you have actually sent: length, slang, languages. Every draft is scored against them, and one that drifts past your own range is rewritten before it goes out.', f: ['Stock phrases and “assistant” tells are caught and redrafted.', 'Thumbs-down a reply and the pattern becomes a lesson for every chat.'] },
+  { id: 'memory', m: 'pal-memory', k: 'Memory', h: 'One memory per person.', b: 'A number on iMessage and a name on WhatsApp resolve to one person with one timeline, so a plan made on one app is known on the other.', f: ['Recent moments with each person come back in every reply.', 'Never brings up one person’s thread to another unless you ask.'] },
+  { id: 'now', m: 'pal-world', k: 'Now', h: 'Knows what’s true today.', b: 'pal keeps a dated picture of your life from your mail, your calendar and your own notes, with a source on every line. When something changes, you get a one-line note.', f: ['Nudges before you’d remember: a meeting in 10 minutes, a thread waiting 3 days, an anniversary tomorrow.', 'Your own note always beats an email.'] },
+] as const;
+const MORE = [
+  { h: 'Books it. Notes it.', b: 'Say yes to a follow-up and pal adds the event to Calendar, saves a note or drafts the mail on your Mac.', v: '📅 Added “Dinner with Sam” · Fri 7:00 PM' },
+  { h: 'Finds your documents.', b: 'Ask for a document and pal searches only the folders you allow, reads it and answers.', v: '📄 passport.pdf · expires Sept 14, 2031' },
+  { h: 'Keeps an eye on things.', b: 'A friend mentions a flight in the air; pal checks back and sends one short update when it lands.', v: '✈️ “just saw you landed, welcome back”' },
+  { h: 'Learns new routines.', b: 'Teach it a recurring job in a sentence. It proposes the schedule and nothing runs until you approve.', v: '🛠 “every Monday 8am: this week’s school events”' },
 ];
 ---
-<Page path="pal/" title="pal — a friend that gets things done, and asks first" description="pal lives in iMessage and WhatsApp on your own Mac. It replies in your voice, remembers your people, brings you a daily Brief and holds money and promises for your yes.">
-  <section class="hero" aria-labelledby="hero-h">
+<Page path="pal/" title="pal — a friend that gets things done, and asks first" description="pal lives in iMessage and WhatsApp on your own Mac. It sends you a Brief of what needs you, replies in your voice, remembers your people and holds money and promises for your yes.">
+  <section class="hero page-hero pal" aria-labelledby="hero-h">
+    <div class="hero-glow" aria-hidden="true"></div>
     <div class="wrap hero-grid">
       <div>
-        <p class="eyebrow">pal · your personal agent</p>
-        <h1 id="hero-h" class="display">A friend that gets things done, and asks first.</h1>
-        <p class="lede">pal lives in your iMessage and WhatsApp. It replies the way you would, remembers the people in your life, and only brings you the moments that need you.</p>
-        <div class="actions">
-          <a class="btn btn-primary" href={u('docs/pal/')}>Set up pal</a>
+        <div data-reveal><Logo size={28} /></div>
+        <p class="eyebrow" style="margin-top:28px" data-reveal>pal · your personal agent</p>
+        <h1 id="hero-h" class="display" data-reveal>A friend that gets things done, <span class="grad-pal">and asks first.</span></h1>
+        <p class="lede" data-reveal>pal lives in your iMessage and WhatsApp, on your own Mac. It replies the way you would, remembers the people in your life, and only brings you the moments that need you.</p>
+        <div class="actions" data-reveal>
+          <a class="btn btn-pal" href={u('docs/pal/')}>Set up pal</a>
           <a class="btn btn-ghost" href="#holds">How Holds work</a>
         </div>
+        <nav class="toc" aria-label="On this page" data-reveal>{FEATURES.map((f) => <a href={`#${f.id}`}>{f.k}</a>)}<a href="#control">Control</a><a href="#private">Privacy</a></nav>
       </div>
-      <Phone who="Sam" label="pal replying to a friend in the owner's voice" caption="Invented example. pal answered; it sounded like you.">
-        <span class="stamp">Sat 10:14 AM</span>
-        <p class="bubble them">are we still on for brunch tomorrow?</p>
-        <p class="bubble me">yes! 11 at the usual place?</p>
-        <p class="bubble them">perfect. can I bring my sister?</p>
-        <p class="bubble me">of course, the more the merrier</p>
-        <p class="bubble them">see you there 🙌</p>
-      </Phone>
+      <div data-reveal><ChatDemo /></div>
     </div>
   </section>
 
-  <section class="section band" aria-labelledby="caps-h">
-    <div class="wrap">
-      <div class="section-head">
-        <h2 id="caps-h" class="h2">What pal does for you.</h2>
-        <p class="lede">Plain things, done well, in the apps you already use.</p>
+  {FEATURES.map((f, i) => (
+    <section id={f.id} class:list={['section', i % 2 === 0 && 'band']} aria-labelledby={`${f.id}-h`}>
+      <div class:list={['wrap', 'feature', i % 2 === 1 && 'flip']}>
+        <div data-reveal>
+          <p class="eyebrow"><b class="pal-k">{String(i + 1).padStart(2, '0')}</b> · {f.k}</p>
+          <h2 id={`${f.id}-h`} class="h2">{f.h}</h2>
+          <p class="body2">{f.b}</p>
+          <ul class="facts">{f.f.map((x) => <li>{x}</li>)}</ul>
+        </div>
+        <div data-reveal><Media name={f.m} /></div>
       </div>
-      <ul class="grid-4">
-        {CAPS.map((c) => (
-          <li class="card"><p class="eyebrow">{c.t}</p><h3 class="h3" style="margin-top:10px">{c.h}</h3><p>{c.b}</p></li>
+    </section>
+  ))}
+
+  <section class="section" aria-labelledby="more-h">
+    <div class="wrap">
+      <div class="section-head" data-reveal><h2 id="more-h" class="h2">And the small things, done well.</h2></div>
+      <ul class="grid-4 more">
+        {MORE.map((m) => (
+          <li class="card" data-reveal><p class="more-v">{m.v}</p><h3 class="h3">{m.h}</h3><p>{m.b}</p></li>
         ))}
       </ul>
     </div>
   </section>
 
-  <section id="holds" class="section" aria-labelledby="holds-h">
-    <div class="wrap split">
-      <Phone who="Maya" label="pal holds a reply that would promise money and asks you first">
-        <p class="bubble them">could you send your share today? $300, I fronted it</p>
-        <div class="held" role="note">
-          <p class="tag">pal held this for you</p>
-          <p class="draft">“sending it tonight 👍”</p>
-          <p class="why">It promises money, so it waits for your yes.</p>
-          <p class="btns" aria-hidden="true"><span>Send</span><span>Edit</span></p>
-        </div>
-      </Phone>
-      <div>
-        <p class="eyebrow">Holds</p>
-        <h2 id="holds-h" class="h2" style="margin-top:12px">pal held it for you.</h2>
-        <p class="lede" style="margin-top:16px">An agent that talks for you should never spend your money or your word on a guess. When a reply matters, pal stops and asks.</p>
-        <ul class="checklist">
-          <li><span><b>Money.</b> Someone asks for it or the reply would promise it, in any language.</span></li>
-          <li><span><b>Promises.</b> A reply that commits you to do something.</span></li>
-          <li><span><b>Facts it can’t check.</b> A date, a plan or an outcome only you would know.</span></li>
-          <li><span><b>Hard news.</b> A loss or an illness gets your words, not a cheerful guess.</span></li>
-        </ul>
-        <p class="small" style="margin-top:20px">These checks run before every send, and a backup check keeps working even if the AI model is unavailable.</p>
-      </div>
-    </div>
-  </section>
-
-  <section class="section rule" aria-labelledby="control-h">
+  <section id="control" class="section band" aria-labelledby="control-h">
     <div class="wrap">
-      <div class="section-head">
-        <h2 id="control-h" class="h2">You stay in charge.</h2>
-      </div>
+      <div class="section-head" data-reveal><h2 id="control-h" class="h2">You stay in charge.</h2></div>
       <div class="grid-4">
-        <div class="card"><h3 class="h3">Mute</h3><p>pal keeps thinking but stops sending. Every reply becomes a draft for you to approve.</p></div>
-        <div class="card"><h3 class="h3">Kill switch</h3><p>One message and pal ignores everything until you turn it back on.</p></div>
-        <div class="card"><h3 class="h3">Quiet hours</h3><p>Messages that arrive overnight wait for morning, then get answered at a natural pace.</p></div>
-        <div class="card"><h3 class="h3">Owner only</h3><p>Only you can ask pal about your documents or tell it to act. Contacts just get replies.</p></div>
+        <div class="card" data-reveal><p class="more-v">🔇 mute</p><h3 class="h3">Mute</h3><p>pal keeps thinking but stops sending. Every reply becomes a draft for you to approve.</p></div>
+        <div class="card" data-reveal><p class="more-v">⛔ kill switch on</p><h3 class="h3">Kill switch</h3><p>One message and pal ignores everything until you turn it back on.</p></div>
+        <div class="card" data-reveal><p class="more-v">🌙 1:00 – 6:00</p><h3 class="h3">Quiet hours</h3><p>Messages that arrive overnight wait for morning, then get answered at a natural pace.</p></div>
+        <div class="card" data-reveal><p class="more-v">🔑 owner only</p><h3 class="h3">Owner only</h3><p>Only you can ask about your documents or tell pal to act. Contacts just get replies.</p></div>
       </div>
     </div>
   </section>
 
-  <section class="section band" aria-labelledby="private-h">
+  <section id="private" class="section" aria-labelledby="private-h">
     <div class="wrap split">
-      <div>
+      <div data-reveal>
         <p class="eyebrow">Private by design</p>
         <h2 id="private-h" class="h2" style="margin-top:12px">Your life stays on your Mac.</h2>
         <p class="lede" style="margin-top:16px">pal runs on a Mac you own, reads only what you allow, and keeps its most personal memory encrypted on disk.</p>
       </div>
-      <ul class="checklist" style="margin-top:0">
+      <ul class="checklist" style="margin-top:0" data-reveal>
         <li><span><b>Your machine.</b> The bridges to iMessage and WhatsApp run on your Mac, not on someone else’s server.</span></li>
         <li><span><b>Your folders.</b> Document search is limited to the folders you list.</span></li>
         <li><span><b>Encrypted memory.</b> Conversation memory and topics are encrypted at rest (AES-256-GCM) and readable only by your user.</span></li>
@@ -109,20 +93,20 @@ const CAPS = [
     </div>
   </section>
 
-  <section class="section" aria-labelledby="promise-h">
+  <section class="section band" aria-labelledby="promise-h">
     <div class="wrap">
-      <div class="section-head"><p class="eyebrow">The PAL Promise</p><h2 id="promise-h" class="h2" style="margin-top:12px">What you can count on.</h2></div>
+      <div class="section-head" data-reveal><p class="eyebrow">The PAL Promise</p><h2 id="promise-h" class="h2" style="margin-top:12px">What you can count on.</h2></div>
       <ul class="grid-4">
-        {PROMISE.map((p) => (<li class="card"><Glyph kind={p.kind} /><h3 class="h3">{p.title}</h3><p>{p.body}</p><a class="arrow-link more" href={u(p.href)}>How it works</a></li>))}
+        {PROMISE.map((p) => (<li class="card" data-reveal><Glyph kind={p.kind} /><h3 class="h3">{p.title}</h3><p>{p.body}</p><a class="arrow-link more" href={u(p.href)}>How it works</a></li>))}
       </ul>
     </div>
   </section>
 
-  <section class="section band closer" aria-labelledby="start-h">
-    <div class="wrap">
+  <section class="section closer closer-grad" aria-labelledby="start-h">
+    <div class="wrap" data-reveal>
       <h2 id="start-h" class="h2">Bring pal home.</h2>
       <p class="lede" style="margin:20px auto 0">pal is open source and runs on your own Mac today. Setup takes some comfort with a terminal; the guide walks you through each step.</p>
-      <div class="actions"><a class="btn btn-primary" href={u('docs/pal/')}>Read the setup guide</a><a class="btn btn-ghost" href={u('runtime/')}>What pal runs on</a></div>
+      <div class="actions"><a class="btn btn-pal" href={u('docs/pal/')}>Read the setup guide</a><a class="btn btn-ghost" href={u('runtime/')}>What pal runs on</a></div>
     </div>
   </section>
 </Page>

@@ -32,7 +32,7 @@ This shapes how the bot sounds. Do NOT put secrets here (passwords).
 Edit freely; reloads within 30 seconds.
 
 ## About me
-I'm Ada. I'm a founder building Lantern.
+I'm Ada. I'm a founder building PAL.
 
 ## How I text
 - lowercase mostly, short
@@ -215,7 +215,7 @@ test("relationshipFor still works alongside address rules", () => {
 const VAULT_SAMPLE = `# Owner profile
 
 ## About me
-I'm Ada. I'm a founder building Lantern.
+I'm Ada. I'm a founder building PAL.
 
 ## Private
 - mother's maiden name: TestSurname

@@ -1,7 +1,7 @@
 /**
  * Production step implementation with journal-aware replay.
  *
- * When running inside a Lantern sandbox, every step call goes through
+ * When running inside a PAL sandbox, every step call goes through
  * the workflow engine's journal. If a step has already executed (e.g.
  * during a replay after a crash), the cached result is returned
  * immediately. Otherwise the step function executes, the result is
@@ -15,9 +15,9 @@ import type { StepOptions, RetryPolicy } from "../types.js";
 import type { Runtime } from "./runtime.js";
 import type { RequestMeta } from "./grpc-client.js";
 import {
-  LanternStepError,
-  LanternTimeoutError,
-  LanternCancelledError,
+  PalStepError,
+  PalTimeoutError,
+  PalCancelledError,
 } from "./errors.js";
 import { traced } from "./tracing.js";
 
@@ -115,7 +115,7 @@ export interface StepAPI {
 export function createProductionStepProxy(runtime: Runtime): StepAPI {
   const sidecar = runtime.sidecar;
   if (!sidecar) {
-    throw new LanternStepError("__init__", 0, false, "Production step proxy requires a sidecar connection");
+    throw new PalStepError("__init__", 0, false, "Production step proxy requires a sidecar connection");
   }
 
   /**
@@ -141,7 +141,7 @@ export function createProductionStepProxy(runtime: Runtime): StepAPI {
     return traced("step.execute", { step: name, stepId }, async (span) => {
       // Check abort signal before starting.
       if (runtime.abortSignal.aborted) {
-        throw new LanternCancelledError(
+        throw new PalCancelledError(
           runtime.abortSignal.reason instanceof Error
             ? runtime.abortSignal.reason.message
             : "Run cancelled",
@@ -178,10 +178,10 @@ export function createProductionStepProxy(runtime: Runtime): StepAPI {
           error: errorMessage,
         });
 
-        if (err instanceof LanternStepError || err instanceof LanternTimeoutError) {
+        if (err instanceof PalStepError || err instanceof PalTimeoutError) {
           throw err;
         }
-        throw new LanternStepError(name, 1, true, errorMessage);
+        throw new PalStepError(name, 1, true, errorMessage);
       }
 
       // 3. Journal the successful result.
@@ -221,7 +221,7 @@ export function createProductionStepProxy(runtime: Runtime): StepAPI {
       const worker = async () => {
         while (queue.length > 0) {
           if (runtime.abortSignal.aborted) {
-            throw new LanternCancelledError();
+            throw new PalCancelledError();
           }
           const entry = queue.shift();
           if (!entry) break;
@@ -273,7 +273,7 @@ export function createProductionStepProxy(runtime: Runtime): StepAPI {
       const contestants = fns.map((fn, i) =>
         handler(`${name}:contestant-${i}`, async () => {
           if (raceController.signal.aborted) {
-            throw new LanternCancelledError("Race contestant cancelled");
+            throw new PalCancelledError("Race contestant cancelled");
           }
           return fn();
         }, opts),
@@ -390,7 +390,7 @@ export function createProductionStepProxy(runtime: Runtime): StepAPI {
 // ---------------------------------------------------------------------------
 
 /**
- * Execute a function with a timeout. Throws LanternTimeoutError if the
+ * Execute a function with a timeout. Throws PalTimeoutError if the
  * function does not complete within the given duration.
  */
 async function executeWithTimeout<T>(
@@ -403,7 +403,7 @@ async function executeWithTimeout<T>(
     const timer = setTimeout(() => {
       if (!settled) {
         settled = true;
-        reject(new LanternTimeoutError(stepName, 1, `${timeoutMs}ms`));
+        reject(new PalTimeoutError(stepName, 1, `${timeoutMs}ms`));
       }
     }, timeoutMs);
 

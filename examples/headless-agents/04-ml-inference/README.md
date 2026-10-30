@@ -12,7 +12,7 @@ since we don't load untrusted model weights at runtime).
 ```bash
 docker build -t lantern/demos/ml-inference:latest examples/headless-agents/04-ml-inference
 
-lantern run examples/headless-agents/04-ml-inference/agent.yaml \
+pal run examples/headless-agents/04-ml-inference/agent.yaml \
   --input '{"texts": ["the quick brown fox", "lantern is a microvm runtime"]}'
 ```
 

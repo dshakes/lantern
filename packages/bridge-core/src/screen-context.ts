@@ -1,12 +1,12 @@
 // Screen-aware context provider — OPT-IN only.
 //
-// When LANTERN_SCREEN_OCR=on, the bridge periodically captures the
+// When PAL_SCREEN_OCR=on, the bridge periodically captures the
 // foreground app's frontmost window, OCRs it via the existing Vision
 // pipeline, and stores a short summary so the bot can answer "what
 // was that thing I was just looking at?" style questions.
 //
 // Privacy posture (these are HARD rules, not defaults):
-//   1. OFF by default. Requires explicit LANTERN_SCREEN_OCR=on.
+//   1. OFF by default. Requires explicit PAL_SCREEN_OCR=on.
 //   2. Per-app blocklist (banks, password managers, secret-bearing
 //      apps). When the frontmost app is in the blocklist, capture is
 //      SKIPPED and we don't even take the screenshot.
@@ -28,10 +28,11 @@
 // This module is the CAPTURE + STORE + RECALL plane. The bridge
 // wires it into the owner-self-chat persona prompt.
 
+import { palStateDir } from "./state-dir.js";
 import { spawn } from "child_process";
 import { mkdirSync, existsSync, rmSync, readFileSync } from "fs";
 import { join } from "path";
-import { homedir, tmpdir } from "os";
+import { tmpdir } from "os";
 import type { Logger } from "pino";
 
 export interface ScreenSnapshot {
@@ -117,7 +118,7 @@ export class ScreenContext {
 
   start(): void {
     if (!this.cfg.enabled) {
-      this.logger.info({}, "screen-context disabled (set LANTERN_SCREEN_OCR=on to enable)");
+      this.logger.info({}, "screen-context disabled (set PAL_SCREEN_OCR=on to enable)");
       return;
     }
     if (this.pollTimer) return;
@@ -241,8 +242,8 @@ export class ScreenContext {
   // for V1.
   private captureScreen(): Promise<string> {
     return new Promise((resolve) => {
-      try { mkdirSync(join(homedir(), ".lantern", "screen-tmp"), { recursive: true, mode: 0o700 }); } catch {}
-      const out = join(tmpdir(), `lantern-screen-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`);
+      try { mkdirSync(join(palStateDir(), "screen-tmp"), { recursive: true, mode: 0o700 }); } catch {}
+      const out = join(tmpdir(), `pal-screen-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`);
       // -x: no shutter sound. -m: main display only. -t png: PNG output.
       const proc = spawn("screencapture", ["-x", "-m", "-t", "png", out]);
       let stderr = "";

@@ -1,19 +1,19 @@
-"""Tests for lantern.agent — decorator and class-based agent definition."""
+"""Tests for pal.agent — decorator and class-based agent definition."""
 
 from __future__ import annotations
 
 import pytest
 
-from lantern.agent import (
-    LanternAgent,
+from pal.agent import (
+    PalAgent,
     RegisteredAgent,
     _registry,
     agent,
     get_agent,
     list_agents,
 )
-from lantern.errors import LanternValidationError
-from lantern.types import AgentContext
+from pal.errors import PalValidationError
+from pal.types import AgentContext
 
 
 # ---------------------------------------------------------------------------
@@ -86,31 +86,31 @@ class TestNameValidation:
     """Tests for agent name validation."""
 
     def test_rejects_empty_name(self):
-        with pytest.raises(LanternValidationError, match="Agent name must match"):
+        with pytest.raises(PalValidationError, match="Agent name must match"):
             @agent("")
             async def empty_agent(input: dict, ctx: AgentContext) -> dict:
                 return {}
 
     def test_rejects_uppercase(self):
-        with pytest.raises(LanternValidationError, match="Agent name must match"):
+        with pytest.raises(PalValidationError, match="Agent name must match"):
             @agent("MyAgent")
             async def upper_agent(input: dict, ctx: AgentContext) -> dict:
                 return {}
 
     def test_rejects_spaces(self):
-        with pytest.raises(LanternValidationError, match="Agent name must match"):
+        with pytest.raises(PalValidationError, match="Agent name must match"):
             @agent("my agent")
             async def space_agent(input: dict, ctx: AgentContext) -> dict:
                 return {}
 
     def test_rejects_underscores(self):
-        with pytest.raises(LanternValidationError, match="Agent name must match"):
+        with pytest.raises(PalValidationError, match="Agent name must match"):
             @agent("my_agent")
             async def underscore_agent(input: dict, ctx: AgentContext) -> dict:
                 return {}
 
     def test_rejects_too_long(self):
-        with pytest.raises(LanternValidationError, match="Agent name must match"):
+        with pytest.raises(PalValidationError, match="Agent name must match"):
             @agent("a" * 64)
             async def long_agent(input: dict, ctx: AgentContext) -> dict:
                 return {}
@@ -137,10 +137,10 @@ class TestNameValidation:
 # ---------------------------------------------------------------------------
 
 class TestClassBasedAgent:
-    """Tests for LanternAgent subclasses."""
+    """Tests for PalAgent subclasses."""
 
     def test_class_agent_registers(self):
-        class MyClassAgent(LanternAgent):
+        class MyClassAgent(PalAgent):
             name = "test-class-agent"
             version = "1.0.0"
             description = "Class-based test"
@@ -154,7 +154,7 @@ class TestClassBasedAgent:
         assert found.config.version == "1.0.0"
 
     async def test_class_agent_run(self):
-        class RunClassAgent(LanternAgent):
+        class RunClassAgent(PalAgent):
             name = "test-class-run-agent"
 
             async def run(self, input: dict, ctx: AgentContext) -> dict:
@@ -166,8 +166,8 @@ class TestClassBasedAgent:
         assert set(result["input_keys"]) == {"a", "b"}
 
     def test_class_agent_validates_name(self):
-        with pytest.raises(LanternValidationError):
-            class BadNameAgent(LanternAgent):
+        with pytest.raises(PalValidationError):
+            class BadNameAgent(PalAgent):
                 name = "Bad Name"
 
                 async def run(self, input: dict, ctx: AgentContext) -> dict:

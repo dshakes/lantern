@@ -13,7 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Exit codes for `lantern deploy` (0 ok, 1 generic).
+// Exit codes for `pal deploy` (0 ok, 1 generic).
 const (
 	exitAuth    = 3 // 401 / 403
 	exitBudget  = 4 // 402 quota or budget exceeded
@@ -31,7 +31,7 @@ func (e *ExitError) Error() string { return e.Err.Error() }
 func (e *ExitError) Unwrap() error { return e.Err }
 
 // agentManifest is the subset of agent.yaml that deploy sends to the control
-// plane. Same file `lantern init` scaffolds; unknown keys (tools, limits, ...)
+// plane. Same file `pal init` scaffolds; unknown keys (tools, limits, ...)
 // are ignored. system_prompt and workflow are optional additions.
 type agentManifest struct {
 	Name         string            `yaml:"name"`
@@ -57,7 +57,7 @@ Exit codes: 0 ok, 3 unauthorized, 4 quota/budget (402), 5 not found,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			raw, err := os.ReadFile("agent.yaml")
 			if os.IsNotExist(err) {
-				return fmt.Errorf("agent.yaml not found in current directory — run 'lantern init <name>' first")
+				return fmt.Errorf("agent.yaml not found in current directory — run 'pal init <name>' first")
 			}
 			if err != nil {
 				return fmt.Errorf("read agent.yaml: %w", err)
@@ -164,7 +164,7 @@ func mapDeployError(err error) error {
 	code, hint := 1, ""
 	switch {
 	case ae.Status == 401 || ae.Status == 403:
-		code, hint = exitAuth, "not authorized — run 'lantern login' or check --api-key"
+		code, hint = exitAuth, "not authorized — run 'pal login' or check --api-key"
 	case ae.Status == 402:
 		code, hint = exitBudget, "quota or budget exceeded"
 	case ae.Status == 404:

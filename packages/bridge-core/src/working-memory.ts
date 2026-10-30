@@ -6,10 +6,10 @@
 // had just built a grocery list AND knew the owner was driving, but answered
 // statelessly. CoALA/Letta call this the working-memory tier — a small,
 // always-in-context record of recent decision cycles. Here it's owner-only and
-// local: ~/.lantern/working-memory.jsonl (mode 0600), rolling ~6h window,
+// local: ~/.pal/working-memory.jsonl (mode 0600), rolling ~6h window,
 // capped. Pure-ish (fs only); path + now are injectable for tests.
 
-import { homedir } from "node:os";
+import { palStateDir } from "./state-dir.js";
 import { join, dirname } from "node:path";
 import { existsSync, readFileSync, appendFileSync, writeFileSync, mkdirSync } from "node:fs";
 
@@ -31,7 +31,7 @@ export interface WorkingAction {
   summary: string; // human one-liner, e.g. "built grocery list from Manasa", "status set: driving"
 }
 
-const DEFAULT_PATH = join(homedir(), ".lantern", "working-memory.jsonl");
+const defaultPath = (): string => join(palStateDir(), "working-memory.jsonl");
 const WINDOW_MS = 6 * 3_600_000; // surface only the last 6h
 const MAX_LINES = 200; // hard cap so the file can't grow unbounded
 const MAX_SHOWN = 12;
@@ -45,7 +45,7 @@ export interface WMOpts {
  *  into the reply path. Call this at the side-effect sites that already exist
  *  (marker exec, note save, status set, outbound send). */
 export function recordAction(a: { kind: ActionKind; summary: string; ts?: number }, opts: WMOpts = {}): void {
-  const path = opts.path ?? DEFAULT_PATH;
+  const path = opts.path ?? defaultPath();
   const ts = a.ts ?? opts.nowMs ?? Date.now();
   const summary = (a.summary || "").replace(/\s+/g, " ").trim().slice(0, 160);
   if (!summary) return;
@@ -71,7 +71,7 @@ function trim(path: string): void {
 
 /** Recent actions inside the window, newest-first. */
 export function recentActions(opts: WMOpts = {}): WorkingAction[] {
-  const path = opts.path ?? DEFAULT_PATH;
+  const path = opts.path ?? defaultPath();
   const now = opts.nowMs ?? Date.now();
   if (!existsSync(path)) return [];
   const out: WorkingAction[] = [];

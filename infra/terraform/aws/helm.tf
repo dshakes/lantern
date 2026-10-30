@@ -32,12 +32,12 @@ provider "helm" {
 # Namespace
 # ---------------------------------------------------------------------------
 
-resource "kubernetes_namespace" "lantern" {
+resource "kubernetes_namespace" "pal" {
   metadata {
     name = "lantern"
 
     labels = {
-      "app.kubernetes.io/part-of"    = "lantern-data-plane"
+      "app.kubernetes.io/part-of"    = "pal-data-plane"
       "app.kubernetes.io/managed-by" = "terraform"
     }
   }
@@ -46,20 +46,35 @@ resource "kubernetes_namespace" "lantern" {
 }
 
 # ---------------------------------------------------------------------------
-# Deploy lantern-data-plane Helm chart
+# Deploy pal-data-plane Helm chart
 # ---------------------------------------------------------------------------
 
-resource "helm_release" "lantern_data_plane" {
-  name       = "lantern-dp"
-  namespace  = kubernetes_namespace.lantern.metadata[0].name
-  chart      = "${path.module}/../../helm/lantern-data-plane"
-  version    = var.lantern_version
-  wait       = true
-  timeout    = 600
+resource "helm_release" "pal_data_plane" {
+  name      = "lantern-dp"
+  namespace = kubernetes_namespace.pal.metadata[0].name
+  chart     = "${path.module}/../../helm/pal-data-plane"
+  # Local chart: Bitnami postgresql/redis deps (Chart.lock) are not vendored,
+  # so helm must fetch them or the release fails "missing in charts/".
+  dependency_update = true
+  wait              = true
+  timeout           = 600
+
+  set {
+    name  = "global.image.tag"
+    value = local.chart_version
+  }
 
   set {
     name  = "controlPlane.endpoint"
-    value = var.lantern_control_plane_endpoint
+    value = local.control_plane_endpoint
+  }
+
+  dynamic "set" {
+    for_each = length(var.pal_control_plane_endpoints) > 0 ? [1] : []
+    content {
+      name  = "controlPlane.endpoints"
+      value = "{${join(",", var.pal_control_plane_endpoints)}}"
+    }
   }
 
   set {
@@ -99,7 +114,19 @@ resource "helm_release" "lantern_data_plane" {
   }
 
   depends_on = [
-    kubernetes_namespace.lantern,
+    kubernetes_namespace.pal,
     aws_eks_node_group.this,
   ]
+}
+
+# ADR 0032: addresses renamed lantern -> pal. `moved` keeps existing state in place
+# (no destroy/recreate). Remove once every deployment has applied this version.
+moved {
+  from = kubernetes_namespace.lantern
+  to   = kubernetes_namespace.pal
+}
+
+moved {
+  from = helm_release.lantern_data_plane
+  to   = helm_release.pal_data_plane
 }

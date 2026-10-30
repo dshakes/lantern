@@ -9,7 +9,7 @@
 # Exit 0: clean. Exit 1: regression or a failing case (the job must stop before deploy).
 # Exit 2: setup error. Writes $EVAL_RESULT (default .eval-result.json) for release.sh.
 #
-# env: LANTERN_API_URL (http://host:8080), LANTERN_API_KEY (JWT or API key with
+# env: PAL_API_URL (http://host:8080), PAL_API_KEY (JWT or API key with
 #      agents:write, runs:execute and runs:write scopes)
 #      EVAL_BRANCH     baseline branch to gate against (default main; PRs gate against main)
 #      STAGING_AGENT   staging agent name (default <name>-ci)

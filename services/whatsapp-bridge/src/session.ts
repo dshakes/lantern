@@ -1,3 +1,4 @@
+import { palStateDir } from "@pal/bridge-core/state-dir";
 import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
@@ -12,23 +13,23 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, appendFileS
 import { readFile as readFileAsync } from "fs/promises";
 import { homedir } from "os";
 import type { Logger } from "pino";
-import { AgentClient } from "@lantern/bridge-core/agent";
+import { AgentClient } from "@pal/bridge-core/agent";
 import { AttentionClassifier } from "./attention.js";
-import { authedFetch } from "@lantern/bridge-core/auth";
-import { recordAutoAction, loadAutoActions, autoActionsToDid } from "@lantern/bridge-core/auto-actions-store";
-import { rephraseNudge } from "@lantern/bridge-core/nudge-voice";
+import { authedFetch } from "@pal/bridge-core/auth";
+import { recordAutoAction, loadAutoActions, autoActionsToDid } from "@pal/bridge-core/auto-actions-store";
+import { rephraseNudge } from "@pal/bridge-core/nudge-voice";
 import { MediaHandler } from "./media.js";
-import { PersonalClient, parseRememberCommand } from "@lantern/bridge-core/personal";
-import { parseSignals, presenceFromSignals, latestKnownLocation, isInnerCircle, formatOwnerLocationBlock, formatOwnerSelfLocationBlock, type SignalPresence } from "@lantern/bridge-core/device-signals";
-import { extractArticleUrl, fetchArticle, buildArticleBlock } from "@lantern/bridge-core/article";
-import { handleSpouseMessage } from "@lantern/bridge-core/spouse-agent";
-import { addReminder as addRecurringReminder } from "@lantern/bridge-core/recurring";
-import { addToList, removeFromList, loadList, renderList } from "@lantern/bridge-core/shared-list";
-import { readWatchHistory, watchSummary, iphoneUsageBlock, isWatchQuery } from "@lantern/bridge-core/browser-history";
-import { computeCommuteSurface, computeEnergyNudge, computeHealthCoachNudge, computeWeeklyHealthSummary, computeFocusGuardian } from "@lantern/bridge-core/proactive-loops";
-import { detectLiveWatch, checkLiveWatch, composeWatchFollowUp, WatchStore, watchContextBlock, contactWatchBlock } from "@lantern/bridge-core/live-watch";
-import { extractAutoFacts } from "@lantern/bridge-core/fact-extractor";
-import { CalendarLookup, needsCalendar } from "@lantern/bridge-core/calendar";
+import { PersonalClient, parseRememberCommand } from "@pal/bridge-core/personal";
+import { parseSignals, presenceFromSignals, latestKnownLocation, isInnerCircle, formatOwnerLocationBlock, formatOwnerSelfLocationBlock, type SignalPresence } from "@pal/bridge-core/device-signals";
+import { extractArticleUrl, fetchArticle, buildArticleBlock } from "@pal/bridge-core/article";
+import { handleSpouseMessage } from "@pal/bridge-core/spouse-agent";
+import { addReminder as addRecurringReminder } from "@pal/bridge-core/recurring";
+import { addToList, removeFromList, loadList, renderList } from "@pal/bridge-core/shared-list";
+import { readWatchHistory, watchSummary, iphoneUsageBlock, isWatchQuery } from "@pal/bridge-core/browser-history";
+import { computeCommuteSurface, computeEnergyNudge, computeHealthCoachNudge, computeWeeklyHealthSummary, computeFocusGuardian } from "@pal/bridge-core/proactive-loops";
+import { detectLiveWatch, checkLiveWatch, composeWatchFollowUp, WatchStore, watchContextBlock, contactWatchBlock } from "@pal/bridge-core/live-watch";
+import { extractAutoFacts } from "@pal/bridge-core/fact-extractor";
+import { CalendarLookup, needsCalendar } from "@pal/bridge-core/calendar";
 import {
   agentPersonaPrompt,
   countTrailingUnanswered,
@@ -46,31 +47,31 @@ import {
   groupRepliesEnabled,
   isBlockedGroupSend,
   mutedNoticeBucket,
-} from "@lantern/bridge-core/natural";
-import { judgeCommitment, commitmentHoldPage, extractContactRequests, isConfidentContactShare, promiseIsAboutNumber, type CommitmentVerdict, type ResolvedShare } from "@lantern/bridge-core/commitment-gate";
-import { judgeGrounding, groundingHoldPage, type GroundingVerdict } from "@lantern/bridge-core/grounding-gate";
-import { fitVoiceModel, scoreVoice, voiceDelta, type VoiceModel } from "@lantern/bridge-core/voice-score";
-import type { BotTellContext } from "@lantern/bridge-core/natural";
-import { strictRegenHint } from "@lantern/bridge-core/natural";
-import { InferredRelationshipStore, relationshipInferPrompt, parseRelationshipInference, shouldInferRelationship, inferredRelationshipLabel, inferredRelationshipFyi, INFER_MIN_CONFIDENCE, type InferredRelationship } from "@lantern/bridge-core/relationship-infer";
-import { buildRefinePrompt, parseRefine } from "@lantern/bridge-core/voice-refine";
-import { parseNLCommand, parsePresenceCommand, type ParsedCommand, type PresenceCommand } from "@lantern/bridge-core/nl-commands";
-import { executeCommand } from "@lantern/bridge-core/command-executor";
-import { parseVoiceCommand } from "@lantern/bridge-core/voice-commands";
-import { reactionToAction, dispatchReaction, ReactableLog, strikeBriefLines, buildAttentionSnapshot, type AttentionSnapshot } from "@lantern/bridge-core/reaction-commands";
+} from "@pal/bridge-core/natural";
+import { judgeCommitment, commitmentHoldPage, extractContactRequests, isConfidentContactShare, promiseIsAboutNumber, type CommitmentVerdict, type ResolvedShare } from "@pal/bridge-core/commitment-gate";
+import { judgeGrounding, groundingHoldPage, type GroundingVerdict } from "@pal/bridge-core/grounding-gate";
+import { fitVoiceModel, scoreVoice, voiceDelta, type VoiceModel } from "@pal/bridge-core/voice-score";
+import type { BotTellContext } from "@pal/bridge-core/natural";
+import { strictRegenHint } from "@pal/bridge-core/natural";
+import { InferredRelationshipStore, relationshipInferPrompt, parseRelationshipInference, shouldInferRelationship, inferredRelationshipLabel, inferredRelationshipFyi, INFER_MIN_CONFIDENCE, type InferredRelationship } from "@pal/bridge-core/relationship-infer";
+import { buildRefinePrompt, parseRefine } from "@pal/bridge-core/voice-refine";
+import { parseNLCommand, parsePresenceCommand, type ParsedCommand, type PresenceCommand } from "@pal/bridge-core/nl-commands";
+import { executeCommand } from "@pal/bridge-core/command-executor";
+import { parseVoiceCommand } from "@pal/bridge-core/voice-commands";
+import { reactionToAction, dispatchReaction, ReactableLog, strikeBriefLines, buildAttentionSnapshot, type AttentionSnapshot } from "@pal/bridge-core/reaction-commands";
 import {
   matchSkillRequest, matchSkillCommand, buildSkillSpecPrompt, parseSkillSpec,
   formatSkillProposal, formatSkillList, formatSchedule, dueSkills, localDayKey, defaultSkillState,
   type SkillForgeState, type SkillSpec,
-} from "@lantern/bridge-core/skill-forge";
+} from "@pal/bridge-core/skill-forge";
 import {
   matchPlanRequest, buildPlanPrompt, parseActionPlan, formatPlanPreview,
   parsePlanReply, dropStep, PLAN_TTL_MS, type ActionPlan,
-} from "@lantern/bridge-core/action-plan";
-import { scheduleDigest, defaultDigestConfig, looksLikeBriefingRequest } from "@lantern/bridge-core/daily-digest";
-import { composeDigestNarrative } from "@lantern/bridge-core/digest-compose";
-import { OfflineMonitor, defaultOfflineMonitorConfig } from "@lantern/bridge-core/offline-monitor";
-import { EmailMirror } from "@lantern/bridge-core/email-mirror";
+} from "@pal/bridge-core/action-plan";
+import { scheduleDigest, defaultDigestConfig, looksLikeBriefingRequest } from "@pal/bridge-core/daily-digest";
+import { composeDigestNarrative } from "@pal/bridge-core/digest-compose";
+import { OfflineMonitor, defaultOfflineMonitorConfig } from "@pal/bridge-core/offline-monitor";
+import { EmailMirror } from "@pal/bridge-core/email-mirror";
 import {
   PersonalDocs,
   defaultPersonalDocsConfig,
@@ -78,16 +79,16 @@ import {
   isGreetingSmallTalk,
   isCelebratoryWish,
   extractAttachMarkers,
-} from "@lantern/bridge-core/personal-docs";
-import { isBotSelfMessage } from "@lantern/bridge-core/bot-self";
-import { detectLanguageHints, languageModalityHint, degradedVoiceAck } from "@lantern/bridge-core/language";
-import { looksLikeRosterQuery, prefetchRoster, formatRosterBlock, type RosterPrefetchAdapter } from "@lantern/bridge-core/roster";
-import { planSubTasks, executeSubTasks, formatSubTaskBriefs, type SubTaskAdapters } from "@lantern/bridge-core/multi-agent";
-import { MacActions, extractActionMarkers, extractDocRequests, validateCalendarEvent, checkCalendarConflict, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
-import { maybeDocRequest, buildDocIntentPrompt, parseDocIntent } from "@lantern/bridge-core/doc-intent";
-import { buildDocRelayPrompt, finalizeDocRelayPing, docNotFoundPing, pickDocToSend, buildDocPickPing, parseDocPick, docMismatchPing, type DocRelayContext, type DocPickCandidate } from "@lantern/bridge-core/doc-relay";
-import { stageDownloadLink, buildDocLinkMessage } from "@lantern/bridge-core/doc-link";
-import { buildPendingResolvePrompt, parsePendingResolution, type PendingResolution } from "@lantern/bridge-core/pending-resolve";
+} from "@pal/bridge-core/personal-docs";
+import { isBotSelfMessage } from "@pal/bridge-core/bot-self";
+import { detectLanguageHints, languageModalityHint, degradedVoiceAck } from "@pal/bridge-core/language";
+import { looksLikeRosterQuery, prefetchRoster, formatRosterBlock, type RosterPrefetchAdapter } from "@pal/bridge-core/roster";
+import { planSubTasks, executeSubTasks, formatSubTaskBriefs, type SubTaskAdapters } from "@pal/bridge-core/multi-agent";
+import { MacActions, extractActionMarkers, extractDocRequests, validateCalendarEvent, checkCalendarConflict, formatAppleCalendarBlock, type CalendarEventRead } from "@pal/bridge-core/mac-actions";
+import { maybeDocRequest, buildDocIntentPrompt, parseDocIntent } from "@pal/bridge-core/doc-intent";
+import { buildDocRelayPrompt, finalizeDocRelayPing, docNotFoundPing, pickDocToSend, buildDocPickPing, parseDocPick, docMismatchPing, type DocRelayContext, type DocPickCandidate } from "@pal/bridge-core/doc-relay";
+import { stageDownloadLink, buildDocLinkMessage } from "@pal/bridge-core/doc-link";
+import { buildPendingResolvePrompt, parsePendingResolution, type PendingResolution } from "@pal/bridge-core/pending-resolve";
 import {
   applyCuration,
   buildCurationPrompt,
@@ -111,41 +112,41 @@ import {
   type ScoutCommand,
   type ScoutEvent,
   type BookSelection,
-} from "@lantern/bridge-core/event-scout";
-import { humanizeWithOffer, detectOfferInReply, looksLikeConfirmation, looksLikeRejection, looksLikeUndo, classifyPendingReply, type PendingOffer } from "@lantern/bridge-core/humanize";
-import { resolvePendingBooking } from "@lantern/bridge-core/life-events";
-import type { AutoFact } from "@lantern/bridge-core/owner-profile-auto-update";
-import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
-import { OwnerProfileStore } from "@lantern/bridge-core/owner-profile";
-import { styleBlockFor } from "@lantern/bridge-core/per-contact-style";
+} from "@pal/bridge-core/event-scout";
+import { humanizeWithOffer, detectOfferInReply, looksLikeConfirmation, looksLikeRejection, looksLikeUndo, classifyPendingReply, type PendingOffer } from "@pal/bridge-core/humanize";
+import { resolvePendingBooking } from "@pal/bridge-core/life-events";
+import type { AutoFact } from "@pal/bridge-core/owner-profile-auto-update";
+import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@pal/bridge-core/prefetch";
+import { OwnerProfileStore } from "@pal/bridge-core/owner-profile";
+import { styleBlockFor } from "@pal/bridge-core/per-contact-style";
 import {
   ownerVoiceExemplars,
   formatOwnerVoiceBlock,
   dedupeKey as ownerVoiceDedupeKey,
   type OwnerVoiceSample,
-} from "@lantern/bridge-core/owner-voice";
-import { DislikeMemory, formatDislikeBlock } from "@lantern/bridge-core/dislike-memory";
-import { verifyClaims, performedClaimActions } from "@lantern/bridge-core/verifiable-claims";
-import { PresenceTracker } from "@lantern/bridge-core/presence";
-import { resolveName as resolveIdentity, resolveHandlesByName, detectIdentityCorrection, recordIdentityCorrection } from "@lantern/bridge-core/identity";
-import { TurnBindings } from "@lantern/bridge-core/entity-binding";
-import { looksLikeThreadPeek } from "@lantern/bridge-core/thread-peek";
-import { buildKnownPeopleBlock, normalizeProfilePerson } from "@lantern/bridge-core/known-people";
-import { canonicalHandle } from "@lantern/bridge-core/canonical-handle";
-import { detectDisclosureDeny, recordDisclosureDeny, resolveDisclosureDeny } from "@lantern/bridge-core/disclosure";
-import { intentRouterEnabled, classifyIntent, forcedHandler } from "@lantern/bridge-core/intent-router";
-import { resolveGender, recordGender, detectGenderStatement } from "@lantern/bridge-core/gender";
-import { recordAction, recentActions, contactActionsBlock } from "@lantern/bridge-core/working-memory";
+} from "@pal/bridge-core/owner-voice";
+import { DislikeMemory, formatDislikeBlock } from "@pal/bridge-core/dislike-memory";
+import { verifyClaims, performedClaimActions } from "@pal/bridge-core/verifiable-claims";
+import { PresenceTracker } from "@pal/bridge-core/presence";
+import { resolveName as resolveIdentity, resolveHandlesByName, detectIdentityCorrection, recordIdentityCorrection } from "@pal/bridge-core/identity";
+import { TurnBindings } from "@pal/bridge-core/entity-binding";
+import { looksLikeThreadPeek } from "@pal/bridge-core/thread-peek";
+import { buildKnownPeopleBlock, normalizeProfilePerson } from "@pal/bridge-core/known-people";
+import { canonicalHandle } from "@pal/bridge-core/canonical-handle";
+import { detectDisclosureDeny, recordDisclosureDeny, resolveDisclosureDeny } from "@pal/bridge-core/disclosure";
+import { intentRouterEnabled, classifyIntent, forcedHandler } from "@pal/bridge-core/intent-router";
+import { resolveGender, recordGender, detectGenderStatement } from "@pal/bridge-core/gender";
+import { recordAction, recentActions, contactActionsBlock } from "@pal/bridge-core/working-memory";
 import {
   looksLikeRecapRequest, parseRecapWindow, buildRecapPrompt, finalizeRecap,
   type RecapItem,
-} from "@lantern/bridge-core/time-travel";
-import { computeHoldFromSamples, type LatencySample } from "@lantern/bridge-core/pacing";
-import { EpisodicMemory, formatEpisodesBlock, maybeRecordEpisode, rankEpisodesByRelevance } from "@lantern/bridge-core/episodic-memory";
-import { SocialGraph, extractTopics, formatRelatedBlock, mergeRelated } from "@lantern/bridge-core/social-graph";
-import { assembleRelevantRecall } from "@lantern/bridge-core/recall";
-import { classifyConfidence, tierBadge } from "@lantern/bridge-core/confidence-tier";
-import { resolveEmotionalRegister } from "@lantern/bridge-core/emotional-register";
+} from "@pal/bridge-core/time-travel";
+import { computeHoldFromSamples, type LatencySample } from "@pal/bridge-core/pacing";
+import { EpisodicMemory, formatEpisodesBlock, maybeRecordEpisode, rankEpisodesByRelevance } from "@pal/bridge-core/episodic-memory";
+import { SocialGraph, extractTopics, formatRelatedBlock, mergeRelated } from "@pal/bridge-core/social-graph";
+import { assembleRelevantRecall } from "@pal/bridge-core/recall";
+import { classifyConfidence, tierBadge } from "@pal/bridge-core/confidence-tier";
+import { resolveEmotionalRegister } from "@pal/bridge-core/emotional-register";
 import {
   detectLifeThreat,
   detectPromptInjection,
@@ -155,9 +156,9 @@ import {
   detectUrgency,
   detectBotClocked,
   refusalReply as escalationRefusalReply,
-} from "@lantern/bridge-core/escalation-detector";
-import { ownerTakeoverPauseMs } from "@lantern/bridge-core/owner-handoff";
-import { OutboundDedupe } from "@lantern/bridge-core/outbound-dedupe";
+} from "@pal/bridge-core/escalation-detector";
+import { ownerTakeoverPauseMs } from "@pal/bridge-core/owner-handoff";
+import { OutboundDedupe } from "@pal/bridge-core/outbound-dedupe";
 // Proactive-intelligence layer (parity with the iMessage bridge):
 //   - anticipation: pure ranker that turns gathered signals (key dates,
 //     overdue replies, upcoming events) into owner-facing nudges.
@@ -173,14 +174,14 @@ import {
   type KeyDateSignal,
   type UpcomingEventSignal,
   type DormantContactSignal,
-} from "@lantern/bridge-core/anticipation";
+} from "@pal/bridge-core/anticipation";
 import {
   runDislikeConsolidation,
   formatStyleLessonsBlock,
-} from "@lantern/bridge-core/dislike-consolidator";
-import { contactPriority, type ContactSignals } from "@lantern/bridge-core/contact-priority";
-import { appendSentLog, noteDraftMeta } from "@lantern/bridge-core/sent-log";
-import { waHistoryEvidence } from "@lantern/bridge-core/world-model";
+} from "@pal/bridge-core/dislike-consolidator";
+import { contactPriority, type ContactSignals } from "@pal/bridge-core/contact-priority";
+import { appendSentLog, noteDraftMeta } from "@pal/bridge-core/sent-log";
+import { waHistoryEvidence } from "@pal/bridge-core/world-model";
 import {
   detectTaskCapture,
   captureTaskWithLlm,
@@ -192,7 +193,7 @@ import {
   runCommitmentJudgment,
   type Commitment,
   type PendingCommitmentNudge,
-} from "@lantern/bridge-core/commitments-edge";
+} from "@pal/bridge-core/commitments-edge";
 import {
   classifyDocForDomain,
   DomainRecordsClient,
@@ -202,23 +203,23 @@ import {
   saveDocIngestState,
   getAllowedRoots,
   findDocFiles,
-} from "@lantern/bridge-core/doc-ingest";
+} from "@pal/bridge-core/doc-ingest";
 import { extname } from "path";
 import {
   parseCenterCommand, parseActionReply, buildBrief, buildPlate, buildAgents, summarizeAgentRuns, mergeBridgeLoopStatus, buildDomain, buildDid, buildNews, buildNewsAsk, buildReadlist, buildQuietAck,
   selectTopDrops, buildTopDropPush, buildNewsDigest,
   type CenterCommand, type ParsedAction, type BriefItem, type DraftWaiting, type AgentStat, type AgentRunRow, type NewsItemLite, type NewsAskResult,
-} from "@lantern/bridge-core/command-center";
+} from "@pal/bridge-core/command-center";
 import {
   getCenterItems, setCenterItems, isRealTimeNudge, fetchBriefInput, parseSnoozeMs,
   type CenterStateEntry,
-} from "@lantern/bridge-core/command-center-executor";
+} from "@pal/bridge-core/command-center-executor";
 import {
   buildAttentionPrompt, parseAttentionRanking, candidateIds,
   type WaitingThread,
-} from "@lantern/bridge-core/attention";
-import type { BriefInput } from "@lantern/bridge-core/command-center";
-import { VoiceProfileCache, isVoiceReasoningEnabled } from "@lantern/bridge-core/voice-profile";
+} from "@pal/bridge-core/attention";
+import type { BriefInput } from "@pal/bridge-core/command-center";
+import { VoiceProfileCache, isVoiceReasoningEnabled } from "@pal/bridge-core/voice-profile";
 
 // MIME map for sendDocument — WhatsApp's UI shows a file-type icon
 // based on this. Falls back to application/octet-stream for unknown.
@@ -300,7 +301,7 @@ const PAUSE_TTL_MS =
 // handoff/commitment ("I'll call you this evening", "human here") — a flat
 // 60-min pause let the bot barge back into a thread the owner said they'd
 // handle (real field bug). Default 12h; override via
-// LANTERN_AGENT_HANDOFF_PAUSE_HOURS.
+// PAL_AGENT_HANDOFF_PAUSE_HOURS.
 const HANDOFF_PAUSE_MS =
   Math.max(1, Number(process.env.PAL_AGENT_HANDOFF_PAUSE_HOURS) || 12) * 60 * 60_000;
 // Explicit `/bot off` in a contact thread pauses that contact for a year —
@@ -318,7 +319,7 @@ const PAUSE_WARN_FLUSH_MS = 30_000;
 const PAUSE_TICK_MS = 30_000;
 // The proactive "auto-replies resume in ~5m … type /bot off" self-chat DM is
 // OFF by default: the owner found it noisy/"random". The pause still expires
-// and auto-reply resumes silently; set LANTERN_PAUSE_WARN=on to restore the
+// and auto-reply resumes silently; set PAL_PAUSE_WARN=on to restore the
 // heads-up. (Expired pauses are still dropped regardless of this flag.)
 const PAUSE_WARN_ENABLED = /^(1|true|on)$/i.test(process.env.PAL_PAUSE_WARN ?? "");
 
@@ -380,7 +381,7 @@ function formatNameList(names: string[]): string {
   return `${head} (+${extra} more)`;
 }
 
-// Short human-readable duration. Used by /lantern status replies so the
+// Short human-readable duration. Used by /pal status replies so the
 // uptime line ('2h 14m', '37s') is glanceable on a phone screen.
 function formatUptimeShort(ms: number): string {
   const s = Math.floor(ms / 1000);
@@ -514,7 +515,7 @@ export class WhatsAppSession {
       // helpers which already handle connector auth + rate limits.
       gmail: async (instruction, hints) => {
         try {
-          const { defaultConnectorClient } = await import("@lantern/bridge-core/prefetch");
+          const { defaultConnectorClient } = await import("@pal/bridge-core/prefetch");
           const client = defaultConnectorClient(this.logger);
           const kw = hints?.keyword || originalQuery;
           const result = await client.execute("gmail", "search", { query: kw, limit: 8 })
@@ -532,7 +533,7 @@ export class WhatsAppSession {
       },
       googleCalendar: async (instruction, hints) => {
         try {
-          const { defaultConnectorClient } = await import("@lantern/bridge-core/prefetch");
+          const { defaultConnectorClient } = await import("@pal/bridge-core/prefetch");
           const client = defaultConnectorClient(this.logger);
           const params: Record<string, unknown> = { limit: 10 };
           if (typeof hints?.sinceMs === "number") params.timeMin = new Date(hints.sinceMs).toISOString();
@@ -555,14 +556,14 @@ export class WhatsAppSession {
 
   // Outbound TTS via control-plane → OpenAI tts-1. Returns Buffer
   // (mp3 bytes) or null if disabled / errored. Called by the
-  // owner-self-chat sender when LANTERN_VOICE_OUT=on and the reply
+  // owner-self-chat sender when PAL_VOICE_OUT=on and the reply
   // is short enough to make sense as a voice note.
   private async ttsAudio(text: string): Promise<Buffer | null> {
     if ((process.env.PAL_VOICE_OUT ?? "off").toLowerCase() !== "on") return null;
     const t = text.trim();
     if (!t || t.length > 1000) return null;
     try {
-      const { authedFetch } = await import("@lantern/bridge-core/auth");
+      const { authedFetch } = await import("@pal/bridge-core/auth");
       const voice = process.env.PAL_VOICE_OUT_VOICE || "nova";
       const res = await authedFetch("/v1/voice/tts", {
         method: "POST",
@@ -623,7 +624,7 @@ export class WhatsAppSession {
     const ownerProfileProse = this.ownerProfileStore.prose();
     const relationshipsBlock = this.ownerProfileStore.relationshipsBlock();
     const systemHint = [
-      `You are Lantern — ${ownerName}'s Jarvis, replying via voice/iOS shortcut. Answer is going to be SPOKEN aloud, so:`,
+      `You are pal — ${ownerName}'s Jarvis, replying via voice/iOS shortcut. Answer is going to be SPOKEN aloud, so:`,
       `  • One short sentence is ideal. Two short sentences max.`,
       `  • No markdown, no bullet lists, no emoji. Just words.`,
       `  • Direct and confident. Don't hedge.`,
@@ -959,7 +960,7 @@ export class WhatsAppSession {
   private hookHistorySync(): void {
     if (!this.socket) return;
     if (!WhatsAppSession.HISTORY_BACKFILL_ENABLED) {
-      this.logger.info({}, "WhatsApp history backfill disabled by LANTERN_WA_HISTORY_BACKFILL=off");
+      this.logger.info({}, "WhatsApp history backfill disabled by PAL_WA_HISTORY_BACKFILL=off");
       return;
     }
     // Pre-seed historySeenIds from the existing JSONL so a restart
@@ -1220,7 +1221,7 @@ export class WhatsAppSession {
   private macActions: MacActions | null = null;
   // Event scout (mirrors the iMessage bridge). Owner commands ("scan
   // events", "book 1,3", "events add/drop/categories") always work; the
-  // SCHEDULED weekly scan defaults OFF here (LANTERN_EVENT_SCOUT_WA=1 to
+  // SCHEDULED weekly scan defaults OFF here (PAL_EVENT_SCOUT_WA=1 to
   // enable) so the owner isn't texted the same weekly list on two
   // channels — iMessage is the primary proactive surface.
   private scoutState: EventScoutState | null = null;
@@ -1259,8 +1260,8 @@ export class WhatsAppSession {
   // jid; one-shot; expires with OFFER_TTL_MS.
   private pendingBookingConfirm: Map<
     string,
-    import("@lantern/bridge-core/life-events").PendingBooking & {
-      event: import("@lantern/bridge-core/life-events").LifeEvent;
+    import("@pal/bridge-core/life-events").PendingBooking & {
+      event: import("@pal/bridge-core/life-events").LifeEvent;
     }
   > = new Map();
   // B5 — inline draft editing. When a high-stakes / LOW-confidence reply is
@@ -1344,7 +1345,7 @@ export class WhatsAppSession {
   private static readonly AUTO_BACKFILL_COUNT = 200;
 
   // History backfill on/off. Default on. Set
-  // LANTERN_WA_HISTORY_BACKFILL=off if a host is memory-constrained
+  // PAL_WA_HISTORY_BACKFILL=off if a host is memory-constrained
   // or doesn't want the JSONL to grow.
   private static readonly HISTORY_BACKFILL_ENABLED =
     (process.env.PAL_WA_HISTORY_BACKFILL ?? "on").toLowerCase() !== "off";
@@ -1433,10 +1434,10 @@ export class WhatsAppSession {
   // Draft-approval queue toggle. When OFF (default), VIPs stay silent
   // and unfamiliar contacts auto-reply. When ON, both queue a draft
   // for owner approval via the dashboard. Seeded from env var
-  // LANTERN_DRAFT_APPROVALS on first boot; once persisted in
+  // PAL_DRAFT_APPROVALS on first boot; once persisted in
   // agent_state.json, the saved value wins so phone commands stick.
   // Toggle from self-chat: "approvals on" / "approvals off" /
-  // /lantern approvals on|off.
+  // /pal approvals on|off.
   private draftApprovalsEnabled =
     (process.env.PAL_DRAFT_APPROVALS || "").toLowerCase() === "on";
   // Master switch for the panic channels on life-threat escalation
@@ -1485,7 +1486,7 @@ export class WhatsAppSession {
   private static readonly LOCATION_ACK_TTL_MS = 60 * 60_000;
 
   // A8: send blue ticks before "typing…". Gated so it can be disabled
-  // (LANTERN_WA_READ_RECEIPTS=off) — some owners prefer read receipts
+  // (PAL_WA_READ_RECEIPTS=off) — some owners prefer read receipts
   // off entirely. On by default to match real human behavior.
   private readonly readReceiptsEnabled: boolean =
     (process.env.PAL_WA_READ_RECEIPTS || "on").toLowerCase() !== "off";
@@ -1500,7 +1501,7 @@ export class WhatsAppSession {
   // AFTER a restart can still reconstruct the prompt and regenerate.
   private bridgeReplyMeta: Map<string, ReplyMetaEntry> = new Map();
   private static readonly REPLY_META_MAX = 200;
-  // Bounded JSONL sidecar (~/.lantern/whatsapp-reply-meta.jsonl) — FIFO
+  // Bounded JSONL sidecar (~/.pal/whatsapp-reply-meta.jsonl) — FIFO
   // at REPLY_META_MAX. Survives restarts so the bad-feedback retry has
   // an anchor even when the reaction lands in a fresh process.
   private replyMetaFile: string = "";
@@ -1729,13 +1730,13 @@ export class WhatsAppSession {
   // 2) Anticipation nudges. Periodically gathers signals (key dates, overdue
   //    replies, upcoming events), ranks them via computeProactiveNudges, and
   //    DMs the owner each NEW nudge — deduped, quiet-hours-aware, killswitch-
-  //    aware, capped. Gated by LANTERN_PROACTIVE_NUDGES (default on; =0 off).
+  //    aware, capped. Gated by PAL_PROACTIVE_NUDGES (default on; =0 off).
   private nudgesTimer: ReturnType<typeof setInterval> | null = null;
   // 2b) Live watches — proactive follow-up on live situations a contact
   //     mentioned (a flight in the air, a game, an outage). Detected by an
   //     LLM pass after each contact reply, re-checked via web_search on a
   //     tick, and resolved with ONE short follow-up text to the contact
-  //     ("just saw the flight landed"). Gated by LANTERN_LIVE_WATCH
+  //     ("just saw the flight landed"). Gated by PAL_LIVE_WATCH
   //     (default on; =0/off disables). Store survives restarts.
   private watchStore: WatchStore | null = null;
   private watchTimer: ReturnType<typeof setInterval> | null = null;
@@ -1756,8 +1757,8 @@ export class WhatsAppSession {
     (process.env.PAL_PROACTIVE_NUDGES ?? "on").toLowerCase() !== "0" &&
     (process.env.PAL_PROACTIVE_NUDGES ?? "on").toLowerCase() !== "off";
   // 4) Concierge edge — task-capture + nudge + 1-click resolution.
-  //    DEFAULT OFF. Set LANTERN_CONCIERGE=on to enable.
-  // ponytail: ships dark; owner flips LANTERN_CONCIERGE=on to enable.
+  //    DEFAULT OFF. Set PAL_CONCIERGE=on to enable.
+  // ponytail: ships dark; owner flips PAL_CONCIERGE=on to enable.
   private static readonly CONCIERGE_ENABLED =
     ["on", "1"].includes((process.env.PAL_CONCIERGE ?? "").toLowerCase());
   // Spouse-nudge-agent: agentic handling of the inner circle's action items.
@@ -1777,65 +1778,65 @@ export class WhatsAppSession {
   // Per-chat numbered state for the command center. Maps owner JID → last shown
   // numbered list + 15-min expiry. Cleared on next Brief/plate/did render.
   private readonly centerState = new Map<string, CenterStateEntry>();
-  // ── Commute copilot (LANTERN_COMMUTE=on, default OFF) ──────────────────────
+  // ── Commute copilot (PAL_COMMUTE=on, default OFF) ──────────────────────
   // Ships dark. Fires hands-free commitment surface once per drive + park recap.
-  // ponytail: ships dark; owner flips LANTERN_COMMUTE=on to enable.
+  // ponytail: ships dark; owner flips PAL_COMMUTE=on to enable.
   private static readonly COMMUTE_ENABLED =
     ["on", "1"].includes((process.env.PAL_COMMUTE ?? "").toLowerCase());
   private static readonly COMMUTE_INTERVAL_MS = 5 * 60_000; // 5 min
   private commuteTimer: ReturnType<typeof setInterval> | null = null;
   private commuteDriveFired = false;   // reset on park transition
   private commuteWasLastDriving = false;
-  // ── Energy guardian (LANTERN_ENERGY=on, default OFF) ───────────────────────
+  // ── Energy guardian (PAL_ENERGY=on, default OFF) ───────────────────────
   // Ships dark. Nudges once per day when last-night's sleep < 6h.
-  // ponytail: ships dark; owner flips LANTERN_ENERGY=on to enable.
+  // ponytail: ships dark; owner flips PAL_ENERGY=on to enable.
   private static readonly ENERGY_ENABLED =
     ["on", "1"].includes((process.env.PAL_ENERGY ?? "").toLowerCase());
   private static readonly ENERGY_INTERVAL_MS = 30 * 60_000; // 30 min
   private energyTimer: ReturnType<typeof setInterval> | null = null;
   private energyNudgedDate = ""; // YYYY-MM-DD — set after sending, reset on new date
-  private readonly energyNudgeFile = join(homedir(), ".lantern", "whatsapp-energy-nudge.json");
+  private readonly energyNudgeFile = join(palStateDir(), "whatsapp-energy-nudge.json");
   // Proactive "top AI drops" — push only high-signal NEW news. ON by default.
   private static readonly NEWS_PROACTIVE_ENABLED =
     !["off", "0", "false"].includes((process.env.PAL_NEWS_PROACTIVE ?? "on").toLowerCase());
   private static readonly NEWS_PROACTIVE_INTERVAL_MS = 12 * 60_000; // ~12 min — near-real-time major-release alerts
   private newsTimer: ReturnType<typeof setInterval> | null = null;
   private newsPushed = new Set<string>();
-  private readonly newsPushedFile = join(homedir(), ".lantern", "whatsapp-news-pushed.json");
+  private readonly newsPushedFile = join(palStateDir(), "whatsapp-news-pushed.json");
   private newsNeedsSeed = false;
   private lastNewsDigestDay = "";
   private proactiveMuteUntil = 0; // epoch ms; while now < this, all proactive pushes pause ("quiet [Nh]")
-  private readonly proactiveMuteFile = join(homedir(), ".lantern", "whatsapp-proactive-mute.txt");
-  // ── Health coach (LANTERN_HEALTH=on, default OFF) ──────────────────────────
+  private readonly proactiveMuteFile = join(palStateDir(), "whatsapp-proactive-mute.txt");
+  // ── Health coach (PAL_HEALTH=on, default OFF) ──────────────────────────
   // Ships dark. Nudges daily on step goal + acks workouts + weekly trend.
-  // ponytail: ships dark; owner flips LANTERN_HEALTH=on to enable.
+  // ponytail: ships dark; owner flips PAL_HEALTH=on to enable.
   private static readonly HEALTH_ENABLED =
     ["on", "1"].includes((process.env.PAL_HEALTH ?? "").toLowerCase());
   private static readonly HEALTH_INTERVAL_MS = 60 * 60_000; // 60 min
   private healthTimer: ReturnType<typeof setInterval> | null = null;
   private healthNudgedDate = ""; // YYYY-MM-DD
   private healthWeeklyFiredWeek = ""; // "YYYY-WNN" — weekly summary dedup
-  private readonly healthNudgeFile = join(homedir(), ".lantern", "whatsapp-health-nudge.json");
-  // ── Focus guardian (LANTERN_FOCUS=on, default OFF) ─────────────────────────
+  private readonly healthNudgeFile = join(palStateDir(), "whatsapp-health-nudge.json");
+  // ── Focus guardian (PAL_FOCUS=on, default OFF) ─────────────────────────
   // Ships dark. Holds non-urgent nudges during heads-down; recaps on release.
-  // ponytail: ships dark; owner flips LANTERN_FOCUS=on to enable.
+  // ponytail: ships dark; owner flips PAL_FOCUS=on to enable.
   private static readonly FOCUS_ENABLED =
     ["on", "1"].includes((process.env.PAL_FOCUS ?? "").toLowerCase());
   private focusWasActive = false; // updated each health tick
   private focusHeldItems: string[] = []; // nudge texts buffered during focus
   private focusActiveStartMs: number | null = null;
-  private readonly focusHeldFile = join(homedir(), ".lantern", "whatsapp-focus-held.json");
-  // ── Doc ingest (LANTERN_DOC_INGEST=on, default OFF) ───────────────────────
+  private readonly focusHeldFile = join(palStateDir(), "whatsapp-focus-held.json");
+  // ── Doc ingest (PAL_DOC_INGEST=on, default OFF) ───────────────────────
   // Ships dark. Scans allowed-root docs daily, classifies by domain, files
   // structured records to /v1/domain-records. Owner-only; path-gated.
-  // ponytail: ships dark; owner flips LANTERN_DOC_INGEST=on to enable.
+  // ponytail: ships dark; owner flips PAL_DOC_INGEST=on to enable.
   private static readonly DOC_INGEST_ENABLED =
     ["on", "1"].includes((process.env.PAL_DOC_INGEST ?? "").toLowerCase());
   private static readonly DOC_INGEST_INTERVAL_MS = 24 * 60 * 60_000; // 24h
   private docIngestTimer: ReturnType<typeof setInterval> | null = null;
   private readonly docIngestClient = new DomainRecordsClient(authedFetch);
   // 3) Draft-and-confirm for LOW-confidence replies. OPT-IN
-  //    (LANTERN_DRAFT_HIGH_STAKES=on) — default OFF. On-by-default silently
+  //    (PAL_DRAFT_HIGH_STAKES=on) — default OFF. On-by-default silently
   //    drafted normal short/cold-contact family messages instead of replying
   //    ("bot isn't responding"). Off → LOW falls back to held-then-send so
   //    benign messages get a reply; the targeted foreign-language
@@ -1947,7 +1948,7 @@ export class WhatsAppSession {
     this.seedOwnerSentFromHistory();
     // Reply-meta sidecar: load prior tracked replies so a 👎 / 🔁 that
     // lands after a restart can still regenerate. Bounded; best-effort.
-    this.replyMetaFile = join(homedir(), ".lantern", "whatsapp-reply-meta.jsonl");
+    this.replyMetaFile = join(palStateDir(), "whatsapp-reply-meta.jsonl");
     this.loadReplyMetaSidecar();
     // GC stale bridgeSentIds every minute so a missed echo doesn't leak mem.
     this.gcTimer = setInterval(() => this.gcBridgeSentIds(), 60_000);
@@ -1959,8 +1960,8 @@ export class WhatsAppSession {
     );
     this.pauseTickerTimer.unref?.();
     // Overnight replay queue: persisted alongside the reply-meta sidecar in
-    // ~/.lantern (NOT auth_sessions/, so a re-pair reset doesn't wipe it).
-    this.overnightQueueFile = join(homedir(), ".lantern", "whatsapp-overnight-queue.jsonl");
+    // ~/.pal (NOT auth_sessions/, so a re-pair reset doesn't wipe it).
+    this.overnightQueueFile = join(palStateDir(), "whatsapp-overnight-queue.jsonl");
     this.loadOvernightQueue();
     // Seed the edge detector with the CURRENT window so a boot that lands
     // inside quiet hours doesn't immediately count as a falling edge.
@@ -1972,9 +1973,9 @@ export class WhatsAppSession {
     this.overnightTimer.unref?.();
 
     // ── Proactive-intelligence schedulers ──────────────────────────────
-    // Persisted-fired-nudge dedupe set lives in ~/.lantern (survives a
+    // Persisted-fired-nudge dedupe set lives in ~/.pal (survives a
     // re-pair reset, like the reply-meta + overnight sidecars).
-    this.firedNudgeKeysFile = join(homedir(), ".lantern", "whatsapp-fired-nudges.json");
+    this.firedNudgeKeysFile = join(palStateDir(), "whatsapp-fired-nudges.json");
     this.loadFiredNudgeKeys();
     // Learning flywheel: distil 👎 feedback → style lessons every 8h.
     this.flywheelTimer = setInterval(() => void this.runFlywheelTick(), WhatsAppSession.FLYWHEEL_INTERVAL_MS);
@@ -2006,7 +2007,7 @@ export class WhatsAppSession {
       this.watchTimer = setInterval(() => void this.runWatchTick(), WhatsAppSession.WATCH_TICK_MS);
       this.watchTimer.unref?.();
     }
-    // Concierge nudge poll (LANTERN_CONCIERGE=on only).
+    // Concierge nudge poll (PAL_CONCIERGE=on only).
     if (WhatsAppSession.CONCIERGE_ENABLED) {
       this.conciergeTimer = setInterval(
         () => void this.runConciergeTick(),
@@ -2017,7 +2018,7 @@ export class WhatsAppSession {
       const conciergeKick = setTimeout(() => void this.runConciergeTick(), 90_000);
       conciergeKick.unref?.();
     }
-    // Commute copilot (LANTERN_COMMUTE=on only).
+    // Commute copilot (PAL_COMMUTE=on only).
     if (WhatsAppSession.COMMUTE_ENABLED) {
       this.commuteTimer = setInterval(
         () => void this.runCommuteTick(),
@@ -2027,7 +2028,7 @@ export class WhatsAppSession {
     }
     // Restore an in-flight "quiet [Nh]" window across restarts.
     try { this.proactiveMuteUntil = parseInt(readFileSync(this.proactiveMuteFile, "utf8").trim(), 10) || 0; } catch { /* none */ }
-    // Proactive AI top-drops (ON by default; LANTERN_NEWS_PROACTIVE=off to silence).
+    // Proactive AI top-drops (ON by default; PAL_NEWS_PROACTIVE=off to silence).
     if (WhatsAppSession.NEWS_PROACTIVE_ENABLED) {
       this.newsNeedsSeed = !existsSync(this.newsPushedFile);
       try {
@@ -2039,7 +2040,7 @@ export class WhatsAppSession {
       this.newsTimer = setInterval(() => void this.runNewsProactiveTick(), WhatsAppSession.NEWS_PROACTIVE_INTERVAL_MS);
       this.newsTimer.unref?.();
     }
-    // Energy guardian (LANTERN_ENERGY=on only).
+    // Energy guardian (PAL_ENERGY=on only).
     if (WhatsAppSession.ENERGY_ENABLED) {
       this.loadEnergyNudgeState();
       this.energyTimer = setInterval(
@@ -2048,7 +2049,7 @@ export class WhatsAppSession {
       );
       this.energyTimer.unref?.();
     }
-    // Health coach (LANTERN_HEALTH=on only).
+    // Health coach (PAL_HEALTH=on only).
     if (WhatsAppSession.HEALTH_ENABLED) {
       this.loadHealthNudgeState();
       this.loadFocusHeldItems();
@@ -2058,7 +2059,7 @@ export class WhatsAppSession {
       );
       this.healthTimer.unref?.();
     }
-    // Doc ingest (LANTERN_DOC_INGEST=on only).
+    // Doc ingest (PAL_DOC_INGEST=on only).
     if (WhatsAppSession.DOC_INGEST_ENABLED) {
       this.docIngestTimer = setInterval(
         () => void this.runDocIngestTick(),
@@ -2126,7 +2127,7 @@ export class WhatsAppSession {
     // branch below replies in UNmonitored groups too — so clearing the list
     // would not actually have stopped group replies. One switch, checked before
     // every group path, is the only version that is true by construction.
-    // Set LANTERN_GROUP_REPLIES=1 to re-enable.
+    // Set PAL_GROUP_REPLIES=1 to re-enable.
     if (!groupRepliesEnabled()) return false;
     const wishToOwner = isCelebratoryWish(text) && this.isAddressedToOwner(text);
     if (wishToOwner) return true; // a wish naming the owner bypasses monitoring
@@ -2305,7 +2306,7 @@ export class WhatsAppSession {
       switch (next) {
         case "conflict":
           return [
-            "⚠️ *Lantern alert: WhatsApp conflict*",
+            "⚠️ *pal alert: WhatsApp conflict*",
             "",
             `Another WhatsApp Web session is active for ${phone} and keeps stealing the bridge's slot. The bridge has stopped retrying.`,
             "",
@@ -2313,12 +2314,12 @@ export class WhatsAppSession {
             "1. On your phone: WhatsApp → Settings → Linked Devices",
             "2. Log out every device in the list",
             "3. Wait 60 seconds",
-            "4. Open the Lantern dashboard → Channels → WhatsApp → Pair with QR",
+            "4. Open the PAL dashboard → Channels → WhatsApp → Pair with QR",
             reason ? `\n_detail: ${reason}_` : "",
           ].filter(Boolean).join("\n");
         case "logged_out":
           return [
-            "🚪 *Lantern alert: WhatsApp unlinked*",
+            "🚪 *pal alert: WhatsApp unlinked*",
             "",
             `Your phone unlinked the bridge from ${phone}. The bridge is no longer paired.`,
             "",
@@ -2329,7 +2330,7 @@ export class WhatsAppSession {
           ].filter(Boolean).join("\n");
         case "error":
           return [
-            "🔴 *Lantern alert: WhatsApp bridge error*",
+            "🔴 *pal alert: WhatsApp bridge error*",
             "",
             `The bridge hit an error and may not be receiving messages.`,
             reason ? `\n_${reason}_\n` : "",
@@ -2476,7 +2477,7 @@ export class WhatsAppSession {
         // than the trimmed default of ~3 days). This is what makes
         // `search_whatsapp_history` actually useful for past questions
         // like "what did the family group say during my Turkey trip".
-        // Disabled when LANTERN_WA_HISTORY_BACKFILL=off.
+        // Disabled when PAL_WA_HISTORY_BACKFILL=off.
         syncFullHistory: WhatsAppSession.HISTORY_BACKFILL_ENABLED,
         // Accept every history message regardless of type. Default
         // returns false for ephemeral/protocol messages; we want
@@ -2566,7 +2567,7 @@ export class WhatsAppSession {
           this.everConnected = true;
 
           // Start the daily morning digest scheduler. Sends a brief
-          // self-chat summary every morning at LANTERN_DIGEST_HOUR.
+          // self-chat summary every morning at PAL_DIGEST_HOUR.
           this.startDailyDigest();
           this.startOfflineMonitor();
 
@@ -2596,11 +2597,11 @@ export class WhatsAppSession {
             if (wasFirstPair) {
               void this.confirmToSelf(
                 [
-                  "🟢 *Lantern is connected*",
+                  "🟢 *pal is connected*",
                   "",
                   "I'll auto-reply to DMs (and @mentions in monitored groups).",
-                  "Reply `/lantern status` anytime to verify I'm still alive.",
-                  "Reply `/lantern help` for the full command list.",
+                  "Reply `/pal status` anytime to verify I'm still alive.",
+                  "Reply `/pal help` for the full command list.",
                 ].join("\n")
               );
             }
@@ -2688,7 +2689,7 @@ export class WhatsAppSession {
               if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
               this.setConnectionState(
                 "conflict",
-                "Another Lantern bridge is using this WhatsApp session. Went dormant to stop fighting — shut down the duplicate, then Reconnect.",
+                "Another pal bridge is using this WhatsApp session. Went dormant to stop fighting — shut down the duplicate, then Reconnect.",
               );
               this.logger.error(
                 { conflicts: this.conflictStormCount, windowMs: WhatsAppSession.CONFLICT_STORM_WINDOW_MS },
@@ -3095,7 +3096,7 @@ export class WhatsAppSession {
           }
 
           // Voice command path: if the OWNER sent themselves a voice
-          // note that starts with "lantern, ..." we transcribe + parse
+          // note that starts with "pal, ..." we transcribe + parse
           // + dispatch. Whisper round-trip is cheaper than an LLM
           // round-trip and the wake-word guard prevents misfires.
           if (msg.key.fromMe && !text && this.media.hasMedia(msg) && this.isSelfChat(from)) {
@@ -3112,7 +3113,7 @@ export class WhatsAppSession {
                 await this.handleSelfChatCommand(voiceCmd, from);
                 continue;
               }
-              // Not a "lantern …" command — treat the transcript as a normal
+              // Not a "pal …" command — treat the transcript as a normal
               // owner message so a voice note gets a conversational reply
               // exactly like typed text (was: silently dropped because `text`
               // stayed empty → the fromMe `if (!text) continue` below ate it).
@@ -3259,7 +3260,7 @@ export class WhatsAppSession {
           // DEDICATED-BOT MODE: owner DMs the bot from their primary
           // WhatsApp number. msg.key.fromMe is false here (the bot's
           // session didn't author it), but isOwnerChat(from) is true
-          // (the sender JID matches LANTERN_WA_OWNER_JID). Route the
+          // (the sender JID matches PAL_WA_OWNER_JID). Route the
           // same owner-control + docs + commands path used in
           // self-chat mode so all features (status, /bot off, doc
           // queries, agentic actions) work identically.
@@ -3323,7 +3324,7 @@ export class WhatsAppSession {
           // has its own earlier skip that the wish bypass could slip past.
           // Both are gated so no group path stays open.
           if (isGroup && !groupRepliesEnabled()) {
-            this.logger.info({ from }, "group msg ignored — group replies disabled (LANTERN_GROUP_REPLIES=1 to enable)");
+            this.logger.info({ from }, "group msg ignored — group replies disabled (PAL_GROUP_REPLIES=1 to enable)");
             continue;
           }
           // Groups are opt-in: silently skip anything not on the monitor list.
@@ -3559,7 +3560,7 @@ export class WhatsAppSession {
     }
     if (isBlockedGroupSend(to)) {
       this.blockedGroupSends++;
-      this.logger.warn({ to, textPreview: text.slice(0, 80) }, "group send BLOCKED at boundary — group replies disabled (LANTERN_GROUP_REPLIES=1 to enable)");
+      this.logger.warn({ to, textPreview: text.slice(0, 80) }, "group send BLOCKED at boundary — group replies disabled (PAL_GROUP_REPLIES=1 to enable)");
       return undefined;
     }
     // FINAL PASS — verifiable-claims rewriter. Catches false-action
@@ -3728,7 +3729,7 @@ export class WhatsAppSession {
     let kind: "appointment" | "spam" | "other";
     let signals: string[];
     try {
-      const { classifyUnknownInbound } = await import("@lantern/bridge-core/inbound-classifier");
+      const { classifyUnknownInbound } = await import("@pal/bridge-core/inbound-classifier");
       ({ kind, signals } = classifyUnknownInbound(text));
     } catch { return "pass"; }
     if (kind === "other") return "pass";
@@ -3736,12 +3737,12 @@ export class WhatsAppSession {
       // Owner directive: respond to EVERYBODY. A real new customer's opener can
       // trip the spam heuristic (a shortlink, the word "deal"), and silencing
       // them is exactly the live-demo failure. Default = fall through to a
-      // normal auto-reply. Set LANTERN_SUPPRESS_SPAM=on to restore silencing.
+      // normal auto-reply. Set PAL_SUPPRESS_SPAM=on to restore silencing.
       if (["on", "1"].includes((process.env.PAL_SUPPRESS_SPAM ?? "").toLowerCase())) {
-        this.logger.warn({ from, signals }, "ingest: NO reply — marketing/spam suppressed from unknown sender (LANTERN_SUPPRESS_SPAM on)");
+        this.logger.warn({ from, signals }, "ingest: NO reply — marketing/spam suppressed from unknown sender (PAL_SUPPRESS_SPAM on)");
         return "handled";
       }
-      this.logger.warn({ from, signals }, "ingest: spam heuristic matched unknown sender — replying anyway (respond-to-everybody default; set LANTERN_SUPPRESS_SPAM=on to silence)");
+      this.logger.warn({ from, signals }, "ingest: spam heuristic matched unknown sender — replying anyway (respond-to-everybody default; set PAL_SUPPRESS_SPAM=on to silence)");
       return "pass";
     }
     this.logger.info({ from, signals }, "ingest: appointment confirmation from unknown sender");
@@ -3766,8 +3767,8 @@ export class WhatsAppSession {
   // suppress), false when it's not actionable (caller falls back to legacy).
   private async surfaceLifeEvent(from: string, text: string): Promise<boolean> {
     const { classifyLifeEvent, makeLifeEventLlm, proactiveDecision, isActionableKind, autoActDecision } =
-      await import("@lantern/bridge-core/life-events");
-    const { loadLifeEventPrefs, isAutoActPaused } = await import("@lantern/bridge-core/life-events-store");
+      await import("@pal/bridge-core/life-events");
+    const { loadLifeEventPrefs, isAutoActPaused } = await import("@pal/bridge-core/life-events-store");
 
     // Unknown-sender inbound only — LLM classifier runs on the transactional
     // tail, not chit-chat. Dedicated `::lifeevent` key, never the live jid.
@@ -3788,7 +3789,7 @@ export class WhatsAppSession {
 
     // ── AUTO-ACT LADDER ── safe+reversible (delivery→note, appointment/travel→
     // calendar) fire automatically; money/fraud/OTP/sending never do. Kill
-    // switch (LANTERN_LIFE_EVENT_AUTOACT, default on) + persisted pause flag.
+    // switch (PAL_LIFE_EVENT_AUTOACT, default on) + persisted pause flag.
     const autoEnabled =
       (process.env.PAL_LIFE_EVENT_AUTOACT || "on").toLowerCase() !== "off" && !isAutoActPaused();
     const auto = autoActDecision(event, prefs, { enabled: autoEnabled });
@@ -3810,7 +3811,7 @@ export class WhatsAppSession {
     // the same owner DM unbounded. Reuse the key already computed for auto-act
     // so all routes share one guard.
     if (auto.idempotencyKey) {
-      const { hasActed, markActed } = await import("@lantern/bridge-core/life-events-store");
+      const { hasActed, markActed } = await import("@pal/bridge-core/life-events-store");
       if (hasActed(auto.idempotencyKey)) {
         this.logger.info(
           { kind: event.kind, idempotencyKey: auto.idempotencyKey, route: decision.route },
@@ -3832,7 +3833,7 @@ export class WhatsAppSession {
       // Emit to Automations dashboard (best-effort, fire-and-forget).
       void (async () => {
         try {
-          const { emitLifeEvent } = await import("@lantern/bridge-core/life-events-emit");
+          const { emitLifeEvent } = await import("@pal/bridge-core/life-events-emit");
           await emitLifeEvent(event, "suggested", {
             idempotencyKey: auto.idempotencyKey,
             summary: decision.ownerMessage,
@@ -3865,7 +3866,7 @@ export class WhatsAppSession {
     // Emit to Automations dashboard (best-effort, fire-and-forget).
     void (async () => {
       try {
-        const { emitLifeEvent } = await import("@lantern/bridge-core/life-events-emit");
+        const { emitLifeEvent } = await import("@pal/bridge-core/life-events-emit");
         await emitLifeEvent(event, "suggested", {
           idempotencyKey: auto.idempotencyKey,
           summary: decision.ownerMessage,
@@ -3885,7 +3886,7 @@ export class WhatsAppSession {
     this.lastLifeEventKind = null;
     void (async () => {
       try {
-        const { persistAccept, persistIgnore } = await import("@lantern/bridge-core/life-events-store");
+        const { persistAccept, persistIgnore } = await import("@pal/bridge-core/life-events-store");
         if (accepted) persistAccept(kind); else persistIgnore(kind);
       } catch { /* best-effort */ }
     })();
@@ -3896,17 +3897,17 @@ export class WhatsAppSession {
   // restarts (hasActed/markActed). On error → suggest fallback (never silent).
   private async autoActLifeEvent(
     ownJid: string,
-    event: import("@lantern/bridge-core/life-events").LifeEvent,
+    event: import("@pal/bridge-core/life-events").LifeEvent,
     idempotencyKey: string,
     rawText: string,
   ): Promise<void> {
     if (!this.macActions) return;
-    const { hasActed, markActed } = await import("@lantern/bridge-core/life-events-store");
+    const { hasActed, markActed } = await import("@pal/bridge-core/life-events-store");
     if (hasActed(idempotencyKey)) {
       this.logger.info({ kind: event.kind, idempotencyKey }, "auto-act skipped — already acted (idempotent)");
       return;
     }
-    const { eventStartIso } = await import("@lantern/bridge-core/life-events");
+    const { eventStartIso } = await import("@pal/bridge-core/life-events");
     try {
       if (event.kind === "delivery") {
         const f = event.fields;
@@ -3922,7 +3923,7 @@ export class WhatsAppSession {
         // Emit auto_acted to Automations dashboard (best-effort, fire-and-forget).
         void (async () => {
           try {
-            const { emitLifeEvent } = await import("@lantern/bridge-core/life-events-emit");
+            const { emitLifeEvent } = await import("@pal/bridge-core/life-events-emit");
             await emitLifeEvent(event, "auto_acted", {
               idempotencyKey,
               actionTaken: "logged in Deliveries note",
@@ -3943,7 +3944,7 @@ export class WhatsAppSession {
       const friendly = new Date(startIso).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
       this.pendingBookingConfirm.set(ownJid, {
         title, startIso, endIso: localPlus30(startIso),
-        notes: `Auto-added by Lantern from: "${rawText.slice(0, 200)}"`,
+        notes: `Auto-added by pal from: "${rawText.slice(0, 200)}"`,
         lifeEventKind: event.kind, idempotencyKey, rawText,
         issuedAt: Date.now(), event,
       });
@@ -3959,12 +3960,12 @@ export class WhatsAppSession {
   // undo → emit. Only reached via the self-chat confirm intercept on a "yes".
   private async bookPendingCalendar(
     ownJid: string,
-    p: import("@lantern/bridge-core/life-events").PendingBooking & {
-      event: import("@lantern/bridge-core/life-events").LifeEvent;
+    p: import("@pal/bridge-core/life-events").PendingBooking & {
+      event: import("@pal/bridge-core/life-events").LifeEvent;
     },
   ): Promise<void> {
     if (!this.macActions) return;
-    const { markActed } = await import("@lantern/bridge-core/life-events-store");
+    const { markActed } = await import("@pal/bridge-core/life-events-store");
     const res = await this.macActions.createCalendarEvent({
       title: p.title, start: p.startIso, end: p.endIso, notes: p.notes,
     });
@@ -3981,7 +3982,7 @@ export class WhatsAppSession {
     // Emit auto_acted to Automations dashboard (best-effort, fire-and-forget).
     void (async () => {
       try {
-        const { emitLifeEvent } = await import("@lantern/bridge-core/life-events-emit");
+        const { emitLifeEvent } = await import("@pal/bridge-core/life-events-emit");
         await emitLifeEvent(p.event, "auto_acted", {
           idempotencyKey: p.idempotencyKey,
           actionTaken: `added to calendar — ${p.title}`,
@@ -4021,7 +4022,7 @@ export class WhatsAppSession {
   private async releaseLifeEventClaim(key: string | undefined, why: string): Promise<void> {
     if (!key) return;
     try {
-      const { unmarkActed } = await import("@lantern/bridge-core/life-events-store");
+      const { unmarkActed } = await import("@pal/bridge-core/life-events-store");
       unmarkActed(key);
       this.logger.warn({ idempotencyKey: key, why }, "life-event claim released — not delivered, will retry");
     } catch (err) {
@@ -4031,12 +4032,12 @@ export class WhatsAppSession {
 
   private async autoActFallbackToSuggest(
     ownJid: string,
-    event: import("@lantern/bridge-core/life-events").LifeEvent,
+    event: import("@pal/bridge-core/life-events").LifeEvent,
     rawText: string,
     reason?: string,
   ): Promise<void> {
     this.logger.warn({ kind: event.kind, reason }, "auto-act fell back to suggest");
-    const { proactiveDecision } = await import("@lantern/bridge-core/life-events");
+    const { proactiveDecision } = await import("@pal/bridge-core/life-events");
     const decision = proactiveDecision(event);
     await this.confirmToSelf(decision.ownerMessage).catch(() => {});
     this.lastLifeEventKind = event.kind;
@@ -4055,7 +4056,7 @@ export class WhatsAppSession {
   // Record an auto-action into the recap ring (last 24h, capped).
   // Rephrase a deterministic proactive nudge in the owner's casual voice so the
   // same daily nudge doesn't read identically every day. Facts/numbers preserved
-  // by rephraseNudge's guards; any doubt → deterministic text. LANTERN_NUDGE_VOICE=off.
+  // by rephraseNudge's guards; any doubt → deterministic text. PAL_NUDGE_VOICE=off.
   private async nudgeVoice(text: string): Promise<string> {
     if ((process.env.PAL_NUDGE_VOICE || "on").toLowerCase() === "off") return text;
     return rephraseNudge(
@@ -4123,7 +4124,7 @@ export class WhatsAppSession {
    * Backs the `search_contacts` agentic tool.
    */
   async searchContacts(query: string, limit?: number) {
-    const { searchAddressBookContacts } = await import("@lantern/bridge-core/contact-resolver");
+    const { searchAddressBookContacts } = await import("@pal/bridge-core/contact-resolver");
     return searchAddressBookContacts(query, { limit, logger: this.logger });
   }
 
@@ -4161,7 +4162,7 @@ export class WhatsAppSession {
 
   /**
    * Pause agent auto-replies for one contact until now + ttlMs. Default TTL
-   * is LANTERN_AGENT_PAUSE_MIN (60 min) which matches the "owner took over"
+   * is PAL_AGENT_PAUSE_MIN (60 min) which matches the "owner took over"
    * heuristic; callers can pass INDEFINITE_MS for an explicit indefinite pause.
    *
    * pushName for the grace-period warning is resolved in priority order:
@@ -4203,7 +4204,7 @@ export class WhatsAppSession {
   // Best-effort, cached, never throws. Parity with the iMessage bridge.
   private async warmContactIndex(): Promise<void> {
     try {
-      const { loadAddressBookIndex } = await import("@lantern/bridge-core/contact-resolver");
+      const { loadAddressBookIndex } = await import("@pal/bridge-core/contact-resolver");
       const idx = await loadAddressBookIndex({ logger: this.logger });
       this.logger.info({ contacts: idx?.byPhone.size ?? 0 }, "contact index warmed");
     } catch {
@@ -4225,7 +4226,7 @@ export class WhatsAppSession {
       // corrected name outranks the AddressBook/pushName (parity with iMessage).
       const corrected = resolveIdentity(jid);
       if (corrected) { this.rememberContactName(jid, corrected); return; }
-      const { nameForHandle } = await import("@lantern/bridge-core/contact-resolver");
+      const { nameForHandle } = await import("@pal/bridge-core/contact-resolver");
       const saved = await nameForHandle(jid, { logger: this.logger });
       if (saved) {
         this.rememberContactName(jid, saved);
@@ -4323,7 +4324,7 @@ export class WhatsAppSession {
     return s;
   }
 
-  // jid -> {name, fetchedAt}. Cached so /lantern groups doesn't hit
+  // jid -> {name, fetchedAt}. Cached so /pal groups doesn't hit
   // Baileys' groupMetadata RPC for every entry on every command. TTL is
   // generous since group names rarely change.
   private groupNameCache: Map<string, { name: string; fetchedAt: number }> = new Map();
@@ -4332,7 +4333,7 @@ export class WhatsAppSession {
   /**
    * Best-effort group name lookup. Returns null when Baileys can't reach
    * WhatsApp, the group metadata isn't cached yet, or the JID isn't a
-   * group. Used by /lantern groups so the listing shows readable names
+   * group. Used by /pal groups so the listing shows readable names
    * instead of raw `120363...@g.us` JIDs.
    */
   async resolveGroupName(jid: string): Promise<string | null> {
@@ -4873,7 +4874,7 @@ export class WhatsAppSession {
   //   (A) DEDICATED BOT MODE — bridge paired to a SEPARATE WhatsApp
   //       number (Google Voice / Twilio / spare SIM) acting as the
   //       bot. Owner DMs the bot from their primary WhatsApp.
-  //       Set LANTERN_WA_OWNER_JID to the owner's primary JID,
+  //       Set PAL_WA_OWNER_JID to the owner's primary JID,
   //       either "<phone>@s.whatsapp.net" or just "<phone>".
   //   (B) SELF-CHAT MODE — single number; owner messages themselves.
   //
@@ -4900,7 +4901,7 @@ export class WhatsAppSession {
     const trimmed = text.trim().toLowerCase();
     // `self` here means "the owner-control channel" — either the
     // owner's own self-chat (single-account mode) OR a DM from the
-    // owner's primary number to this dedicated bot (LANTERN_WA_OWNER_JID).
+    // owner's primary number to this dedicated bot (PAL_WA_OWNER_JID).
     // Both topologies route through the same command + docs paths
     // since the semantics are identical: it's the owner addressing
     // the bot directly.
@@ -5244,17 +5245,18 @@ export class WhatsAppSession {
       return;
     }
 
-    // ---- /lantern command suite -------------------------------------------
+    // ---- /pal command suite (legacy /lantern accepted) --------------------
     //
     // Mobile-first status surface. Lets the user verify bridge health from
     // their phone without opening the dashboard. Works in any chat, but
     // status/help/ping replies always go to self-chat so they don't leak
     // into a friend's thread.
-    if (trimmed === "/lantern" || trimmed === "/lantern help") {
+    const slash = trimmed.replace(/^\/lantern(?=\s|$)/, "/pal");
+    if (slash === "/pal" || slash === "/pal help") {
       await this.sendReaction(jid, key, "📖");
       await this.confirmToSelf(
         [
-          "🤖 *Lantern commands*",
+          "🤖 *pal commands*",
           "",
           "Command center (type in self-chat):",
           "`?` or `today` — your daily brief (drafts + commitments + fyi)",
@@ -5267,9 +5269,9 @@ export class WhatsAppSession {
           "`1` — default · `1 done` · `1 snooze 2h` · `1 send` · `1 edit <text>`",
           "",
           "Bridge commands:",
-          "`/lantern status` — bridge uptime + agent state",
-          "`/lantern ping` — quick echo, confirms I'm alive",
-          "`/lantern groups` — list the groups I'm monitoring",
+          "`/pal status` — bridge uptime + agent state",
+          "`/pal ping` — quick echo, confirms I'm alive",
+          "`/pal groups` — list the groups I'm monitoring",
           "`/bot off` — silence me everywhere (or in this thread)",
           "`/bot on` — un-silence me",
           "`/bot status` — show paused contacts + monitored groups",
@@ -5280,11 +5282,11 @@ export class WhatsAppSession {
       return;
     }
 
-    // /lantern groups — list monitored groups with friendly names.
+    // /pal groups — list monitored groups with friendly names.
     // Falls back to bare JID when name lookup fails (e.g. metadata not
     // cached yet). Self-chat only so the list doesn't leak into a friend's
     // thread.
-    if (trimmed === "/lantern groups" && self) {
+    if (slash === "/pal groups" && self) {
       await this.sendReaction(jid, key, "👥");
       const monitored = [...this.monitoredGroups];
       if (monitored.length === 0) {
@@ -5305,7 +5307,7 @@ export class WhatsAppSession {
       return;
     }
 
-    if (trimmed === "/lantern status") {
+    if (slash === "/pal status") {
       const uptimeMs = Date.now() - this.startedAt;
       const uptimeStr = formatUptimeShort(uptimeMs);
       const state = this.getBotState();
@@ -5315,7 +5317,7 @@ export class WhatsAppSession {
         : null;
       await this.sendReaction(jid, key, "✅");
       const lines = [
-        `🤖 *Lantern* · ${state.muted ? "🔇 muted" : "🟢 active"}`,
+        `🤖 *pal* · ${state.muted ? "🔇 muted" : "🟢 active"}`,
         `uptime ${uptimeStr}${this.phoneNumber ? ` · 📞 +${this.phoneNumber}` : ""}`,
         `paused contacts: ${pausedCount} · monitored groups: ${state.monitoredGroups.length}`,
       ];
@@ -5329,7 +5331,7 @@ export class WhatsAppSession {
       return;
     }
 
-    if (trimmed === "/lantern ping") {
+    if (slash === "/pal ping") {
       // Cheapest possible health check — emoji-only. Confirms the bridge
       // received + processed the message round-trip.
       await this.sendReaction(jid, key, "🏓");
@@ -5429,7 +5431,7 @@ export class WhatsAppSession {
   private lifeEventDigestQueue: string[] = [];
   // Most-recent life-event kind surfaced — attributes a later accept/ignore to
   // the right kind for the owner-model downgrade.
-  private lastLifeEventKind: import("@lantern/bridge-core/life-events").LifeEventKind | null = null;
+  private lastLifeEventKind: import("@pal/bridge-core/life-events").LifeEventKind | null = null;
   // AUTO-ACT LADDER — in-memory ring of today's auto-actions for the recap.
   private autoActLog: Array<{ text: string; ts: number }> = [];
   private stateDir = "";
@@ -5442,7 +5444,7 @@ export class WhatsAppSession {
 
   private startOfflineMonitor(): void {
     if (this.offlineMonitor) return;
-    const mirror = new EmailMirror(this.logger, { subjectPrefix: "Lantern WhatsApp" });
+    const mirror = new EmailMirror(this.logger, { subjectPrefix: "pal WhatsApp" });
     this.offlineMonitor = new OfflineMonitor(
       this.logger,
       defaultOfflineMonitorConfig("WhatsApp"),
@@ -5529,7 +5531,7 @@ export class WhatsAppSession {
   // sleep signal is in the overnight window. Never throws.
   private async digestReadSleepHours(): Promise<number | null> {
     try {
-      const file = join(homedir(), ".lantern", "device-signals.jsonl");
+      const file = join(palStateDir(), "device-signals.jsonl");
       if (!existsSync(file)) return null;
       const tail = readFileSync(file, "utf8").split("\n").filter(Boolean).slice(-500);
       const signals = parseSignals(tail);
@@ -5574,7 +5576,7 @@ export class WhatsAppSession {
         const pausedCount = [...this.pausedUntil.entries()].filter(([, e]) => e.until > now).length;
         const phone = this.phoneNumber ? `+${this.phoneNumber}` : "(not paired)";
         return [
-          `🟢 *Lantern WhatsApp*`,
+          `🟢 *pal WhatsApp*`,
           `• bot: ${this.killSwitch ? "🚨 KILL SWITCH ENGAGED" : this.muted ? "off" : "on"}`,
           `• personal-docs: ${this.personalDocsEnabled ? "on" : "off"}`,
           `• approval queue: ${this.draftApprovalsEnabled ? "on" : "off"}`,
@@ -5671,7 +5673,7 @@ export class WhatsAppSession {
         return this.placeOutboundCallFromOwner(req);
       },
       setAutoAct: async (enabled: boolean) => {
-        const { setAutoActPaused } = await import("@lantern/bridge-core/life-events-store");
+        const { setAutoActPaused } = await import("@pal/bridge-core/life-events-store");
         setAutoActPaused(!enabled);
         this.logActivity(enabled ? "bot_on" : "bot_off", `auto-act ladder ${enabled ? "RESUMED" : "PAUSED"}`, { scope: "self" });
       },
@@ -5683,7 +5685,7 @@ export class WhatsAppSession {
     intent: { intent: "conference" | "voicemail" | "task"; target: string; message?: string; reason?: string; chatJid: string },
   ): Promise<{ ok: boolean; reason?: string }> {
     try {
-      const { authedFetch } = await import("@lantern/bridge-core/auth");
+      const { authedFetch } = await import("@pal/bridge-core/auth");
       const listRes = await authedFetch("/v1/connectors");
       if (!listRes.ok) return { ok: false, reason: "couldn't fetch connectors" };
       const installs = (await listRes.json()) as Array<{ connectorId: string; config?: Record<string, unknown> }>;
@@ -5693,9 +5695,9 @@ export class WhatsAppSession {
         return { ok: false, reason: "Twilio connector not installed — set up via dashboard /connectors → Twilio" };
       }
       const { executeOutboundCall: exec, synthesizeSpeech } =
-        await import("@lantern/bridge-core/call-orchestrator");
+        await import("@pal/bridge-core/call-orchestrator");
       const { resolveVoiceCloneConfig } = await import(
-        "@lantern/bridge-core/outbound-call"
+        "@pal/bridge-core/outbound-call"
       );
       // chatJid is the jid of the chat where the call command was
       // issued — pendingOffer + notify go here so the "yes" arriving
@@ -6052,7 +6054,7 @@ export class WhatsAppSession {
   }
 
   private async resolveCallTarget(input: string): Promise<{ phone: string; name?: string; relationship?: string; unique?: boolean } | null> {
-    const { resolveContact: universalResolve } = await import("@lantern/bridge-core/contact-resolver");
+    const { resolveContact: universalResolve } = await import("@pal/bridge-core/contact-resolver");
     const result = await universalResolve(input, {
       ownerPhone: process.env.PAL_OWNER_PHONE,
       bridgeContactCache: this.contactNames,
@@ -6070,20 +6072,20 @@ export class WhatsAppSession {
   }
 
   getLastResolveSuggestions(): string {
-    const { formatSuggestions } = require("@lantern/bridge-core/contact-resolver") as typeof import("@lantern/bridge-core/contact-resolver");
+    const { formatSuggestions } = require("@pal/bridge-core/contact-resolver") as typeof import("@pal/bridge-core/contact-resolver");
     return formatSuggestions(this.lastResolveSuggestions);
   }
 
   // Optional ElevenLabs voice-clone renderer (B8). Returns undefined
   // when voice-clone is OFF/unconfigured so the orchestrator falls back
-  // to inline Polly <Say>. Triple-gated (LANTERN_VOICE_CLONE=1 +
-  // LANTERN_ELEVENLABS_API_KEY + LANTERN_ELEVENLABS_VOICE_ID, resolved by
-  // bridge-core) plus the bridge-owned LANTERN_VOICE_CACHE_PUBLIC_URL
+  // to inline Polly <Say>. Triple-gated (PAL_VOICE_CLONE=1 +
+  // PAL_ELEVENLABS_API_KEY + PAL_ELEVENLABS_VOICE_ID, resolved by
+  // bridge-core) plus the bridge-owned PAL_VOICE_CACHE_PUBLIC_URL
   // host. Best-effort; never throws into the call path. `synth` +
   // `resolveCfg` are injected (the bridge lazy-imports bridge-core).
   private makeVoiceRenderer(
-    synth: typeof import("@lantern/bridge-core/call-orchestrator").synthesizeSpeech,
-    resolveCfg: typeof import("@lantern/bridge-core/outbound-call").resolveVoiceCloneConfig,
+    synth: typeof import("@pal/bridge-core/call-orchestrator").synthesizeSpeech,
+    resolveCfg: typeof import("@pal/bridge-core/outbound-call").resolveVoiceCloneConfig,
   ): ((text: string) => Promise<string | null>) | undefined {
     const publicUrlBase = process.env.PAL_VOICE_CACHE_PUBLIC_URL;
     if (!resolveCfg() || !publicUrlBase) return undefined;
@@ -6094,7 +6096,7 @@ export class WhatsAppSession {
           const { writeFile, mkdir } = await import("node:fs/promises");
           const { join } = await import("node:path");
           const { homedir } = await import("node:os");
-          const cacheDir = join(homedir(), ".lantern", "voice-cache");
+          const cacheDir = join(palStateDir(), "voice-cache");
           await mkdir(cacheDir, { recursive: true });
           await writeFile(join(cacheDir, `${cacheKey}.mp3`), mp3);
           return `${publicUrlBase.replace(/\/$/, "")}/voice-cache/${cacheKey}.mp3`;
@@ -6104,7 +6106,7 @@ export class WhatsAppSession {
 
   // Owner self-chat auto-profile-update hook. Inspects each owner
   // self-chat message for durable facts and appends them to the
-  // shared ~/.lantern/owner-profile.md via the LLM-backed extractor.
+  // shared ~/.pal/owner-profile.md via the LLM-backed extractor.
   // Sends a one-line ack so the owner sees what was committed.
   // Fire-and-forget — never blocks the doc-query path.
   private async maybeAutoUpdateOwnerProfileFromSelfChat(
@@ -6165,7 +6167,7 @@ export class WhatsAppSession {
     }
     try {
       const { maybeAutoUpdateOwnerProfile, formatAck } = await import(
-        "@lantern/bridge-core/owner-profile-auto-update"
+        "@pal/bridge-core/owner-profile-auto-update"
       );
       const result = await maybeAutoUpdateOwnerProfile(text, {
         profilePath: this.ownerProfileStore.getPath(),
@@ -6194,7 +6196,7 @@ export class WhatsAppSession {
       // Typed facts await the owner's explicit "yes" (see the self-chat
       // dispatch intercept). Hold them + DM the confirm.
       if (result.pendingTyped && result.pendingTyped.length > 0) {
-        const { formatFactConfirmPrompt } = await import("@lantern/bridge-core/owner-profile-auto-update");
+        const { formatFactConfirmPrompt } = await import("@pal/bridge-core/owner-profile-auto-update");
         this.pendingFactConfirm.set(jid, { facts: result.pendingTyped, issuedAt: Date.now() });
         await this.confirmToSelf(formatFactConfirmPrompt(result.pendingTyped));
       }
@@ -6225,7 +6227,7 @@ export class WhatsAppSession {
   // ## Facts / ## Relationships and acks what landed.
   private async applyPendingOwnerFacts(jid: string, facts: AutoFact[]): Promise<void> {
     try {
-      const { applyConfirmedOwnerFacts, formatAck } = await import("@lantern/bridge-core/owner-profile-auto-update");
+      const { applyConfirmedOwnerFacts, formatAck } = await import("@pal/bridge-core/owner-profile-auto-update");
       const res = await applyConfirmedOwnerFacts(facts, {
         profilePath: this.ownerProfileStore.getPath(),
         invalidate: () => this.ownerProfileStore.invalidate(),
@@ -6251,7 +6253,7 @@ export class WhatsAppSession {
   private async teachContactNamingRule(contactLabel: string, fact: string): Promise<void> {
     try {
       const { maybeAutoUpdateOwnerProfile, formatAck } = await import(
-        "@lantern/bridge-core/owner-profile-auto-update"
+        "@pal/bridge-core/owner-profile-auto-update"
       );
       // Prepend the contact name so the extractor attributes the rule to
       // the right person (the contact-thread text often says only "her").
@@ -6281,7 +6283,7 @@ export class WhatsAppSession {
   private async maybeRecordMentionEpisode(jid: string, text: string): Promise<void> {
     try {
       const { extractMentionEpisodeFromSelfChat } = await import(
-        "@lantern/bridge-core/episodic-memory"
+        "@pal/bridge-core/episodic-memory"
       );
       const knownNames = this.ownerProfileStore.knownFirstNames();
       const ep = extractMentionEpisodeFromSelfChat({
@@ -6316,8 +6318,8 @@ export class WhatsAppSession {
   ): Promise<{ ok: boolean; reason?: string; via?: "link" }> {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     // Authenticate to the PEER's token, not ours: this helper only ever dials the
-    // iMessage bridge, whose /session routes validate LANTERN_IMESSAGE_BRIDGE_TOKEN
-    // (WA validates the separate LANTERN_BRIDGE_TOKEN). Sending our own token here
+    // iMessage bridge, whose /session routes validate PAL_IMESSAGE_BRIDGE_TOKEN
+    // (WA validates the separate PAL_BRIDGE_TOKEN). Sending our own token here
     // 401s every WA→iMessage relay when the two secrets differ.
     const tok = process.env.PAL_IMESSAGE_BRIDGE_TOKEN;
     if (tok) headers["Authorization"] = `Bearer ${tok}`;
@@ -6395,7 +6397,7 @@ export class WhatsAppSession {
     // Runs before busyChat.add so an early return can't leave the chat busy.
     if (await this.maybeResolvePendingDraft(jid, query, true)) return;
     if (!this.docs) return;
-    // PHASE 2c — intent router (LANTERN_INTENT_ROUTER, default OFF). When ON it
+    // PHASE 2c — intent router (PAL_INTENT_ROUTER, default OFF). When ON it
     // reasons about the owner's intent and force-routes the self-contained gates
     // it subsumes (disclosure-deny, recap) for phrasings the regex wordlist
     // downstream would miss. OFF → short-circuits synchronously; the regex gates
@@ -6584,7 +6586,7 @@ export class WhatsAppSession {
     let ownerLocationBlock = "";
     if ((process.env.PAL_IPHONE_SIGNALS || "on").toLowerCase() !== "off") {
       try {
-        const f = join(homedir(), ".lantern", "device-signals.jsonl");
+        const f = join(palStateDir(), "device-signals.jsonl");
         const known = existsSync(f)
           ? latestKnownLocation(parseSignals(readFileSync(f, "utf8").split("\n").filter(Boolean).slice(-500)))
           : null;
@@ -6603,7 +6605,7 @@ export class WhatsAppSession {
     // Intelligent person-context grounding (parity with iMessage).
     const knownPeopleBlock = this.ownerKnownPeopleBlock();
     const systemHint = [
-      `You are Lantern — ${ownerName}'s personal agent, replying in his WhatsApp self-chat as if you ARE him talking to himself.`,
+      `You are pal — ${ownerName}'s personal agent, replying in his WhatsApp self-chat as if you ARE him talking to himself.`,
       `Today is ${today}.`,
       nowLine,
       presenceLine,
@@ -6967,7 +6969,7 @@ export class WhatsAppSession {
     // AUTO-ACT UNDO — revert the auto-executed safe action, record an autoUndo
     // (trust downgrade), and clear the acted key. Deterministic; no LLM.
     if (offer.kind === "auto-act-undo") {
-      const { persistAutoUndo, unmarkActed } = await import("@lantern/bridge-core/life-events-store");
+      const { persistAutoUndo, unmarkActed } = await import("@pal/bridge-core/life-events-store");
       try {
         let res: { ok: true; detail?: string } | { ok: false; reason: string };
         if (offer.undoTarget === "calendar" && offer.undoTitle && offer.undoStartIso && this.macActions) {
@@ -6984,7 +6986,7 @@ export class WhatsAppSession {
           // Emit undone to Automations dashboard (best-effort, fire-and-forget).
           void (async () => {
             try {
-              const { emitLifeEvent } = await import("@lantern/bridge-core/life-events-emit");
+              const { emitLifeEvent } = await import("@pal/bridge-core/life-events-emit");
               await emitLifeEvent(
                 {
                   kind: (offer.undoLifeEventKind || "other") as any,
@@ -7018,7 +7020,7 @@ export class WhatsAppSession {
     // macActions is ever unavailable (e.g. a headless deployment).
     if (offer.kind === "outbound-call" && (offer as any).callRequest && (offer as any).callPlan) {
       try {
-        const { placeCallNow } = await import("@lantern/bridge-core/call-orchestrator");
+        const { placeCallNow } = await import("@pal/bridge-core/call-orchestrator");
         const deps = this.lastCallDeps;
         if (!deps) {
           await this.confirmToSelf("(can't place the call — orchestrator deps missing, ask me again)");
@@ -7049,7 +7051,7 @@ export class WhatsAppSession {
           title: offer.title || "Renewal reminder",
           start: startIso,
           end: endIso,
-          notes: `Auto-set by Lantern. Original expiration: ${offer.targetIsoDate}.`,
+          notes: `Auto-set by pal. Original expiration: ${offer.targetIsoDate}.`,
         });
         if (res.ok) {
           const friendly = reminderDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -7144,7 +7146,7 @@ export class WhatsAppSession {
     // handleOwnerDocQuery for the security rationale). Never on contact replies.
     const privateVault = this.ownerProfileStore.privateVaultBlock();
     const systemHint = [
-      `You are Lantern — ${ownerName}'s personal agent, replying in his WhatsApp self-chat.`,
+      `You are pal — ${ownerName}'s personal agent, replying in his WhatsApp self-chat.`,
       `Today is ${today}. Local time of day: ${timeOfDay}.`,
       ``,
       ownerProfileProse ? `# Who you are\n${ownerProfileProse}\n` : ``,
@@ -7157,7 +7159,7 @@ export class WhatsAppSession {
       `  • For greetings ("hi", "hey"), say hello briefly + ask what he needs OR drop a useful nudge from time of day (morning → "anything on for today?", evening → "wrap-up notes for tomorrow?").`,
       `  • You can search his Mac files (passport, license, receipts, etc.) — when he mentions one, suggest the exact phrasing ("when does my passport expire", "find my I-485 receipt", "what's my green card number").`,
       `  • You can add calendar events, save notes, draft mail on his behalf — offer when relevant.`,
-      `  • Use any connector tools attached to this agent in the Lantern dashboard (Gmail, Calendar, etc.) when helpful.`,
+      `  • Use any connector tools attached to this agent in the PAL dashboard (Gmail, Calendar, etc.) when helpful.`,
       prefetchBlock,
       languageModality,
     ].filter(Boolean).join("\n");
@@ -7201,7 +7203,7 @@ export class WhatsAppSession {
         //   conversational replies — overkill for "hi" → "hey".
         // - Sonnet 4.6 is the sweet spot: ~1-2s, conversational
         //   quality indistinguishable from opus at this length.
-        // - Override per-deploy via LANTERN_NATURAL_CHAT_MODEL
+        // - Override per-deploy via PAL_NATURAL_CHAT_MODEL
         //   (e.g., "claude-haiku-4-5-20251001" for sub-second).
         const fastModel =
           process.env.PAL_NATURAL_CHAT_MODEL ||
@@ -7383,8 +7385,8 @@ export class WhatsAppSession {
     // always-on dashboard broadcast).
     //
     //   1. Dashboard activity feed (always; broadcast over the WS)
-    //   2. Email (LANTERN_OWNER_EMAIL — universal, push via Mail app)
-    //   3. Telegram bot (LANTERN_OWNER_TELEGRAM_* — when configured)
+    //   2. Email (PAL_OWNER_EMAIL — universal, push via Mail app)
+    //   3. Telegram bot (PAL_OWNER_TELEGRAM_* — when configured)
     //   4. WhatsApp self-chat (best-effort; lossy via Signal pre-key
     //      drift on the user's phone — channels 1-3 are the safety net)
     this.broadcast({
@@ -7450,13 +7452,13 @@ export class WhatsAppSession {
   // setup.
   //
   // Throttling: we don't want the user's inbox flooded with one email
-  // per /lantern ping reaction. Skip when the SAME text was emailed
+  // per /pal ping reaction. Skip when the SAME text was emailed
   // within the last 30s (covers the retry-storm case). Also skip very
   // short messages (single emojis from reactions etc).
   private lastEmailedAt: Map<string, number> = new Map();
   private static readonly EMAIL_DEDUP_MS = 30_000;
   private static readonly EMAIL_MIN_LEN = 8;
-  // Label every Lantern mail with this so the user can filter all
+  // Label every pal mail with this so the user can filter all
   // status messages out of their main inbox with one Gmail rule. The
   // connector creates the label on first use. Together with
   // `skipInbox: true` below, status mail lands directly under the
@@ -7504,7 +7506,7 @@ export class WhatsAppSession {
     // UTF-8 plain-text which Gmail handles fine.
     const firstLine = text.split("\n").find((l) => l.trim().length > 0) ?? "";
     const cleaned = this.sanitizeSubject(firstLine) || "status";
-    const subject = `Lantern: ${cleaned}`;
+    const subject = `pal: ${cleaned}`;
     try {
       const res = await authedFetch(
         `/v1/connectors/gmail/execute?action=send_message`,
@@ -7558,10 +7560,10 @@ export class WhatsAppSession {
   // Telegram fallback for bridge status messages. Reliable delivery on
   // mobile when WhatsApp's Signal session is in stale-key purgatory
   // (the 'Waiting for this message' loop). Setup: BotFather → /newbot
-  // → paste the token into LANTERN_OWNER_TELEGRAM_BOT_TOKEN, get your
+  // → paste the token into PAL_OWNER_TELEGRAM_BOT_TOKEN, get your
   // chat id (any of multiple methods — message @userinfobot or just
   // hit api.telegram.org/bot<token>/getUpdates after you DM the bot)
-  // → set LANTERN_OWNER_TELEGRAM_CHAT_ID.
+  // → set PAL_OWNER_TELEGRAM_CHAT_ID.
   //
   // Fire-and-forget: failures log a warning but never block the WA
   // path or throw to the caller. Skipped silently when env not set so
@@ -7579,7 +7581,7 @@ export class WhatsAppSession {
           chat_id: chatId,
           text,
           // Markdown to match WhatsApp's *bold* / `code` rendering we
-          // use in /lantern status / help replies.
+          // use in /pal status / help replies.
           parse_mode: "Markdown",
           disable_web_page_preview: true,
         }),
@@ -7892,9 +7894,9 @@ export class WhatsAppSession {
   // A7: randomized inter-reply gap for the morning replay drain, so a
   // backlog of overnight messages goes out spaced like a person catching
   // up rather than a 7am burst. Defaults to a 2–9 min uniform gap;
-  // override the band with LANTERN_WA_REPLAY_STAGGER_MIN_MS /
-  // LANTERN_WA_REPLAY_STAGGER_MAX_MS, or disable entirely with
-  // LANTERN_WA_REPLAY_STAGGER=off (returns 0 → back-to-back, old behavior).
+  // override the band with PAL_WA_REPLAY_STAGGER_MIN_MS /
+  // PAL_WA_REPLAY_STAGGER_MAX_MS, or disable entirely with
+  // PAL_WA_REPLAY_STAGGER=off (returns 0 → back-to-back, old behavior).
   private overnightReplayGapMs(): number {
     if ((process.env.PAL_WA_REPLAY_STAGGER || "on").toLowerCase() === "off") return 0;
     const min = Number(process.env.PAL_WA_REPLAY_STAGGER_MIN_MS) || 2 * 60_000;
@@ -7957,7 +7959,7 @@ export class WhatsAppSession {
           // sends with a randomized multi-minute gap so the morning catch-up
           // looks like a person working through their backlog one thread at a
           // time. First reply goes promptly (after its own pace hold); each
-          // subsequent one waits a fresh gap. Gated via LANTERN_WA_REPLAY_STAGGER.
+          // subsequent one waits a fresh gap. Gated via PAL_WA_REPLAY_STAGGER.
           if (replayed > 0) {
             const gap = this.overnightReplayGapMs();
             if (gap > 0) {
@@ -8014,7 +8016,7 @@ export class WhatsAppSession {
   }
 
   // Owner's current LOCAL hour (0-23), timezone-aware via the same
-  // LANTERN_OWNER_TIMEZONE env quiet-hours uses. Feeds the pacing
+  // PAL_OWNER_TIMEZONE env quiet-hours uses. Feeds the pacing
   // time-of-day multiplier (and the morning-edge floor on replays).
   private ownerLocalHour(): number {
     const tz = process.env.PAL_OWNER_TIMEZONE || undefined;
@@ -8306,7 +8308,7 @@ export class WhatsAppSession {
       try {
         const ownerEmail = process.env.PAL_OWNER_EMAIL;
         if (!ownerEmail) return;
-        const { authedFetch } = await import("@lantern/bridge-core/auth");
+        const { authedFetch } = await import("@pal/bridge-core/auth");
         const subject =
           opts.kind === "life-threat" ? `🚨 LIFE-THREAT alert from ${who}` :
           opts.kind === "prompt-injection" ? `🛡 prompt-injection probe from ${who}` :
@@ -8343,7 +8345,7 @@ export class WhatsAppSession {
           const safeBody = body.replace(/"/g, '\\"').slice(0, 300);
           await execFileP(
             "osascript",
-            ["-e", `display notification "${safeBody}" with title "🚨 Lantern: ${prefix}" sound name "Sosumi"`],
+            ["-e", `display notification "${safeBody}" with title "🚨 pal: ${prefix}" sound name "Sosumi"`],
             { timeout: 2000 },
           );
         } catch (err) {
@@ -8358,7 +8360,7 @@ export class WhatsAppSession {
     // a backgrounded phone, focus mode, and a screen-off device.
     //
     // Requires:
-    //   - LANTERN_OWNER_PHONE env (E.164, e.g. "+15555550100")
+    //   - PAL_OWNER_PHONE env (E.164, e.g. "+15555550100")
     //   - Twilio connector installed with accountSid/authToken/from
     // If either is missing we silently skip — the other 4 channels
     // still deliver the alert.
@@ -8368,11 +8370,11 @@ export class WhatsAppSession {
           const ownerPhone = process.env.PAL_OWNER_PHONE;
           if (!ownerPhone) {
             this.logger.warn(
-              "owner escalation: LANTERN_OWNER_PHONE not set — voice call skipped (other channels still firing)",
+              "owner escalation: PAL_OWNER_PHONE not set — voice call skipped (other channels still firing)",
             );
             return;
           }
-          const { authedFetch } = await import("@lantern/bridge-core/auth");
+          const { authedFetch } = await import("@pal/bridge-core/auth");
           // Pull the Twilio "from" number directly from the
           // connector config so we don't duplicate it in env.
           const listRes = await authedFetch("/v1/connectors");
@@ -8396,7 +8398,7 @@ export class WhatsAppSession {
           // around 4000 chars but readability drops fast past 200.
           const senderLabel = who.replace(/[^A-Za-z0-9\s]/g, " ").trim() || "an unknown contact";
           const safeMsg = opts.contactText.replace(/\s+/g, " ").slice(0, 400);
-          const speech = `This is Lantern, an urgent alert. ${senderLabel} just messaged you saying: ${safeMsg}. They said it is an emergency. Please open WhatsApp now.`;
+          const speech = `This is pal, an urgent alert. ${senderLabel} just messaged you saying: ${safeMsg}. They said it is an emergency. Please open WhatsApp now.`;
           const callRes = await authedFetch(
             "/v1/connectors/twilio/execute?action=place_call",
             {
@@ -8430,8 +8432,8 @@ export class WhatsAppSession {
     // 6. PUSHOVER PRIORITY-2 push — pierces iPhone silent + Do Not
     // Disturb with a siren-style alert that repeats every 30s until
     // the owner ack's. Works as a no-Twilio alternative for ringing
-    // the phone. Requires LANTERN_PUSHOVER_TOKEN (app API key) and
-    // LANTERN_PUSHOVER_USER (user key) in env. Both come from
+    // the phone. Requires PAL_PUSHOVER_TOKEN (app API key) and
+    // PAL_PUSHOVER_USER (user key) in env. Both come from
     // pushover.net dashboard. Skipped silently when either is unset
     // OR when the master escalationEnabled / pushoverEnabled is off.
     if (opts.kind === "life-threat" && this.escalationEnabled && this.pushoverEnabled) {
@@ -8450,7 +8452,7 @@ export class WhatsAppSession {
           const body = new URLSearchParams({
             token,
             user,
-            title: "🚨 LANTERN — life-threat alert",
+            title: "🚨 PAL — life-threat alert",
             message: msg,
             priority: "2",
             retry: "30",
@@ -8517,7 +8519,7 @@ export class WhatsAppSession {
   ) {
     if (!this.socket) return;
 
-    // Owner channel = self-chat OR owner-DM (LANTERN_WA_OWNER_JID). Groups
+    // Owner channel = self-chat OR owner-DM (PAL_WA_OWNER_JID). Groups
     // and non-owner DMs are NOT owner. This single boolean drives the
     // persona's audience: owner → full factual access; contact → the
     // non-disclosure persona. isOwnerChat already returns false for groups.
@@ -8628,7 +8630,7 @@ export class WhatsAppSession {
           senderName: opts.senderName,
         });
       }
-      // Non-English fallback: OPT-IN ONLY (LANTERN_NONENGLISH_DRAFT=on),
+      // Non-English fallback: OPT-IN ONLY (PAL_NONENGLISH_DRAFT=on),
       // default OFF. It kept mis-flagging the owner's own Telugu/Hindi (native
       // script + romanized + voice-note transcripts) as foreign probes and
       // silently drafting them — net-negative for a multilingual household.
@@ -8767,7 +8769,7 @@ export class WhatsAppSession {
     //  contact directly asks "is this a bot / are you really X", the
     //  persona allows a casual acknowledgement instead of a formal
     //  announcement. To opt back in to the old behavior, set
-    //  LANTERN_AGENT_HANDOFF_MESSAGE — but think hard before doing it.)
+    //  PAL_AGENT_HANDOFF_MESSAGE — but think hard before doing it.)
     if (
       !opts.isGroup &&
       !this.disclosedJids.has(from) &&
@@ -8987,7 +8989,7 @@ export class WhatsAppSession {
             return v.register !== "neutral" && v.confidence >= 0.4 ? v.register : undefined;
           })()
         : undefined;
-    // Proactive recall — gate on LANTERN_PROACTIVE_RECALL (default OFF).
+    // Proactive recall — gate on PAL_PROACTIVE_RECALL (default OFF).
     // Reuses already-loaded allEpisodes + related; no new network calls.
     const proactiveRecallBlock =
       !opts.isGroup &&
@@ -9071,7 +9073,7 @@ export class WhatsAppSession {
         // #2 — urgent inbound: acknowledge + fast concrete promise, no scheduling.
         inboundUrgent,
         // Proactive recall — the top-ranked relevant memory for this inbound.
-        // undefined when LANTERN_PROACTIVE_RECALL is off (default) — prompt identical to today.
+        // undefined when PAL_PROACTIVE_RECALL is off (default) — prompt identical to today.
         proactiveRecallBlock,
       }
     );
@@ -9150,7 +9152,7 @@ export class WhatsAppSession {
     if (!opts.isGroup && (process.env.PAL_IPHONE_SIGNALS || "on").toLowerCase() !== "off") {
       try {
         const canShare = isInnerCircle(relationship) && !denyLoc;
-        const f = join(homedir(), ".lantern", "device-signals.jsonl");
+        const f = join(palStateDir(), "device-signals.jsonl");
         const known = canShare && existsSync(f)
           ? latestKnownLocation(parseSignals(readFileSync(f, "utf8").split("\n").filter(Boolean).slice(-500)))
           : null;
@@ -9186,7 +9188,7 @@ export class WhatsAppSession {
     // turnHint pins a model FLOOR so the owner's outgoing texts are never
     // drafted by the weakest (trivial-tier) model. QUALITY LEVER: defaults to
     // "hard" (frontier tier) so contact replies get the best model — set
-    // LANTERN_REPLY_MODEL_TIER=balanced to trade quality for cost.
+    // PAL_REPLY_MODEL_TIER=balanced to trade quality for cost.
     const replyTier = process.env.PAL_REPLY_MODEL_TIER || "hard";
     // #7 — clearly-logistics inbound gets READ-only tools so the reply can
     // ground on Calendar/Gmail reads; the control plane filters out every
@@ -9394,7 +9396,7 @@ export class WhatsAppSession {
     //     relationship AND no captured facts. An unfamiliar contact —
     //     draft, don't send, so the owner trains trust over time. Once
     //     samples accumulate the gate opens automatically.
-    // Two-layer gate, controlled by LANTERN_DRAFT_APPROVALS (default off):
+    // Two-layer gate, controlled by PAL_DRAFT_APPROVALS (default off):
     //
     //   APPROVALS=on  → VIP + low-conf both queue a draft for the owner
     //                   to approve (old behavior, opt-in).
@@ -9579,7 +9581,7 @@ export class WhatsAppSession {
       // to the owner's self-chat for explicit approval (reusing the same draft
       // queue as VIPs) rather than firing after a silent hold. The owner
       // approves from the dashboard / self-chat and the reply goes out then.
-      // Disable with LANTERN_DRAFT_HIGH_STAKES=off to restore the old
+      // Disable with PAL_DRAFT_HIGH_STAKES=off to restore the old
       // hold-then-send behavior. A non-English injection caution ALWAYS
       // drafts (or suppresses) regardless of the high-stakes toggle.
       if (opts.mutedHold || WhatsAppSession.DRAFT_HIGH_STAKES || forceDraftCaution || commitVerdict?.hold || groundVerdict?.hold) {
@@ -9706,7 +9708,7 @@ export class WhatsAppSession {
     // and never both at the same instant. We mark the inbound read with a
     // short human jitter (1–4s) so the read receipt lands first, then the
     // pace hold + composing indicator follow. Best-effort + gated via
-    // LANTERN_WA_READ_RECEIPTS=off. Skip on overnight replay (the inbound
+    // PAL_WA_READ_RECEIPTS=off. Skip on overnight replay (the inbound
     // was already auto-read overnight) and when we have no message key.
     if (
       this.readReceiptsEnabled &&
@@ -10707,7 +10709,7 @@ export class WhatsAppSession {
     return true;
   }
 
-  // ── PHASE 2c INTENT ROUTER (LANTERN_INTENT_ROUTER, default OFF) ─────
+  // ── PHASE 2c INTENT ROUTER (PAL_INTENT_ROUTER, default OFF) ─────
   /** Persist a location-disclosure preference and ack to the owner. Mirrors the
    *  detectDisclosureDeny gate inside handleOwnerDocQuery so the intent router
    *  can force it for phrasings the wordlist misses. Returns true if applied. */
@@ -10895,7 +10897,7 @@ export class WhatsAppSession {
       const now = Date.now();
 
       // EVENT SCOUT rides this tick (same killswitch/quiet-hours guards).
-      // Default OFF on WhatsApp (LANTERN_EVENT_SCOUT_WA=1 enables) — the
+      // Default OFF on WhatsApp (PAL_EVENT_SCOUT_WA=1 enables) — the
       // iMessage bridge already runs the weekly proactive scan.
       this.maybeRunEventScout(now);
       this.maybeRunSkills(now);
@@ -11306,7 +11308,7 @@ export class WhatsAppSession {
       const items = await readWatchHistory({ windowHours: 168, logger: this.logger });
       let text = watchSummary(items, Date.now(), askedYouTube);
       try {
-        const file = join(homedir(), ".lantern", "device-signals.jsonl");
+        const file = join(palStateDir(), "device-signals.jsonl");
         if (existsSync(file)) {
           const tail = readFileSync(file, "utf8").split("\n").filter(Boolean).slice(-500);
           const phone = iphoneUsageBlock(parseSignals(tail), Date.now());
@@ -11477,7 +11479,7 @@ export class WhatsAppSession {
 
   /**
    * Capture a task-assignment from a VIP/spouse contact into /v1/commitments.
-   * Only fires when LANTERN_CONCIERGE=on. Fire-and-forget; never throws.
+   * Only fires when PAL_CONCIERGE=on. Fire-and-forget; never throws.
    * Source mapping: relationship="spouse/wife/husband/partner" → "spouse";
    * any other relationship label → "vip"; no label → skipped (not a VIP).
    */
@@ -11648,7 +11650,7 @@ export class WhatsAppSession {
       if (hour >= WhatsAppSession.NUDGE_QUIET_START_HOUR && hour < WhatsAppSession.NUDGE_QUIET_END_HOUR) return;
 
       // Read signals inline — same path as contactIphonePresence().
-      const file = join(homedir(), ".lantern", "device-signals.jsonl");
+      const file = join(palStateDir(), "device-signals.jsonl");
       if (!existsSync(file)) return;
       const tail = readFileSync(file, "utf8").split("\n").filter(Boolean).slice(-500);
       const signals = parseSignals(tail);
@@ -11772,7 +11774,7 @@ export class WhatsAppSession {
       const today = new Date().toISOString().slice(0, 10);
       if (this.energyNudgedDate === today) return;
 
-      const file = join(homedir(), ".lantern", "device-signals.jsonl");
+      const file = join(palStateDir(), "device-signals.jsonl");
       if (!existsSync(file)) return;
       const tail = readFileSync(file, "utf8").split("\n").filter(Boolean).slice(-500);
       const signals = parseSignals(tail);
@@ -11844,7 +11846,7 @@ export class WhatsAppSession {
       const today = new Date(nowMs).toISOString().slice(0, 10);
 
       // Read device signals (shared path with commute / energy ticks).
-      const file = join(homedir(), ".lantern", "device-signals.jsonl");
+      const file = join(palStateDir(), "device-signals.jsonl");
       if (!existsSync(file)) return;
       const tail = readFileSync(file, "utf8").split("\n").filter(Boolean).slice(-500);
       const signals = parseSignals(tail);
@@ -11929,7 +11931,7 @@ export class WhatsAppSession {
       if (this.killSwitch) return;
       if (!this.docs) return;
 
-      const stateFile = join(homedir(), ".lantern", "whatsapp-doc-ingest-state.json");
+      const stateFile = join(palStateDir(), "whatsapp-doc-ingest-state.json");
       const state = loadDocIngestState(stateFile);
       const roots = getAllowedRoots();
       const CAP = 10; // ponytail: cap per tick to avoid first-run storm
@@ -12219,7 +12221,7 @@ export class WhatsAppSession {
   private contactIphonePresence(): SignalPresence | null {
     if ((process.env.PAL_IPHONE_SIGNALS || "on").toLowerCase() === "off") return null;
     try {
-      const file = join(homedir(), ".lantern", "device-signals.jsonl");
+      const file = join(palStateDir(), "device-signals.jsonl");
       if (!existsSync(file)) return null;
       const tail = readFileSync(file, "utf8").split("\n").filter(Boolean).slice(-500);
       return presenceFromSignals(parseSignals(tail));
@@ -12242,7 +12244,7 @@ export class WhatsAppSession {
     if (now - this.signalTsCache.at < 10_000) return this.signalTsCache.v;
     let v = 0;
     try {
-      const file = join(homedir(), ".lantern", "device-signals.jsonl");
+      const file = join(palStateDir(), "device-signals.jsonl");
       if (existsSync(file)) {
         const tail = readFileSync(file, "utf8").split("\n").filter(Boolean).slice(-50);
         v = parseSignals(tail).reduce((m, s) => Math.max(m, s.ts || 0), 0);

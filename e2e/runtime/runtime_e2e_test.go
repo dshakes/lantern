@@ -46,19 +46,17 @@ import (
 
 // ---------- config ----------
 
+// envOr reads a LANTERN_X key as PAL_X first, then the legacy name (ADR 0032).
 func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
+	return cmp.Or(os.Getenv("PAL_"+strings.TrimPrefix(key, "LANTERN_")), os.Getenv(key), def)
 }
 
 // baseURL returns the control-plane base URL.
-// Env var priority: LANTERN_E2E_API_URL (canonical) → LANTERN_API_URL (alias) → localhost:8080.
-// Always set LANTERN_E2E_API_URL or LANTERN_API_URL explicitly — never rely on the :8080 default
+// Env var priority: PAL_E2E_API_URL (canonical) → PAL_API_URL (alias) → localhost:8080;
+// each also read under its legacy LANTERN_ name. Always set one explicitly — never rely on the :8080 default
 // in a non-dev environment; it silently points at the owner's live stack.
 func baseURL() string {
-	for _, key := range []string{"LANTERN_E2E_API_URL", "LANTERN_API_URL"} {
+	for _, key := range []string{"PAL_E2E_API_URL", "LANTERN_E2E_API_URL", "PAL_API_URL", "LANTERN_API_URL"} {
 		if v := os.Getenv(key); v != "" {
 			return strings.TrimRight(v, "/")
 		}

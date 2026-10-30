@@ -4,7 +4,7 @@
  * Creates a fully-wired AgentContext with all production clients
  * connected to the runtime sidecar. This is the context object
  * passed to `agent.run({ input, ctx })` when executing inside a
- * Lantern sandbox.
+ * PAL sandbox.
  */
 
 import type {
@@ -30,7 +30,7 @@ import { RuntimeLlmClient } from "./llm-client.js";
 import { RuntimeToolClient } from "./tool-client.js";
 import { RuntimeMemoryClient } from "./memory-client.js";
 import { createConnectorProxy } from "./connector-proxy.js";
-import { LanternError } from "./errors.js";
+import { PalError } from "./errors.js";
 import { traced } from "./tracing.js";
 
 // ---------------------------------------------------------------------------
@@ -74,7 +74,7 @@ class RuntimeLogger implements Logger {
     if (!sidecar) {
       // Fallback for dev mode: write to console.
       const fn = level === "error" ? console.error : level === "warn" ? console.warn : level === "debug" ? console.debug : console.log;
-      fn(`[lantern:${level}] ${message}`, fields ?? "");
+      fn(`[pal:${level}] ${message}`, fields ?? "");
       return;
     }
 
@@ -171,7 +171,7 @@ class RuntimeApprovalClient implements ApprovalClient {
    * Request human approval. Blocks until approved, denied, or timeout.
    *
    * @param opts - Approval request options.
-   * @throws {LanternError} If the approval is denied or times out.
+   * @throws {PalError} If the approval is denied or times out.
    */
   async request(opts: {
     reason: string;
@@ -182,7 +182,7 @@ class RuntimeApprovalClient implements ApprovalClient {
   }): Promise<void> {
     const sidecar = this.runtime.sidecar;
     if (!sidecar) {
-      throw new LanternError("APPROVAL_ERROR", "Approval client requires a production runtime with sidecar");
+      throw new PalError("APPROVAL_ERROR", "Approval client requires a production runtime with sidecar");
     }
 
     const meta: RequestMeta = { ...this.runtime.meta };
@@ -224,7 +224,7 @@ class RuntimeScreenClient implements ScreenClient {
   }): Promise<void> {
     const sidecar = this.runtime.sidecar;
     if (!sidecar) {
-      throw new LanternError("SCREEN_ERROR", "Screen client requires a production runtime with sidecar");
+      throw new PalError("SCREEN_ERROR", "Screen client requires a production runtime with sidecar");
     }
 
     const meta: RequestMeta = { ...this.runtime.meta };
@@ -343,7 +343,7 @@ function createAskFn(runtime: Runtime): AskFn {
   return async (opts) => {
     const sidecar = runtime.sidecar;
     if (!sidecar) {
-      throw new LanternError("ASK_ERROR", "Ask function requires a production runtime with sidecar");
+      throw new PalError("ASK_ERROR", "Ask function requires a production runtime with sidecar");
     }
 
     const meta: RequestMeta = { ...runtime.meta };
@@ -382,7 +382,7 @@ function createNotifyFn(runtime: Runtime): NotifyFn {
   return async (opts) => {
     const sidecar = runtime.sidecar;
     if (!sidecar) {
-      throw new LanternError("NOTIFY_ERROR", "Notify function requires a production runtime with sidecar");
+      throw new PalError("NOTIFY_ERROR", "Notify function requires a production runtime with sidecar");
     }
 
     const meta: RequestMeta = { ...runtime.meta };
@@ -406,7 +406,7 @@ function createMcpProxy(runtime: Runtime): McpClient {
     async call(method: string, params?: Record<string, unknown>): Promise<unknown> {
       const sidecar = runtime.sidecar;
       if (!sidecar) {
-        throw new LanternError("MCP_ERROR", "MCP client requires a production runtime with sidecar");
+        throw new PalError("MCP_ERROR", "MCP client requires a production runtime with sidecar");
       }
 
       const meta: RequestMeta = { ...runtime.meta };
@@ -425,7 +425,7 @@ function createMcpProxy(runtime: Runtime): McpClient {
     async resource(uri: string): Promise<unknown> {
       const sidecar = runtime.sidecar;
       if (!sidecar) {
-        throw new LanternError("MCP_ERROR", "MCP client requires a production runtime with sidecar");
+        throw new PalError("MCP_ERROR", "MCP client requires a production runtime with sidecar");
       }
 
       const meta: RequestMeta = { ...runtime.meta };
@@ -450,7 +450,7 @@ function createA2aProxy(runtime: Runtime): A2aClient {
     async submit(opts: { input: unknown; timeout?: string }): Promise<unknown> {
       const sidecar = runtime.sidecar;
       if (!sidecar) {
-        throw new LanternError("A2A_ERROR", "A2A client requires a production runtime with sidecar");
+        throw new PalError("A2A_ERROR", "A2A client requires a production runtime with sidecar");
       }
 
       const meta: RequestMeta = { ...runtime.meta };
@@ -489,7 +489,7 @@ function createSubagentFn(runtime: Runtime): SubagentFn {
   return async <T = unknown>(agent: string, input: unknown): Promise<T> => {
     const sidecar = runtime.sidecar;
     if (!sidecar) {
-      throw new LanternError("SUBAGENT_ERROR", "Subagent function requires a production runtime with sidecar");
+      throw new PalError("SUBAGENT_ERROR", "Subagent function requires a production runtime with sidecar");
     }
 
     const meta: RequestMeta = { ...runtime.meta };

@@ -70,7 +70,7 @@ test("readWatchHistory parses a Chrome History DB with correct time conversion",
   if (process.platform !== "darwin") return; // reader is darwin-only
   let Database: any;
   try { Database = (await import("better-sqlite3")).default; } catch { return; } // skip if native module absent
-  const home = mkdtempSync(join(tmpdir(), "lantern-bh-test-"));
+  const home = mkdtempSync(join(tmpdir(), "pal-bh-test-"));
   try {
     const profDir = join(home, "Library", "Application Support", "Google", "Chrome", "Default");
     mkdirSync(profDir, { recursive: true });

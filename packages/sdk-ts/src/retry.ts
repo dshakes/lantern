@@ -1,4 +1,4 @@
-// Bounded exponential backoff retry helper for LanternClient's HTTP calls.
+// Bounded exponential backoff retry helper for PalClient's HTTP calls.
 //
 // Mirrors packages/bridge-core/src/retry.ts (full-jitter exponential
 // backoff). Duplicated locally rather than imported because sdk-ts is a

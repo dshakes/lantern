@@ -1,10 +1,10 @@
 /**
  * Runtime module barrel export.
  *
- * Re-exports the public API of the Lantern SDK runtime subsystem.
+ * Re-exports the public API of the PAL SDK runtime subsystem.
  */
 
-export { LanternRuntime } from "./runtime.js";
+export { PalRuntime } from "./runtime.js";
 export type { Runtime, RunInfo } from "./runtime.js";
 
 export {
@@ -47,17 +47,18 @@ export { createConnectorProxy } from "./connector-proxy.js";
 export { buildContext } from "./context.js";
 
 export {
-  LanternError,
-  LanternGrpcError,
-  LanternStepError,
-  LanternLlmError,
-  LanternLlmJsonError,
-  LanternToolError,
-  LanternMemoryError,
-  LanternConnectorError,
-  LanternTimeoutError,
-  LanternCancelledError,
+  PalError,
+  PalGrpcError,
+  PalStepError,
+  PalLlmError,
+  PalLlmJsonError,
+  PalToolError,
+  PalMemoryError,
+  PalConnectorError,
+  PalTimeoutError,
+  PalCancelledError,
 } from "./errors.js";
 
 export { getTracer, traced } from "./tracing.js";
 export type { Span, Tracer } from "./tracing.js";
+export * from "./deprecated.js";

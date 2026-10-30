@@ -1,0 +1,39 @@
+---
+title: Request lifecycle
+description: A run from API call to journaled result, on the inline and microVM tiers, with model routing and the budget and eval gates.
+glance:
+  what: "The exact hops a run takes: gateway, control plane, budget, scheduler, manager, microVM, model router, journal."
+  why: "Knowing where each check happens tells you where a 402, a 422 or a retry comes from."
+  how: "Play the microVM sequence, then switch scenarios in the run sequence to see the budget, crash and data-plane paths."
+sidebar:
+  order: 2
+---
+
+import { MicroVmRunSequence, RunSequence, ToolCallSequence, ModelRouting, BudgetEvalGate } from '../../../../components/diagrams';
+
+## On the microVM tier
+
+<MicroVmRunSequence client:visible />
+
+## A run, every path
+
+<RunSequence client:visible />
+
+## A tool call into a sandbox
+
+<ToolCallSequence client:visible />
+
+## Model routing
+
+<ModelRouting client:visible />
+
+## Spend and quality gates
+
+<BudgetEvalGate client:visible />
+
+## Reference
+
+- Over a budget or VM quota: **HTTP 402**, before any compute or tokens.
+- An eval run worse than its branch baseline: **HTTP 422**.
+- Every provider call carries an `Idempotency-Key` derived from `(run_id, step_id, attempt)`.
+- Streams are end to end: `GET /v1/runs/{id}/events` flushes per event and tails until the run is terminal.

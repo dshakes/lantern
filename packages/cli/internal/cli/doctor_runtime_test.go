@@ -65,7 +65,7 @@ func TestCheckRuntime_StubAndUnreachableGiveFixes(t *testing.T) {
 			t.Errorf("%s: should not pass", r.label)
 		}
 	}
-	if !strings.Contains(res[0].detail, "LANTERN_SCHEDULER_GRPC_ADDR") {
+	if !strings.Contains(res[0].detail, "PAL_SCHEDULER_GRPC_ADDR") {
 		t.Errorf("stub detail lacks the fix: %q", res[0].detail)
 	}
 	if !strings.Contains(res[1].detail, "make run-scheduler") || !strings.Contains(res[2].detail, "make run-runtime-manager") {

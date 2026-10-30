@@ -16,16 +16,36 @@ type Credentials struct {
 	UserID   string `json:"userId,omitempty"`
 }
 
-// CredentialsPath returns the path to ~/.lantern/credentials.json.
-func CredentialsPath() (string, error) {
+// ConfigDir is the CLI's config/state directory (ADR 0032): $PAL_HOME when set,
+// else ~/.pal when it exists, else the legacy ~/.lantern when it exists, else
+// ~/.pal. An existing ~/.lantern is used in place — user files are never moved.
+func ConfigDir() (string, error) {
+	if d := os.Getenv("PAL_HOME"); d != "" {
+		return d, nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("home directory: %w", err)
 	}
-	return filepath.Join(home, ".lantern", "credentials.json"), nil
+	pal := filepath.Join(home, ".pal")
+	for _, d := range []string{pal, filepath.Join(home, ".lantern")} {
+		if fi, err := os.Stat(d); err == nil && fi.IsDir() {
+			return d, nil
+		}
+	}
+	return pal, nil
 }
 
-// LoadCredentials reads credentials from ~/.lantern/credentials.json.
+// CredentialsPath returns the path to credentials.json in ConfigDir.
+func CredentialsPath() (string, error) {
+	dir, err := ConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "credentials.json"), nil
+}
+
+// LoadCredentials reads credentials from CredentialsPath.
 // Returns nil (no error) if the file does not exist.
 func LoadCredentials() (*Credentials, error) {
 	path, err := CredentialsPath()
@@ -46,7 +66,7 @@ func LoadCredentials() (*Credentials, error) {
 	return &creds, nil
 }
 
-// SaveCredentials writes credentials to ~/.lantern/credentials.json.
+// SaveCredentials writes credentials to CredentialsPath.
 func SaveCredentials(creds *Credentials) error {
 	path, err := CredentialsPath()
 	if err != nil {

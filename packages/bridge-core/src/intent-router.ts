@@ -11,7 +11,7 @@
 // returns a constrained decision that routes to the SAME existing handlers.
 //
 // HARD invariants (this runs on the owner's LIVE GA bridges):
-//   • FLAG-GATED, DEFAULT OFF (LANTERN_INTENT_ROUTER). Off → the router never
+//   • FLAG-GATED, DEFAULT OFF (PAL_INTENT_ROUTER). Off → the router never
 //     runs; the regex gates dispatch byte-for-byte as today. See
 //     intentRouterEnabled(); the bridge short-circuits on it synchronously so
 //     no await/LLM/state is touched when off.

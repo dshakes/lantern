@@ -141,3 +141,25 @@ func findKV(attrs []attribute.KeyValue, key string) (attribute.KeyValue, bool) {
 	}
 	return attribute.KeyValue{}, false
 }
+
+func TestTrafficClass(t *testing.T) {
+	cases := []struct {
+		path, accept, want string
+	}{
+		{"/v1/runs", "", "api"},
+		{"/readyz", "", "probe"},
+		{"/metrics", "", "probe"},
+		{"/v1/runs/abc/events", "", "stream"},
+		{"/v1/runtime/vms/x/logs", "", "stream"},
+		{"/v1/sessions/x/messages", "text/event-stream", "stream"},
+	}
+	for _, c := range cases {
+		r := httptest.NewRequest("GET", c.path, nil)
+		if c.accept != "" {
+			r.Header.Set("Accept", c.accept)
+		}
+		if got := trafficClass(r); got != c.want {
+			t.Errorf("%s accept=%q: got %s want %s", c.path, c.accept, got, c.want)
+		}
+	}
+}

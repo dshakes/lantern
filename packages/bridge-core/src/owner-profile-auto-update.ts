@@ -1,4 +1,4 @@
-// Auto-updater for ~/.lantern/owner-profile.md.
+// Auto-updater for ~/.pal/owner-profile.md.
 //
 // Triggered on owner self-chat messages that look like they're
 // TEACHING the bot something contextual ("Raju moved to MD",
@@ -408,7 +408,7 @@ const EXTRACT_PROMPT_PREAMBLE = [
 ].join("\n");
 
 export interface AutoUpdateOptions {
-  // Path to the owner-profile.md file. Defaults to ~/.lantern/owner-profile.md.
+  // Path to the owner-profile.md file. Defaults to ~/.pal/owner-profile.md.
   profilePath: string;
   // LLM caller — returns the raw JSON string. The bridge wires this
   // to its existing completions client.
