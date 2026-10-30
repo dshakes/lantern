@@ -1,4 +1,4 @@
-import { agent, step } from "@lantern/sdk";
+import { agent, step } from "@pal-runtime/sdk";
 
 export default agent({
   name: "{{.Name}}",

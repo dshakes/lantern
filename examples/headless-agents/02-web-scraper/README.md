@@ -13,12 +13,12 @@ allowlist + readonly rootfs).
 docker build -t lantern/demos/web-scraper:latest examples/headless-agents/02-web-scraper
 
 # Allowed: Wikipedia is on the allowlist (see agent.yaml egress_rules)
-lantern run examples/headless-agents/02-web-scraper/agent.yaml \
+pal run examples/headless-agents/02-web-scraper/agent.yaml \
   --input '{"url": "https://en.wikipedia.org/wiki/Firecracker_(microVM)"}'
 # → { "title": "Firecracker (microVM) - Wikipedia", "description": "...", "bytes": 234567 }
 
 # Denied: harness proxy returns 403, workload exits 3, audit event written
-lantern run examples/headless-agents/02-web-scraper/agent.yaml \
+pal run examples/headless-agents/02-web-scraper/agent.yaml \
   --input '{"url": "https://attacker.example.com/exfil"}'
 # → exit 3, audit_event { action: "egress.deny", pattern: "attacker.example.com" }
 ```

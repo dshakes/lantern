@@ -1,7 +1,7 @@
-"""Thin synchronous client for the Lantern microVM runtime REST surface.
+"""Thin synchronous client for the PAL microVM runtime REST surface.
 
 Sync on purpose: agent-framework backend protocols (filesystem/sandbox ops)
-are synchronous, and bridging the async ``LanternClient`` into a sync call
+are synchronous, and bridging the async ``PalClient`` into a sync call
 site from inside a running event loop is fragile. This client covers only the
 four runtime endpoints the sandbox integration needs.
 """
@@ -13,14 +13,14 @@ from typing import Any
 
 import httpx
 
-from lantern import _env
+from pal import _env
 
-from ..errors import LanternApiError
+from ..errors import PalApiError
 
 _TERMINAL_STATES = {"terminated", "failed"}
 
 
-class LanternRuntimeClient:
+class PalRuntimeClient:
     """Sync client for ``/v1/runtime/*`` (schedule, get, exec, terminate)."""
 
     def __init__(
@@ -49,7 +49,7 @@ class LanternRuntimeClient:
     def _request(self, method: str, path: str, *, json: Any = None, params: dict[str, str] | None = None) -> Any:
         resp = self._http.request(method, path, json=json, params=params)
         if not resp.is_success:
-            raise LanternApiError(resp.status_code, resp.text)
+            raise PalApiError(resp.status_code, resp.text)
         if resp.status_code == 204 or not resp.content:
             return None
         return resp.json()
@@ -74,9 +74,9 @@ class LanternRuntimeClient:
     def exec(self, vm_id: str, command: str, argv: list[str] | None = None) -> tuple[str, str, int]:
         """POST /v1/runtime/vms/{id}/exec. Returns (stdout, stderr, exit_code).
 
-        Lantern's exec contract is execve-style: ``command`` is the executable
+        PAL's exec contract is execve-style: ``command`` is the executable
         and ``argv`` its arguments, with NO implicit shell — matching
-        ``lantern vm exec <id> -- <cmd> [args]`` and the in-VM harness. So when
+        ``pal vm exec <id> -- <cmd> [args]`` and the in-VM harness. So when
         ``argv`` is omitted we run the string through ``/bin/sh -c``, since the
         sandbox backend emits shell syntax (pipes, redirects, ``&&``).
         """
@@ -115,3 +115,6 @@ class LanternRuntimeClient:
             if time.monotonic() >= deadline:
                 raise TimeoutError(f"vm {vm_id} not running after {timeout}s (state={state!r})")
             time.sleep(poll_interval)
+
+
+LanternRuntimeClient = PalRuntimeClient  # deprecated alias, ADR 0032

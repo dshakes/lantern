@@ -1,5 +1,5 @@
 # Support desk: a webchat agent that answers from your docs and hands off to a human.
-# `lantern deploy` is still a simulated spike (packages/cli/internal/cli/deploy.go);
+# `pal deploy` is still a simulated spike (packages/cli/internal/cli/deploy.go);
 # `python3 setup.py` deploys this agent for real over the REST API using spec.json.
 name: support-desk
 version: "0.1.0"

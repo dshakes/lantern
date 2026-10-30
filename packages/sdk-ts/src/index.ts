@@ -1,10 +1,10 @@
 export { agent } from "./agent.js";
 export { step, setStepRuntime } from "./step.js";
-export { LanternClient, LanternApiError, MessageStreamError } from "./client.js";
+export { PalClient, PalApiError, MessageStreamError } from "./client.js";
 export { tool } from "./tools.js";
 
 // Runtime subsystem
-export { LanternRuntime } from "./runtime/runtime.js";
+export { PalRuntime } from "./runtime/runtime.js";
 export type { Runtime, RunInfo } from "./runtime/runtime.js";
 export { RuntimeLlmClient } from "./runtime/llm-client.js";
 export { RuntimeToolClient } from "./runtime/tool-client.js";
@@ -25,16 +25,16 @@ export { executeAgent, main as runAgent } from "./runner.js";
 
 // Errors
 export {
-  LanternError,
-  LanternGrpcError,
-  LanternStepError,
-  LanternLlmError,
-  LanternLlmJsonError,
-  LanternToolError,
-  LanternMemoryError,
-  LanternConnectorError,
-  LanternTimeoutError,
-  LanternCancelledError,
+  PalError,
+  PalGrpcError,
+  PalStepError,
+  PalLlmError,
+  PalLlmJsonError,
+  PalToolError,
+  PalMemoryError,
+  PalConnectorError,
+  PalTimeoutError,
+  PalCancelledError,
 } from "./runtime/errors.js";
 
 // Tracing
@@ -127,3 +127,5 @@ export type {
   ExecStreamEvent,
   ExecResult,
 } from "./types.js";
+export * from "./deprecated.js";
+export * from "./runtime/deprecated.js";

@@ -9,7 +9,7 @@ Usage (decorator)::
 
 Usage (class-based)::
 
-    class MyAgent(LanternAgent):
+    class MyAgent(PalAgent):
         name = "my-agent"
         model = "auto"
 
@@ -22,8 +22,8 @@ from __future__ import annotations
 import re
 from typing import Any, Awaitable, Callable
 
-from lantern.errors import LanternValidationError
-from lantern.types import (
+from pal.errors import PalValidationError
+from pal.types import (
     AgentConfig,
     AgentContext,
     Capability,
@@ -39,7 +39,7 @@ _NAME_RE = re.compile(r"^[a-z0-9-]{1,63}$")
 
 def _validate_name(name: str) -> None:
     if not _NAME_RE.match(name):
-        raise LanternValidationError(
+        raise PalValidationError(
             f'Agent name must match [a-z0-9-]{{1,63}}, got: "{name}"'
         )
 
@@ -109,7 +109,7 @@ def agent(
     [Callable[[dict[str, Any], AgentContext], Awaitable[Any]]],
     RegisteredAgent,
 ]:
-    """Decorator that creates and registers a Lantern agent.
+    """Decorator that creates and registers a PAL agent.
 
     Parameters
     ----------
@@ -160,7 +160,7 @@ def agent(
         fn: Callable[[dict[str, Any], AgentContext], Awaitable[Any]],
     ) -> RegisteredAgent:
         if not callable(fn):
-            raise LanternValidationError("Agent must wrap a callable")
+            raise PalValidationError("Agent must wrap a callable")
 
         registered = RegisteredAgent(config, fn)
         _registry[name] = registered
@@ -173,13 +173,13 @@ def agent(
 # Class-based agent (Google ADK style)
 # ---------------------------------------------------------------------------
 
-class LanternAgent:
+class PalAgent:
     """Base class for class-based agent definitions.
 
     Subclass and override ``run``. Class attributes map to ``AgentConfig``
     fields::
 
-        class Greeter(LanternAgent):
+        class Greeter(PalAgent):
             name = "greeter"
             version = "1.0.0"
             model = "chat-small"
@@ -232,3 +232,6 @@ class LanternAgent:
 
     async def init(self) -> None:
         """Optional init hook called once before the first run."""
+
+
+LanternAgent = PalAgent  # deprecated alias, ADR 0032

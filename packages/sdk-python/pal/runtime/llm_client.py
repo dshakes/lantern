@@ -1,6 +1,6 @@
 """Production LLM client that talks to the model router over gRPC.
 
-In the Lantern runtime, LLM calls are routed through the model router
+In the PAL runtime, LLM calls are routed through the model router
 which handles caching, routing to concrete models, metering, and
 multi-tenant isolation.
 """
@@ -11,8 +11,8 @@ import json
 import os
 from typing import Any, AsyncIterator
 
-from lantern.errors import LanternLlmError
-from lantern.types import Capability, LlmClient as LlmClientBase, Message
+from pal.errors import PalLlmError
+from pal.types import Capability, LlmClient as LlmClientBase, Message
 
 
 class GrpcLlmClient(LlmClientBase):
@@ -33,7 +33,7 @@ class GrpcLlmClient(LlmClientBase):
                 import grpc.aio  # type: ignore[import-untyped]
                 self._channel = grpc.aio.insecure_channel(self._endpoint)
             except ImportError:
-                raise LanternLlmError(
+                raise PalLlmError(
                     "grpcio is required for production runtime LLM calls. "
                     "Install with: pip install grpcio"
                 )
@@ -76,7 +76,9 @@ class GrpcLlmClient(LlmClientBase):
             )
 
             metadata = [
+                ("x-pal-tenant-id", self._tenant_id),
                 ("x-lantern-tenant-id", self._tenant_id),
+                ("x-pal-run-id", self._run_id),
                 ("x-lantern-run-id", self._run_id),
             ]
 
@@ -86,7 +88,7 @@ class GrpcLlmClient(LlmClientBase):
 
         except Exception as exc:
             if "grpc" in type(exc).__module__:
-                raise LanternLlmError(
+                raise PalLlmError(
                     f"Model router gRPC error: {exc}",
                     capability=kwargs.get("capability"),
                 ) from exc
@@ -99,7 +101,7 @@ class GrpcLlmClient(LlmClientBase):
         try:
             return json.loads(raw)
         except json.JSONDecodeError as exc:
-            raise LanternLlmError(f"Failed to parse LLM JSON response: {exc}") from exc
+            raise PalLlmError(f"Failed to parse LLM JSON response: {exc}") from exc
 
     async def stream(self, **kwargs: Any) -> AsyncIterator[str]:
         """Stream tokens from the model router."""
@@ -119,7 +121,9 @@ class GrpcLlmClient(LlmClientBase):
             )
 
             metadata = [
+                ("x-pal-tenant-id", self._tenant_id),
                 ("x-lantern-tenant-id", self._tenant_id),
+                ("x-pal-run-id", self._run_id),
                 ("x-lantern-run-id", self._run_id),
             ]
 
@@ -131,7 +135,7 @@ class GrpcLlmClient(LlmClientBase):
 
         except Exception as exc:
             if "grpc" in type(exc).__module__:
-                raise LanternLlmError(
+                raise PalLlmError(
                     f"Model router stream gRPC error: {exc}",
                     capability=kwargs.get("capability"),
                 ) from exc
@@ -160,7 +164,9 @@ class GrpcLlmClient(LlmClientBase):
             )
 
             metadata = [
+                ("x-pal-tenant-id", self._tenant_id),
                 ("x-lantern-tenant-id", self._tenant_id),
+                ("x-pal-run-id", self._run_id),
                 ("x-lantern-run-id", self._run_id),
             ]
 
@@ -170,7 +176,7 @@ class GrpcLlmClient(LlmClientBase):
 
         except Exception as exc:
             if "grpc" in type(exc).__module__:
-                raise LanternLlmError(f"Embed gRPC error: {exc}") from exc
+                raise PalLlmError(f"Embed gRPC error: {exc}") from exc
             raise
 
     async def close(self) -> None:

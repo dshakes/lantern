@@ -1,4 +1,4 @@
-"""Tests for lantern.step — durable step primitives in dev mode."""
+"""Tests for pal.step — durable step primitives in dev mode."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ import time
 
 import pytest
 
-from lantern.step import step, step_map, step_race, step_sleep, step_signal
-from lantern.errors import LanternStepError
+from pal.step import step, step_map, step_race, step_sleep, step_signal
+from pal.errors import PalStepError
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +149,7 @@ class TestStepRace:
         assert result == "only"
 
     async def test_empty_raises(self):
-        with pytest.raises(LanternStepError, match="at least one function"):
+        with pytest.raises(PalStepError, match="at least one function"):
             await step_race("empty", [])
 
 
@@ -187,5 +187,5 @@ class TestStepSignal:
     """Tests for step_signal() — only works in production runtime."""
 
     async def test_raises_in_dev_mode(self):
-        with pytest.raises(LanternStepError, match="only available in the Lantern runtime"):
+        with pytest.raises(PalStepError, match="only available in the PAL runtime"):
             await step_signal("wait-approval")

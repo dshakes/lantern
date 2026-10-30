@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from lantern.errors import LanternError
-from lantern.types import (
+from pal.errors import PalError
+from pal.types import (
     ArchivalMemory,
     CoreMemory,
     MemoryClient as MemoryClientBase,
@@ -41,7 +41,7 @@ class GrpcMemoryClient(MemoryClientBase):
                 import grpc.aio  # type: ignore[import-untyped]
                 self._channel = grpc.aio.insecure_channel(self._endpoint)
             except ImportError:
-                raise LanternError("grpcio is required for production memory calls")
+                raise PalError("grpcio is required for production memory calls")
         return self._channel
 
     async def _call(self, method: str, params: dict[str, Any]) -> Any:
@@ -61,7 +61,9 @@ class GrpcMemoryClient(MemoryClientBase):
             )
 
             metadata = [
+                ("x-pal-tenant-id", self._tenant_id),
                 ("x-lantern-tenant-id", self._tenant_id),
+                ("x-pal-run-id", self._run_id),
                 ("x-lantern-run-id", self._run_id),
             ]
 
@@ -70,7 +72,7 @@ class GrpcMemoryClient(MemoryClientBase):
 
         except Exception as exc:
             if "grpc" in type(exc).__module__:
-                raise LanternError(f"Memory gRPC error ({method}): {exc}") from exc
+                raise PalError(f"Memory gRPC error ({method}): {exc}") from exc
             raise
 
     async def close(self) -> None:

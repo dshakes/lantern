@@ -1,6 +1,6 @@
 package cli
 
-// `lantern dev` brings up the entire PAL stack with a single command.
+// `pal dev` brings up the entire PAL stack with a single command.
 //
 //   - Infra (Postgres, Redis, MinIO) runs in docker-compose so the user
 //     doesn't need a local Postgres install.
@@ -348,7 +348,7 @@ func pipeLines(r io.Reader, t procTag) {
 func startInfra(ctx context.Context, composeFile string) error {
 	// Bring up the three infra services in detached mode — we'll pipe
 	// their logs in via `docker compose logs -f` only on demand
-	// (`lantern dev logs`). Detached so they don't block the foreground.
+	// (`pal dev logs`). Detached so they don't block the foreground.
 	args := []string{
 		"compose", "-f", composeFile,
 		"up", "-d",

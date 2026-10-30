@@ -1,10 +1,15 @@
-// Package lantern is the official Go SDK for Lantern — the open-source
+// Package lantern is the official Go SDK for PAL Runtime — the open-source
 // runtime for AI agents with VPC deployment, pre-run cost forecasts,
 // policy budgets, and eval-in-CI.
+//
+// The package keeps its pre-rename name (ADR 0032) until the module path
+// moves: Go has no package alias, so renaming the clause alone would break
+// every importer's `lantern.X` references for no gain.
 package lantern
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,7 +25,7 @@ import (
 // DefaultBaseURL is used when no explicit base URL is configured.
 const DefaultBaseURL = "https://api.lantern.run"
 
-// Client talks to a Lantern control plane over HTTPS.
+// Client talks to a PAL Runtime control plane over HTTPS.
 type Client struct {
 	baseURL     string
 	apiKey      string
@@ -32,11 +37,11 @@ type Client struct {
 type Option func(*Client)
 
 // WithBaseURL overrides the control-plane URL.
-// Defaults to LANTERN_API_URL env var, then DefaultBaseURL.
+// Defaults to the PAL_API_URL env var (legacy LANTERN_API_URL), then DefaultBaseURL.
 func WithBaseURL(u string) Option { return func(c *Client) { c.baseURL = u } }
 
 // WithAPIKey sets the API key used for authentication.
-// Defaults to LANTERN_API_KEY env var.
+// Defaults to the PAL_API_KEY env var (legacy LANTERN_API_KEY).
 func WithAPIKey(k string) Option { return func(c *Client) { c.apiKey = k } }
 
 // WithHTTPClient injects a custom *http.Client (for testing or custom transport).
@@ -92,7 +97,7 @@ type APIError struct {
 	Body   string
 }
 
-func (e *APIError) Error() string { return fmt.Sprintf("lantern: http %d: %s", e.Status, e.Body) }
+func (e *APIError) Error() string { return fmt.Sprintf("pal: http %d: %s", e.Status, e.Body) }
 
 // ---------- Core types ----------
 
@@ -387,13 +392,13 @@ func (c *Client) DeleteBudget(ctx context.Context, agentName string) error {
 }
 
 // ErrNoBudget is returned by GetBudget when no budget is configured.
-var ErrNoBudget = errors.New("lantern: no budget configured")
+var ErrNoBudget = errors.New("pal: no budget configured")
 
 // ---------- Triggers (inbound webhooks) ----------
 
 // Trigger is an inbound webhook bound to an agent. A provider POSTs signed
 // deliveries to the API base URL + HookPath; each verified delivery starts a
-// run. Secret is set only on CreateTrigger, and only when Lantern generated it.
+// run. Secret is set only on CreateTrigger, and only when PAL generated it.
 type Trigger struct {
 	ID             string          `json:"id"`
 	AgentName      string          `json:"agentName"`
@@ -769,7 +774,7 @@ type RehearseOptions struct {
 }
 
 // Rehearse pulls past failed/low-score runs as synthetic test cases that the
-// caller (typically `lantern test --rehearse`) replays against a candidate
+// caller (typically `pal test --rehearse`) replays against a candidate
 // agent version. The resulting case scores can be posted back to /v1/eval-runs
 // to gate merges through the existing baseline machinery.
 func (c *Client) Rehearse(ctx context.Context, agentName string, opts RehearseOptions) (*RehearseResponse, error) {
@@ -889,7 +894,7 @@ func (c *Client) ResumeVM(ctx context.Context, vmID string) (*VMLifecycle, error
 	return &out, err
 }
 
-// ForkVM spawns count (1..LANTERN_MAX_FORK_COUNT, default 100) new VMs from a snapshot of a running or paused
+// ForkVM spawns count (1..PAL_MAX_FORK_COUNT, default 100) new VMs from a snapshot of a running or paused
 // VM. A running source keeps running. Per-child failures are reported in
 // ForkResult.Forks rather than as an error.
 func (c *Client) ForkVM(ctx context.Context, vmID string, count int) (*ForkResult, error) {
@@ -942,9 +947,11 @@ func (c *Client) ReadFile(ctx context.Context, vmID, path string) (*FileContent,
 	defer res.Body.Close()
 	b, err := io.ReadAll(res.Body)
 	if err != nil {
-		return nil, fmt.Errorf("lantern: read file body: %w", err)
+		return nil, fmt.Errorf("pal: read file body: %w", err)
 	}
-	return &FileContent{Content: string(b), Truncated: res.Header.Get("X-Lantern-Truncated") == "true"}, nil
+	// X-Pal-Truncated, or the legacy X-Lantern-Truncated from a pre-rename control plane (ADR 0032).
+	truncated := cmp.Or(res.Header.Get("X-Pal-Truncated"), res.Header.Get("X-Lantern-Truncated")) == "true"
+	return &FileContent{Content: string(b), Truncated: truncated}, nil
 }
 
 // WriteFile creates or overwrites a file under the VM's /workspace. content
@@ -960,7 +967,7 @@ func (c *Client) WriteFile(ctx context.Context, vmID, path string, content []byt
 		BytesWritten int64 `json:"bytesWritten"`
 	}
 	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
-		return 0, fmt.Errorf("lantern: decode write response: %w", err)
+		return 0, fmt.Errorf("pal: decode write response: %w", err)
 	}
 	return out.BytesWritten, nil
 }
@@ -976,7 +983,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	if body != nil {
 		buf, err := json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("lantern: marshal body: %w", err)
+			return fmt.Errorf("pal: marshal body: %w", err)
 		}
 		bodyBytes = buf
 	}

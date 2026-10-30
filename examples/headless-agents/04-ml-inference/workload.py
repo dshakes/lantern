@@ -9,7 +9,7 @@ Proves:
     /run/lantern/cost.txt after each batch; harness reads + reports
     via Heartbeat.
 
-Real Lantern image would have torch + onnxruntime-gpu + the model
+Real PAL image would have torch + onnxruntime-gpu + the model
 weights baked in. For the demo we structure the code so the
 inference loop is obvious; the encode() call is a stub that returns
 a fixed-dim vector.

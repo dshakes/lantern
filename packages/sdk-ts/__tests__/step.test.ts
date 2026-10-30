@@ -160,7 +160,7 @@ describe("step.sleep() — dev mode", () => {
 describe("step.signal() — dev mode", () => {
   it("throws in dev mode", async () => {
     await expect(step.signal("wait-approval")).rejects.toThrow(
-      /only available in the Lantern runtime/
+      /only available in the PAL runtime/
     );
   });
 });

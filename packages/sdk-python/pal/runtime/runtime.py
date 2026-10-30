@@ -1,6 +1,6 @@
 """Runtime detection and configuration.
 
-Determines whether the agent is running inside the Lantern production
+Determines whether the agent is running inside the PAL production
 runtime (Firecracker / Kata sandbox) or in local dev mode.
 """
 
@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from enum import StrEnum
 
-from lantern import _env
+from pal import _env
 
 
 class RuntimeMode(StrEnum):
@@ -20,7 +20,7 @@ class RuntimeMode(StrEnum):
 def detect_mode() -> RuntimeMode:
     """Detect whether we are in production or dev mode.
 
-    The Lantern runtime sets ``LANTERN_RUNTIME=1`` in the sandbox
+    The PAL runtime sets ``LANTERN_RUNTIME=1`` in the sandbox
     environment.  Anything else is treated as dev mode.
     """
     if _env.get("RUNTIME") == "1":
@@ -41,7 +41,7 @@ def require_runtime_env(key: str) -> str:
     return value
 
 
-# Well-known environment variables set by the Lantern runtime
+# Well-known environment variables set by the PAL runtime
 RUNTIME_ENV_KEYS = {
     "LANTERN_RUNTIME": "Set to '1' inside the sandbox",
     "LANTERN_RUN_ID": "Current run ID",

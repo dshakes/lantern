@@ -1,6 +1,6 @@
 package cli
 
-// onboard.go — `lantern onboard` first-run wizard.
+// onboard.go — `pal onboard` first-run wizard.
 //
 // A deterministic, fail-loud state machine that takes a new user from
 // "stack running" to "first agent ran successfully" with minimal input.
@@ -227,7 +227,7 @@ Rules:
 - End with ONE concrete next command the user can copy-paste. Use EXACTLY the command supplied under "Next command:" verbatim — never invent an agent name or a flag (there is no --prompt flag; input is passed with --input '{"prompt":"..."}').
 - Friendly and accurate. No markdown headers. No filler ("Great!", "Certainly!"). If there was an error, say so plainly and tell them how to fix it.`
 
-// newOnboardCommand builds the `lantern onboard` cobra.Command.
+// newOnboardCommand builds the `pal onboard` cobra.Command.
 func newOnboardCommand() *cobra.Command {
 	var (
 		providerFlag    string
@@ -245,11 +245,11 @@ stack to a working AI agent in under a minute.
 Each step performs a real action against the REST API on :8080 and stops
 loudly if something is wrong — no silent failures, no mocked output.
 
-The agent is created agentically: on a terminal, lantern asks what you want
+The agent is created agentically: on a terminal, pal asks what you want
 the agent to do, has the control plane design it (generate-spec, LLM
 reasoning via the model router), shows the proposal, and creates it once you
 confirm. The first run uses the design's own first task. If the design call
-fails, lantern says why and falls back to a general quickstart agent.
+fails, pal says why and falls back to a general quickstart agent.
 
 Flags --provider and --api-key bypass the interactive provider prompt.
 Flag --yes (or a non-terminal stdin) never prompts: CI mode, with
@@ -291,7 +291,7 @@ func runOnboard(cfg *onboardConfig) error {
 		fmt.Fprintln(os.Stderr, colorRed+"✗"+colorReset)
 		fmt.Fprintf(os.Stderr, "\n%s\n", err)
 		fmt.Fprintln(os.Stderr, "\nBoot the stack first:")
-		fmt.Fprintln(os.Stderr, "  lantern dev")
+		fmt.Fprintln(os.Stderr, "  pal dev")
 		fmt.Fprintln(os.Stderr, "  # or: make run-api")
 		return fmt.Errorf("onboard: health check failed")
 	}
@@ -303,7 +303,7 @@ func runOnboard(cfg *onboardConfig) error {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, colorRed+"✗"+colorReset)
 		fmt.Fprintf(os.Stderr, "\n%s\n", err)
-		fmt.Fprintln(os.Stderr, "\nRun: lantern login")
+		fmt.Fprintln(os.Stderr, "\nRun: pal login")
 		return fmt.Errorf("onboard: auth failed")
 	}
 	fmt.Fprintf(os.Stderr, "%s✓%s  %s%s%s\n", colorGreen, colorReset, colorDim, authDetail, colorReset)
@@ -319,7 +319,7 @@ func runOnboard(cfg *onboardConfig) error {
 	// ── Step 4: Agent (agentic creation) ────────────────────────────────────
 	agentName, _, firstInput, err := onboardEnsureAgent(cfg, client)
 	if errors.Is(err, errOnboardDeclined) {
-		fmt.Fprintln(os.Stderr, "   Nothing was created. Run `lantern onboard` again and describe it differently.")
+		fmt.Fprintln(os.Stderr, "   Nothing was created. Run `pal onboard` again and describe it differently.")
 		return nil
 	}
 	if err != nil {
@@ -410,7 +410,7 @@ func runOnboard(cfg *onboardConfig) error {
 	fmt.Fprintf(os.Stderr, "Dashboard:  %s/runs/%s\n", dashURL, finalRun.ID)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Run it again:")
-	fmt.Fprintf(os.Stderr, "  lantern runs create --agent %s --input '{\"prompt\":\"What can you do?\"}'\n", agentName)
+	fmt.Fprintf(os.Stderr, "  pal runs create --agent %s --input '{\"prompt\":\"What can you do?\"}'\n", agentName)
 	fmt.Fprintln(os.Stderr)
 
 	// ── Step 6: Guide (BEST-EFFORT / FAIL-SOFT) ─────────────────────────────
@@ -420,6 +420,7 @@ func runOnboard(cfg *onboardConfig) error {
 	}
 	runGuideStep(client, firstRunContext, agentName)
 	_ = agentName // used above
+	fmt.Fprintf(os.Stderr, "\nnext: pal agent dev %s   # edit locally; re-publishes and re-runs on every save\n", agentName)
 
 	return nil
 }
@@ -504,7 +505,7 @@ func onboardEnsureAgent(cfg *onboardConfig, client *internal.RESTClient) (string
 	if _, err := client.GetAgent(quickstartAgentName); err != nil {
 		if _, cerr := client.CreateAgentWithSystemPrompt(
 			quickstartAgentName,
-			"General-purpose starter agent created by `lantern onboard`.",
+			"General-purpose starter agent created by `pal onboard`.",
 			quickstartSystemPrompt,
 		); cerr != nil {
 			fmt.Fprintln(os.Stderr, colorRed+"✗"+colorReset)
@@ -668,7 +669,7 @@ func onboardEnsureProvider(cfg *onboardConfig, client *internal.RESTClient, rest
 		fmt.Fprintln(os.Stderr, `    -d '{"provider":"openai","apiKey":"sk-..."}'`)
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Or run again with flags:")
-		fmt.Fprintln(os.Stderr, `  lantern onboard --provider openai --api-key sk-...`)
+		fmt.Fprintln(os.Stderr, `  pal onboard --provider openai --api-key sk-...`)
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Alternatively, start the API without a key requirement:")
 		fmt.Fprintln(os.Stderr, "  make run-api-free  # see README for the keyless local path")
@@ -864,7 +865,7 @@ func runGuideStep(client *internal.RESTClient, firstRunContext, agentName string
 
 	// Build the guide input from the first run's output context. Hand the
 	// guide the EXACT next command so it can't invent an agent name or flag.
-	nextCommand := fmt.Sprintf("lantern runs create --agent %s --input '{\"prompt\":\"What can you do?\"}'", agentName)
+	nextCommand := fmt.Sprintf("pal runs create --agent %s --input '{\"prompt\":\"What can you do?\"}'", agentName)
 	guideInput, err := json.Marshal(map[string]string{
 		"prompt": "Here is the output from the user's first PAL agent run:\n\n" + firstRunContext +
 			"\n\nExplain what happened and suggest one next command.\n\nNext command: " + nextCommand,

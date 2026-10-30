@@ -1,16 +1,16 @@
-"""Built-in tool definitions for the Lantern Python SDK.
+"""Built-in tool definitions for the PAL Python SDK.
 
 These mirror the tool definitions in the TypeScript SDK.  They are used in
 two ways:
 
 1. Passed to ``@agent(tools=[...])`` so the LLM knows what tools are
    available.
-2. The runtime resolves tool calls to the corresponding Lantern built-in
+2. The runtime resolves tool calls to the corresponding PAL built-in
    implementations (web search, code execution, filesystem, browser).
 
 Usage::
 
-    from lantern.tools import tool
+    from pal.tools import tool
 
     @agent("researcher", tools=[tool.web, tool.python])
     async def researcher(input: dict, ctx: AgentContext) -> dict:
@@ -20,11 +20,11 @@ Usage::
 
 from __future__ import annotations
 
-from lantern.types import ToolDef
+from pal.types import ToolDef
 
 
 class _ToolRegistry:
-    """Namespace for built-in Lantern tool definitions."""
+    """Namespace for built-in PAL tool definitions."""
 
     @property
     def web(self) -> ToolDef:

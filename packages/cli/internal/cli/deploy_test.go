@@ -65,6 +65,7 @@ func runCLI(t *testing.T, srvURL string, args ...string) (stdout string, err err
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
+	t.Setenv("PAL_HOME", "") // else ConfigDir would use a developer's real PAL_HOME
 	old, _ := os.Getwd()
 	if e := os.Chdir(dir); e != nil {
 		t.Fatal(e)
@@ -146,7 +147,7 @@ func TestDeployErrorMapping(t *testing.T) {
 		code   int
 		msg    string
 	}{
-		{"401", map[string]int{"GET /v1/agents/bot": 401}, exitAuth, "lantern login"},
+		{"401", map[string]int{"GET /v1/agents/bot": 401}, exitAuth, "pal login"},
 		{"402 on deploy", map[string]int{"POST /v1/agents/bot/deploy": 402}, exitBudget, "quota or budget"},
 		{"404 on deploy", map[string]int{"POST /v1/agents/bot/deploy": 404}, exitMissing, "not found"},
 		{"500 on create", map[string]int{"POST /v1/agents": 500, "GET /v1/agents/bot": 404}, exitServer, "control plane error"},

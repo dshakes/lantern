@@ -12,9 +12,9 @@ import time
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from lantern import _env
-from lantern.errors import LanternStepError
-from lantern.types import StepOptions
+from pal import _env
+from pal.errors import PalStepError
+from pal.types import StepOptions
 
 
 class StepJournal:
@@ -64,7 +64,7 @@ class StepJournal:
         self._load()
         value = self._cache[name]
         if isinstance(value, _JournalError):
-            raise LanternStepError(name, value.message)
+            raise PalStepError(name, value.message)
         return value
 
     def record_result(self, name: str, result: Any) -> None:
@@ -134,7 +134,7 @@ def create_journal_step_runner(journal: StepJournal) -> Callable[
 
         error_msg = str(last_error) if last_error else "unknown error"
         journal.record_error(name, error_msg)
-        raise LanternStepError(name, error_msg, attempt=max_attempts)
+        raise PalStepError(name, error_msg, attempt=max_attempts)
 
     return runner
 

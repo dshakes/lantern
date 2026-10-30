@@ -19,20 +19,24 @@ type globalFlags struct {
 
 var flags globalFlags
 
-// NewRootCommand builds and returns the top-level `lantern` command tree.
+// NewRootCommand builds and returns the top-level `pal` command tree.
 func NewRootCommand(version, commit, date string) *cobra.Command {
 	root := &cobra.Command{
-		Use:   "lantern",
+		Use:   "pal",
 		Short: "PAL CLI — production runtime for AI agents",
 		Long: `PAL is an open-source platform for building, running, and managing
 production AI agents with multi-LLM routing, cost forecasting, and
 eval-in-CI.
 
-The lantern CLI lets you create and manage agents, trigger and inspect
+The pal CLI lets you create and manage agents, trigger and inspect
 runs, stream run logs, run eval suites against a branch baseline, and
-deploy agent code from your terminal. Interactive sessions, connector
+deploy agent code from your terminal. For the build inner loop,
+` + "`pal agent dev <name>`" + ` watches a directory, re-publishes the agent on every
+save, fires a smoke run and streams its events. Interactive sessions, connector
 integrations, and cron scheduling are available today via the SDKs and
-dashboard — not yet as CLI subcommands.`,
+dashboard — not yet as CLI subcommands.
+
+` + "`lantern`" + ` is the legacy name of this CLI and keeps working as an alias.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       fmt.Sprintf("%s (commit: %s, built: %s)", version, commit, date),
@@ -40,11 +44,11 @@ dashboard — not yet as CLI subcommands.`,
 
 	// Persistent flags available on every subcommand.
 	pf := root.PersistentFlags()
-	pf.StringVar(&flags.apiURL, "api-url", envOrDefault("PAL_API_URL", "localhost:50051"), "PAL API address (env: LANTERN_API_URL)")
-	pf.StringVar(&flags.apiKey, "api-key", envOrDefault("PAL_API_KEY", ""), "API key for authentication (env: LANTERN_API_KEY)")
-	pf.StringVar(&flags.tenantID, "tenant-id", envOrDefault("PAL_TENANT_ID", ""), "Tenant ID (env: LANTERN_TENANT_ID)")
+	pf.StringVar(&flags.apiURL, "api-url", envOrDefault("PAL_API_URL", "localhost:50051"), "PAL API address (env: PAL_API_URL)")
+	pf.StringVar(&flags.apiKey, "api-key", envOrDefault("PAL_API_KEY", ""), "API key for authentication (env: PAL_API_KEY)")
+	pf.StringVar(&flags.tenantID, "tenant-id", envOrDefault("PAL_TENANT_ID", ""), "Tenant ID (env: PAL_TENANT_ID)")
 	pf.StringVarP(&flags.output, "output", "o", "text", "Output format: text or json")
-	pf.BoolVar(&flags.rest, "rest", false, "Force REST API instead of gRPC (env: LANTERN_USE_REST)")
+	pf.BoolVar(&flags.rest, "rest", false, "Force REST API instead of gRPC (env: PAL_USE_REST)")
 
 	// Check env var for REST mode.
 	if envOrDefault("PAL_USE_REST", "") != "" {
@@ -88,7 +92,7 @@ func clientConfig() internal.ClientConfig {
 	// If a stored token exists and no API key was provided, use the token.
 	// Fall back to the tenant captured at login too — the gRPC trust boundary
 	// requires an explicit tenant_id in metadata, so without this every call
-	// after `lantern login` fails with "missing tenant_id in metadata".
+	// after `pal login` fails with "missing tenant_id in metadata".
 	if cfg.APIKey == "" || cfg.TenantID == "" {
 		creds, err := internal.LoadCredentials()
 		if err == nil && creds != nil {

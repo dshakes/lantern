@@ -1,22 +1,22 @@
-"""Error types for the Lantern Python SDK."""
+"""Error types for the PAL Python SDK."""
 
 from __future__ import annotations
 
 
-class LanternError(Exception):
-    """Base exception for all Lantern SDK errors."""
+class PalError(Exception):
+    """Base exception for all PAL SDK errors."""
 
 
-class LanternApiError(LanternError):
-    """Raised when the Lantern HTTP API returns a non-2xx response."""
+class PalApiError(PalError):
+    """Raised when the PAL HTTP API returns a non-2xx response."""
 
     def __init__(self, status: int, body: str) -> None:
         self.status = status
         self.body = body
-        super().__init__(f"Lantern API error {status}: {body[:200]}")
+        super().__init__(f"PAL API error {status}: {body[:200]}")
 
 
-class LanternStepError(LanternError):
+class PalStepError(PalError):
     """Raised when a durable step fails after exhausting retries."""
 
     def __init__(self, step_name: str, message: str, *, attempt: int = 0) -> None:
@@ -25,7 +25,7 @@ class LanternStepError(LanternError):
         super().__init__(f"Step '{step_name}' failed (attempt {attempt}): {message}")
 
 
-class LanternLlmError(LanternError):
+class PalLlmError(PalError):
     """Raised when an LLM call fails."""
 
     def __init__(self, message: str, *, capability: str | None = None, provider: str | None = None) -> None:
@@ -34,7 +34,7 @@ class LanternLlmError(LanternError):
         super().__init__(message)
 
 
-class LanternTimeoutError(LanternError):
+class PalTimeoutError(PalError):
     """Raised when an operation exceeds its timeout."""
 
     def __init__(self, operation: str, duration: str) -> None:
@@ -43,5 +43,13 @@ class LanternTimeoutError(LanternError):
         super().__init__(f"Operation '{operation}' timed out after {duration}")
 
 
-class LanternValidationError(LanternError):
+class PalValidationError(PalError):
     """Raised when input validation fails."""
+
+
+LanternError = PalError  # deprecated alias, ADR 0032
+LanternApiError = PalApiError  # deprecated alias, ADR 0032
+LanternStepError = PalStepError  # deprecated alias, ADR 0032
+LanternLlmError = PalLlmError  # deprecated alias, ADR 0032
+LanternTimeoutError = PalTimeoutError  # deprecated alias, ADR 0032
+LanternValidationError = PalValidationError  # deprecated alias, ADR 0032
