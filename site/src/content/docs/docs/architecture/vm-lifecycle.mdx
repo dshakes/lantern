@@ -1,0 +1,26 @@
+---
+title: VM lifecycle
+description: The sandbox state machine, from schedule to terminate, including idle-suspend, pause, resume and copy-on-write forks.
+glance:
+  what: "Every state a sandbox microVM can be in, and every transition the scheduler drives."
+  why: "Pause, idle-suspend and fork change what you pay for and what survives; the guarantees differ per transition."
+  how: "Select a state or arrow for its trigger, API call and guarantees, then play the lifecycle sequence."
+sidebar:
+  order: 3
+---
+
+import { VmLifecycle, SandboxLifecycleSequence } from '../../../../components/diagrams';
+
+<VmLifecycle client:visible />
+
+<SandboxLifecycleSequence client:visible />
+
+## Reference
+
+| Item | Value |
+| --- | --- |
+| Harness heartbeat | every 5 s; stale after 30 s |
+| Idle sweeper tick | 10 s, for VMs with `idleTimeoutSecs > 0` |
+| Fork count | 1 to 100 by default, ceiling 1000; spawned 16 at a time |
+| Paused VM | holds no quota slot; snapshot storage kept |
+| Manually paused VM | never auto-resumed: exec answers 409 |
