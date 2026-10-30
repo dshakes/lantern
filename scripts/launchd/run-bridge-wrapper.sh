@@ -21,12 +21,12 @@ cd "$BRIDGE_DIR" || { echo "[$(date +%T)] bridge dir missing: $BRIDGE_DIR" >&2; 
 
 # Optional env overrides. launchd only reloads plist EnvironmentVariables on a
 # full bootout/bootstrap (which has failed and left the bridge down before);
-# vars in ~/.lantern/bridge.env take effect on a plain `kickstart -k` because
+# vars in ~/.pal/bridge.env take effect on a plain `kickstart -k` because
 # this wrapper runs at every (re)start. Vars here override plist env.
-if [ -f "$HOME/.lantern/bridge.env" ]; then
+if [ -f "$HOME/.pal/bridge.env" ]; then
   set -a
   # shellcheck disable=SC1091
-  . "$HOME/.lantern/bridge.env"
+  . "$HOME/.pal/bridge.env"
   set +a
 fi
 

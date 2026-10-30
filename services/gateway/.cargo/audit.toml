@@ -1,4 +1,4 @@
-# cargo-audit configuration for lantern-gateway.
+# cargo-audit configuration for pal-gateway.
 #
 # RUSTSEC-2026-0097: rand 0.8.5 — unsound interaction with a custom GlobalRng logger.
 # rand 0.8 is pulled TRANSITIVELY by opentelemetry_sdk (0.27.1), which still pins rand 0.8.

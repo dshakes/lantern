@@ -14,9 +14,9 @@ func TestConfigDir(t *testing.T) {
 		want    string   // relative to HOME, or "PAL_HOME"
 	}{
 		{"fresh install defaults to .pal", false, nil, ".pal"},
-		{"legacy .lantern used in place", false, []string{".lantern"}, ".lantern"},
-		{".pal wins over legacy", false, []string{".pal", ".lantern"}, ".pal"},
-		{"PAL_HOME wins over both", true, []string{".pal", ".lantern"}, "PAL_HOME"},
+		{"legacy .pal used in place", false, []string{".pal"}, ".pal"},
+		{".pal wins over legacy", false, []string{".pal", ".pal"}, ".pal"},
+		{"PAL_HOME wins over both", true, []string{".pal", ".pal"}, "PAL_HOME"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -42,12 +42,12 @@ func TestConfigDir(t *testing.T) {
 }
 
 // A user logged in before the rename keeps their session: credentials in the
-// legacy ~/.lantern are read, and a new login writes back to the same file.
+// legacy ~/.pal are read, and a new login writes back to the same file.
 func TestCredentials_LegacyDirRoundTrip(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("PAL_HOME", "")
-	legacy := filepath.Join(home, ".lantern", "credentials.json")
+	legacy := filepath.Join(home, ".pal", "credentials.json")
 	if err := os.MkdirAll(filepath.Dir(legacy), 0o700); err != nil {
 		t.Fatal(err)
 	}

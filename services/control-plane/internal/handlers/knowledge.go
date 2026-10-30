@@ -27,8 +27,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 const (
@@ -494,7 +494,7 @@ func kbContextBlock(hits []KBHit) string {
 }
 
 // kbMinScore is the cosine-similarity floor for a vector hit
-// (LANTERN_KB_MIN_SCORE, default 0.2); below it the full-text fallback runs.
+// (PAL_KB_MIN_SCORE, default 0.2); below it the full-text fallback runs.
 func kbMinScore() float64 {
 	if f, err := strconv.ParseFloat(os.Getenv("PAL_KB_MIN_SCORE"), 64); err == nil && f >= 0 && f <= 1 {
 		return f

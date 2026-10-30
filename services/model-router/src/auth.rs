@@ -1,6 +1,6 @@
 //! Service-token gate for the gRPC port (CLAUDE.md invariant #7).
 //!
-//! Callers must present `x-lantern-service-token` == `LANTERN_GRPC_SERVICE_TOKEN`.
+//! Callers must present `x-pal-service-token` == `PAL_GRPC_SERVICE_TOKEN`.
 //! Without it any pod reaching :50053 could read tenant caches, burn the
 //! router's env provider keys, or feed it a stolen `provider_credentials` map.
 //! The token is never logged.
@@ -8,7 +8,7 @@
 use subtle::ConstantTimeEq;
 use tonic::{Request, Status};
 
-pub const TOKEN_HEADER: &str = "x-lantern-service-token";
+pub const TOKEN_HEADER: &str = "x-pal-service-token";
 
 /// True for the env values that mean "production-like" (fail closed).
 fn is_prod(env: &str) -> bool {
@@ -23,7 +23,7 @@ pub fn check_startup(env: &str, token: Option<&str>) -> Result<(), &'static str>
     let unset = token.is_none_or(str::is_empty);
     if unset && is_prod(env) {
         return Err(
-            "LANTERN_GRPC_SERVICE_TOKEN is unset in a production-like LANTERN_ENV; \
+            "PAL_GRPC_SERVICE_TOKEN is unset in a production-like PAL_ENV; \
              refusing to serve the model-router gRPC port unauthenticated",
         );
     }

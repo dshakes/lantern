@@ -52,45 +52,45 @@ func New() *Registry {
 	m := &Registry{reg: reg}
 
 	m.ScheduleTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "lantern_scheduler_schedule_total",
+		Name: "pal_scheduler_schedule_total",
 		Help: "Total Schedule RPCs, partitioned by result (ok|error|quota|standby).",
 	}, []string{"result"})
 	reg.MustRegister(m.ScheduleTotal)
 
 	m.ScheduleErrorsTotal = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "lantern_scheduler_schedule_errors_total",
+		Name: "pal_scheduler_schedule_errors_total",
 		Help: "Total Schedule RPCs that returned an error.",
 	})
 	reg.MustRegister(m.ScheduleErrorsTotal)
 
 	m.ScheduleDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "lantern_scheduler_schedule_duration_seconds",
+		Name:    "pal_scheduler_schedule_duration_seconds",
 		Help:    "Schedule RPC latency (placement; spawn dispatch is async), partitioned by result (ok|error).",
 		Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
 	}, []string{"result"})
 	reg.MustRegister(m.ScheduleDuration)
 
 	m.PlacementScore = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:    "lantern_scheduler_placement_score",
+		Name:    "pal_scheduler_placement_score",
 		Help:    "Placement score of the winning node (0–N weighted sum).",
 		Buckets: prometheus.LinearBuckets(0, 0.5, 12),
 	})
 	reg.MustRegister(m.PlacementScore)
 
 	m.ActiveVMs = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "lantern_scheduler_active_vms",
+		Name: "pal_scheduler_active_vms",
 		Help: "Number of VMs in a non-terminal state tracked by the scheduler.",
 	})
 	reg.MustRegister(m.ActiveVMs)
 
 	m.Nodes = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "lantern_scheduler_nodes",
+		Name: "pal_scheduler_nodes",
 		Help: "Number of registered nodes known to the scheduler.",
 	})
 	reg.MustRegister(m.Nodes)
 
 	m.IsLeader = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "lantern_scheduler_is_leader",
+		Name: "pal_scheduler_is_leader",
 		Help: "1 if this replica currently holds the leader advisory lock, 0 otherwise.",
 	})
 	reg.MustRegister(m.IsLeader)

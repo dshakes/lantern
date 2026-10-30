@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# One-shot post-reboot health check for the Lantern dev stack.
-# Armed via dev.lantern.post-reboot-check.plist (RunAtLoad). After it writes
+# One-shot post-reboot health check for the PAL dev stack.
+# Armed via dev.pal.post-reboot-check.plist (RunAtLoad). After it writes
 # its report it disarms itself so it only runs on the first login after arming.
 set -uo pipefail
 
-REPORT="$HOME/Library/Logs/Lantern/post-reboot-check.log"
+REPORT="$HOME/Library/Logs/PAL/post-reboot-check.log"
 mkdir -p "$(dirname "$REPORT")"
-PLIST="$HOME/Library/LaunchAgents/dev.lantern.post-reboot-check.plist"
+PLIST="$HOME/Library/LaunchAgents/dev.pal.post-reboot-check.plist"
 UID_NUM="$(id -u)"
 
 {
   echo "================================================================"
-  echo "Lantern post-reboot check — started $(date '+%Y-%m-%d %H:%M:%S %Z')"
+  echo "PAL post-reboot check — started $(date '+%Y-%m-%d %H:%M:%S %Z')"
   echo "uptime: $(uptime)"
   echo "================================================================"
 
@@ -48,13 +48,13 @@ UID_NUM="$(id -u)"
   echo "--- launchd agents ---"
   for s in infra api dashboard whatsapp-bridge imessage-bridge tunnel tunnel-watcher a2p-watcher; do
     printf "%-22s " "$s"
-    launchctl print gui/$UID_NUM/dev.lantern.$s 2>/dev/null | grep -E 'pid =|last exit code' | tr '\n' ' '
+    launchctl print gui/$UID_NUM/dev.pal.$s 2>/dev/null | grep -E 'pid =|last exit code' | tr '\n' ' '
     echo
   done
 
   echo
   echo "--- imessage-bridge log freshness ---"
-  IMLOG="$HOME/Library/Logs/Lantern/imessage-bridge.out.log"
+  IMLOG="$HOME/Library/Logs/PAL/imessage-bridge.out.log"
   [ -f "$IMLOG" ] && echo "mtime: $(stat -f '%Sm' "$IMLOG")" || echo "(log not found)"
 
   echo
@@ -63,6 +63,6 @@ UID_NUM="$(id -u)"
 
 # Disarm: this is a one-shot. Remove the plist and bootout so it won't run on
 # every future login.
-launchctl bootout gui/$UID_NUM/dev.lantern.post-reboot-check 2>/dev/null
+launchctl bootout gui/$UID_NUM/dev.pal.post-reboot-check 2>/dev/null
 rm -f "$PLIST" 2>/dev/null
 exit 0

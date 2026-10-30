@@ -18,10 +18,10 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/control-plane/internal/db"
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/control-plane/internal/db"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // ---------- test helpers ----------
@@ -43,7 +43,7 @@ func startDPServer(t *testing.T, svc *DataPlaneService) string {
 		t.Fatalf("net.Listen: %v", err)
 	}
 	grpcSrv := grpc.NewServer()
-	lanternv1.RegisterDataPlaneServiceServer(grpcSrv, svc)
+	palv1.RegisterDataPlaneServiceServer(grpcSrv, svc)
 	go func() { _ = grpcSrv.Serve(lis) }()
 	t.Cleanup(grpcSrv.Stop)
 	return lis.Addr().String()
@@ -64,21 +64,21 @@ func startDPServerWithInterceptors(t *testing.T, svc *DataPlaneService) string {
 		grpc.ChainUnaryInterceptor(middleware.UnaryTenantInterceptor(logger)),
 		grpc.ChainStreamInterceptor(middleware.StreamTenantInterceptor(logger)),
 	)
-	lanternv1.RegisterDataPlaneServiceServer(grpcSrv, svc)
+	palv1.RegisterDataPlaneServiceServer(grpcSrv, svc)
 	go func() { _ = grpcSrv.Serve(lis) }()
 	t.Cleanup(grpcSrv.Stop)
 	return lis.Addr().String()
 }
 
 // dialDP dials the test gRPC server.
-func dialDP(t *testing.T, addr string) lanternv1.DataPlaneServiceClient {
+func dialDP(t *testing.T, addr string) palv1.DataPlaneServiceClient {
 	t.Helper()
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		t.Fatalf("grpc.NewClient: %v", err)
 	}
 	t.Cleanup(func() { conn.Close() })
-	return lanternv1.NewDataPlaneServiceClient(conn)
+	return palv1.NewDataPlaneServiceClient(conn)
 }
 
 // seedDP inserts a data_planes row and returns the row's ID.
@@ -124,7 +124,7 @@ func dpAssertCode(t *testing.T, err error, want codes.Code) {
 
 func TestDataPlane_Register_MissingTenantID(t *testing.T) {
 	svc := newDPSvc(t, nil)
-	_, err := svc.Register(context.Background(), &lanternv1.DpRegisterRequest{
+	_, err := svc.Register(context.Background(), &palv1.DpRegisterRequest{
 		AgentToken: "tok",
 	})
 	dpAssertCode(t, err, codes.InvalidArgument)
@@ -132,7 +132,7 @@ func TestDataPlane_Register_MissingTenantID(t *testing.T) {
 
 func TestDataPlane_Register_MissingAgentToken(t *testing.T) {
 	svc := newDPSvc(t, nil)
-	_, err := svc.Register(context.Background(), &lanternv1.DpRegisterRequest{
+	_, err := svc.Register(context.Background(), &palv1.DpRegisterRequest{
 		TenantId: "00000000-0000-0000-0000-000000000001",
 	})
 	dpAssertCode(t, err, codes.Unauthenticated)
@@ -140,7 +140,7 @@ func TestDataPlane_Register_MissingAgentToken(t *testing.T) {
 
 func TestDataPlane_Heartbeat_InvalidToken(t *testing.T) {
 	svc := newDPSvc(t, nil)
-	_, err := svc.Heartbeat(context.Background(), &lanternv1.DpHeartbeatRequest{
+	_, err := svc.Heartbeat(context.Background(), &palv1.DpHeartbeatRequest{
 		PlaneId:      "dp-1",
 		SessionToken: "not-a-valid-jwt",
 	})
@@ -155,7 +155,7 @@ func TestDataPlane_Heartbeat_WrongPlaneID(t *testing.T) {
 		t.Fatalf("issueSessionToken: %v", err)
 	}
 	// Present it as plane-B — should be rejected.
-	_, err = svc.Heartbeat(context.Background(), &lanternv1.DpHeartbeatRequest{
+	_, err = svc.Heartbeat(context.Background(), &palv1.DpHeartbeatRequest{
 		PlaneId:      "plane-B",
 		SessionToken: tok,
 	})
@@ -164,7 +164,7 @@ func TestDataPlane_Heartbeat_WrongPlaneID(t *testing.T) {
 
 func TestDataPlane_RefreshToken_Forged(t *testing.T) {
 	svc := newDPSvc(t, nil)
-	_, err := svc.RefreshToken(context.Background(), &lanternv1.DpRefreshTokenRequest{
+	_, err := svc.RefreshToken(context.Background(), &palv1.DpRefreshTokenRequest{
 		PlaneId:      "dp-1",
 		SessionToken: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJkcC0xIn0.bad",
 	})
@@ -173,7 +173,7 @@ func TestDataPlane_RefreshToken_Forged(t *testing.T) {
 
 func TestDataPlane_ReportMetrics_InvalidToken(t *testing.T) {
 	svc := newDPSvc(t, nil)
-	_, err := svc.ReportMetrics(context.Background(), &lanternv1.DpMetricsReport{
+	_, err := svc.ReportMetrics(context.Background(), &palv1.DpMetricsReport{
 		PlaneId:      "dp-1",
 		SessionToken: "garbage",
 	})
@@ -185,10 +185,10 @@ func TestDataPlane_ReportMetrics_InvalidToken(t *testing.T) {
 func TestPlaneRegistry_SendAndDeregister(t *testing.T) {
 	reg := newPlaneRegistry()
 
-	ch := make(chan *lanternv1.DpRunAssignment, 1)
+	ch := make(chan *palv1.DpRunAssignment, 1)
 	deregister := reg.register("tenant-1", "plane-1", ch)
 
-	a := &lanternv1.DpRunAssignment{RunId: "run-abc", TenantId: "tenant-1"}
+	a := &palv1.DpRunAssignment{RunId: "run-abc", TenantId: "tenant-1"}
 	if !reg.Send("tenant-1", "plane-1", a) {
 		t.Fatal("Send returned false for connected plane")
 	}
@@ -207,12 +207,12 @@ func TestPlaneRegistry_SendAndDeregister(t *testing.T) {
 func TestPlaneRegistry_CrossTenantSendFails(t *testing.T) {
 	reg := newPlaneRegistry()
 
-	ch := make(chan *lanternv1.DpRunAssignment, 1)
+	ch := make(chan *palv1.DpRunAssignment, 1)
 	deregister := reg.register("tenant-1", "plane-1", ch)
 	defer deregister()
 
 	// The registry key is tenantID+"/"+planeID so tenant-2/plane-1 is distinct.
-	a := &lanternv1.DpRunAssignment{RunId: "run-xyz"}
+	a := &palv1.DpRunAssignment{RunId: "run-xyz"}
 	if reg.Send("tenant-2", "plane-1", a) {
 		t.Fatal("Send returned true for a wrong-tenant key")
 	}
@@ -221,8 +221,8 @@ func TestPlaneRegistry_CrossTenantSendFails(t *testing.T) {
 func TestPlaneRegistry_ConnectedPlanes(t *testing.T) {
 	reg := newPlaneRegistry()
 
-	ch1 := make(chan *lanternv1.DpRunAssignment, 1)
-	ch2 := make(chan *lanternv1.DpRunAssignment, 1)
+	ch1 := make(chan *palv1.DpRunAssignment, 1)
+	ch2 := make(chan *palv1.DpRunAssignment, 1)
 	d1 := reg.register("t1", "p1", ch1)
 	d2 := reg.register("t2", "p2", ch2)
 
@@ -254,9 +254,9 @@ func TestDataPlane_RunStream_NoHello(t *testing.T) {
 	}
 
 	// Send a non-hello frame (RunAccepted).
-	sendErr := stream.Send(&lanternv1.DpRunStreamClientMsg{
-		Msg: &lanternv1.DpRunStreamClientMsg_Accepted{
-			Accepted: &lanternv1.DpRunAccepted{RunId: "run-1"},
+	sendErr := stream.Send(&palv1.DpRunStreamClientMsg{
+		Msg: &palv1.DpRunStreamClientMsg_Accepted{
+			Accepted: &palv1.DpRunAccepted{RunId: "run-1"},
 		},
 	})
 	if sendErr != nil {
@@ -290,7 +290,7 @@ func TestDataPlane_Register_ValidToken(t *testing.T) {
 	planeID := seedDP(t, pool, tenantID, sha256Hex(regToken))
 
 	svc := newDPSvc(t, pool)
-	resp, err := svc.Register(context.Background(), &lanternv1.DpRegisterRequest{
+	resp, err := svc.Register(context.Background(), &palv1.DpRegisterRequest{
 		TenantId:     tenantID,
 		AgentToken:   regToken,
 		AgentVersion: "1.0.0",
@@ -329,7 +329,7 @@ func TestDataPlane_Register_InvalidToken(t *testing.T) {
 	seedDP(t, pool, tenantID, sha256Hex("correct-tok"))
 
 	svc := newDPSvc(t, pool)
-	_, err := svc.Register(context.Background(), &lanternv1.DpRegisterRequest{
+	_, err := svc.Register(context.Background(), &palv1.DpRegisterRequest{
 		TenantId:   tenantID,
 		AgentToken: "wrong-tok",
 	})
@@ -346,14 +346,14 @@ func TestDataPlane_Heartbeat_UpdatesDB(t *testing.T) {
 	planeID := seedDP(t, pool, tenantID, sha256Hex(regToken))
 
 	svc := newDPSvc(t, pool)
-	regResp, err := svc.Register(context.Background(), &lanternv1.DpRegisterRequest{
+	regResp, err := svc.Register(context.Background(), &palv1.DpRegisterRequest{
 		TenantId: tenantID, AgentToken: regToken,
 	})
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 
-	hbResp, err := svc.Heartbeat(context.Background(), &lanternv1.DpHeartbeatRequest{
+	hbResp, err := svc.Heartbeat(context.Background(), &palv1.DpHeartbeatRequest{
 		PlaneId:      planeID,
 		SessionToken: regResp.GetSessionToken(),
 		ActiveRuns:   5,
@@ -399,7 +399,7 @@ func TestDataPlane_Heartbeat_WrongSecret(t *testing.T) {
 	)
 	forgedTok, _ := forgedSvc.issueSessionToken(tenantID, planeID)
 
-	_, err := svc.Heartbeat(context.Background(), &lanternv1.DpHeartbeatRequest{
+	_, err := svc.Heartbeat(context.Background(), &palv1.DpHeartbeatRequest{
 		PlaneId:      planeID,
 		SessionToken: forgedTok,
 	})
@@ -425,7 +425,7 @@ func TestDataPlane_E2E(t *testing.T) {
 	defer cancel()
 
 	// 1. Register.
-	regResp, err := client.Register(ctx, &lanternv1.DpRegisterRequest{
+	regResp, err := client.Register(ctx, &palv1.DpRegisterRequest{
 		TenantId:     tenantID,
 		AgentToken:   regToken,
 		AgentVersion: "1.0.0",
@@ -440,7 +440,7 @@ func TestDataPlane_E2E(t *testing.T) {
 	sessionToken := regResp.GetSessionToken()
 
 	// 2. Heartbeat.
-	hbResp, err := client.Heartbeat(ctx, &lanternv1.DpHeartbeatRequest{
+	hbResp, err := client.Heartbeat(ctx, &palv1.DpHeartbeatRequest{
 		PlaneId:      planeID,
 		SessionToken: sessionToken,
 	})
@@ -456,16 +456,16 @@ func TestDataPlane_E2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunStream: %v", err)
 	}
-	if err := stream.Send(&lanternv1.DpRunStreamClientMsg{
-		Msg: &lanternv1.DpRunStreamClientMsg_Hello{
-			Hello: &lanternv1.DpHello{PlaneId: planeID, SessionToken: sessionToken},
+	if err := stream.Send(&palv1.DpRunStreamClientMsg{
+		Msg: &palv1.DpRunStreamClientMsg_Hello{
+			Hello: &palv1.DpHello{PlaneId: planeID, SessionToken: sessionToken},
 		},
 	}); err != nil {
 		t.Fatalf("send hello: %v", err)
 	}
 
 	// 4. Push a run assignment through the registry.
-	assignment := &lanternv1.DpRunAssignment{
+	assignment := &palv1.DpRunAssignment{
 		RunId:          "e2e-run-001",
 		AgentVersionId: "v1",
 		TenantId:       tenantID,
@@ -496,16 +496,16 @@ func TestDataPlane_E2E(t *testing.T) {
 	}
 
 	// 6. Client sends acceptance.
-	if err := stream.Send(&lanternv1.DpRunStreamClientMsg{
-		Msg: &lanternv1.DpRunStreamClientMsg_Accepted{
-			Accepted: &lanternv1.DpRunAccepted{RunId: assignment.RunId},
+	if err := stream.Send(&palv1.DpRunStreamClientMsg{
+		Msg: &palv1.DpRunStreamClientMsg_Accepted{
+			Accepted: &palv1.DpRunAccepted{RunId: assignment.RunId},
 		},
 	}); err != nil {
 		t.Fatalf("send accepted: %v", err)
 	}
 
 	// 7. RefreshToken.
-	refreshResp, err := client.RefreshToken(ctx, &lanternv1.DpRefreshTokenRequest{
+	refreshResp, err := client.RefreshToken(ctx, &palv1.DpRefreshTokenRequest{
 		PlaneId:      planeID,
 		SessionToken: sessionToken,
 	})
@@ -544,7 +544,7 @@ func TestDataPlane_BehindInterceptorChain(t *testing.T) {
 	defer cancel()
 
 	// Register — must succeed WITHOUT tenant_id metadata header.
-	regResp, err := client.Register(ctx, &lanternv1.DpRegisterRequest{
+	regResp, err := client.Register(ctx, &palv1.DpRegisterRequest{
 		TenantId:   tenantID,
 		AgentToken: regToken,
 		Hostname:   "interceptor-host",
@@ -558,7 +558,7 @@ func TestDataPlane_BehindInterceptorChain(t *testing.T) {
 	sessionToken := regResp.GetSessionToken()
 
 	// Heartbeat — must succeed WITHOUT tenant_id metadata header.
-	hbResp, err := client.Heartbeat(ctx, &lanternv1.DpHeartbeatRequest{
+	hbResp, err := client.Heartbeat(ctx, &palv1.DpHeartbeatRequest{
 		PlaneId:      planeID,
 		SessionToken: sessionToken,
 	})
@@ -574,16 +574,16 @@ func TestDataPlane_BehindInterceptorChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunStream behind interceptors: %v", err)
 	}
-	if err := stream.Send(&lanternv1.DpRunStreamClientMsg{
-		Msg: &lanternv1.DpRunStreamClientMsg_Hello{
-			Hello: &lanternv1.DpHello{PlaneId: planeID, SessionToken: sessionToken},
+	if err := stream.Send(&palv1.DpRunStreamClientMsg{
+		Msg: &palv1.DpRunStreamClientMsg_Hello{
+			Hello: &palv1.DpHello{PlaneId: planeID, SessionToken: sessionToken},
 		},
 	}); err != nil {
 		t.Fatalf("send hello behind interceptors: %v", err)
 	}
 
 	// RefreshToken — must succeed WITHOUT tenant_id metadata header.
-	refreshResp, err := client.RefreshToken(ctx, &lanternv1.DpRefreshTokenRequest{
+	refreshResp, err := client.RefreshToken(ctx, &palv1.DpRefreshTokenRequest{
 		PlaneId:      planeID,
 		SessionToken: sessionToken,
 	})
@@ -619,13 +619,13 @@ func TestDataPlane_RunStream_TenantCap(t *testing.T) {
 	defer cancel()
 
 	// Obtain session tokens for both planes.
-	reg1, err := client.Register(ctx, &lanternv1.DpRegisterRequest{
+	reg1, err := client.Register(ctx, &palv1.DpRegisterRequest{
 		TenantId: tenantID, AgentToken: "cap-tok-1",
 	})
 	if err != nil {
 		t.Fatalf("Register plane1: %v", err)
 	}
-	reg2, err := client.Register(ctx, &lanternv1.DpRegisterRequest{
+	reg2, err := client.Register(ctx, &palv1.DpRegisterRequest{
 		TenantId: tenantID, AgentToken: "cap-tok-2",
 	})
 	if err != nil {
@@ -634,7 +634,7 @@ func TestDataPlane_RunStream_TenantCap(t *testing.T) {
 
 	// Artificially set the cap to 1 by pre-registering a fake connection in the
 	// registry so that the second RunStream open triggers ResourceExhausted.
-	fakeCh := make(chan *lanternv1.DpRunAssignment, 1)
+	fakeCh := make(chan *palv1.DpRunAssignment, 1)
 	fakeDeregister, ok := svc.Registry.tryRegister(tenantID, "fake-plane", fakeCh, 1)
 	if !ok {
 		t.Fatal("tryRegister for fake-plane should succeed (cap=1, count was 0)")
@@ -645,7 +645,7 @@ func TestDataPlane_RunStream_TenantCap(t *testing.T) {
 	// but same tenant) must fail ResourceExhausted.
 	// We call tryRegister directly rather than opening a full stream so the test
 	// stays fast and doesn't depend on stream-level timing.
-	ch1 := make(chan *lanternv1.DpRunAssignment, 1)
+	ch1 := make(chan *palv1.DpRunAssignment, 1)
 	_, ok = svc.Registry.tryRegister(tenantID, planeID1, ch1, 1)
 	if ok {
 		t.Error("tryRegister should have failed (cap=1 already filled)")
@@ -666,9 +666,9 @@ func TestDataPlane_RunStream_TenantCap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunStream plane2: %v", err)
 	}
-	if err := stream2.Send(&lanternv1.DpRunStreamClientMsg{
-		Msg: &lanternv1.DpRunStreamClientMsg_Hello{
-			Hello: &lanternv1.DpHello{PlaneId: planeID2, SessionToken: reg2.GetSessionToken()},
+	if err := stream2.Send(&palv1.DpRunStreamClientMsg{
+		Msg: &palv1.DpRunStreamClientMsg_Hello{
+			Hello: &palv1.DpHello{PlaneId: planeID2, SessionToken: reg2.GetSessionToken()},
 		},
 	}); err != nil {
 		t.Fatalf("send hello plane2: %v", err)

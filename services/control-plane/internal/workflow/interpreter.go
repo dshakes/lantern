@@ -217,7 +217,7 @@ type Deps struct {
 	// requiresConfidence=true). When score < Threshold the node is diverted
 	// to the human-approval mechanism (WaitForApproval) rather than
 	// auto-executing. When nil (the default), the feature is completely
-	// bypassed. Controlled at the call site via LANTERN_CONFIDENCE_GATE.
+	// bypassed. Controlled at the call site via PAL_CONFIDENCE_GATE.
 	ConfidenceGate *ConfidenceGate
 
 	// RecordStep, when non-nil, is called after each node's retry loop
@@ -233,7 +233,7 @@ type Deps struct {
 
 	// RecordReplaySkip, when non-nil, is called each time CompletedStep
 	// returns a cached result (crash-resume replay skip). The caller uses
-	// this to increment the lantern.run.replay.skips OTel counter.
+	// this to increment the pal.run.replay.skips OTel counter.
 	RecordReplaySkip func()
 }
 
@@ -573,7 +573,7 @@ func executeNode(ctx context.Context, runID string, deps Deps, emit emitFn, node
 
 	// Confidence gate: evaluate confidence and optionally route to human
 	// approval before executing any side-effecting node. Bypassed entirely
-	// when deps.ConfidenceGate is nil (default — LANTERN_CONFIDENCE_GATE off).
+	// when deps.ConfidenceGate is nil (default — PAL_CONFIDENCE_GATE off).
 	if deps.ConfidenceGate != nil && isConfidenceGated(node) {
 		if err := runConfidenceGate(ctx, runID, deps, emit, node, vars); err != nil {
 			return nil, err

@@ -12,7 +12,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 
 const COOKIE_NAME = "pal_token";
-const LEGACY_COOKIE_NAME = "lantern_token"; // pre-PAL-rename; cleared on logout
+const LEGACY_COOKIE_NAME = "pal_token"; // pre-PAL-rename; cleared on logout
 const MAX_AGE = 60 * 60 * 24 * 30; // 30 days
 
 export async function POST(req: NextRequest) {

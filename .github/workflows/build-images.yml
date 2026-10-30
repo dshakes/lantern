@@ -1,5 +1,5 @@
 # build-images — builds, pushes, and cosign-signs the deployable PAL Runtime service images
-# that Helm/Terraform reference (ghcr.io/dshakes/lantern/<name>). Runs on push to master
+# that Helm/Terraform reference (ghcr.io/dshakes/pal/<name>). Runs on push to master
 # and on demand (workflow_dispatch). Each image is tagged with the git SHA and `latest`.
 #
 # Signing is Sigstore KEYLESS (Fulcio short-lived cert + Rekor), identical in trust to
@@ -20,7 +20,7 @@
 # and the job then VERIFIES what it just produced — signature under the expected identity,
 # a wrong identity must be rejected, SBOM + provenance attestations must verify — so a
 # broken signing chain fails CI instead of failing admission in a customer cluster.
-# Cluster-side checks: infra/helm/lantern-data-plane (imageVerification) for platform
+# Cluster-side checks: infra/helm/pal-data-plane (imageVerification) for platform
 # images, infra/k8s/supply-chain for tenant workload images.
 #
 # Action SHAs are pinned (same convention as sdlc-qa.yml / sign-images.yml).
@@ -45,7 +45,7 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_PREFIX: ghcr.io/dshakes/lantern
+  IMAGE_PREFIX: ghcr.io/dshakes/pal
   # The keyless identity build-images.yml signs as on master. Kyverno attestors
   # (data-plane chart + infra/k8s/supply-chain) trust exactly this subject.
   SIGNER_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/build-images.yml@${{ github.ref }}
@@ -77,7 +77,7 @@ jobs:
           - image: runtime-manager
             context: .
             file: services/runtime-manager/Dockerfile
-          - image: web   # dashboard — Helm pulls .../lantern/web (apps/web)
+          - image: web   # dashboard — Helm pulls .../pal/web (apps/web)
             context: apps/web
             file: apps/web/Dockerfile
     steps:

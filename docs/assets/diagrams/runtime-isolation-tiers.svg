@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 690" class="lx" role="img" aria-labelledby="runtime-isolation-tiers-title runtime-isolation-tiers-desc">
   <title id="runtime-isolation-tiers-title">Each trust class maps to one RuntimeClass, and the node must offer it</title>
-  <desc id="runtime-isolation-tiers-desc">Matrix of seven isolation classes. Trusted maps to bare runc on a shared host kernel and is the only class where that is deliberate. Standard maps to gVisor and falls back to runc only when LANTERN_ALLOW_RUNC_STANDARD is set. Untrusted maps to gVisor and is refused if gVisor is missing. Hostile maps to a Kata RuntimeClass, a hardware VM with its own kernel, and is refused if Kata is missing. Confidential maps to the Kata-CC RuntimeClass, a memory-encrypted VM, with an isolation floor of hostile, and is refused without it. Wasm maps to the Wasm RuntimeClass and devcontainer maps to gVisor with a long-lived pod and volume. Untrusted and hostile pods also get node affinity and a NoSchedule toleration for their node pool.</desc>
+  <desc id="runtime-isolation-tiers-desc">Matrix of seven isolation classes. Trusted maps to bare runc on a shared host kernel and is the only class where that is deliberate. Standard maps to gVisor and falls back to runc only when PAL_ALLOW_RUNC_STANDARD is set. Untrusted maps to gVisor and is refused if gVisor is missing. Hostile maps to a Kata RuntimeClass, a hardware VM with its own kernel, and is refused if Kata is missing. Confidential maps to the Kata-CC RuntimeClass, a memory-encrypted VM, with an isolation floor of hostile, and is refused without it. Wasm maps to the Wasm RuntimeClass and devcontainer maps to gVisor with a long-lived pod and volume. Untrusted and hostile pods also get node affinity and a NoSchedule toleration for their node pool.</desc>
   <style class="lx-style">
     .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
     @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
@@ -58,7 +58,7 @@
   <text class="t-b" x="466" y="214">user-space kernel (runsc)</text>
   <rect class="node-deny" x="740" y="186" width="404" height="44" rx="8"/>
   <text class="t-s" x="752" y="205">gVisor missing: refused unless</text>
-  <text class="t-s mono" x="752" y="220">LANTERN_ALLOW_RUNC_STANDARD=1</text>
+  <text class="t-s mono" x="752" y="220">PAL_ALLOW_RUNC_STANDARD=1</text>
   <rect class="node" x="40" y="244" width="1120" height="56" rx="10"/>
   <text class="t-h" x="56" y="268">Untrusted</text>
   <text class="t-s" x="56" y="287">packages, browsers</text>
@@ -103,9 +103,9 @@
   <text class="t-b" x="466" y="534">user-space kernel (runsc)</text>
   <rect class="node-deny" x="740" y="506" width="404" height="44" rx="8"/>
   <text class="t-s" x="752" y="525">gVisor missing: refused unless</text>
-  <text class="t-s mono" x="752" y="540">LANTERN_ALLOW_RUNC_STANDARD=1</text>
+  <text class="t-s mono" x="752" y="540">PAL_ALLOW_RUNC_STANDARD=1</text>
   <text class="t-b" x="40" y="590">Untrusted and hostile pods also get node affinity and a NoSchedule toleration for their node pool.</text>
-  <text class="t-s" x="40" y="612">Names come from LANTERN_RUNTIMECLASS_GVISOR, _KATA, _KATA_CC and _WASM.</text>
+  <text class="t-s" x="40" y="612">Names come from PAL_RUNTIMECLASS_GVISOR, _KATA, _KATA_CC and _WASM.</text>
   <g transform="translate(40 650)">
   <rect class="node-glass" x="0" width="14" height="14" rx="3"/><text class="t-s" x="22" y="11">Hardened RuntimeClass</text>
   <rect class="group" x="190" width="14" height="14" rx="3"/><text class="t-s" x="212" y="11">No hardened boundary</text>

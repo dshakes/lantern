@@ -15,8 +15,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
-	"github.com/dshakes/lantern/services/control-plane/internal/storage"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/storage"
 )
 
 // mockBlob is an in-memory blobStore so dl tests stay hermetic (no MinIO).

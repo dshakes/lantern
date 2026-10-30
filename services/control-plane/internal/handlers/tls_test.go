@@ -21,7 +21,7 @@ import (
 
 // writeTestCert generates a self-signed cert/key pair and writes them as PEM
 // files into dir, returning their paths. Mirrors what an operator would supply
-// via LANTERN_CONTROL_PLANE_TLS_CERT / _KEY.
+// via PAL_CONTROL_PLANE_TLS_CERT / _KEY.
 func writeTestCert(t *testing.T, dir string) (certPath, keyPath string) {
 	t.Helper()
 
@@ -32,7 +32,7 @@ func writeTestCert(t *testing.T, dir string) (certPath, keyPath string) {
 
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "lantern-control-plane-test"},
+		Subject:      pkix.Name{CommonName: "pal-control-plane-test"},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
@@ -152,7 +152,7 @@ func TestGRPCServerTLS_ProdGating(t *testing.T) {
 			t.Fatalf("unset returns nil,nil regardless of env; got creds=%v err=%v", creds, err)
 		}
 		if !IsProd() {
-			t.Fatalf("LANTERN_ENV=prod should be prod")
+			t.Fatalf("PAL_ENV=prod should be prod")
 		}
 		// main.go: creds==nil && IsProd() → Fatal.
 	})
@@ -164,7 +164,7 @@ func TestGRPCServerTLS_ProdGating(t *testing.T) {
 			t.Fatalf("unset returns nil,nil; got creds=%v err=%v", creds, err)
 		}
 		if IsProd() {
-			t.Fatalf("LANTERN_ENV unset should not be prod")
+			t.Fatalf("PAL_ENV unset should not be prod")
 		}
 		// main.go: creds==nil && !IsProd() → WARN + plaintext.
 	})

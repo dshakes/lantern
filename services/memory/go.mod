@@ -1,4 +1,4 @@
-module github.com/dshakes/lantern/services/memory
+module github.com/dshakes/pal/services/memory
 
 go 1.25.0
 

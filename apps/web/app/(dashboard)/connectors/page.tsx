@@ -227,7 +227,7 @@ export default function ConnectorsPage() {
   // Listen for OAuth popup completion.
   useEffect(() => {
     const handler = (e: MessageEvent) => {
-      if (e.data?.type !== "pal:oauth:complete" && e.data?.type !== "lantern:oauth:complete") return; // legacy type still sent by current control-plane
+      if (e.data?.type !== "pal:oauth:complete" && e.data?.type !== "pal:oauth:complete") return; // legacy type still sent by current control-plane
       if (e.data.success) {
         setView("success"); setMsg(e.data.message || "Connected successfully"); setOauthErr("");
         loadData();

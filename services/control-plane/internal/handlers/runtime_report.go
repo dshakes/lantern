@@ -9,8 +9,8 @@ package handlers
 //
 // # Authentication
 //
-// Identical to the secret relay: X-Lantern-Runtime-Token pre-shared token,
-// compared constant-time (SHA-256 hashed) against LANTERN_RUNTIME_SECRET_TOKEN.
+// Identical to the secret relay: X-Pal-Runtime-Token pre-shared token,
+// compared constant-time (SHA-256 hashed) against PAL_RUNTIME_SECRET_TOKEN.
 // FAIL-CLOSED: if the env var is unset this endpoint returns 403 for every
 // call regardless of the token supplied.
 //
@@ -63,8 +63,8 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 const (
@@ -77,7 +77,7 @@ const (
 	// Set to "0" to disable the grace window entirely (strict: terminal → reject).
 	envTerminalGrace = "PAL_RUNTIME_TERMINAL_GRACE"
 
-	// defaultTerminalGrace is used when LANTERN_RUNTIME_TERMINAL_GRACE is absent
+	// defaultTerminalGrace is used when PAL_RUNTIME_TERMINAL_GRACE is absent
 	// or unparseable.
 	defaultTerminalGrace = 10 * time.Minute
 )
@@ -286,7 +286,7 @@ type vmBindingRow struct {
 	terminatedAt    *time.Time // non-nil when the VM has reached a terminal state
 }
 
-// terminalGrace reads LANTERN_RUNTIME_TERMINAL_GRACE and returns the configured
+// terminalGrace reads PAL_RUNTIME_TERMINAL_GRACE and returns the configured
 // grace duration. Invalid or absent values fall back to defaultTerminalGrace.
 // A value of "0" disables the grace window entirely.
 func terminalGrace() time.Duration {
@@ -316,7 +316,7 @@ func isTerminalState(state string) bool {
 // for the supplied kind.
 //
 // Grace window behaviour: for kind=log and kind=audit only, a VM that entered a
-// terminal state within LANTERN_RUNTIME_TERMINAL_GRACE (default 10 min) of now
+// terminal state within PAL_RUNTIME_TERMINAL_GRACE (default 10 min) of now
 // is still accepted. This allows final harness logs and shutdown audit events to
 // land after the runtime-manager has flipped the row to "terminated" / "failed".
 // All other kinds (otlp_traces, prometheus_metrics) and wrong-tenant / unknown-vm
@@ -415,8 +415,8 @@ func (h *RuntimeReportHandler) insertLogLine(ctx context.Context, tenantID, vmID
 
 // Report handles POST /v1/runtime/report.
 //
-// Authentication: X-Lantern-Runtime-Token pre-shared token (service-to-service).
-// LANTERN_RUNTIME_SECRET_TOKEN must be set; if unset returns 403 fail-closed.
+// Authentication: X-Pal-Runtime-Token pre-shared token (service-to-service).
+// PAL_RUNTIME_SECRET_TOKEN must be set; if unset returns 403 fail-closed.
 //
 // The body is limited to 1 MiB.
 func (h *RuntimeReportHandler) Report(w http.ResponseWriter, r *http.Request) {
@@ -432,7 +432,7 @@ func (h *RuntimeReportHandler) Report(w http.ResponseWriter, r *http.Request) {
 	ok, authErr := authenticateRuntimeToken(r)
 	if !ok {
 		if authErr == errRelayDisabled {
-			h.logger().Warn("runtime report: disabled (LANTERN_RUNTIME_SECRET_TOKEN not set)")
+			h.logger().Warn("runtime report: disabled (PAL_RUNTIME_SECRET_TOKEN not set)")
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "relay disabled"})
 			return
 		}
@@ -674,9 +674,9 @@ var validStepEventKinds = map[string]bool{
 // Uses the same seq-generation pattern as dispatchMicroVMRun so the inline
 // and microVM tiers share an identical journal shape.
 //
-// Span: runtime.report.step_event (attrs: lantern.run_id, lantern.vm_id).
+// Span: runtime.report.step_event (attrs: pal.run_id, pal.vm_id).
 func (h *RuntimeReportHandler) handleStepEvent(ctx context.Context, req reportRequest, vmRow vmBindingRow) error {
-	tracer := otel.Tracer("lantern.control-plane")
+	tracer := otel.Tracer("pal.control-plane")
 	ctx, span := tracer.Start(ctx, "runtime.report.step_event")
 	defer span.End()
 
@@ -687,8 +687,8 @@ func (h *RuntimeReportHandler) handleStepEvent(ctx context.Context, req reportRe
 		return ridErr
 	}
 	span.SetAttributes(
-		attribute.String("lantern.run_id", runID),
-		attribute.String("lantern.vm_id", req.VmID),
+		attribute.String("pal.run_id", runID),
+		attribute.String("pal.vm_id", req.VmID),
 	)
 
 	if runID == "" {
@@ -740,9 +740,9 @@ func (h *RuntimeReportHandler) handleStepEvent(ctx context.Context, req reportRe
 // Idempotent via ON CONFLICT DO NOTHING on the journal seq insert and a
 // conditional UPDATE on runs (WHERE status NOT IN ('succeeded','failed')).
 //
-// Span: runtime.report.vm_exit (attrs: lantern.run_id, lantern.vm_id).
+// Span: runtime.report.vm_exit (attrs: pal.run_id, pal.vm_id).
 func (h *RuntimeReportHandler) handleVMExit(ctx context.Context, req reportRequest, vmRow vmBindingRow) error {
-	tracer := otel.Tracer("lantern.control-plane")
+	tracer := otel.Tracer("pal.control-plane")
 	ctx, span := tracer.Start(ctx, "runtime.report.vm_exit")
 	defer span.End()
 
@@ -753,9 +753,9 @@ func (h *RuntimeReportHandler) handleVMExit(ctx context.Context, req reportReque
 		return ridErr
 	}
 	span.SetAttributes(
-		attribute.String("lantern.run_id", runID),
-		attribute.String("lantern.vm_id", req.VmID),
-		attribute.Int("lantern.exit_code", req.VMExit.ExitCode),
+		attribute.String("pal.run_id", runID),
+		attribute.String("pal.vm_id", req.VmID),
+		attribute.Int("pal.exit_code", req.VMExit.ExitCode),
 	)
 
 	if runID == "" {
@@ -878,7 +878,7 @@ const (
 	logRetentionSweepInterval = time.Hour
 )
 
-// logRetentionDays reads LANTERN_RUNTIME_LOG_RETENTION_DAYS and returns the
+// logRetentionDays reads PAL_RUNTIME_LOG_RETENTION_DAYS and returns the
 // configured window in days. Invalid or absent values fall back to the default.
 func logRetentionDays() int {
 	raw := os.Getenv(envLogRetentionDays)
@@ -971,7 +971,7 @@ func (h *RuntimeReportHandler) sweepOldLogs(ctx context.Context) (int64, error) 
 }
 
 // RunLogRetentionJanitor runs a periodic sweep that deletes runtime_vm_logs
-// rows older than LANTERN_RUNTIME_LOG_RETENTION_DAYS (default 14). It blocks
+// rows older than PAL_RUNTIME_LOG_RETENTION_DAYS (default 14). It blocks
 // until ctx is cancelled, which is the graceful-shutdown signal from main.
 //
 // Call pattern (from main.go):

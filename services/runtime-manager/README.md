@@ -5,8 +5,8 @@ receives spawn/stop/logs/exec/stats requests over gRPC, delegates to an isolatio
 backend, tracks live handles, and serves the `RuntimeHarness` endpoint that VM
 harnesses call for heartbeats and secret vending.
 
-Proto contract: `packages/proto/lantern/v1/runtime.proto`
-Hand-stub Go bindings: `gen/go/lantern/v1/`
+Proto contract: `packages/proto/pal/v1/runtime.proto`
+Hand-stub Go bindings: `gen/go/pal/v1/`
 
 ---
 
@@ -22,7 +22,7 @@ control-plane  →  runtime-scheduler  →  runtime-manager  →  harness (PID 1
    forwards a `Spawn` gRPC call to the winning node's manager.
 3. Manager calls the configured isolation backend, registers the resulting handle,
    issues a per-VM mTLS client cert, and returns a `VmHandle`.
-4. The VM boots the `lantern-harness` binary as PID 1; the harness calls back to
+4. The VM boots the `pal-harness` binary as PID 1; the harness calls back to
    the manager on the `RuntimeHarness` service (`Heartbeat`, `VendSecret`, `Report`).
 
 The manager also self-registers with the scheduler on startup (`POST
@@ -84,7 +84,7 @@ refused on any node whose backend is not `firecracker` or `kata`. The manager re
 
 ### Kubernetes (real implementation for trusted workloads)
 
-Creates K8s Jobs in per-tenant namespaces (`lantern-t-<tenant_id>`). Each job runs the
+Creates K8s Jobs in per-tenant namespaces (`pal-t-<tenant_id>`). Each job runs the
 agent image as a single pod with resource limits, SecurityContext (non-root,
 `cap_drop: [ALL]`, `readOnlyRootFilesystem`, `seccomp: RuntimeDefault`), and an
 accompanying default-deny `NetworkPolicy`. Uses the ambient in-cluster credentials or
@@ -153,10 +153,10 @@ All env vars; no config file.
 | `LISTEN_ADDR` | `0.0.0.0:50054` | gRPC listen address |
 | `RUNTIME_BACKEND` | `docker` | Active isolation backend: `docker`, `k8s`, `firecracker`, `kata`, `wasm` |
 | `DOCKER_SOCKET` | `/var/run/docker.sock` | Docker daemon Unix socket path |
-| `AGENT_IMAGE` | `ghcr.io/lantern/agent-runner:latest` | Default OCI image for spawned workloads |
+| `AGENT_IMAGE` | `ghcr.io/pal/agent-runner:latest` | Default OCI image for spawned workloads |
 | `BUNDLE_S3_ENDPOINT` | `http://localhost:9000` | MinIO / S3 endpoint for agent bundles and snapshots |
-| `BUNDLE_S3_BUCKET` | `lantern-bundles` | Bucket name |
-| `LOG_LEVEL` | `info` | Rust tracing filter (e.g. `debug`, `info,lantern_runtime_manager=debug`) |
+| `BUNDLE_S3_BUCKET` | `pal-bundles` | Bucket name |
+| `LOG_LEVEL` | `info` | Rust tracing filter (e.g. `debug`, `info,pal_runtime_manager=debug`) |
 | `SCHEDULER_URL` | _(empty — disabled)_ | REST URL of the scheduler for node self-registration heartbeat (`POST /v1/nodes/heartbeat`). Empty → standalone dev mode |
 | `SCHEDULER_TOKEN` | _(empty)_ | Shared token sent as `X-Scheduler-Token` on heartbeats |
 | `NODE_NAME` | `node-<hostname>` | Logical node identity reported to the scheduler |
@@ -165,13 +165,13 @@ All env vars; no config file.
 | `NODE_ZONE` | `local-a` | Availability zone tag |
 | `PAL_ENV` | _(unset)_ | Set to `prod`, `production`, or `staging` to enable fail-closed mTLS enforcement |
 | `KATA_RUNTIME_NAME` | `kata-runtime` | OCI runtime name registered in `/etc/docker/daemon.json`. Only used when `RUNTIME_BACKEND=kata` |
-| `SNAPSHOT_DIR` | `/var/lib/lantern/snapshots` | Root directory for `SnapshotStore` filesystem persistence (`src/snapshot_store.rs`). Tier-2 retention: keep last 3 per `(agent_version_id, vm_id)`, delete after 7 days (ADR 0007) |
+| `SNAPSHOT_DIR` | `/var/lib/pal/snapshots` | Root directory for `SnapshotStore` filesystem persistence (`src/snapshot_store.rs`). Tier-2 retention: keep last 3 per `(agent_version_id, vm_id)`, delete after 7 days (ADR 0007) |
 | `S3_ENDPOINT` | _(unset)_ | S3 / MinIO endpoint URL for the `SnapshotStore` S3 tier (e.g. `http://localhost:9000`). Must be set together with `S3_BUCKET` to activate the tier. Path-style URLs are used (required for MinIO). |
 | `S3_BUCKET` | _(unset)_ | Bucket name for snapshot uploads. Objects are stored under `snapshots/<agent_version_id>/<vm_id>/<snapshot_id>/`. S3 upload failures on `put` are warn-logged and non-fatal; the local copy is always written first. |
 | `AWS_ACCESS_KEY_ID` | _(unset)_ | S3 / MinIO access key. Required when `S3_ENDPOINT` is set. |
 | `AWS_SECRET_ACCESS_KEY` | _(unset)_ | S3 / MinIO secret key. Required when `S3_ENDPOINT` is set. |
 | `PAL_CONTROL_PLANE_URL` | _(unset)_ | Base URL of the control-plane for the `RelaySecretResolver` (e.g. `http://control-plane:8080`). Both this and `PAL_RUNTIME_SECRET_TOKEN` must be set to activate the relay |
-| `PAL_RUNTIME_SECRET_TOKEN` | _(unset)_ | Pre-shared token sent as `X-Lantern-Runtime-Token` when calling `POST /v1/runtime/secrets/resolve`. Both this and `PAL_CONTROL_PLANE_URL` must be set. Unset → dev `EnvSecretResolver` (ADR 0008) |
+| `PAL_RUNTIME_SECRET_TOKEN` | _(unset)_ | Pre-shared token sent as `X-Pal-Runtime-Token` when calling `POST /v1/runtime/secrets/resolve`. Both this and `PAL_CONTROL_PLANE_URL` must be set. Unset → dev `EnvSecretResolver` (ADR 0008) |
 
 ### mTLS (harness ↔ manager)
 
@@ -195,7 +195,7 @@ Optional overrides for the signing CA (used to issue per-VM client certs at spaw
 |---|---|
 | `PAL_VM_SIGNING_CA_CERT` | Path to PEM CA cert used to sign per-VM client certs. Defaults to `PAL_MANAGER_TLS_CA` |
 | `PAL_VM_SIGNING_CA_KEY` | Path to its private key. Defaults to `PAL_MANAGER_TLS_KEY` |
-| `PAL_VM_CERT_DIR` | Host directory for per-VM cert material. Default `/run/lantern/certs` |
+| `PAL_VM_CERT_DIR` | Host directory for per-VM cert material. Default `/run/pal/certs` |
 
 ---
 

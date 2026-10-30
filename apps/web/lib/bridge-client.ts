@@ -18,14 +18,14 @@ import type {
 // go through a Next.js Route Handler).
 //
 // All REST calls from the browser go through /api/bridge/<channel>/...
-// where the server-side handler injects LANTERN_BRIDGE_TOKEN /
-// LANTERN_IMESSAGE_BRIDGE_TOKEN (non-public server env vars). The token
+// where the server-side handler injects PAL_BRIDGE_TOKEN /
+// PAL_IMESSAGE_BRIDGE_TOKEN (non-public server env vars). The token
 // never reaches the browser bundle.
 const BRIDGE_WS_URLS: Record<BridgeChannel, string> = {
   whatsapp:
-    (process.env.NEXT_PUBLIC_PAL_BRIDGE_URL || process.env.NEXT_PUBLIC_LANTERN_BRIDGE_URL) || "http://localhost:3100",
+    (process.env.NEXT_PUBLIC_PAL_BRIDGE_URL || process.env.NEXT_PUBLIC_PAL_BRIDGE_URL) || "http://localhost:3100",
   imessage:
-    (process.env.NEXT_PUBLIC_PAL_IMESSAGE_BRIDGE_URL || process.env.NEXT_PUBLIC_LANTERN_IMESSAGE_BRIDGE_URL) || "http://localhost:3200",
+    (process.env.NEXT_PUBLIC_PAL_IMESSAGE_BRIDGE_URL || process.env.NEXT_PUBLIC_PAL_IMESSAGE_BRIDGE_URL) || "http://localhost:3200",
 };
 
 // Same-origin prefix for all REST bridge calls (proxied server-side).
@@ -293,7 +293,7 @@ export function bridgeWebSocketUrl(
   // visible in browser devtools and logs.  Bridge WS auth is enforced at the
   // HTTP level (REST calls proxy through /api/bridge/... with the server-side
   // token).  If the bridge requires token auth on WS too, set
-  // LANTERN_BRIDGE_WS_TOKEN_REQUIRED=0 on the bridge side to disable it,
+  // PAL_BRIDGE_WS_TOKEN_REQUIRED=0 on the bridge side to disable it,
   // or upgrade to cookie-based WS auth.
   const wsUrl = bridgeBaseUrl(channel).replace(/^http/, "ws");
   const qs = new URLSearchParams({ tenantId });

@@ -28,10 +28,10 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/grounding"
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/grounding"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/secrets"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // LlmProxyHandler proxies completion requests to upstream LLM providers
@@ -66,7 +66,7 @@ func NewLlmProxyHandler(srv *server.Server, auth *AuthHandler) *LlmProxyHandler 
 // maxToolTurnsEnv returns the tool-call budget per LLM turn. Defaults
 // to 12 (covers realistic cross-source synthesis: docs + Gmail +
 // Calendar + iMessage + WhatsApp + 2-3 follow-up reads + 1 synthesis
-// turn). Override via LANTERN_LLM_MAX_TURNS for deployments that need
+// turn). Override via PAL_LLM_MAX_TURNS for deployments that need
 // more headroom (multi-step research) or less (cost-bounded).
 func maxToolTurnsEnv() int {
 	v := os.Getenv("PAL_LLM_MAX_TURNS")
@@ -335,9 +335,9 @@ func (h *LlmProxyHandler) resolveModelForTenant(ctx context.Context, tenantID, c
 }
 
 // resolveModelForTenantAuto is the complexity-aware variant used by the tool
-// loop. When LANTERN_COMPLEXITY_ROUTING=1 it classifies the turn and routes to
+// loop. When PAL_COMPLEXITY_ROUTING=1 it classifies the turn and routes to
 // the cheapest model that can handle it; otherwise it falls back to the normal
-// balanced scorer. The hint string is the value of X-Lantern-Turn-Hint (empty
+// balanced scorer. The hint string is the value of X-Pal-Turn-Hint (empty
 // when not provided).
 func (h *LlmProxyHandler) resolveModelForTenantAuto(
 	ctx context.Context,
@@ -359,11 +359,11 @@ func (h *LlmProxyHandler) resolveModelForTenantAuto(
 // Claude Code routing is enabled, otherwise empty. Gated by an explicit
 // env var so prod can't accidentally route through a dev tool.
 //
-// LANTERN_USE_CLAUDE_CODE=1   → enable; uses the user's Claude Max
+// PAL_USE_CLAUDE_CODE=1   → enable; uses the user's Claude Max
 //
 //	subscription (no API credits burned)
 //
-// LANTERN_CLAUDE_BINARY=/path → override binary location
+// PAL_CLAUDE_BINARY=/path → override binary location
 func claudeCodeBinary() string {
 	if os.Getenv("PAL_USE_CLAUDE_CODE") != "1" {
 		return ""
@@ -430,15 +430,15 @@ type LLMUsageDetail struct {
 // A child OTel span is created for every call using the GenAI semantic
 // conventions (gen_ai.system, gen_ai.request.model, gen_ai.operation.name,
 // gen_ai.usage.input_tokens, gen_ai.usage.output_tokens) plus the
-// Lantern-specific lantern.cost_usd attribute. Spans are recorded only when
+// PAL-specific pal.cost_usd attribute. Spans are recorded only when
 // a real TracerProvider is installed; the default no-op provider makes this
 // a zero-cost no-op.
 //
 // Extended cache/reasoning counts are set as additional span attributes:
 //
 //	gen_ai.usage.reasoning_tokens
-//	lantern.usage.cache_read_tokens
-//	lantern.usage.cache_write_tokens
+//	pal.usage.cache_read_tokens
+//	pal.usage.cache_write_tokens
 func (h *LlmProxyHandler) callLLMSync(ctx context.Context, provider, model, apiKey, prompt string) (result string, tokensIn, tokensOut int64, costUsd float64, err error) {
 	_, _, _, _, _ = h.callLLMSyncDetailed(ctx, provider, model, apiKey, prompt,
 		func(r string, ti, to int64, c float64, d LLMUsageDetail, e error) {
@@ -457,7 +457,7 @@ func (h *LlmProxyHandler) callLLMSyncDetailed(
 	provider, model, apiKey, prompt string,
 	cb func(result string, tokensIn, tokensOut int64, costUsd float64, detail LLMUsageDetail, err error),
 ) (result string, tokensIn, tokensOut int64, costUsd float64, err error) {
-	tracer := otel.Tracer("lantern.control-plane")
+	tracer := otel.Tracer("pal.control-plane")
 	spanName := "chat " + model
 	if model == "" {
 		spanName = "chat " + provider
@@ -479,13 +479,13 @@ func (h *LlmProxyHandler) callLLMSyncDetailed(
 			attribute.String("gen_ai.operation.name", "chat"),
 			attribute.Int64("gen_ai.usage.input_tokens", tokensIn),
 			attribute.Int64("gen_ai.usage.output_tokens", tokensOut),
-			attribute.Float64("lantern.cost_usd", costUsd),
+			attribute.Float64("pal.cost_usd", costUsd),
 		)
 		// Extended FinOps attributes (zero when not applicable).
 		span.SetAttributes(
 			attribute.Int64("gen_ai.usage.reasoning_tokens", detail.ReasoningTokens),
-			attribute.Int64("lantern.usage.cache_read_tokens", detail.CacheReadTokens),
-			attribute.Int64("lantern.usage.cache_write_tokens", detail.CacheWriteTokens),
+			attribute.Int64("pal.usage.cache_read_tokens", detail.CacheReadTokens),
+			attribute.Int64("pal.usage.cache_write_tokens", detail.CacheWriteTokens),
 		)
 		span.End()
 		if cb != nil {
@@ -642,11 +642,11 @@ type modelOption struct {
 }
 
 // Live model IDs — kept here so a single env override (e.g.
-// LANTERN_OPUS_MODEL=claude-opus-4-8) flips every consumer at once
+// PAL_OPUS_MODEL=claude-opus-4-8) flips every consumer at once
 // without grep-and-replace through the codebase. Defaults track the
 // latest Claude 4.X family at time of writing (4.7 for opus / 4.6 for
 // sonnet / 4.5 for haiku). If Anthropic releases a newer ID (4.8+),
-// set LANTERN_OPUS_MODEL=claude-opus-4-8 and restart — no rebuild.
+// set PAL_OPUS_MODEL=claude-opus-4-8 and restart — no rebuild.
 //
 // The multi-provider failover wrapper (newFailoverProvider) catches
 // 4xx from an invalid/unauthorised model ID and tries the next
@@ -868,9 +868,9 @@ func resolveAutoModel(hasAnthropic, hasOpenAI bool) (string, string) {
 //
 // Used by callLLMWithFailover so that if Claude returns 429 / 402 / 5xx,
 // the next request hits GPT-4o automatically. Without this, a single
-// provider outage stops every Lantern agent on the tenant.
+// provider outage stops every PAL agent on the tenant.
 //
-// Local Claude Code: when LANTERN_USE_CLAUDE_CODE=1 and the `claude`
+// Local Claude Code: when PAL_USE_CLAUDE_CODE=1 and the `claude`
 // binary is on PATH, claude-code is PREPENDED as the top candidate ONLY
 // when userFacing=false. For any user-facing path (bridge contact replies,
 // SMS, voice, escalation) claude-code is NEVER in the chain — this
@@ -1654,7 +1654,7 @@ func (h *LlmProxyHandler) HandleStreamCompletion(w http.ResponseWriter, r *http.
 // HandleTTS — POST /v1/voice/tts. Body: {text, voice?, format?}.
 // Returns audio bytes (mp3 by default) via OpenAI's TTS API using the
 // tenant's configured OpenAI key. Used by the bridges' outbound voice
-// path when LANTERN_VOICE_OUT=on.
+// path when PAL_VOICE_OUT=on.
 //
 // Voices: alloy, echo, fable, onyx, nova, shimmer. Defaults to "nova"
 // (warm + clear; pleasant for self-chat consumption).
@@ -1790,7 +1790,7 @@ func (h *LlmProxyHandler) Complete(w http.ResponseWriter, r *http.Request) {
 
 	// For NON-streaming, NON-agent-scoped completions ('Generate with AI'
 	// buttons etc.) route through the failover chain so claude-code is
-	// reachable when LANTERN_USE_CLAUDE_CODE=1 is the only thing
+	// reachable when PAL_USE_CLAUDE_CODE=1 is the only thing
 	// configured. Without this, users with no API keys + claude-code
 	// enabled hit 'No LLM provider API key configured' for any plain
 	// completion call — including the agent-detail Generate buttons,
@@ -1875,7 +1875,7 @@ func (h *LlmProxyHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		altKey, altErr := h.resolveProviderKey(ctx, tenantID, altProvider)
 		if altErr != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{
-				"error": "No LLM provider API key configured. Add one in Settings > LLM Providers, or set LANTERN_USE_CLAUDE_CODE=1 for free local routing.",
+				"error": "No LLM provider API key configured. Add one in Settings > LLM Providers, or set PAL_USE_CLAUDE_CODE=1 for free local routing.",
 			})
 			return
 		}
@@ -2747,7 +2747,7 @@ func writeLLMAssistError(w http.ResponseWriter, err error) {
 	}
 }
 
-const agentSpecSystemPrompt = `You are Lantern's agent architect. Given a user's goal, design an agent for it.
+const agentSpecSystemPrompt = `You are PAL's agent architect. Given a user's goal, design an agent for it.
 
 Output ONLY valid JSON with this exact structure (no markdown, no backticks, no explanation):
 {
@@ -2872,7 +2872,7 @@ func (h *LlmProxyHandler) GenerateAgentCode(w http.ResponseWriter, r *http.Reque
 		zap.String("tenant_id", tenantID),
 	)
 
-	systemPrompt := `You are Lantern's code generator. Given an agent specification JSON, generate TypeScript agent scaffold code using the @pal-runtime/sdk.
+	systemPrompt := `You are PAL's code generator. Given an agent specification JSON, generate TypeScript agent scaffold code using the @pal-runtime/sdk.
 
 Output ONLY valid JSON with this exact structure (no markdown, no backticks):
 {
@@ -3854,7 +3854,7 @@ func (h *LlmProxyHandler) callLLMWithFailover(
 		return "", nil, "", "", 0, 0, fmt.Errorf("no LLM provider configured for this tenant")
 	}
 
-	// Model-router cutover (P2-B5/6). Behind LANTERN_USE_MODEL_ROUTER
+	// Model-router cutover (P2-B5/6). Behind PAL_USE_MODEL_ROUTER
 	// (default OFF). When ON, offload PLAIN provider completions (no tools,
 	// real hosted provider at the head of the chain) to the model-router
 	// service. claude-code and the tool loop stay on the direct path for

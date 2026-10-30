@@ -42,7 +42,7 @@ Control plane in one place (your own platform account, or hosted for you once th
 
 #### Tunnel RPCs
 
-Defined in `packages/proto/lantern/v1/dataplane.proto`, served on the control plane's `:50051` listener.
+Defined in `packages/proto/pal/v1/dataplane.proto`, served on the control plane's `:50051` listener.
 
 | RPC | Direction | Purpose |
 | --- | --- | --- |
@@ -66,12 +66,12 @@ You manage Postgres, Redis, and Kubernetes. Ensure your team has the capacity be
 
 ## Helm
 
-The repo ships one chart, `infra/helm/lantern`, with `values-dev.yaml`, `values-staging.yaml` and `values-prod.yaml`. It deploys the gateway, control plane, model router, workflow engine, runtime manager, runtime scheduler, surface gateway and dashboard, with in-cluster Postgres and S3-compatible storage for development and a Redis subchart. The chart defaults `PAL_ENV=production`, so the production startup guards are on.
+The repo ships one chart, `infra/helm/pal`, with `values-dev.yaml`, `values-staging.yaml` and `values-prod.yaml`. It deploys the gateway, control plane, model router, workflow engine, runtime manager, runtime scheduler, surface gateway and dashboard, with in-cluster Postgres and S3-compatible storage for development and a Redis subchart. The chart defaults `PAL_ENV=production`, so the production startup guards are on.
 
 ```bash
-helm install lantern ./infra/helm/lantern \
-  --namespace lantern --create-namespace \
-  --values infra/helm/lantern/values-prod.yaml
+helm install pal ./infra/helm/pal \
+  --namespace pal --create-namespace \
+  --values infra/helm/pal/values-prod.yaml
 ```
 
 Top-level values keys: `global`, `gateway`, `controlPlane`, `modelRouter`, `workflowEngine`, `runtimeManager`, `runtimeScheduler`, `surfaceGateway`, `dashboard`, `postgresql`, `redis`, `minio`, `ingress`, `networkPolicy`, `backup`, `secrets`, `serviceAccount`. There is no separate data-plane chart yet; for a data plane in another cloud, use the Terraform path below.
@@ -94,7 +94,7 @@ PAL needs Postgres with the `pgvector` extension, an S3-compatible object store 
 **Postgres**
 
 - Dev / kind / evaluation (default): `postgresql.enabled=true`: one `pgvector/pgvector` StatefulSet with a PVC. Password is `secrets.postgresPassword`.
-- Production (`values-prod.yaml`): `postgresql.enabled=false` and `externalDatabase.host` (plus `port`, `sslmode`). User and database names still come from `postgresql.auth`. Provision `pgvector` and the `lantern_app` role yourself.
+- Production (`values-prod.yaml`): `postgresql.enabled=false` and `externalDatabase.host` (plus `port`, `sslmode`). User and database names still come from `postgresql.auth`. Provision `pgvector` and the `pal_app` role yourself.
 
 **Object store**
 
@@ -114,10 +114,10 @@ They are single replicas with no replication, point-in-time recovery or lifecycl
 
 ## Terraform
 
-`lantern infra install --cloud aws|gcp|azure` generates Terraform for a data-plane cluster. Flags include `--tenant-id` (required), `--region`, `--cluster-name`, `--existing-cluster`, `--instance-type` and `--node-count`. The modules live in `infra/terraform/` and are not published to the Terraform Registry. Review the output, then apply.
+`pal infra install --cloud aws|gcp|azure` generates Terraform for a data-plane cluster. Flags include `--tenant-id` (required), `--region`, `--cluster-name`, `--existing-cluster`, `--instance-type` and `--node-count`. The modules live in `infra/terraform/` and are not published to the Terraform Registry. Review the output, then apply.
 
 ```bash
-lantern infra install --cloud aws --region us-east-1 --tenant-id <tenant-id>   # generates terraform/ in the current directory
+pal infra install --cloud aws --region us-east-1 --tenant-id <tenant-id>   # generates terraform/ in the current directory
 cd terraform
 terraform init
 terraform plan
@@ -126,7 +126,7 @@ terraform apply
 
 ## Namespace isolation
 
-Each tenant gets its own Kubernetes namespace: `lantern-t-<tenant_id>`. This provides network isolation, per-tenant resource quotas, and separate service accounts and secrets.
+Each tenant gets its own Kubernetes namespace: `pal-t-<tenant_id>`. This provides network isolation, per-tenant resource quotas, and separate service accounts and secrets.
 
 ## Monitoring
 

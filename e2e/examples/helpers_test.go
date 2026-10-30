@@ -7,11 +7,11 @@
 //
 // Needs the fixture stack from scripts/e2e-examples.sh (or equivalent):
 //
-//	LANTERN_E2E_API_URL               control-plane started with
-//	                                  LANTERN_CONNECTOR_BASEURL_{SLACK,GITHUB,SENTRY,PAGERDUTY}
-//	                                  and LANTERN_LLM_BASEURL_{OPENAI,ANTHROPIC}
-//	LANTERN_E2E_CONNECTOR_REPLAY_URL  that connector-replay (default http://127.0.0.1:9191)
-//	LANTERN_E2E_LLM_REPLAY_URL        that llm-replay, started with the example's
+//	PAL_E2E_API_URL               control-plane started with
+//	                                  PAL_CONNECTOR_BASEURL_{SLACK,GITHUB,SENTRY,PAGERDUTY}
+//	                                  and PAL_LLM_BASEURL_{OPENAI,ANTHROPIC}
+//	PAL_E2E_CONNECTOR_REPLAY_URL  that connector-replay (default http://127.0.0.1:9191)
+//	PAL_E2E_LLM_REPLAY_URL        that llm-replay, started with the example's
 //	                                  fixtures/llm-rules.json (default http://127.0.0.1:9192)
 //
 // The tests install connectors in the target tenant, so they refuse to overwrite
@@ -34,7 +34,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dshakes/lantern/e2e/internal/e2ekit"
+	"github.com/dshakes/pal/e2e/internal/e2ekit"
 )
 
 func TestMain(m *testing.M) {
@@ -145,8 +145,8 @@ func connect(t *testing.T) *stack {
 	k := e2ekit.Connect(t)
 	s := &stack{
 		kit:       k,
-		connector: replayURL("LANTERN_E2E_CONNECTOR_REPLAY_URL", "http://127.0.0.1:9191"),
-		llm:       replayURL("LANTERN_E2E_LLM_REPLAY_URL", "http://127.0.0.1:9192"),
+		connector: replayURL("PAL_E2E_CONNECTOR_REPLAY_URL", "http://127.0.0.1:9191"),
+		llm:       replayURL("PAL_E2E_LLM_REPLAY_URL", "http://127.0.0.1:9192"),
 	}
 	// Both must be up: a run against anything else would hit real SaaS / a real model.
 	fetchReplay(t, s.connector)

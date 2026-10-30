@@ -107,7 +107,7 @@ fn measure_capacity() -> NodeCapacity {
         .unwrap_or_else(|| {
             tracing::warn!(
                 "could not determine node memory; falling back to 8GiB. Set \
-                 LANTERN_NODE_MEMORY_BYTES so placement does not oversubscribe this node"
+                 PAL_NODE_MEMORY_BYTES so placement does not oversubscribe this node"
             );
             8 * 1024 * 1024 * 1024
         });

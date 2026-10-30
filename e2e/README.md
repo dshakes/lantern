@@ -64,9 +64,9 @@ A reachable API with broken dev credentials is always a failure, never a skip.
 | `PAL_E2E_API_URL` | `http://localhost:8080` | **Target API URL** (canonical). Always set this — never rely on the default, which silently points at `:8080`. |
 | `PAL_API_URL` | — | Alias for `PAL_E2E_API_URL`; checked when the canonical var is unset. |
 | `E2E_ALLOW_SKIP` | — | Set to `1` to skip (instead of fail) when the stack is unreachable. |
-| `PAL_E2E_EMAIL` | `admin@lantern.dev` | Login email (seeded dev user) |
-| `PAL_E2E_PASSWORD` | `lantern` | Login password |
-| `PAL_E2E_IMAGE_DIGEST` | `lantern/demos/hello@sha256:00…01` (placeholder) | Image to schedule; override with a pullable image on two-tier stacks |
+| `PAL_E2E_EMAIL` | `admin@pal.dev` | Login email (seeded dev user) |
+| `PAL_E2E_PASSWORD` | `pal` | Login password |
+| `PAL_E2E_IMAGE_DIGEST` | `pal/demos/hello@sha256:00…01` (placeholder) | Image to schedule; override with a pullable image on two-tier stacks |
 
 Both suites (`runtime/` and `quickstart/`) print the resolved target URL at
 the start of every run, so there is no silent fallback confusion.

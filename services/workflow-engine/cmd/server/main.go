@@ -24,12 +24,12 @@ import (
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/workflow-engine/internal/db"
-	"github.com/dshakes/lantern/services/workflow-engine/internal/engine"
-	"github.com/dshakes/lantern/services/workflow-engine/internal/handlers"
-	"github.com/dshakes/lantern/services/workflow-engine/internal/middleware"
-	"github.com/dshakes/lantern/services/workflow-engine/internal/server"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/workflow-engine/internal/db"
+	"github.com/dshakes/pal/services/workflow-engine/internal/engine"
+	"github.com/dshakes/pal/services/workflow-engine/internal/handlers"
+	"github.com/dshakes/pal/services/workflow-engine/internal/middleware"
+	"github.com/dshakes/pal/services/workflow-engine/internal/server"
 )
 
 func main() {
@@ -38,15 +38,15 @@ func main() {
 	logger := mustInitLogger(cfg.LogLevel)
 	defer logger.Sync() //nolint:errcheck
 
-	// Fail closed in production; warn and continue in dev (LANTERN_ENV unset).
+	// Fail closed in production; warn and continue in dev (PAL_ENV unset).
 	// Without a service token any caller reachable to :50052 can forge any
 	// tenant_id because the token check is what guards the tenant interceptor.
 	prod := isProdEnv()
 	if prod && cfg.GRPCServiceToken == "" {
-		logger.Fatal("LANTERN_GRPC_SERVICE_TOKEN is unset — workflow-engine gRPC port (:50052) would accept any caller-supplied tenant_id; set a strong random shared token (same value as the control-plane)")
+		logger.Fatal("PAL_GRPC_SERVICE_TOKEN is unset — workflow-engine gRPC port (:50052) would accept any caller-supplied tenant_id; set a strong random shared token (same value as the control-plane)")
 	}
 	if !prod && cfg.GRPCServiceToken == "" {
-		logger.Warn("LANTERN_GRPC_SERVICE_TOKEN is unset — workflow-engine gRPC accepts unauthenticated callers (acceptable in dev, required in production)")
+		logger.Warn("PAL_GRPC_SERVICE_TOKEN is unset — workflow-engine gRPC accepts unauthenticated callers (acceptable in dev, required in production)")
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
@@ -96,11 +96,11 @@ func main() {
 	// consumer (invariant #6): llm_call steps dispatch to ModelService.Complete.
 	// When the address is unset the client stays nil and llm_call steps fail
 	// with a typed error rather than executing.
-	var modelClient lanternv1.ModelServiceClient
+	var modelClient palv1.ModelServiceClient
 	if cfg.ModelRouterAddr != "" {
 		mrOpts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
 		if cfg.GRPCServiceToken != "" {
-			// The router rejects calls without x-lantern-service-token.
+			// The router rejects calls without x-pal-service-token.
 			mrOpts = append(mrOpts, grpc.WithPerRPCCredentials(serviceTokenCreds{token: cfg.GRPCServiceToken}))
 		}
 		conn, err := grpc.NewClient(cfg.ModelRouterAddr, mrOpts...)
@@ -108,10 +108,10 @@ func main() {
 			logger.Fatal("failed to dial model router", zap.String("addr", cfg.ModelRouterAddr), zap.Error(err))
 		}
 		defer conn.Close() //nolint:errcheck
-		modelClient = lanternv1.NewModelServiceClient(conn)
+		modelClient = palv1.NewModelServiceClient(conn)
 		logger.Info("model router client configured", zap.String("addr", cfg.ModelRouterAddr))
 	} else {
-		logger.Warn("LANTERN_MODEL_ROUTER_ADDR unset — llm_call steps will fail with a typed error")
+		logger.Warn("PAL_MODEL_ROUTER_ADDR unset — llm_call steps will fail with a typed error")
 	}
 
 	// --- Runtime manager client ---
@@ -119,7 +119,7 @@ func main() {
 	// dispatch to RuntimeManager.ExecTool. When the address is unset the client
 	// stays nil and tool_call steps fail with a typed error rather than
 	// fabricating a tool result.
-	var runtimeClient lanternv1.RuntimeManagerClient
+	var runtimeClient palv1.RuntimeManagerClient
 	if cfg.RuntimeManagerAddr != "" {
 		// The manager requires the service token and, in prod, mTLS.
 		rmCreds, err := managerTransportCreds(prod)
@@ -135,10 +135,10 @@ func main() {
 			logger.Fatal("failed to dial runtime manager", zap.String("addr", cfg.RuntimeManagerAddr), zap.Error(err))
 		}
 		defer conn.Close() //nolint:errcheck
-		runtimeClient = lanternv1.NewRuntimeManagerClient(conn)
+		runtimeClient = palv1.NewRuntimeManagerClient(conn)
 		logger.Info("runtime manager client configured", zap.String("addr", cfg.RuntimeManagerAddr))
 	} else {
-		logger.Warn("LANTERN_RUNTIME_MANAGER_ADDR unset — tool_call steps will fail with a typed error")
+		logger.Warn("PAL_RUNTIME_MANAGER_ADDR unset — tool_call steps will fail with a typed error")
 	}
 
 	// --- Engine ---
@@ -154,14 +154,14 @@ func main() {
 	// Default (either var unset) leaves the engine on the single pool: the GUC
 	// is still set, RLS is simply not enforced, and behaviour is unchanged.
 	//
-	// Operator cutover: CREATE ROLE lantern_app (done by the control-plane's
-	// Migrate) -> ALTER ROLE lantern_app PASSWORD '<strong>' -> set
-	// LANTERN_APP_DB_PASSWORD + LANTERN_RLS_ENFORCE=1 on this service too.
+	// Operator cutover: CREATE ROLE pal_app (done by the control-plane's
+	// Migrate) -> ALTER ROLE pal_app PASSWORD '<strong>' -> set
+	// PAL_APP_DB_PASSWORD + PAL_RLS_ENFORCE=1 on this service too.
 	//
 	// GRANTS MATTER HERE, and this is the step that will bite. A tenant-scoped
 	// transaction in this service touches more than runs/agents: journal_events,
 	// run_locks and step_state are written inside the SAME transaction. If
-	// lantern_app has no grants on those, enforcement does not merely restrict
+	// pal_app has no grants on those, enforcement does not merely restrict
 	// rows — the engine starts failing with permission errors on ordinary work.
 	// Verify the role can read AND write every one of:
 	//   runs, agents, journal_events, run_locks, step_state
@@ -172,26 +172,26 @@ func main() {
 	if os.Getenv("PAL_RLS_ENFORCE") == "1" {
 		appPwd := os.Getenv("PAL_APP_DB_PASSWORD")
 		if appPwd == "" {
-			// FAIL CLOSED. An operator who sets LANTERN_RLS_ENFORCE=1 believes
+			// FAIL CLOSED. An operator who sets PAL_RLS_ENFORCE=1 believes
 			// isolation is on; continuing on the privileged pool would leave it
 			// off while looking enabled, which is the worst of both. Matches
 			// the repo's precedent for security controls (the gRPC service
 			// token refuses to start rather than run unauthenticated).
-			logger.Fatal("LANTERN_RLS_ENFORCE=1 requires LANTERN_APP_DB_PASSWORD — " +
+			logger.Fatal("PAL_RLS_ENFORCE=1 requires PAL_APP_DB_PASSWORD — " +
 				"refusing to start rather than run with RLS silently bypassed")
 		} else {
 			appCfg, cfgErr := pgxpool.ParseConfig(cfg.DatabaseURL)
 			if cfgErr != nil {
-				logger.Fatal("failed to parse DATABASE_URL for the lantern_app pool", zap.Error(cfgErr))
+				logger.Fatal("failed to parse DATABASE_URL for the pal_app pool", zap.Error(cfgErr))
 			}
-			appCfg.ConnConfig.User = "lantern_app"
+			appCfg.ConnConfig.User = "pal_app"
 			appCfg.ConnConfig.Password = appPwd
 			if err := db.ApplyRegionSession(appCfg.ConnConfig); err != nil {
 				logger.Fatal("invalid region configuration", zap.Error(err))
 			}
 			appPool, poolErr := pgxpool.NewWithConfig(ctx, appCfg)
 			if poolErr != nil {
-				logger.Fatal("failed to create the lantern_app pool", zap.Error(poolErr))
+				logger.Fatal("failed to create the pal_app pool", zap.Error(poolErr))
 			}
 			defer appPool.Close()
 			// Ping now: pgxpool.New is LAZY, so a wrong password or missing
@@ -200,11 +200,11 @@ func main() {
 			// MISSING password fatal, letting a WRONG one through silently
 			// would be the same mistake with an extra step.
 			if pingErr := appPool.Ping(ctx); pingErr != nil {
-				logger.Fatal("cannot connect as lantern_app — refusing to start with RLS "+
+				logger.Fatal("cannot connect as pal_app — refusing to start with RLS "+
 					"enforcement requested but unusable", zap.Error(pingErr))
 			}
 			eng.SetAppPool(appPool)
-			logger.Info("RLS enforcement on: tenant-scoped queries use the lantern_app pool")
+			logger.Info("RLS enforcement on: tenant-scoped queries use the pal_app pool")
 		}
 	}
 	eng.Start(ctx)
@@ -234,12 +234,12 @@ func main() {
 
 	// Register services.
 	workflowSvc := handlers.NewWorkflowService(srv)
-	lanternv1.RegisterWorkflowEngineServiceServer(grpcServer, workflowSvc)
+	palv1.RegisterWorkflowEngineServiceServer(grpcServer, workflowSvc)
 
 	// Health check.
 	healthSvc := health.NewServer()
 	healthpb.RegisterHealthServer(grpcServer, healthSvc)
-	healthSvc.SetServingStatus("lantern.v1.WorkflowEngineService", healthpb.HealthCheckResponse_SERVING)
+	healthSvc.SetServingStatus("pal.v1.WorkflowEngineService", healthpb.HealthCheckResponse_SERVING)
 
 	// Reflection for grpcurl / grpcui.
 	reflection.Register(grpcServer)
@@ -301,7 +301,7 @@ func main() {
 	}
 
 	// Graceful shutdown: stop accepting, drain in-flight.
-	healthSvc.SetServingStatus("lantern.v1.WorkflowEngineService", healthpb.HealthCheckResponse_NOT_SERVING)
+	healthSvc.SetServingStatus("pal.v1.WorkflowEngineService", healthpb.HealthCheckResponse_NOT_SERVING)
 
 	// Stop the engine first (drains active runs).
 	eng.Stop()
@@ -340,7 +340,7 @@ func loadConfig() config {
 	}
 
 	return config{
-		DatabaseURL:        envOrDefault("DATABASE_URL", "postgres://localhost:5432/lantern?sslmode=disable"),
+		DatabaseURL:        envOrDefault("DATABASE_URL", "postgres://localhost:5432/pal?sslmode=disable"),
 		RedisURL:           envOrDefault("REDIS_URL", "redis://localhost:6379/0"),
 		ListenAddr:         envOrDefault("LISTEN_ADDR", ":50052"),
 		LogLevel:           envOrDefault("LOG_LEVEL", "info"),
@@ -352,7 +352,7 @@ func loadConfig() config {
 }
 
 // isProdEnv reports whether the server is running in a production-like
-// environment (LANTERN_ENV=prod|production|staging).
+// environment (PAL_ENV=prod|production|staging).
 func isProdEnv() bool {
 	e := os.Getenv("PAL_ENV")
 	return e == "prod" || e == "production" || e == "staging"
@@ -384,16 +384,16 @@ func mustInitLogger(level string) *zap.Logger {
 }
 
 // runIDer is satisfied by any proto request that carries a run_id field.
-// Used to extract lantern.run_id for span enrichment without type-switching
+// Used to extract pal.run_id for span enrichment without type-switching
 // on every concrete request type.
 type runIDer interface{ GetRunId() string }
 
 // unaryTracingInterceptor returns a gRPC unary interceptor that creates OTel
-// spans enriched with lantern.tenant_id and, where the request carries it,
-// lantern.run_id (invariant #9). The tenant_id is already in ctx because
+// spans enriched with pal.tenant_id and, where the request carries it,
+// pal.run_id (invariant #9). The tenant_id is already in ctx because
 // UnaryTenantInterceptor runs before this one in the chain.
 func unaryTracingInterceptor() grpc.UnaryServerInterceptor {
-	tracer := otel.Tracer("lantern.workflow-engine")
+	tracer := otel.Tracer("pal.workflow-engine")
 	return func(
 		ctx context.Context,
 		req any,
@@ -405,11 +405,11 @@ func unaryTracingInterceptor() grpc.UnaryServerInterceptor {
 
 		var attrs []attribute.KeyValue
 		if tid, ok := middleware.TenantIDFromContext(ctx); ok && tid != "" {
-			attrs = append(attrs, attribute.String("lantern.tenant_id", tid))
+			attrs = append(attrs, attribute.String("pal.tenant_id", tid))
 		}
 		if r, ok := req.(runIDer); ok {
 			if rid := r.GetRunId(); rid != "" {
-				attrs = append(attrs, attribute.String("lantern.run_id", rid))
+				attrs = append(attrs, attribute.String("pal.run_id", rid))
 			}
 		}
 		if len(attrs) > 0 {
@@ -421,11 +421,11 @@ func unaryTracingInterceptor() grpc.UnaryServerInterceptor {
 }
 
 // streamTracingInterceptor returns a gRPC stream interceptor that creates OTel
-// spans enriched with lantern.tenant_id (invariant #9). run_id is not
+// spans enriched with pal.tenant_id (invariant #9). run_id is not
 // available at the stream interceptor level (it arrives in the first message,
 // not in the metadata); handlers enrich their own spans when they know it.
 func streamTracingInterceptor() grpc.StreamServerInterceptor {
-	tracer := otel.Tracer("lantern.workflow-engine")
+	tracer := otel.Tracer("pal.workflow-engine")
 	return func(
 		srv any,
 		ss grpc.ServerStream,
@@ -436,7 +436,7 @@ func streamTracingInterceptor() grpc.StreamServerInterceptor {
 		defer span.End()
 
 		if tid, ok := middleware.TenantIDFromContext(ctx); ok && tid != "" {
-			span.SetAttributes(attribute.String("lantern.tenant_id", tid))
+			span.SetAttributes(attribute.String("pal.tenant_id", tid))
 		}
 
 		wrapped := &wrappedStream{ServerStream: ss, ctx: ctx}
@@ -458,7 +458,7 @@ func (w *wrappedStream) Context() context.Context {
 type serviceTokenCreds struct{ token string }
 
 func (c serviceTokenCreds) GetRequestMetadata(_ context.Context, _ ...string) (map[string]string, error) {
-	return map[string]string{"x-lantern-service-token": c.token}, nil
+	return map[string]string{"x-pal-service-token": c.token}, nil
 }
 
 // RequireTransportSecurity is false: in-cluster hop, same as the other dials.

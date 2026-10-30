@@ -19,7 +19,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
 )
 
 // writeSelfSigned writes a self-signed cert + key PEM pair into dir.
@@ -96,15 +96,15 @@ func TestManagerTransportCreds(t *testing.T) {
 }
 
 // TestGRPCDialer_AttachesServiceToken proves every manager RPC carries
-// x-lantern-service-token (required by the manager when the token is set).
+// x-pal-service-token (required by the manager when the token is set).
 func TestGRPCDialer_AttachesServiceToken(t *testing.T) {
 	got := make(chan string, 1)
 	srv := grpc.NewServer(grpc.UnaryInterceptor(func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, h grpc.UnaryHandler) (any, error) {
 		md, _ := metadata.FromIncomingContext(ctx)
-		got <- firstOrEmpty(md.Get("x-lantern-service-token"))
+		got <- firstOrEmpty(md.Get("x-pal-service-token"))
 		return h(ctx, req)
 	}))
-	lanternv1.RegisterRuntimeManagerServer(srv, lanternv1.UnimplementedRuntimeManagerServer{})
+	palv1.RegisterRuntimeManagerServer(srv, palv1.UnimplementedRuntimeManagerServer{})
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +114,7 @@ func TestGRPCDialer_AttachesServiceToken(t *testing.T) {
 
 	for _, tc := range []struct{ token, want string }{{"s3cret", "s3cret"}, {"", ""}} {
 		d := NewGRPCDialer(zap.NewNop(), nil, tc.token)
-		_, _ = d.Stop(context.Background(), lis.Addr().String(), &lanternv1.StopRequest{VmId: "vm-1"})
+		_, _ = d.Stop(context.Background(), lis.Addr().String(), &palv1.StopRequest{VmId: "vm-1"})
 		d.Close()
 		if v := <-got; v != tc.want {
 			t.Errorf("token %q: server saw %q", tc.token, v)

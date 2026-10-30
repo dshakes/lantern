@@ -117,7 +117,7 @@ async function createProductionRuntime(): Promise<Runtime> {
   if (!runId) {
     throw new PalError(
       "RUNTIME_INIT",
-      "LANTERN_RUN_ID environment variable is not set. Cannot initialize production runtime.",
+      "PAL_RUN_ID environment variable is not set. Cannot initialize production runtime.",
     );
   }
 
@@ -207,7 +207,7 @@ async function createProductionRuntime(): Promise<Runtime> {
 export class PalRuntime {
   /**
    * Returns `true` when running inside a PAL sandbox.
-   * Checks the `LANTERN_RUNTIME` environment variable.
+   * Checks the `PAL_RUNTIME` environment variable.
    */
   static isProduction(): boolean {
     return palEnv("RUNTIME") === "true";
@@ -216,7 +216,7 @@ export class PalRuntime {
   /**
    * Initialize the appropriate runtime.
    *
-   * - In production (LANTERN_RUNTIME=true): connects to the sidecar, fetches
+   * - In production (PAL_RUNTIME=true): connects to the sidecar, fetches
    *   run info, and returns a fully-wired production runtime.
    * - In dev mode: returns a lightweight local runtime with mock metadata.
    *

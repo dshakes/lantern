@@ -9,7 +9,7 @@
 //
 //   POST /v1/sms/twilio/webhook
 //     Twilio fires this when an SMS arrives at the owner's Twilio
-//     number. We verify the sender is the owner (LANTERN_OWNER_PHONE),
+//     number. We verify the sender is the owner (PAL_OWNER_PHONE),
 //     run the body through the agent loop with full tools (same
 //     authenticity stack as iMessage/WhatsApp self-chat), and reply
 //     via Twilio's send_sms. Senders OTHER than the owner → silent
@@ -32,10 +32,10 @@
 // Point the Twilio webhooks at the tunnel URL.
 //
 // Security:
-//   - Sender phone MUST match LANTERN_OWNER_PHONE (normalized to
+//   - Sender phone MUST match PAL_OWNER_PHONE (normalized to
 //     digits-only). Mismatches are silently dropped.
 //   - Twilio HMAC-SHA1 signature verification on every request,
-//     skipped only when LANTERN_TWILIO_WEBHOOK_AUTH=off (dev).
+//     skipped only when PAL_TWILIO_WEBHOOK_AUTH=off (dev).
 //   - The agent runs with full tools because the only caller is the
 //     trusted owner.
 
@@ -58,7 +58,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
+	"github.com/dshakes/pal/services/control-plane/internal/secrets"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
@@ -122,7 +122,7 @@ func NewSMSHandler(logger *zap.Logger, pool *pgxpool.Pool, llm *LlmProxyHandler)
 		verifyTTL:     ttl,
 	}
 	if h.ownerPIN == "" {
-		h.logger.Warn("LANTERN_OWNER_VERIFY_PIN unset — owner Twilio line authorizes on caller ID alone (spoofable); set a PIN for spoof-resistant access")
+		h.logger.Warn("PAL_OWNER_VERIFY_PIN unset — owner Twilio line authorizes on caller ID alone (spoofable); set a PIN for spoof-resistant access")
 	}
 	return h
 }
@@ -652,7 +652,7 @@ func (h *SMSHandler) deriveOwnPublicURL(r *http.Request) string {
 }
 
 // derivePublicURL reconstructs the externally-visible base URL of a
-// request. Prefers LANTERN_PUBLIC_BASE_URL, then X-Forwarded-* headers,
+// request. Prefers PAL_PUBLIC_BASE_URL, then X-Forwarded-* headers,
 // then the raw Host. Shared across Twilio webhook handlers.
 func derivePublicURL(r *http.Request) string {
 	if override := strings.TrimSpace(os.Getenv("PAL_PUBLIC_BASE_URL")); override != "" {

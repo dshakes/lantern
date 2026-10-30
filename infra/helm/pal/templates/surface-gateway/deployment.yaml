@@ -32,7 +32,7 @@ spec:
                   name: {{ include "pal.fullname" . }}-config
                   key: LOG_LEVEL
             - name: PAL_ENV
-              value: {{ .Values.surfaceGateway.env.PAL_ENV | default .Values.surfaceGateway.env.LANTERN_ENV | default "production" | quote }}
+              value: {{ .Values.surfaceGateway.env.PAL_ENV | default .Values.surfaceGateway.env.PAL_ENV | default "production" | quote }}
             # The control-plane REST port (:8080); the token must match its
             # PAL_GRPC_SERVICE_TOKEN.
             # gRPC, not REST: control_plane.rs is a tonic client (see its header).

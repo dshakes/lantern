@@ -216,7 +216,7 @@ export default function RuntimePage() {
           <EmptyState
             icon={Server}
             title="No workloads running"
-            description="Schedule a headless agent from here, or use `lantern run <agent.yaml>` / POST /v1/runtime/schedule."
+            description="Schedule a headless agent from here, or use `pal run <agent.yaml>` / POST /v1/runtime/schedule."
             actionLabel="Schedule a workload"
             onAction={() => setScheduleOpen(true)}
           />

@@ -173,7 +173,7 @@ export const TRUST_BOUNDARIES: FlowDef = {
       steps: [
         { title: "The edge", note: "TLS plus a JWT or an API key. API keys are introspected by the control plane and cached for 60 s keyed by a SHA-256 of the key; any error fails closed.", edges: ["ext>gw"] },
         { title: "Tenant from the credential", note: "The tenant is taken from the verified token, never from a body or a path.", edges: ["gw>cp"] },
-        { title: "Every internal gRPC port is a trust boundary", note: "x-lantern-service-token, checked in constant time before tenant extraction. Without it a caller cannot set tenant_id. Fail-closed in production.", edges: ["cp>we", "cp>sc", "cp>mr"] },
+        { title: "Every internal gRPC port is a trust boundary", note: "x-pal-service-token, checked in constant time before tenant extraction. Without it a caller cannot set tenant_id. Fail-closed in production.", edges: ["cp>we", "cp>sc", "cp>mr"] },
         { title: "The manager trusts only the scheduler and control plane", note: "Service token plus client TLS.", edges: ["sc>rm"] },
         { title: "Row-level security underneath", note: "WithTenant sets app.tenant_id; the policies filter every read and check every write. Cross-tenant returns nothing, and handlers answer 404 rather than leak existence.", edges: ["cp>rls", "we>rls"] },
         { title: "The VM wall", note: "Host and guest talk over vsock only. A per-VM certificate is refused on every RuntimeManager method: a guest reaches only the harness RPCs.", edges: ["rm>h", "h>rm"] },
@@ -342,7 +342,7 @@ export const DEPLOY_TOPOLOGY: FlowDef = {
     { label: "Cloud · data plane in your VPC", x: 490, y: 170, w: 470, h: 300, kind: "dp" },
   ],
   nodes: [
-    { id: "cli", label: "lantern dev", sub: "· agent dev · doctor", tone: "client", x: 40, y: 60, detail: "One command boots Postgres, Redis, MinIO, the API and the console. agent dev hot-reloads, re-publishes and smoke-runs." },
+    { id: "cli", label: "pal dev", sub: "· agent dev · doctor", tone: "client", x: 40, y: 60, detail: "One command boots Postgres, Redis, MinIO, the API and the console. agent dev hot-reloads, re-publishes and smoke-runs." },
     { id: "lcon", label: "Console", sub: ":3001", x: 250, y: 60 },
     { id: "lcp", label: "Control plane", sub: ":8080", tone: "rt", x: 40, y: 170 },
     { id: "lpg", label: "Postgres", tone: "store", x: 40, y: 280, w: 120 },
@@ -382,7 +382,7 @@ export const DEPLOY_TOPOLOGY: FlowDef = {
     {
       id: "local", label: "Design time (local)",
       steps: [
-        { title: "One command", note: "lantern dev boots the whole stack; lantern doctor reports what is missing.", edges: ["cli>lcp", "lcon>lcp"] },
+        { title: "One command", note: "pal dev boots the whole stack; pal doctor reports what is missing.", edges: ["cli>lcp", "lcon>lcp"] },
         { title: "Same stores as production", note: "Postgres, Redis and MinIO in containers.", edges: ["lcp>lpg", "lcp>lrd", "lcp>lmin"] },
         { title: "Real sandboxes via Lima", note: "With a scheduler address set, runs reach real Firecracker in a Lima guest.", edges: ["lcp>lima"] },
         { title: "Or an honest stub", note: "Without KVM the stub fabricates VM ids so the console and API still work. Production refuses to start with it.", edges: ["lcp>stub"] },

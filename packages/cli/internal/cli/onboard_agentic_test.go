@@ -27,7 +27,7 @@ type agenticRecorder struct {
 
 func newAgenticServer(t *testing.T, rec *agenticRecorder) *httptest.Server {
 	t.Helper()
-	// Never touch the real credentials.json (~/.pal or legacy ~/.lantern).
+	// Never touch the real credentials.json (~/.pal or legacy ~/.pal).
 	t.Setenv("HOME", t.TempDir())
 	mux := http.NewServeMux()
 	registerHealthOK(mux)
@@ -212,7 +212,7 @@ func TestOnboardAgentic_InteractiveExistingNameReuseOnYes(t *testing.T) {
 		t.Fatalf("runOnboard: %v", err)
 	}
 	for _, c := range rec.created {
-		if c["name"] != "lantern-guide" {
+		if c["name"] != "pal-guide" {
 			t.Fatalf("reuse must not create an agent, got %v", c)
 		}
 	}
@@ -229,7 +229,7 @@ func TestOnboardAgentic_YesReusesExistingWithoutAsking(t *testing.T) {
 		t.Fatalf("runOnboard: %v", err)
 	}
 	for _, c := range rec.created {
-		if c["name"] != "lantern-guide" {
+		if c["name"] != "pal-guide" {
 			t.Fatalf("--yes must reuse silently, but created %v", c)
 		}
 	}

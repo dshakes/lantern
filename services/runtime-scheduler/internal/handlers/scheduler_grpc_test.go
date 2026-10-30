@@ -11,14 +11,14 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/cluster"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/dialer"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/handlers"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/metrics"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/middleware"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/placement"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/scoring"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/cluster"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/dialer"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/handlers"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/metrics"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/middleware"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/placement"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/scoring"
 )
 
 // ---------------------------------------------------------------------------
@@ -28,13 +28,13 @@ import (
 // errDialer always returns an error from Stop, simulating an unreachable manager.
 type errDialer struct{}
 
-func (errDialer) Spawn(_ context.Context, _ string, _ *lanternv1.SpawnRequest) (*lanternv1.SpawnResponse, error) {
-	return &lanternv1.SpawnResponse{}, nil
+func (errDialer) Spawn(_ context.Context, _ string, _ *palv1.SpawnRequest) (*palv1.SpawnResponse, error) {
+	return &palv1.SpawnResponse{}, nil
 }
-func (errDialer) Stop(_ context.Context, _ string, _ *lanternv1.StopRequest) (*lanternv1.StopResponse, error) {
+func (errDialer) Stop(_ context.Context, _ string, _ *palv1.StopRequest) (*palv1.StopResponse, error) {
 	return nil, errors.New("connection refused")
 }
-func (errDialer) Snapshot(_ context.Context, _ string, _ *lanternv1.SnapshotRequest) (*lanternv1.SnapshotResponse, error) {
+func (errDialer) Snapshot(_ context.Context, _ string, _ *palv1.SnapshotRequest) (*palv1.SnapshotResponse, error) {
 	return nil, errors.New("unimplemented")
 }
 func (errDialer) Close() {}
@@ -42,13 +42,13 @@ func (errDialer) Close() {}
 // okDialer succeeds for all calls.
 type okDialer struct{}
 
-func (okDialer) Spawn(_ context.Context, _ string, req *lanternv1.SpawnRequest) (*lanternv1.SpawnResponse, error) {
-	return &lanternv1.SpawnResponse{Handle: req.Handle}, nil
+func (okDialer) Spawn(_ context.Context, _ string, req *palv1.SpawnRequest) (*palv1.SpawnResponse, error) {
+	return &palv1.SpawnResponse{Handle: req.Handle}, nil
 }
-func (okDialer) Stop(_ context.Context, _ string, _ *lanternv1.StopRequest) (*lanternv1.StopResponse, error) {
-	return &lanternv1.StopResponse{Ok: true}, nil
+func (okDialer) Stop(_ context.Context, _ string, _ *palv1.StopRequest) (*palv1.StopResponse, error) {
+	return &palv1.StopResponse{Ok: true}, nil
 }
-func (okDialer) Snapshot(_ context.Context, _ string, _ *lanternv1.SnapshotRequest) (*lanternv1.SnapshotResponse, error) {
+func (okDialer) Snapshot(_ context.Context, _ string, _ *palv1.SnapshotRequest) (*palv1.SnapshotResponse, error) {
 	return nil, errors.New("unimplemented")
 }
 func (okDialer) Close() {}
@@ -73,11 +73,11 @@ func addNode(store cluster.ClusterStore, name string, vcpuMillis, memBytes int64
 	})
 }
 
-func scheduleReq(imageDigest, idempotencyKey string) *lanternv1.ScheduleRequest {
-	return &lanternv1.ScheduleRequest{
-		Spec: &lanternv1.AgentSpec{
+func scheduleReq(imageDigest, idempotencyKey string) *palv1.ScheduleRequest {
+	return &palv1.ScheduleRequest{
+		Spec: &palv1.AgentSpec{
 			ImageDigest: imageDigest,
-			Limits:      &lanternv1.ResourceLimits{Vcpu: "1", Memory: "1Gi"},
+			Limits:      &palv1.ResourceLimits{Vcpu: "1", Memory: "1Gi"},
 		},
 		IdempotencyKey: idempotencyKey,
 	}
@@ -109,7 +109,7 @@ func TestTerminate_StopError_DoesNotFreeQuota(t *testing.T) {
 	}
 
 	// Terminate should fail because errDialer.Stop returns an error.
-	_, err = svc.Terminate(ctx, &lanternv1.TerminateRequest{VmId: handle.VmId, Reason: "test"})
+	_, err = svc.Terminate(ctx, &palv1.TerminateRequest{VmId: handle.VmId, Reason: "test"})
 	if err == nil {
 		t.Fatal("expected Terminate to return error when Stop fails, got nil")
 	}
@@ -138,7 +138,7 @@ func TestTerminate_StopSuccess_FreesQuota(t *testing.T) {
 		t.Fatalf("Schedule: %v", err)
 	}
 
-	resp, err := svc.Terminate(ctx, &lanternv1.TerminateRequest{VmId: handle.VmId, Reason: "done"})
+	resp, err := svc.Terminate(ctx, &palv1.TerminateRequest{VmId: handle.VmId, Reason: "done"})
 	if err != nil {
 		t.Fatalf("Terminate: %v", err)
 	}
@@ -211,7 +211,7 @@ var _ = timestamppb.Now // ensure import used
 // spawnFailDialer fails every Spawn but stops fine.
 type spawnFailDialer struct{ okDialer }
 
-func (spawnFailDialer) Spawn(_ context.Context, _ string, _ *lanternv1.SpawnRequest) (*lanternv1.SpawnResponse, error) {
+func (spawnFailDialer) Spawn(_ context.Context, _ string, _ *palv1.SpawnRequest) (*palv1.SpawnResponse, error) {
 	return nil, errors.New("manager down")
 }
 
@@ -236,7 +236,7 @@ func TestSchedule_SpawnFailure_ReleasesQuotaExactlyOnce(t *testing.T) {
 	// A second tenant VM keeps its slot; cleaning up the FAILED VM must not
 	// double-decrement.
 	store.IncrTenantVMs("t1", 1)
-	if _, err := svc.Terminate(ctx, &lanternv1.TerminateRequest{VmId: h.VmId, Reason: "cleanup"}); err != nil {
+	if _, err := svc.Terminate(ctx, &palv1.TerminateRequest{VmId: h.VmId, Reason: "cleanup"}); err != nil {
 		t.Fatalf("Terminate failed VM: %v", err)
 	}
 	if got := store.TenantLiveVMs("t1"); got != 1 {
@@ -311,14 +311,14 @@ type measuredDialer struct {
 	m string
 }
 
-func (d measuredDialer) Spawn(_ context.Context, _ string, req *lanternv1.SpawnRequest) (*lanternv1.SpawnResponse, error) {
-	return &lanternv1.SpawnResponse{Handle: &lanternv1.VmHandle{
+func (d measuredDialer) Spawn(_ context.Context, _ string, req *palv1.SpawnRequest) (*palv1.SpawnResponse, error) {
+	return &palv1.SpawnResponse{Handle: &palv1.VmHandle{
 		VmId: req.GetHandle().GetVmId(), Node: req.GetHandle().GetNode(), SoftwareMeasurement: d.m,
 	}}, nil
 }
 
-func (measuredDialer) Snapshot(_ context.Context, _ string, req *lanternv1.SnapshotRequest) (*lanternv1.SnapshotResponse, error) {
-	return &lanternv1.SnapshotResponse{SnapshotId: "snap-" + req.VmId}, nil
+func (measuredDialer) Snapshot(_ context.Context, _ string, req *palv1.SnapshotRequest) (*palv1.SnapshotResponse, error) {
+	return &palv1.SnapshotResponse{SnapshotId: "snap-" + req.VmId}, nil
 }
 
 // TestSchedule_SpawnResponseStampsMeasurement: the async dispatch records the
@@ -366,7 +366,7 @@ func TestSchedule_RecordsDurationHistogram(t *testing.T) {
 	got := map[string]uint64{}
 	fams, _ := m.Prometheus().Gather()
 	for _, f := range fams {
-		if f.GetName() != "lantern_scheduler_schedule_duration_seconds" {
+		if f.GetName() != "pal_scheduler_schedule_duration_seconds" {
 			continue
 		}
 		for _, mm := range f.GetMetric() {

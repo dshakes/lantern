@@ -118,24 +118,24 @@ func TestReadOnlyGRPC(t *testing.T) {
 	stream := func(c Config, method string) error {
 		return c.StreamReadOnly()(nil, nil, &grpc.StreamServerInfo{FullMethod: method}, func(any, grpc.ServerStream) error { return nil })
 	}
-	if err := call(Config{}, "/lantern.v1.RunService/CreateRun"); err != nil {
+	if err := call(Config{}, "/pal.v1.RunService/CreateRun"); err != nil {
 		t.Fatalf("off must pass mutations: %v", err)
 	}
 	ro := Config{ReadOnly: true}
-	for _, m := range []string{"/lantern.v1.RunService/GetRun", "/lantern.v1.AgentService/ListAgents", "/grpc.health.v1.Health/Check"} {
+	for _, m := range []string{"/pal.v1.RunService/GetRun", "/pal.v1.AgentService/ListAgents", "/grpc.health.v1.Health/Check"} {
 		if err := call(ro, m); err != nil {
 			t.Errorf("%s should pass on standby: %v", m, err)
 		}
 	}
-	if err := stream(ro, "/lantern.v1.RunService/StreamRunEvents"); err != nil {
+	if err := stream(ro, "/pal.v1.RunService/StreamRunEvents"); err != nil {
 		t.Errorf("StreamRunEvents should pass on standby: %v", err)
 	}
-	for _, m := range []string{"/lantern.v1.RunService/CreateRun", "/lantern.v1.RunService/CancelRun", "/lantern.v1.DataPlaneService/Register", "/lantern.v1.AgentService/PromoteAgentVersion"} {
+	for _, m := range []string{"/pal.v1.RunService/CreateRun", "/pal.v1.RunService/CancelRun", "/pal.v1.DataPlaneService/Register", "/pal.v1.AgentService/PromoteAgentVersion"} {
 		if status.Code(call(ro, m)) != codes.Unavailable {
 			t.Errorf("%s should be UNAVAILABLE on standby", m)
 		}
 	}
-	if status.Code(stream(ro, "/lantern.v1.DataPlaneService/RunStream")) != codes.Unavailable {
+	if status.Code(stream(ro, "/pal.v1.DataPlaneService/RunStream")) != codes.Unavailable {
 		t.Errorf("RunStream should be UNAVAILABLE on standby")
 	}
 }

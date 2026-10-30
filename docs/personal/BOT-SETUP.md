@@ -15,7 +15,7 @@ The bridge supports **both** topologies simultaneously. If `PAL_IMESSAGE_OWNER_H
 
 1. **Create a second Apple ID** (only if you don't already have a spare):
    - Visit [appleid.apple.com](https://appleid.apple.com/account) → **Create Your Apple ID**
-   - Use an email you control (e.g. `lantern.yourname@icloud.com` — iCloud will generate one for free if you don't have a spare)
+   - Use an email you control (e.g. `pal.yourname@icloud.com` — iCloud will generate one for free if you don't have a spare)
    - **No phone number required** — iMessage works with email-only Apple IDs
    - Verify the email
 2. **Add the bot Apple ID to Messages.app on this Mac**:
@@ -27,7 +27,7 @@ The bridge supports **both** topologies simultaneously. If `PAL_IMESSAGE_OWNER_H
 
 ### Wiring the bridge
 
-Add to your shell env (or `~/.lantern/env`):
+Add to your shell env (or `~/.pal/env`):
 
 ```bash
 export PAL_IMESSAGE_OWNER_HANDLE="+15125551234"   # your primary phone
@@ -116,8 +116,8 @@ After setup, send each of these to your bot in iMessage / WhatsApp:
 If `status` doesn't reply, the env var likely doesn't match what the bot sees. Check the bridge log:
 
 ```bash
-tail -f /tmp/lantern-imessage-bridge.log     # iMessage
-tail -f /tmp/lantern-whatsapp-bridge.log     # WhatsApp
+tail -f /tmp/pal-imessage-bridge.log     # iMessage
+tail -f /tmp/pal-whatsapp-bridge.log     # WhatsApp
 ```
 
 Look for inbound rows showing the sender's handle/JID — set your env to that exact value (after normalization).
@@ -132,7 +132,7 @@ Just `unset PAL_IMESSAGE_OWNER_HANDLE` / `unset PAL_WA_OWNER_JID` and restart th
 
 ## 5. Owner profile
 
-Create `~/.lantern/owner-profile.md` to give the bot your voice, world, and ground-truth facts. The bridge hot-reloads it on every mtime change (no restart needed).
+Create `~/.pal/owner-profile.md` to give the bot your voice, world, and ground-truth facts. The bridge hot-reloads it on every mtime change (no restart needed).
 
 ```markdown
 # Owner profile
@@ -177,7 +177,7 @@ I'm Ada — founder building PAL. Currently heads-down on launch.
 
 ## 6. New env vars (personal-assistant features)
 
-Add these to your `~/.lantern/env` or LaunchAgent plist alongside the existing vars:
+Add these to your `~/.pal/env` or LaunchAgent plist alongside the existing vars:
 
 | Var | Purpose | Default |
 |---|---|---|
@@ -196,7 +196,7 @@ Add these to your `~/.lantern/env` or LaunchAgent plist alongside the existing v
 curl -s http://localhost:3100/health | jq .quietHours
 
 # Tail the bridge log for nudge fires:
-tail -f ~/Library/Logs/Lantern/whatsapp-bridge.out.log | grep "nudge\|anticipation"
+tail -f ~/Library/Logs/PAL/whatsapp-bridge.out.log | grep "nudge\|anticipation"
 ```
 
 For Twilio SMS fallback and RCS upgrade (so the iMessage bridge can reach SMS/RCS-only contacts), see [`RCS-SETUP.md`](RCS-SETUP.md).
@@ -225,7 +225,7 @@ default**; you must opt in explicitly.
    them when it dials. The bridge serves `/voice-cache/<sha>.mp3`; expose it
    via Cloudflare Tunnel or ngrok and set `PAL_VOICE_CACHE_PUBLIC_URL` to
    that public base URL.
-4. Add to `~/.lantern/env` (or the LaunchAgent plist):
+4. Add to `~/.pal/env` (or the LaunchAgent plist):
 
    ```bash
    export PAL_VOICE_CLONE=1                       # master opt-in (off by default)
@@ -242,6 +242,6 @@ mid-call, it also falls back to Polly: voice-clone never fails a call.
 | Var | Purpose | Default |
 |---|---|---|
 | `PAL_VOICE_CLONE` | Master opt-in (`1`/`true`/`on`). Deepfake-class — keep off unless intended | off |
-| `LANTERN_ELEVENLABS_API_KEY` | ElevenLabs API key (legacy alias `LANTERN_ELEVENLABS_KEY`) | — |
+| `PAL_ELEVENLABS_API_KEY` | ElevenLabs API key (legacy alias `PAL_ELEVENLABS_KEY`) | — |
 | `PAL_ELEVENLABS_VOICE_ID` | The cloned voice to speak in | — |
 | `PAL_VOICE_CACHE_PUBLIC_URL` | Public base URL the bridge serves `/voice-cache/<sha>.mp3` from | — |

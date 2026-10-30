@@ -82,15 +82,15 @@ const BOT_SELF_PREFIXES: string[] = [
   "(call failed",
 
   // ── Status / digest / dashboard output ──
-  "🟢 *lantern",             // "🟢 *Lantern iMessage*", "🟢 *Lantern WhatsApp*"
-  "🟢 lantern",
-  "🔴 *lantern",
-  "🔴 lantern",
-  "📊 *lantern morning report",
-  "📊 *lantern",
-  "📊 lantern",
-  // Lantern→PAL rename (ADR 0032): the bot now emits "pal" headers. The
-  // "lantern" entries above stay forever — those rows are still in chat
+  "🟢 *pal",             // "🟢 *PAL iMessage*", "🟢 *PAL WhatsApp*"
+  "🟢 pal",
+  "🔴 *pal",
+  "🔴 pal",
+  "📊 *pal morning report",
+  "📊 *pal",
+  "📊 pal",
+  // PAL→PAL rename (ADR 0032): the bot now emits "pal" headers. The
+  // "pal" entries above stay forever — those rows are still in chat
   // history and iCloud can echo them back hours later.
   "🟢 *pal",                 // "🟢 *pal iMessage*", "🟢 *pal WhatsApp*", "🟢 *pal is connected*"
   "🟢 pal",
@@ -100,11 +100,11 @@ const BOT_SELF_PREFIXES: string[] = [
   "📊 *pal",
   "📊 pal",
   "🤖 *pal",                 // WA "/pal" help + status replies
-  "🤖 *lantern",             // …and their pre-rename form
+  "🤖 *pal",             // …and their pre-rename form
   "⚠️ *pal alert",           // WA conflict / unlinked / error pages
-  "⚠️ *lantern alert",
+  "⚠️ *pal alert",
   "🚪 *pal alert",
-  "🚪 *lantern alert",
+  "🚪 *pal alert",
   "🚨 kill switch",
   "🚨 ",
   "⏸ paused contacts",

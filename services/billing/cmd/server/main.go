@@ -20,12 +20,12 @@ import (
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/billing/internal/aggregator"
-	"github.com/dshakes/lantern/services/billing/internal/db"
-	"github.com/dshakes/lantern/services/billing/internal/handlers"
-	"github.com/dshakes/lantern/services/billing/internal/middleware"
-	"github.com/dshakes/lantern/services/billing/internal/server"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/billing/internal/aggregator"
+	"github.com/dshakes/pal/services/billing/internal/db"
+	"github.com/dshakes/pal/services/billing/internal/handlers"
+	"github.com/dshakes/pal/services/billing/internal/middleware"
+	"github.com/dshakes/pal/services/billing/internal/server"
 )
 
 func main() {
@@ -86,12 +86,12 @@ func main() {
 
 	// Register services.
 	billingSvc := handlers.NewBillingService(srv)
-	lanternv1.RegisterBillingServiceServer(grpcServer, billingSvc)
+	palv1.RegisterBillingServiceServer(grpcServer, billingSvc)
 
 	// Health check.
 	healthSvc := health.NewServer()
 	healthpb.RegisterHealthServer(grpcServer, healthSvc)
-	healthSvc.SetServingStatus("lantern.v1.BillingService", healthpb.HealthCheckResponse_SERVING)
+	healthSvc.SetServingStatus("pal.v1.BillingService", healthpb.HealthCheckResponse_SERVING)
 
 	reflection.Register(grpcServer)
 
@@ -147,7 +147,7 @@ func main() {
 		logger.Fatal("HTTP server failed", zap.Error(err))
 	}
 
-	healthSvc.SetServingStatus("lantern.v1.BillingService", healthpb.HealthCheckResponse_NOT_SERVING)
+	healthSvc.SetServingStatus("pal.v1.BillingService", healthpb.HealthCheckResponse_NOT_SERVING)
 
 	grpcServer.GracefulStop()
 	logger.Info("gRPC server stopped")
@@ -172,7 +172,7 @@ type config struct {
 
 func loadConfig() config {
 	return config{
-		DatabaseURL: envOrDefault("DATABASE_URL", "postgres://localhost:5432/lantern?sslmode=disable"),
+		DatabaseURL: envOrDefault("DATABASE_URL", "postgres://localhost:5432/pal?sslmode=disable"),
 		ListenAddr:  envOrDefault("LISTEN_ADDR", ":50057"),
 		HTTPAddr:    envOrDefault("HTTP_ADDR", ":8087"),
 		LogLevel:    envOrDefault("LOG_LEVEL", "info"),
@@ -205,7 +205,7 @@ func mustInitLogger(level string) *zap.Logger {
 }
 
 func unaryTracingInterceptor() grpc.UnaryServerInterceptor {
-	tracer := otel.Tracer("lantern.billing")
+	tracer := otel.Tracer("pal.billing")
 	return func(
 		ctx context.Context,
 		req any,
@@ -219,7 +219,7 @@ func unaryTracingInterceptor() grpc.UnaryServerInterceptor {
 }
 
 func streamTracingInterceptor() grpc.StreamServerInterceptor {
-	tracer := otel.Tracer("lantern.billing")
+	tracer := otel.Tracer("pal.billing")
 	return func(
 		srv any,
 		ss grpc.ServerStream,

@@ -84,7 +84,7 @@ let _tracer: Tracer | undefined;
 
 /**
  * Get the singleton tracer instance.
- * In production (LANTERN_RUNTIME=true) this attempts to load the OTel SDK.
+ * In production (PAL_RUNTIME=true) this attempts to load the OTel SDK.
  * Otherwise it returns a no-op tracer.
  */
 export function getTracer(): Tracer {

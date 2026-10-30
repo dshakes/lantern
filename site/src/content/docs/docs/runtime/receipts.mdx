@@ -55,7 +55,7 @@ Verify with `POST /v1/runs/receipts/verify` (no auth required). If `PAL_RECEIPT_
 Verification needs no privileged access. The signing key's algorithm, fingerprint and (for Ed25519) public key are published at a well-known endpoint, so an external party can verify a receipt without calling back into your control plane:
 
 ```
-GET /.well-known/lantern-receipts
+GET /.well-known/pal-receipts
 ```
 
 Anyone holding an Ed25519 receipt and the public key published there can confirm the receipt was signed by this deployment's key. Matching the journal hash against the run's actual event log (that is, confirming nothing was altered after the fact) additionally requires the run's journal export. An HMAC-SHA256 receipt can only be checked by the deployment that holds the secret.
@@ -70,6 +70,6 @@ You do not need a terminal to check one: the dashboard's public `/proof` page (n
 
 - **Provenance.** Cryptographic proof of exactly which steps a run executed.
 - **Tamper-evidence.** Editing the journal after the fact invalidates the signature.
-- **Offline verification.** The key fingerprint at `/.well-known/lantern-receipts` lets external verifiers check a receipt without trusting (or contacting) your control plane.
+- **Offline verification.** The key fingerprint at `/.well-known/pal-receipts` lets external verifiers check a receipt without trusting (or contacting) your control plane.
 
 Receipts share the same signing and verification machinery as run receipts elsewhere on the platform. See the [API reference](/docs/reference/api/) for the full request/response shape.

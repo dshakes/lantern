@@ -16,7 +16,7 @@ which is genuinely finicky from a variable; see RICH-SIGNALS.md for that recipe.
 
 Run it on an Automation trigger like "When I start playing media" (Music/Spotify),
 or tap it. Token from env or the API plist; baked into the signed output (never
-committed). Output: ~/Desktop/Lantern-NowPlaying.shortcut.
+committed). Output: ~/Desktop/PAL-NowPlaying.shortcut.
 """
 
 import os
@@ -28,22 +28,22 @@ import uuid
 from pathlib import Path
 
 URL = os.environ.get(
-    "LANTERN_SIGNAL_URL",
+    "PAL_SIGNAL_URL",
     "https://macbook-pro-2.tail0be192.ts.net/v1/signals",
 )
 
 
 def resolve_token() -> str:
-    tok = (os.environ.get("PAL_SIGNAL_TOKEN") or os.environ.get("LANTERN_SIGNAL_TOKEN", "")).strip()
+    tok = (os.environ.get("PAL_SIGNAL_TOKEN") or os.environ.get("PAL_SIGNAL_TOKEN", "")).strip()
     if tok:
         return tok
-    plist = Path.home() / "Library/LaunchAgents/dev.lantern.api.plist"
+    plist = Path.home() / "Library/LaunchAgents/dev.pal.api.plist"
     if plist.exists():
         out = subprocess.run(
             [
                 "/usr/libexec/PlistBuddy",
                 "-c",
-                "Print :EnvironmentVariables:LANTERN_SIGNAL_TOKEN",
+                "Print :EnvironmentVariables:PAL_SIGNAL_TOKEN",
                 str(plist),
             ],
             capture_output=True,
@@ -51,7 +51,7 @@ def resolve_token() -> str:
         )
         if out.returncode == 0 and out.stdout.strip():
             return out.stdout.strip()
-    sys.exit("ERROR: no LANTERN_SIGNAL_TOKEN (env or plist).")
+    sys.exit("ERROR: no PAL_SIGNAL_TOKEN (env or plist).")
 
 
 def text_token(s: str) -> dict:
@@ -109,7 +109,7 @@ def main() -> None:
                     "WFDictionaryFieldValueItems": [
                         {
                             "WFItemType": 0,
-                            "WFKey": text_token("x-lantern-signal-token"),
+                            "WFKey": text_token("x-pal-signal-token"),
                             "WFValue": text_token(token),
                         }
                     ]
@@ -138,9 +138,9 @@ def main() -> None:
         "WFWorkflowActions": [get_now_playing, post],
     }
 
-    out_dir = Path(os.environ.get("PAL_SHORTCUT_OUT") or os.environ.get("LANTERN_SHORTCUT_OUT", str(Path.home() / "Desktop")))
+    out_dir = Path(os.environ.get("PAL_SHORTCUT_OUT") or os.environ.get("PAL_SHORTCUT_OUT", str(Path.home() / "Desktop")))
     out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / "Lantern-NowPlaying.shortcut"
+    out = out_dir / "PAL-NowPlaying.shortcut"
     with tempfile.NamedTemporaryFile(suffix=".shortcut", delete=False) as tf:
         plistlib.dump(plist, tf)
         unsigned = tf.name
@@ -160,10 +160,10 @@ def main() -> None:
         )
     finally:
         os.unlink(unsigned)
-    print("  ✓ Lantern-NowPlaying  (getcurrentsong → POST now_playing:<track>)")
+    print("  ✓ PAL-NowPlaying  (getcurrentsong → POST now_playing:<track>)")
     print(f"Signed → {out}")
     print(
-        "Trigger: Automation → 'When I open/start playing' Music/Spotify → Run Lantern-NowPlaying."
+        "Trigger: Automation → 'When I open/start playing' Music/Spotify → Run PAL-NowPlaying."
     )
 
 

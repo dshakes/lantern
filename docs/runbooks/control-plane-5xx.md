@@ -12,7 +12,7 @@ the dashboard backend all live behind it. If it is down, the platform is down.
 
 ## What fired it
 
-- **`ControlPlaneDown`** — the scrape/probe target `up{job="lantern-control-plane"}`
+- **`ControlPlaneDown`** — the scrape/probe target `up{job="pal-control-plane"}`
   has been 0 for 2m. The process is unreachable (crash-loop, OOM, scheduling
   failure, or network).
 - **`ControlPlaneNotReady`** — the blackbox probe of `/readyz` reports not-ready
@@ -21,7 +21,7 @@ the dashboard backend all live behind it. If it is down, the platform is down.
   control-plane itself — cross-check `db-saturation.md`.
 
 > **Note on 5xx rate.** A true HTTP-5xx-rate alert needs the
-> `lantern_http_requests_total` counter, which is **not emitted yet** (TODO in
+> `pal_http_requests_total` counter, which is **not emitted yet** (TODO in
 > `infra/monitoring/prometheus/alerts.yml`). Until that middleware ships, "5xx"
 > is observed via the liveness/readiness probes above and the logs below — not a
 > Prometheus error-rate series.
@@ -76,7 +76,7 @@ kubectl -n <ns> exec deploy/<control-plane> -- sh -c \
 4. **Image/rollout regression** — if this started right after a deploy, roll
    back: `kubectl -n <ns> rollout undo deploy/<control-plane>`.
 
-After recovery confirm: `/readyz` green, `up{job="lantern-control-plane"} == 1`,
+After recovery confirm: `/readyz` green, `up{job="pal-control-plane"} == 1`,
 and a known agent lists via `GET /v1/agents`.
 
 ---

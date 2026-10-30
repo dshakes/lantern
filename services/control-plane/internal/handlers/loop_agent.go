@@ -27,10 +27,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/scheduler"
-	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/scheduler"
+	"github.com/dshakes/pal/services/control-plane/internal/secrets"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // ---------- loopUsage ----------
@@ -266,7 +266,7 @@ func (h *LoopAgentHandler) CreateLoopAgent(w http.ResponseWriter, r *http.Reques
 // natural-language prompt. Falls back to tier-based cron defaults when the
 // model omits or returns an invalid expression.
 func (h *LoopAgentHandler) generateLoopManifest(ctx context.Context, tenantID, prompt, preferredName string) (*LoopManifest, error) {
-	systemPrompt := `You are Lantern's loop-agent architect. Given a description, generate a structured loop-agent manifest.
+	systemPrompt := `You are PAL's loop-agent architect. Given a description, generate a structured loop-agent manifest.
 
 Output ONLY valid JSON with this exact structure (no markdown, no backticks, no explanation):
 {
@@ -2754,7 +2754,7 @@ func SeedLoopAgents(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger)
 			Role:    "domain_tracker",
 			Type:    "loop",
 			Name:    "travel-concierge",
-			Goal:    "Your travel concierge. Reads trip email (flights, hotels, rentals) into a clear itinerary and reminds you of check-ins, departures, and what to do before you go. Runs on the Lantern platform.",
+			Goal:    "Your travel concierge. Reads trip email (flights, hotels, rentals) into a clear itinerary and reminds you of check-ins, departures, and what to do before you go. Runs on the PAL platform.",
 			Tier:    "macro",
 			Cron:    "0 */6 * * *",
 			Sensors: []string{"email"},
@@ -2768,7 +2768,7 @@ func SeedLoopAgents(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger)
 			Role:    "domain_tracker",
 			Type:    "loop",
 			Name:    "household",
-			Goal:    "Your household manager. Tracks utilities, warranties, home services, and renewals from your email and reminds you before anything lapses or expires. Runs on the Lantern platform.",
+			Goal:    "Your household manager. Tracks utilities, warranties, home services, and renewals from your email and reminds you before anything lapses or expires. Runs on the PAL platform.",
 			Tier:    "macro",
 			Cron:    "0 */6 * * *",
 			Sensors: []string{"email"},

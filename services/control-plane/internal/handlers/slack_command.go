@@ -1,16 +1,16 @@
 package handlers
 
-// Slack /lantern slash command.
+// Slack /pal slash command.
 //
-// Mirrors the WhatsApp /lantern command suite so Slack users can check
+// Mirrors the WhatsApp /pal command suite so Slack users can check
 // bridge / agent state from inside Slack the same way WhatsApp users do
 // from their phone.
 //
 // Setup (one-time, per workspace):
 //   1. https://api.slack.com/apps → your app → Slash Commands → Create New
-//      Command name: /lantern
+//      Command name: /pal
 //      Request URL:  https://<your-control-plane>/v1/surfaces/slack/command
-//      Short desc:   Lantern agent control
+//      Short desc:   PAL agent control
 //      Usage hint:   status | ping | agents | help
 //   2. Copy your app's Signing Secret into SLACK_SIGNING_SECRET on the
 //      control-plane so we can verify request authenticity. In dev (no
@@ -18,10 +18,10 @@ package handlers
 //      iteration via ngrok still works.
 //
 // Commands:
-//   /lantern              -> help
-//   /lantern status       -> uptime, configured surfaces, recent runs
-//   /lantern ping         -> liveness check (round-trip)
-//   /lantern agents       -> list of active agents in this tenant
+//   /pal              -> help
+//   /pal status       -> uptime, configured surfaces, recent runs
+//   /pal ping         -> liveness check (round-trip)
+//   /pal agents       -> list of active agents in this tenant
 //
 // Slack expects a JSON response within 3s OR a 200 + async via response_url.
 // We answer synchronously since all handlers are sub-second DB reads.
@@ -43,8 +43,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 type SlackCommandHandler struct {
@@ -61,7 +61,7 @@ func (h *SlackCommandHandler) logger() *zap.Logger {
 
 // HandleCommand is the entry point for POST /v1/surfaces/slack/command.
 // Slack sends application/x-www-form-urlencoded with: team_id, team_domain,
-// channel_id, channel_name, user_id, user_name, command (e.g. "/lantern"),
+// channel_id, channel_name, user_id, user_name, command (e.g. "/pal"),
 // text (the subcommand + args), response_url, trigger_id.
 //
 // See https://api.slack.com/interactivity/slash-commands#app_command_handling
@@ -107,11 +107,11 @@ func (h *SlackCommandHandler) HandleCommand(w http.ResponseWriter, r *http.Reque
 	)
 
 	// Resolve the tenant. Look up by team_id stored in surface_configs
-	// config.workspaceId; fall back to the dev tenant so /lantern works
+	// config.workspaceId; fall back to the dev tenant so /pal works
 	// out of the box on the seeded data.
 	tenantID := h.resolveTenantFromSlackTeam(r.Context(), teamID)
 	if tenantID == "" {
-		writeJSON(w, http.StatusOK, slackReply("This Slack workspace is not linked to a Lantern tenant."))
+		writeJSON(w, http.StatusOK, slackReply("This Slack workspace is not linked to a PAL tenant."))
 		return
 	}
 
@@ -137,7 +137,7 @@ func (h *SlackCommandHandler) HandleCommand(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusOK, slackReply(h.agentsReply(ctx, tenantID)))
 	default:
 		writeJSON(w, http.StatusOK, slackReply(
-			fmt.Sprintf("Unknown subcommand `%s`. Try `/lantern help` for the list.", sub),
+			fmt.Sprintf("Unknown subcommand `%s`. Try `/pal help` for the list.", sub),
 		))
 	}
 }
@@ -153,12 +153,12 @@ func slackReply(text string) map[string]any {
 
 func slackHelpBlock() string {
 	return strings.Join([]string{
-		":robot_face: *Lantern commands*",
+		":robot_face: *PAL commands*",
 		"",
-		"`/lantern status` — control-plane uptime + configured surfaces + recent runs",
-		"`/lantern ping` — quick liveness check",
-		"`/lantern agents` — list active agents in this workspace's tenant",
-		"`/lantern help` — show this message",
+		"`/pal status` — control-plane uptime + configured surfaces + recent runs",
+		"`/pal ping` — quick liveness check",
+		"`/pal agents` — list active agents in this workspace's tenant",
+		"`/pal help` — show this message",
 	}, "\n")
 }
 
@@ -167,7 +167,7 @@ func slackHelpBlock() string {
 // to "0" rather than aborting the whole reply.
 func (h *SlackCommandHandler) statusReply(ctx context.Context, tenantID string) string {
 	if tenantID == "" {
-		return ":warning: This Slack workspace isn't linked to a Lantern tenant yet. Install the Slack surface in the dashboard first."
+		return ":warning: This Slack workspace isn't linked to a PAL tenant yet. Install the Slack surface in the dashboard first."
 	}
 	var (
 		surfaces         int
@@ -200,7 +200,7 @@ func (h *SlackCommandHandler) statusReply(ctx context.Context, tenantID string) 
 	})
 
 	lines := []string{
-		":green_circle: *Lantern is alive*",
+		":green_circle: *PAL is alive*",
 		fmt.Sprintf("agents: %d · connectors: %d · surfaces: %d", agents, connectors, surfaces),
 		fmt.Sprintf("runs (24h): %d", runs24h),
 	}
@@ -213,7 +213,7 @@ func (h *SlackCommandHandler) statusReply(ctx context.Context, tenantID string) 
 // agentsReply lists the tenant's active agents with their model.
 func (h *SlackCommandHandler) agentsReply(ctx context.Context, tenantID string) string {
 	if tenantID == "" {
-		return ":warning: This Slack workspace isn't linked to a Lantern tenant yet."
+		return ":warning: This Slack workspace isn't linked to a PAL tenant yet."
 	}
 	lines := []string{":scroll: *Agents*"}
 	count := 0
@@ -251,7 +251,7 @@ func (h *SlackCommandHandler) agentsReply(ctx context.Context, tenantID string) 
 
 // resolveTenantFromSlackTeam looks up the tenant that owns this Slack
 // workspace by team_id stored in surface_configs.config. Falls back to
-// the dev tenant when nothing is configured so /lantern works against
+// the dev tenant when nothing is configured so /pal works against
 // seeded data without explicit setup. In prod there is no fallback: an
 // unlinked workspace returns "" so the caller refuses rather than act as the
 // dev tenant.

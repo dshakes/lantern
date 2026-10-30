@@ -44,7 +44,7 @@ async function warmRoutes() {
   const r = await fetch(`${API_URL}/auth/signup`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email: "warmup@e2e.lantern.test", password: "e2e-warmup-password", name: "Warmup" }),
+    body: JSON.stringify({ email: "warmup@e2e.pal.test", password: "e2e-warmup-password", name: "Warmup" }),
   });
   const { token } = (await r.json()) as { token?: string };
   const headers = { cookie: `pal_token=${token ?? ""}` };
@@ -93,7 +93,7 @@ export default async function globalSetup() {
   fs.rmSync(RUN_DIR, { recursive: true, force: true });
   fs.mkdirSync(RUN_DIR, { recursive: true });
 
-  const dbName = `lantern_e2e_${process.pid}`;
+  const dbName = `pal_e2e_${process.pid}`;
   const dbUrl = new URL(PG_ADMIN_URL);
   dbUrl.pathname = `/${dbName}`;
   const psql = (sql: string) => execFileSync("psql", [PG_ADMIN_URL, "-v", "ON_ERROR_STOP=1", "-qc", sql], { stdio: "inherit" });
@@ -124,21 +124,21 @@ export default async function globalSetup() {
       REDIS_URL: `redis://${REDIS_HOST}:${REDIS_PORT}/${REDIS_DB}`,
       HTTP_ADDR: `127.0.0.1:${API_PORT}`,
       LISTEN_ADDR: `127.0.0.1:${GRPC_PORT}`,
-      LANTERN_METRICS_ADDR: `127.0.0.1:${METRICS_PORT}`,
+      PAL_METRICS_ADDR: `127.0.0.1:${METRICS_PORT}`,
       // Without this every API call from the dashboard origin fails CORS.
-      LANTERN_CORS_ORIGINS: WEB_URL,
-      LANTERN_ENV: "",
-      LANTERN_MAILER: "log",
-      LANTERN_SIGNUP_MODE: "open",
-      LANTERN_LLM_BASEURL_OPENAI: `http://127.0.0.1:${LLM_PORT}`,
-      LANTERN_LLM_BASEURL_ANTHROPIC: `http://127.0.0.1:${LLM_PORT}`,
+      PAL_CORS_ORIGINS: WEB_URL,
+      PAL_ENV: "",
+      PAL_MAILER: "log",
+      PAL_SIGNUP_MODE: "open",
+      PAL_LLM_BASEURL_OPENAI: `http://127.0.0.1:${LLM_PORT}`,
+      PAL_LLM_BASEURL_ANTHROPIC: `http://127.0.0.1:${LLM_PORT}`,
       ...extraEnv,
     }, CP_LOG);
     await waitFor(`${API_URL}/healthz`, "control-plane");
 
     start("web", "npx", ["next", "dev", "--port", String(WEB_PORT)], WEB_DIR, {
       NEXT_PUBLIC_API_URL: API_URL,
-      LANTERN_API_URL: API_URL,
+      PAL_API_URL: API_URL,
       NEXT_TELEMETRY_DISABLED: "1",
     }, path.join(RUN_DIR, "web.log"));
     await waitFor(`${WEB_URL}/login`, "next dev");

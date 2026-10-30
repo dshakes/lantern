@@ -23,16 +23,16 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
 )
 
 // IsProd reports whether the scheduler is running in a production-like
 // environment. It mirrors the control-plane's IsProd() logic so the guard
 // rules are consistent across services.
 //
-// Dev (LANTERN_ENV unset) is the default so `make dev` / local runs work
+// Dev (PAL_ENV unset) is the default so `make dev` / local runs work
 // without any configuration. Operators opt into prod behaviour by setting
-// LANTERN_ENV to "prod", "production", or "staging".
+// PAL_ENV to "prod", "production", or "staging".
 func IsProd() bool {
 	e := strings.ToLower(strings.TrimSpace(os.Getenv("PAL_ENV")))
 	return e == "prod" || e == "production" || e == "staging"
@@ -46,19 +46,19 @@ func IsProd() bool {
 // the function pure and testable without triggering os.Exit in tests.
 //
 // Rules:
-//   - prod (LANTERN_ENV=prod/production/staging): FATAL when defaultAddr is
+//   - prod (PAL_ENV=prod/production/staging): FATAL when defaultAddr is
 //     empty OR dialerOverride is "stub". The LogOnlyDialer spawns nothing and
 //     returns synthetic OK responses — in prod that is silent data loss.
-//   - dev (LANTERN_ENV unset): stub is intentional; returns fatal=false.
+//   - dev (PAL_ENV unset): stub is intentional; returns fatal=false.
 func CheckManagerDialer(isProd bool, defaultAddr, dialerOverride string) (fatal bool, message string) {
 	if !isProd {
 		return false, ""
 	}
 	if dialerOverride == "stub" {
-		return true, "LANTERN_DIALER=stub is set — production refuses to start with the stub manager dialer (it spawns nothing and returns fake success); unset LANTERN_DIALER to use the real gRPC dialer"
+		return true, "PAL_DIALER=stub is set — production refuses to start with the stub manager dialer (it spawns nothing and returns fake success); unset PAL_DIALER to use the real gRPC dialer"
 	}
 	if defaultAddr == "" {
-		return true, "LANTERN_DEFAULT_MANAGER_ADDR is unset — production refuses to start with the stub manager dialer (it spawns nothing and returns fake success); set LANTERN_DEFAULT_MANAGER_ADDR to the runtime-manager gRPC address"
+		return true, "PAL_DEFAULT_MANAGER_ADDR is unset — production refuses to start with the stub manager dialer (it spawns nothing and returns fake success); set PAL_DEFAULT_MANAGER_ADDR to the runtime-manager gRPC address"
 	}
 	return false, ""
 }
@@ -67,8 +67,8 @@ func CheckManagerDialer(isProd bool, defaultAddr, dialerOverride string) (fatal 
 // runtime-manager. The manager forces mTLS in prod (it verifies client certs
 // against its CA), so:
 //
-//   - LANTERN_RUNTIME_MANAGER_TLS_CA set → TLS, verifying the manager against
-//     that CA; LANTERN_RUNTIME_MANAGER_TLS_CERT/KEY (both or neither) add the
+//   - PAL_RUNTIME_MANAGER_TLS_CA set → TLS, verifying the manager against
+//     that CA; PAL_RUNTIME_MANAGER_TLS_CERT/KEY (both or neither) add the
 //     client certificate.
 //   - unset in dev → insecure (plaintext), so `make dev` works.
 //   - unset in prod, client cert missing in prod, half-set cert/key, or an
@@ -78,24 +78,24 @@ func ManagerTransportCreds(isProd bool) (credentials.TransportCredentials, error
 	certPath := strings.TrimSpace(os.Getenv("PAL_RUNTIME_MANAGER_TLS_CERT"))
 	keyPath := strings.TrimSpace(os.Getenv("PAL_RUNTIME_MANAGER_TLS_KEY"))
 	if (certPath == "") != (keyPath == "") {
-		return nil, fmt.Errorf("runtime-manager client TLS is half-configured: set BOTH LANTERN_RUNTIME_MANAGER_TLS_CERT and LANTERN_RUNTIME_MANAGER_TLS_KEY (or neither)")
+		return nil, fmt.Errorf("runtime-manager client TLS is half-configured: set BOTH PAL_RUNTIME_MANAGER_TLS_CERT and PAL_RUNTIME_MANAGER_TLS_KEY (or neither)")
 	}
 	if caPath == "" {
 		if isProd {
-			return nil, fmt.Errorf("LANTERN_RUNTIME_MANAGER_TLS_CA is unset — the runtime-manager requires mTLS in production; set LANTERN_RUNTIME_MANAGER_TLS_CA plus LANTERN_RUNTIME_MANAGER_TLS_CERT/KEY (client cert signed by the manager CA)")
+			return nil, fmt.Errorf("PAL_RUNTIME_MANAGER_TLS_CA is unset — the runtime-manager requires mTLS in production; set PAL_RUNTIME_MANAGER_TLS_CA plus PAL_RUNTIME_MANAGER_TLS_CERT/KEY (client cert signed by the manager CA)")
 		}
 		return insecure.NewCredentials(), nil
 	}
 	if isProd && certPath == "" {
-		return nil, fmt.Errorf("LANTERN_RUNTIME_MANAGER_TLS_CERT/KEY are unset — the runtime-manager verifies client certificates in production; set both")
+		return nil, fmt.Errorf("PAL_RUNTIME_MANAGER_TLS_CERT/KEY are unset — the runtime-manager verifies client certificates in production; set both")
 	}
 	caPEM, err := os.ReadFile(caPath)
 	if err != nil {
-		return nil, fmt.Errorf("read LANTERN_RUNTIME_MANAGER_TLS_CA %s: %w", caPath, err)
+		return nil, fmt.Errorf("read PAL_RUNTIME_MANAGER_TLS_CA %s: %w", caPath, err)
 	}
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(caPEM) {
-		return nil, fmt.Errorf("LANTERN_RUNTIME_MANAGER_TLS_CA %s contains no PEM certificates", caPath)
+		return nil, fmt.Errorf("PAL_RUNTIME_MANAGER_TLS_CA %s contains no PEM certificates", caPath)
 	}
 	cfg := &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 	if certPath != "" {
@@ -109,15 +109,15 @@ func ManagerTransportCreds(isProd bool) (credentials.TransportCredentials, error
 }
 
 // serviceTokenCreds attaches the shared service token as
-// x-lantern-service-token on every RPC (the manager requires it when
-// LANTERN_GRPC_SERVICE_TOKEN is set). Empty token → nothing attached.
+// x-pal-service-token on every RPC (the manager requires it when
+// PAL_GRPC_SERVICE_TOKEN is set). Empty token → nothing attached.
 type serviceTokenCreds struct{ token string }
 
 func (c serviceTokenCreds) GetRequestMetadata(context.Context, ...string) (map[string]string, error) {
 	if c.token == "" {
 		return nil, nil
 	}
-	return map[string]string{"x-lantern-service-token": c.token}, nil
+	return map[string]string{"x-pal-service-token": c.token}, nil
 }
 
 // RequireTransportSecurity is false so the token also rides dev plaintext links.
@@ -129,13 +129,13 @@ const defaultManagerPort = "50054"
 
 // ManagerDialer is the interface the scheduler uses to talk to a node.
 type ManagerDialer interface {
-	Spawn(ctx context.Context, nodeAddr string, req *lanternv1.SpawnRequest) (*lanternv1.SpawnResponse, error)
-	Stop(ctx context.Context, nodeAddr string, req *lanternv1.StopRequest) (*lanternv1.StopResponse, error)
+	Spawn(ctx context.Context, nodeAddr string, req *palv1.SpawnRequest) (*palv1.SpawnResponse, error)
+	Stop(ctx context.Context, nodeAddr string, req *palv1.StopRequest) (*palv1.StopResponse, error)
 	// Snapshot forwards a snapshot request to the node. The node's runtime-manager
 	// may not yet implement this RPC (it will return Unimplemented); callers must
 	// handle a non-nil error gracefully. On success the returned SnapshotResponse
 	// carries the id, sha256, and bytes from the manager.
-	Snapshot(ctx context.Context, nodeAddr string, req *lanternv1.SnapshotRequest) (*lanternv1.SnapshotResponse, error)
+	Snapshot(ctx context.Context, nodeAddr string, req *palv1.SnapshotRequest) (*palv1.SnapshotResponse, error)
 	Close()
 }
 
@@ -157,7 +157,7 @@ func NewLogOnlyDialer(logger *zap.Logger) *LogOnlyDialer {
 	return &LogOnlyDialer{logger: logger.Named("manager_dialer")}
 }
 
-func (d *LogOnlyDialer) Spawn(_ context.Context, nodeAddr string, req *lanternv1.SpawnRequest) (*lanternv1.SpawnResponse, error) {
+func (d *LogOnlyDialer) Spawn(_ context.Context, nodeAddr string, req *palv1.SpawnRequest) (*palv1.SpawnResponse, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.logger.Info("spawn intent (stub)",
@@ -167,19 +167,19 @@ func (d *LogOnlyDialer) Spawn(_ context.Context, nodeAddr string, req *lanternv1
 		zap.String("tenant_id", specTenant(req.Spec)),
 		zap.String("run_id", specRunID(req.Spec)),
 	)
-	return &lanternv1.SpawnResponse{Handle: req.Handle}, nil
+	return &palv1.SpawnResponse{Handle: req.Handle}, nil
 }
 
-func (d *LogOnlyDialer) Stop(_ context.Context, nodeAddr string, req *lanternv1.StopRequest) (*lanternv1.StopResponse, error) {
+func (d *LogOnlyDialer) Stop(_ context.Context, nodeAddr string, req *palv1.StopRequest) (*palv1.StopResponse, error) {
 	d.logger.Info("stop intent (stub)",
 		zap.String("node_addr", nodeAddr),
 		zap.String("vm_id", req.VmId),
 		zap.String("reason", req.Reason),
 	)
-	return &lanternv1.StopResponse{Ok: true, Detail: "stub dialer"}, nil
+	return &palv1.StopResponse{Ok: true, Detail: "stub dialer"}, nil
 }
 
-func (d *LogOnlyDialer) Snapshot(_ context.Context, nodeAddr string, req *lanternv1.SnapshotRequest) (*lanternv1.SnapshotResponse, error) {
+func (d *LogOnlyDialer) Snapshot(_ context.Context, nodeAddr string, req *palv1.SnapshotRequest) (*palv1.SnapshotResponse, error) {
 	d.logger.Info("snapshot intent (stub)",
 		zap.String("node_addr", nodeAddr),
 		zap.String("vm_id", req.VmId),
@@ -191,7 +191,7 @@ func (d *LogOnlyDialer) Snapshot(_ context.Context, nodeAddr string, req *lanter
 	if snapID == "" {
 		snapID = "snap-stub-" + req.VmId
 	}
-	return &lanternv1.SnapshotResponse{
+	return &palv1.SnapshotResponse{
 		SnapshotId: snapID,
 		Bytes:      0,
 		Sha256:     "",
@@ -209,13 +209,13 @@ func (d *LogOnlyDialer) Close() {}
 // lazily (first call per node) and reused for all subsequent RPCs.
 //
 // Per-node address resolution rules, in order:
-//  1. If env LANTERN_NODE_ADDR_<NODE-UPPERCASED> is set, use that.
+//  1. If env PAL_NODE_ADDR_<NODE-UPPERCASED> is set, use that.
 //  2. If nodeAddr is "node-local", "node-stub", or empty, fall back to
-//     env LANTERN_DEFAULT_MANAGER_ADDR.
+//     env PAL_DEFAULT_MANAGER_ADDR.
 //  3. If nodeAddr already contains a ':' (has a port), use as-is.
 //  4. Otherwise append the default runtime-manager port (:50054).
 //
-// Transport is TLS when LANTERN_RUNTIME_MANAGER_TLS_CA is set (see
+// Transport is TLS when PAL_RUNTIME_MANAGER_TLS_CA is set (see
 // ManagerTransportCreds), cleartext otherwise (dev only). Every RPC carries
 // the shared service token.
 type GRPCDialer struct {
@@ -229,7 +229,7 @@ type GRPCDialer struct {
 
 // NewGRPCDialer returns a dialer with no eager connections; conns are
 // established on the first Spawn/Stop call per node. creds nil means insecure
-// (tests); serviceToken is attached as x-lantern-service-token on every RPC.
+// (tests); serviceToken is attached as x-pal-service-token on every RPC.
 func NewGRPCDialer(logger *zap.Logger, creds credentials.TransportCredentials, serviceToken string) *GRPCDialer {
 	if creds == nil {
 		creds = insecure.NewCredentials()
@@ -326,16 +326,16 @@ func (d *GRPCDialer) connFor(nodeAddr string) (*grpc.ClientConn, error) {
 }
 
 // clientFor returns a RuntimeManagerClient for the given node address.
-func (d *GRPCDialer) clientFor(nodeAddr string) (lanternv1.RuntimeManagerClient, error) {
+func (d *GRPCDialer) clientFor(nodeAddr string) (palv1.RuntimeManagerClient, error) {
 	conn, err := d.connFor(nodeAddr)
 	if err != nil {
 		return nil, err
 	}
-	return lanternv1.NewRuntimeManagerClient(conn), nil
+	return palv1.NewRuntimeManagerClient(conn), nil
 }
 
 // Spawn forwards to the runtime-manager at nodeAddr.
-func (d *GRPCDialer) Spawn(ctx context.Context, nodeAddr string, req *lanternv1.SpawnRequest) (*lanternv1.SpawnResponse, error) {
+func (d *GRPCDialer) Spawn(ctx context.Context, nodeAddr string, req *palv1.SpawnRequest) (*palv1.SpawnResponse, error) {
 	client, err := d.clientFor(nodeAddr)
 	if err != nil {
 		return nil, err
@@ -350,7 +350,7 @@ func (d *GRPCDialer) Spawn(ctx context.Context, nodeAddr string, req *lanternv1.
 }
 
 // Stop forwards to the runtime-manager at nodeAddr.
-func (d *GRPCDialer) Stop(ctx context.Context, nodeAddr string, req *lanternv1.StopRequest) (*lanternv1.StopResponse, error) {
+func (d *GRPCDialer) Stop(ctx context.Context, nodeAddr string, req *palv1.StopRequest) (*palv1.StopResponse, error) {
 	client, err := d.clientFor(nodeAddr)
 	if err != nil {
 		return nil, err
@@ -365,8 +365,8 @@ func (d *GRPCDialer) Stop(ctx context.Context, nodeAddr string, req *lanternv1.S
 
 // Snapshot forwards the snapshot request to the runtime-manager at nodeAddr.
 // The manager exposes Snapshot on the RuntimeManager service
-// (/lantern.v1.RuntimeManager/Snapshot).
-func (d *GRPCDialer) Snapshot(ctx context.Context, nodeAddr string, req *lanternv1.SnapshotRequest) (*lanternv1.SnapshotResponse, error) {
+// (/pal.v1.RuntimeManager/Snapshot).
+func (d *GRPCDialer) Snapshot(ctx context.Context, nodeAddr string, req *palv1.SnapshotRequest) (*palv1.SnapshotResponse, error) {
 	client, err := d.clientFor(nodeAddr)
 	if err != nil {
 		return nil, err
@@ -409,28 +409,28 @@ func (d *GRPCDialer) Close() {
 // Nil-safe accessors used while the generated stubs don't include the
 // usual `func (x *T) GetField() ...` helpers from protoc-gen-go. Once
 // `make proto` lands, these can collapse to spec.GetX() etc.
-func vmHandleID(h *lanternv1.VmHandle) string {
+func vmHandleID(h *palv1.VmHandle) string {
 	if h == nil {
 		return ""
 	}
 	return h.VmId
 }
 
-func specImage(s *lanternv1.AgentSpec) string {
+func specImage(s *palv1.AgentSpec) string {
 	if s == nil {
 		return ""
 	}
 	return s.ImageDigest
 }
 
-func specTenant(s *lanternv1.AgentSpec) string {
+func specTenant(s *palv1.AgentSpec) string {
 	if s == nil {
 		return ""
 	}
 	return s.TenantId
 }
 
-func specRunID(s *lanternv1.AgentSpec) string {
+func specRunID(s *palv1.AgentSpec) string {
 	if s == nil {
 		return ""
 	}

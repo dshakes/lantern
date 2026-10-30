@@ -376,7 +376,7 @@ function parseAskPalAction(raw: string): AskPalAction | null {
 // so the demo footprint is grep-able from one place.
 export const DEMO_USER: User = {
   id: "usr_demo",
-  email: "demo@lantern.dev",
+  email: "demo@pal.dev",
   name: "Demo User",
   tenantId: "t_acme",
   role: "owner",
@@ -476,7 +476,7 @@ class PalAPI {
         "http://localhost:8080";
     } else {
       this.baseUrl =
-        (process.env.PAL_API_URL ?? process.env.LANTERN_API_URL) ??
+        (process.env.PAL_API_URL ?? process.env.PAL_API_URL) ??
         process.env.NEXT_PUBLIC_API_URL ??
         "http://localhost:8080";
     }
@@ -497,7 +497,7 @@ class PalAPI {
         localStorage.setItem("pal_token", token);
       } else {
         localStorage.removeItem("pal_token");
-        localStorage.removeItem("lantern_token"); // legacy name; else the boot-time migration would resurrect the session
+        localStorage.removeItem("pal_token"); // legacy name; else the boot-time migration would resurrect the session
       }
       // Set / clear the auth cookie as HttpOnly via the server-side Route
       // Handler so XSS cannot read it.  Fire-and-forget: the cookie is only
@@ -637,7 +637,7 @@ class PalAPI {
       // demo tokens at /auth/me, so they never reach real tenant data.
       if (
         process.env.NEXT_PUBLIC_DEMO_MODE === "1" &&
-        (email === "demo@lantern.dev" || password === "demo")
+        (email === "demo@pal.dev" || password === "demo")
       ) {
         const demoToken = "demo_token_" + Date.now();
         this.setToken(demoToken);
@@ -1799,11 +1799,11 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
         description: "Agent card unavailable",
         version: "0.1.0",
         capabilities: ["text-generation"],
-        endpoint: `https://api.lantern.run/v1/agents/${agentName}/a2a/invoke`,
+        endpoint: `https://api.pal.run/v1/agents/${agentName}/a2a/invoke`,
         auth: { type: "bearer", description: "PAL API key" },
         inputSchema: { type: "object", properties: { message: { type: "string" } } },
         outputSchema: { type: "object", properties: { result: { type: "string" } } },
-        provider: { name: "PAL", url: "https://lantern.run" },
+        provider: { name: "PAL", url: "https://pal.run" },
       };
     }
   }
@@ -1826,7 +1826,7 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
       return await this.request("/.well-known/agent.json");
     } catch {
       notifySimulated("getAgentDirectory");
-      return { agents: [], provider: { name: "PAL", url: "https://lantern.run" } };
+      return { agents: [], provider: { name: "PAL", url: "https://pal.run" } };
     }
   }
 

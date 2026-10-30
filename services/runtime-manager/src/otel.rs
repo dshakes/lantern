@@ -1,9 +1,9 @@
-// OpenTelemetry integration for lantern-runtime-manager.
+// OpenTelemetry integration for pal-runtime-manager.
 //
 // # Design
 //
 // Only initialised when `OTEL_EXPORTER_OTLP_ENDPOINT` (standard OTLP env var)
-// or `LANTERN_OTEL_ENABLED=1` is set; otherwise every function is a cheap
+// or `PAL_OTEL_ENABLED=1` is set; otherwise every function is a cheap
 // no-op so the service behaves exactly as before with zero overhead.
 //
 // The global propagator is always set to W3C TraceContext so the extract /
@@ -54,7 +54,7 @@ pub fn init() -> Option<SdkShutdown> {
 
     if endpoint.is_none() && !enabled {
         tracing::debug!(
-            "otel: OTEL_EXPORTER_OTLP_ENDPOINT not set and LANTERN_OTEL_ENABLED != 1; \
+            "otel: OTEL_EXPORTER_OTLP_ENDPOINT not set and PAL_OTEL_ENABLED != 1; \
              running without OTLP exporter (propagation headers still active)"
         );
         return None;
@@ -80,7 +80,7 @@ pub fn init() -> Option<SdkShutdown> {
         .with_sampler(Sampler::AlwaysOn)
         .with_id_generator(RandomIdGenerator::default())
         .with_resource(opentelemetry_sdk::Resource::new(vec![
-            opentelemetry::KeyValue::new("service.name", "lantern-runtime-manager"),
+            opentelemetry::KeyValue::new("service.name", "pal-runtime-manager"),
         ]))
         .build();
 

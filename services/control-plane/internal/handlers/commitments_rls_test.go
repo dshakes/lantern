@@ -1,7 +1,7 @@
 package handlers
 
 // RLS enforcement tests for the commitments domain. Uses the newEnforcedServer
-// harness (lantern_app-backed AppPool) to prove RLS is genuinely enforced at
+// harness (pal_app-backed AppPool) to prove RLS is genuinely enforced at
 // the Postgres layer — not just GUC-scoped on the superuser pool.
 
 import (
@@ -22,7 +22,7 @@ func newEnforcedCommitmentHandler(t *testing.T, e *enforcedServer) *CommitmentHa
 }
 
 // TestRLSCommitments_SameTenantWorks proves that a same-tenant create + read
-// works correctly under genuine RLS enforcement (AppPool as lantern_app).
+// works correctly under genuine RLS enforcement (AppPool as pal_app).
 func TestRLSCommitments_SameTenantWorks(t *testing.T) {
 	e := newEnforcedServer(t)
 	h := newEnforcedCommitmentHandler(t, e)

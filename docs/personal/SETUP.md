@@ -13,7 +13,7 @@ assistant on WhatsApp + iMessage, with auto-start at every Mac boot.
 - VIPs queue drafts for your approval instead of auto-sending
 - Natural-language commands ("pause for 2 hours", "status", "what's
   paused") from any thread
-- Voice notes ("hey lantern, mute until tomorrow")
+- Voice notes ("hey pal, mute until tomorrow")
 - Daily morning digest of overnight activity
 - iOS Siri integration (separate guide: `SHORTCUTS.md`)
 
@@ -27,14 +27,14 @@ assistant on WhatsApp + iMessage, with auto-start at every Mac boot.
 ## Step 1 — Clone + first boot
 
 ```bash
-git clone https://github.com/dshakes/lantern
-cd lantern
+git clone https://github.com/dshakes/pal
+cd pal
 make dev-infra        # starts Postgres + Redis + MinIO via docker-compose
 make run-api          # starts control-plane on :8080
 make dashboard-dev    # starts dashboard on :3001 (in a separate terminal)
 ```
 
-Open <http://localhost:3001> and log in with `admin@lantern.dev` / `lantern`.
+Open <http://localhost:3001> and log in with `admin@pal.dev` / `pal`.
 
 ## Step 2 — Configure your LLM provider
 
@@ -178,7 +178,7 @@ it). One-tap approve / edit / discard.
   current state (also via email + dashboard)
 - **Type "pause for 2 hours" in self-chat** → mute auto-reply, auto-
   resume in 2h
-- **Record voice note "lantern, status"** → same as above
+- **Record voice note "pal, status"** → same as above
 - **React ⏸ to any bot reply** → pause that contact
 - **Friend mentions you in a monitored group** → bot DMs you a
   summary + can auto-reply
@@ -214,7 +214,7 @@ unset PAL_API_TOKEN
 Logs (all bridges + services):
 
 ```bash
-tail -f ~/Library/Logs/Lantern/*.err.log
+tail -f ~/Library/Logs/PAL/*.err.log
 ```
 
 Dashboard banner: when any service goes `logged_out` / `conflict` /

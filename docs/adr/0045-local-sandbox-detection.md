@@ -29,7 +29,7 @@ test; nothing connected it to the dev stack.
 2. **Wiring.** In a non-stub mode `dev` starts (or reuses) the runtime-scheduler
    on `:50055` with `PAL_DEFAULT_MANAGER_ADDR=<detected manager>` and starts the
    API with `PAL_SCHEDULER_GRPC_ADDR=localhost:50055`. Names are `PAL_*` and
-   reach the binaries' `LANTERN_*` reads through `palenv.Bridge` (ADR 0032).
+   reach the binaries' `PAL_*` reads through `palenv.Bridge` (ADR 0032).
 3. **Lima topology.** `make lima-runtime` runs a long-lived, jailed Firecracker
    runtime-manager inside the guest on `0.0.0.0:52054`. Lima's default port
    forwarding exposes it as the Mac's `localhost:52054`; it self-registers by
@@ -43,7 +43,7 @@ test; nothing connected it to the dev stack.
 - The local loop is honest: a developer either has real microVMs or reads, in
   one line, that they do not and how to get them.
 - **Dev-only security posture** for `lima-runtime`: plaintext gRPC, no service
-  token, `LANTERN_ENV` unset — the manager's existing dev defaults. It binds
+  token, `PAL_ENV` unset — the manager's existing dev defaults. It binds
   inside the VM's private NAT network and is forwarded only to the Mac's
   loopback. Production keeps its fail-closed guards (mTLS, service token)
   unchanged; nothing here relaxes them.

@@ -9,17 +9,17 @@ import (
 
 // Span attribute keys. Kept consistent with the rest of the codebase
 // (internal/handlers/runtime.go, llm_proxy.go) which already stamp
-// "lantern.tenant_id" / "lantern.run_id" on their spans. Using one prefix
+// "pal.tenant_id" / "pal.run_id" on their spans. Using one prefix
 // everywhere means a trace can be filtered by tenant/run regardless of which
 // service entry point (HTTP, gRPC, internal step) created the span.
 const (
-	AttrTenantID = "lantern.tenant_id"
-	AttrUserID   = "lantern.user_id"
-	AttrRunID    = "lantern.run_id"
-	AttrStepID   = "lantern.step_id"
+	AttrTenantID = "pal.tenant_id"
+	AttrUserID   = "pal.user_id"
+	AttrRunID    = "pal.run_id"
+	AttrStepID   = "pal.step_id"
 )
 
-// EnrichSpan stamps the well-known Lantern identifiers onto whatever span is
+// EnrichSpan stamps the well-known PAL identifiers onto whatever span is
 // active in ctx. Empty values are skipped so we never emit blank attributes.
 //
 // It is safe to call when telemetry is disabled: trace.SpanFromContext returns

@@ -4,7 +4,7 @@ package main
 import (
 	"os"
 
-	"github.com/dshakes/lantern/packages/cli/internal/cli"
+	"github.com/dshakes/pal/packages/cli/internal/cli"
 )
 
 // Build-time variables set via ldflags.

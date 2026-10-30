@@ -1,11 +1,11 @@
-// Package lantern is the official Go SDK for PAL Runtime — the open-source
+// Package pal is the official Go SDK for PAL Runtime — the open-source
 // runtime for AI agents with VPC deployment, pre-run cost forecasts,
 // policy budgets, and eval-in-CI.
 //
 // The package keeps its pre-rename name (ADR 0032) until the module path
 // moves: Go has no package alias, so renaming the clause alone would break
-// every importer's `lantern.X` references for no gain.
-package lantern
+// every importer's `pal.X` references for no gain.
+package pal
 
 import (
 	"bytes"
@@ -23,7 +23,7 @@ import (
 )
 
 // DefaultBaseURL is used when no explicit base URL is configured.
-const DefaultBaseURL = "https://api.lantern.run"
+const DefaultBaseURL = "https://api.pal.run"
 
 // Client talks to a PAL Runtime control plane over HTTPS.
 type Client struct {
@@ -37,11 +37,11 @@ type Client struct {
 type Option func(*Client)
 
 // WithBaseURL overrides the control-plane URL.
-// Defaults to the PAL_API_URL env var (legacy LANTERN_API_URL), then DefaultBaseURL.
+// Defaults to the PAL_API_URL env var (legacy PAL_API_URL), then DefaultBaseURL.
 func WithBaseURL(u string) Option { return func(c *Client) { c.baseURL = u } }
 
 // WithAPIKey sets the API key used for authentication.
-// Defaults to the PAL_API_KEY env var (legacy LANTERN_API_KEY).
+// Defaults to the PAL_API_KEY env var (legacy PAL_API_KEY).
 func WithAPIKey(k string) Option { return func(c *Client) { c.apiKey = k } }
 
 // WithHTTPClient injects a custom *http.Client (for testing or custom transport).
@@ -55,8 +55,8 @@ func WithMaxRetries(n int) Option { return func(c *Client) { c.maxAttempts = n }
 // New constructs a Client.
 func New(opts ...Option) *Client {
 	c := &Client{
-		baseURL:     getenv("PAL_API_URL", getenv("LANTERN_API_URL", DefaultBaseURL)), // PAL_ wins (ADR 0032); inline, no palenv dep: a replace breaks go get for SDK users,
-		apiKey:      getenv("PAL_API_KEY", os.Getenv("LANTERN_API_KEY")),
+		baseURL:     getenv("PAL_API_URL", getenv("PAL_API_URL", DefaultBaseURL)), // PAL_ wins (ADR 0032); inline, no palenv dep: a replace breaks go get for SDK users,
+		apiKey:      getenv("PAL_API_KEY", os.Getenv("PAL_API_KEY")),
 		http:        &http.Client{Timeout: 60 * time.Second},
 		maxAttempts: 3,
 	}
@@ -796,7 +796,7 @@ func (c *Client) Rehearse(ctx context.Context, agentName string, opts RehearseOp
 
 // CredentialInjection is a header the runtime-manager's host-side egress
 // broker sets on requests matching the rule. SecretRef is a
-// `lantern.secret/...` ref resolved on the host at request time; the secret
+// `pal.secret/...` ref resolved on the host at request time; the secret
 // value never enters the VM. Honoured only in broker egress mode.
 type CredentialInjection struct {
 	Header      string `json:"header"`
@@ -949,8 +949,8 @@ func (c *Client) ReadFile(ctx context.Context, vmID, path string) (*FileContent,
 	if err != nil {
 		return nil, fmt.Errorf("pal: read file body: %w", err)
 	}
-	// X-Pal-Truncated, or the legacy X-Lantern-Truncated from a pre-rename control plane (ADR 0032).
-	truncated := cmp.Or(res.Header.Get("X-Pal-Truncated"), res.Header.Get("X-Lantern-Truncated")) == "true"
+	// X-Pal-Truncated, or the legacy X-Pal-Truncated from a pre-rename control plane (ADR 0032).
+	truncated := cmp.Or(res.Header.Get("X-Pal-Truncated"), res.Header.Get("X-Pal-Truncated")) == "true"
 	return &FileContent{Content: string(b), Truncated: truncated}, nil
 }
 

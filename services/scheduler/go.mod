@@ -1,11 +1,11 @@
-module github.com/dshakes/lantern/services/scheduler
+module github.com/dshakes/pal/services/scheduler
 
 go 1.25.0
 
 toolchain go1.26.6
 
 require (
-	github.com/dshakes/lantern/gen/go v0.0.0
+	github.com/dshakes/pal/gen/go v0.0.0
 	github.com/jackc/pgx/v5 v5.7.4
 	github.com/redis/go-redis/v9 v9.7.3
 	go.opentelemetry.io/otel v1.43.0
@@ -14,7 +14,7 @@ require (
 	google.golang.org/protobuf v1.36.11
 )
 
-replace github.com/dshakes/lantern/gen/go => ../../gen/go
+replace github.com/dshakes/pal/gen/go => ../../gen/go
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

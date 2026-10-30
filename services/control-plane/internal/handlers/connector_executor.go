@@ -18,9 +18,9 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/secrets"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // credRowQuerier is the subset of pgx used to load a single connector row. Both
@@ -270,8 +270,8 @@ func executeConnectorAction(
 	//
 	// A stored status_reason is a SNAPSHOT of why it broke. Serving it verbatim
 	// goes stale the moment the operator acts: after setting
-	// LANTERN_CREDENTIAL_KEY the install kept saying "set
-	// LANTERN_CREDENTIAL_KEY", which is worse than useless. Re-deriving costs a
+	// PAL_CREDENTIAL_KEY the install kept saying "set
+	// PAL_CREDENTIAL_KEY", which is worse than useless. Re-deriving costs a
 	// local AES attempt measured in microseconds — the expense worth avoiding
 	// was the run and the LLM tokens downstream, not this.
 	//
@@ -1224,7 +1224,7 @@ func executeTwilio(config map[string]any, action string, params map[string]any) 
 		if twiml == "" {
 			msg := stringParam(params, "message")
 			if msg == "" {
-				msg = "This is Lantern. An urgent alert was triggered. Please check your phone."
+				msg = "This is PAL. An urgent alert was triggered. Please check your phone."
 			}
 			twiml = fmt.Sprintf(
 				`<Response><Say voice="Polly.Joanna" loop="2">%s</Say><Pause length="1"/><Say voice="Polly.Joanna">Hanging up now.</Say></Response>`,
@@ -1253,7 +1253,7 @@ func executeTwilio(config map[string]any, action string, params map[string]any) 
 	case "add_conference_participant":
 		// Add a participant to a Twilio Conference room by dialing
 		// their phone number. Used to bridge a third party into an
-		// existing conference (e.g. "lantern, get me on with Madhu" →
+		// existing conference (e.g. "pal, get me on with Madhu" →
 		// bridge dials Madhu first with conference TwiML; once Madhu
 		// is in the room, this action dials the owner with the same
 		// conference name and they're now both in the room).

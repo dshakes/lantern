@@ -23,9 +23,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/secrets"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 type JarvisHandler struct {
@@ -88,7 +88,7 @@ func (h *JarvisHandler) composeBrief(ctx context.Context, tenantID string) (stri
 	brief := h.phraseBrief(ctx, tenantID, calendar, emails, awaiting, urgent)
 
 	// Additive: prepend any upcoming immigration deadlines when the sentinel is
-	// enabled (LANTERN_IMMIGRATION_SENTINEL=1). Empty-string when flag is off
+	// enabled (PAL_IMMIGRATION_SENTINEL=1). Empty-string when flag is off
 	// or no deadlines within 90 days — zero behavior change by default.
 	if section := immigrationBriefSection(ctx, h.srv, tenantID, h.logger()); section != "" {
 		if brief == "" {
@@ -345,7 +345,7 @@ func (h *JarvisHandler) phraseBrief(ctx context.Context, tenantID string, calend
 	}
 	ownerName := strings.TrimSpace(os.Getenv("PAL_OWNER_NAME"))
 	if ownerName == "" {
-		h.logger().Warn("LANTERN_OWNER_NAME not set; brief will use neutral phrasing (set this env var for personalised output)")
+		h.logger().Warn("PAL_OWNER_NAME not set; brief will use neutral phrasing (set this env var for personalised output)")
 		ownerName = "the owner"
 	}
 	system := strings.Join([]string{
@@ -455,19 +455,19 @@ func stripAssistantPreamble(s string) string {
 
 // ---- proactive morning push ------------------------------------------------
 
-// RunBriefScheduler delivers the brief once a day at LANTERN_JARVIS_BRIEF_HOUR
+// RunBriefScheduler delivers the brief once a day at PAL_JARVIS_BRIEF_HOUR
 // (0-23, local time). Disabled when unset. Delivers via SMS when
-// LANTERN_TWILIO_NUMBER + LANTERN_OWNER_PHONE are set, else via email to
-// LANTERN_OWNER_EMAIL. Best-effort; loops until ctx is cancelled.
+// PAL_TWILIO_NUMBER + PAL_OWNER_PHONE are set, else via email to
+// PAL_OWNER_EMAIL. Best-effort; loops until ctx is cancelled.
 func (h *JarvisHandler) RunBriefScheduler(ctx context.Context) {
 	hourStr := strings.TrimSpace(os.Getenv("PAL_JARVIS_BRIEF_HOUR"))
 	if hourStr == "" {
-		h.logger().Info("jarvis morning brief disabled (LANTERN_JARVIS_BRIEF_HOUR unset)")
+		h.logger().Info("jarvis morning brief disabled (PAL_JARVIS_BRIEF_HOUR unset)")
 		return
 	}
 	hour, err := strconv.Atoi(hourStr)
 	if err != nil || hour < 0 || hour > 23 {
-		h.logger().Warn("invalid LANTERN_JARVIS_BRIEF_HOUR — disabling brief push", zap.String("value", hourStr))
+		h.logger().Warn("invalid PAL_JARVIS_BRIEF_HOUR — disabling brief push", zap.String("value", hourStr))
 		return
 	}
 	tenantID := getEnvOr("PAL_DEFAULT_TENANT_ID", "00000000-0000-0000-0000-000000000001")
@@ -534,12 +534,12 @@ func (h *JarvisHandler) deliverBrief(ctx context.Context, tenantID, brief string
 }
 
 // briefChannel resolves the preferred delivery channel. A runtime override
-// file (~/.lantern/brief-channel, written by the A2P watcher on approval)
-// wins over the LANTERN_JARVIS_BRIEF_CHANNEL env — so the channel can flip
+// file (~/.pal/brief-channel, written by the A2P watcher on approval)
+// wins over the PAL_JARVIS_BRIEF_CHANNEL env — so the channel can flip
 // without restarting the control-plane.
 func (h *JarvisHandler) briefChannel() string {
 	if home := os.Getenv("HOME"); home != "" {
-		if b, err := os.ReadFile(home + "/.lantern/brief-channel"); err == nil {
+		if b, err := os.ReadFile(home + "/.pal/brief-channel"); err == nil {
 			if c := strings.ToLower(strings.TrimSpace(string(b))); c != "" {
 				return c
 			}
@@ -601,7 +601,7 @@ func (h *JarvisHandler) sendBriefEmail(ctx context.Context, tenantID, brief stri
 		return false
 	}
 	_, err := executeConnectorAction(ctx, h.srv.Pool, tenantID, "gmail", "send_message",
-		map[string]any{"to": owner, "subject": "Your Lantern brief", "body": brief, "label": "lantern", "skipInbox": false})
+		map[string]any{"to": owner, "subject": "Your PAL brief", "body": brief, "label": "pal", "skipInbox": false})
 	if err != nil {
 		h.logger().Warn("brief email failed", zap.Error(err))
 	}

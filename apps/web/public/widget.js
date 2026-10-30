@@ -167,7 +167,7 @@
     '<textarea placeholder="Type a message…" rows="1" id="pal-widget-textarea"></textarea>' +
     '<button id="pal-widget-send">Send</button>' +
     '</div>' +
-    '<div id="pal-widget-footer">Powered by <a href="https://lantern.run" target="_blank" rel="noopener">PAL</a></div>';
+    '<div id="pal-widget-footer">Powered by <a href="https://pal.run" target="_blank" rel="noopener">PAL</a></div>';
 
   document.body.appendChild(bubble);
   document.body.appendChild(panel);

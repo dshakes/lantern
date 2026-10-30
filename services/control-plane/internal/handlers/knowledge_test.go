@@ -2,7 +2,7 @@ package handlers
 
 // Tests for the knowledge base (knowledge.go) and session handoff
 // (session_handoff.go). The DB-backed tests run on the RLS-ENFORCED harness
-// (newEnforcedServer: queries execute as lantern_app, so a missing WithTenant or
+// (newEnforcedServer: queries execute as pal_app, so a missing WithTenant or
 // policy fails here) with the fixture LLM (internal/llmreplay) standing in for
 // OpenAI embeddings and chat, and a fixture Slack for the handoff ping.
 
@@ -22,7 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/llmreplay"
+	"github.com/dshakes/pal/services/control-plane/internal/llmreplay"
 )
 
 func TestChunkText(t *testing.T) {

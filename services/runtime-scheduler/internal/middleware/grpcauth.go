@@ -26,7 +26,7 @@ import (
 // ServiceTokenMetadataKey is the gRPC metadata key carrying the shared service
 // token that authenticates trusted internal callers (e.g. the control-plane)
 // to the runtime-scheduler gRPC server.
-const ServiceTokenMetadataKey = "x-lantern-service-token"
+const ServiceTokenMetadataKey = "x-pal-service-token"
 
 // serviceTokenValid reports whether presented matches expected using a
 // constant-time comparison (avoids leaking token length/prefix via timing).

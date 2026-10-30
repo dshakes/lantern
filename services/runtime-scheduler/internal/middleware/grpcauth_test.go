@@ -11,7 +11,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const testAuthMethod = "/lantern.v1.RuntimeScheduler/Schedule"
+const testAuthMethod = "/pal.v1.RuntimeScheduler/Schedule"
 
 func ctxWithToken(tok string) context.Context {
 	md := metadata.New(map[string]string{ServiceTokenMetadataKey: tok})

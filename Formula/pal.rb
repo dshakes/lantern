@@ -5,11 +5,11 @@
 #
 class Pal < Formula
   desc "CLI for PAL Runtime, the production runtime for AI agents"
-  homepage "https://github.com/dshakes/lantern"
-  url "https://github.com/dshakes/lantern/archive/refs/tags/v0.2.0.tar.gz"
+  homepage "https://github.com/dshakes/pal"
+  url "https://github.com/dshakes/pal/archive/refs/tags/v0.2.0.tar.gz"
   sha256 "b29234e12cc6df3c25b0e0bf7fe5db39cafe0ec4147a067618efe92fd57299f7"
   license "Apache-2.0"
-  head "https://github.com/dshakes/lantern.git", branch: "master"
+  head "https://github.com/dshakes/pal.git", branch: "master"
 
   depends_on "go" => :build
 

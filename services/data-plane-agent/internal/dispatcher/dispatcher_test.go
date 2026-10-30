@@ -13,25 +13,25 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/test/bufconn"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/data-plane-agent/internal/dispatcher"
-	"github.com/dshakes/lantern/services/data-plane-agent/internal/tunnel"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/data-plane-agent/internal/dispatcher"
+	"github.com/dshakes/pal/services/data-plane-agent/internal/tunnel"
 )
 
 const bufSize = 1 << 20 // 1 MiB
 
 // fakeEngine is an in-process WorkflowEngineService server for tests.
 type fakeEngine struct {
-	lanternv1.UnimplementedWorkflowEngineServiceServer
+	palv1.UnimplementedWorkflowEngineServiceServer
 
 	// events is the sequence of StreamEvents the fake sends before closing.
-	events []*lanternv1.StreamEvent
+	events []*palv1.StreamEvent
 
 	// receivedMeta captures the incoming gRPC metadata from ExecuteRun calls.
 	receivedMeta []metadata.MD
 }
 
-func (f *fakeEngine) ExecuteRun(req *lanternv1.ExecuteRunRequest, stream grpc.ServerStreamingServer[lanternv1.StreamEvent]) error {
+func (f *fakeEngine) ExecuteRun(req *palv1.ExecuteRunRequest, stream grpc.ServerStreamingServer[palv1.StreamEvent]) error {
 	// Capture caller metadata.
 	if md, ok := metadata.FromIncomingContext(stream.Context()); ok {
 		f.receivedMeta = append(f.receivedMeta, md)
@@ -52,7 +52,7 @@ func startFakeEngine(t *testing.T, fake *fakeEngine) (dialFn func(context.Contex
 
 	lis := bufconn.Listen(bufSize)
 	srv := grpc.NewServer()
-	lanternv1.RegisterWorkflowEngineServiceServer(srv, fake)
+	palv1.RegisterWorkflowEngineServiceServer(srv, fake)
 
 	go func() {
 		if err := srv.Serve(lis); err != nil && err != grpc.ErrServerStopped {
@@ -107,23 +107,23 @@ func newTestDispatcher(t *testing.T, fake *fakeEngine, serviceToken string) (*di
 // is eventually marked completed.
 func TestDispatchRun_HappyPath(t *testing.T) {
 	fake := &fakeEngine{
-		events: []*lanternv1.StreamEvent{
+		events: []*palv1.StreamEvent{
 			{
 				RunId: "run-1",
-				Payload: &lanternv1.StreamEvent_StepStarted{
-					StepStarted: &lanternv1.StepStarted{StepId: "step-1", Kind: "ai-step"},
+				Payload: &palv1.StreamEvent_StepStarted{
+					StepStarted: &palv1.StepStarted{StepId: "step-1", Kind: "ai-step"},
 				},
 			},
 			{
 				RunId: "run-1",
-				Payload: &lanternv1.StreamEvent_StepCompleted{
-					StepCompleted: &lanternv1.StepCompleted{StepId: "step-1"},
+				Payload: &palv1.StreamEvent_StepCompleted{
+					StepCompleted: &palv1.StepCompleted{StepId: "step-1"},
 				},
 			},
 			{
 				RunId: "run-1",
-				Payload: &lanternv1.StreamEvent_End{
-					End: &lanternv1.StreamEnd{Reason: ""},
+				Payload: &palv1.StreamEvent_End{
+					End: &palv1.StreamEnd{Reason: ""},
 				},
 			},
 		},
@@ -160,17 +160,17 @@ func TestDispatchRun_HappyPath(t *testing.T) {
 // StreamEnd with reason "failed", the run is marked failed.
 func TestDispatchRun_FailedStream(t *testing.T) {
 	fake := &fakeEngine{
-		events: []*lanternv1.StreamEvent{
+		events: []*palv1.StreamEvent{
 			{
 				RunId: "run-2",
-				Payload: &lanternv1.StreamEvent_StepFailed{
-					StepFailed: &lanternv1.StepFailed{StepId: "step-1"},
+				Payload: &palv1.StreamEvent_StepFailed{
+					StepFailed: &palv1.StepFailed{StepId: "step-1"},
 				},
 			},
 			{
 				RunId: "run-2",
-				Payload: &lanternv1.StreamEvent_End{
-					End: &lanternv1.StreamEnd{Reason: "failed"},
+				Payload: &palv1.StreamEvent_End{
+					End: &palv1.StreamEnd{Reason: "failed"},
 				},
 			},
 		},
@@ -205,10 +205,10 @@ func TestDispatchRun_FailedStream(t *testing.T) {
 // outgoing gRPC metadata on ExecuteRun, satisfying architectural invariant #7.
 func TestDispatchRun_TenantIDInMetadata(t *testing.T) {
 	fake := &fakeEngine{
-		events: []*lanternv1.StreamEvent{
+		events: []*palv1.StreamEvent{
 			{
-				Payload: &lanternv1.StreamEvent_End{
-					End: &lanternv1.StreamEnd{},
+				Payload: &palv1.StreamEvent_End{
+					End: &palv1.StreamEnd{},
 				},
 			},
 		},
@@ -245,14 +245,14 @@ func TestDispatchRun_TenantIDInMetadata(t *testing.T) {
 	}
 }
 
-// TestDispatchRun_ServiceTokenInMetadata verifies that x-lantern-service-token
+// TestDispatchRun_ServiceTokenInMetadata verifies that x-pal-service-token
 // is injected when a non-empty service token is configured.
 func TestDispatchRun_ServiceTokenInMetadata(t *testing.T) {
 	fake := &fakeEngine{
-		events: []*lanternv1.StreamEvent{
+		events: []*palv1.StreamEvent{
 			{
-				Payload: &lanternv1.StreamEvent_End{
-					End: &lanternv1.StreamEnd{},
+				Payload: &palv1.StreamEvent_End{
+					End: &palv1.StreamEnd{},
 				},
 			},
 		},
@@ -283,20 +283,20 @@ func TestDispatchRun_ServiceTokenInMetadata(t *testing.T) {
 	if len(fake.receivedMeta) == 0 {
 		t.Fatal("no gRPC metadata captured")
 	}
-	vals := fake.receivedMeta[0].Get("x-lantern-service-token")
+	vals := fake.receivedMeta[0].Get("x-pal-service-token")
 	if len(vals) == 0 || vals[0] != tok {
-		t.Errorf("x-lantern-service-token in metadata: got %v, want [%s]", vals, tok)
+		t.Errorf("x-pal-service-token in metadata: got %v, want [%s]", vals, tok)
 	}
 }
 
-// TestDispatchRun_NoServiceToken verifies that x-lantern-service-token is NOT
+// TestDispatchRun_NoServiceToken verifies that x-pal-service-token is NOT
 // injected when the service token is empty (dev mode).
 func TestDispatchRun_NoServiceToken(t *testing.T) {
 	fake := &fakeEngine{
-		events: []*lanternv1.StreamEvent{
+		events: []*palv1.StreamEvent{
 			{
-				Payload: &lanternv1.StreamEvent_End{
-					End: &lanternv1.StreamEnd{},
+				Payload: &palv1.StreamEvent_End{
+					End: &palv1.StreamEnd{},
 				},
 			},
 		},
@@ -326,9 +326,9 @@ func TestDispatchRun_NoServiceToken(t *testing.T) {
 	if len(fake.receivedMeta) == 0 {
 		t.Fatal("no gRPC metadata captured")
 	}
-	vals := fake.receivedMeta[0].Get("x-lantern-service-token")
+	vals := fake.receivedMeta[0].Get("x-pal-service-token")
 	if len(vals) != 0 {
-		t.Errorf("x-lantern-service-token unexpectedly present: %v", vals)
+		t.Errorf("x-pal-service-token unexpectedly present: %v", vals)
 	}
 }
 
@@ -336,7 +336,7 @@ func TestDispatchRun_NoServiceToken(t *testing.T) {
 // before or during dispatch does not block or panic.
 func TestDispatchRun_ContextCancellation(t *testing.T) {
 	// Engine that blocks until context is cancelled.
-	blockFn := func(req *lanternv1.ExecuteRunRequest, stream grpc.ServerStreamingServer[lanternv1.StreamEvent]) error {
+	blockFn := func(req *palv1.ExecuteRunRequest, stream grpc.ServerStreamingServer[palv1.StreamEvent]) error {
 		<-stream.Context().Done()
 		return io.EOF
 	}
@@ -387,19 +387,19 @@ func TestDispatchRun_ContextCancellation(t *testing.T) {
 
 // blockingEngine lets tests inject a custom ExecuteRun implementation.
 type blockingEngine struct {
-	lanternv1.UnimplementedWorkflowEngineServiceServer
-	fn func(*lanternv1.ExecuteRunRequest, grpc.ServerStreamingServer[lanternv1.StreamEvent]) error
+	palv1.UnimplementedWorkflowEngineServiceServer
+	fn func(*palv1.ExecuteRunRequest, grpc.ServerStreamingServer[palv1.StreamEvent]) error
 }
 
-func (b *blockingEngine) ExecuteRun(req *lanternv1.ExecuteRunRequest, stream grpc.ServerStreamingServer[lanternv1.StreamEvent]) error {
+func (b *blockingEngine) ExecuteRun(req *palv1.ExecuteRunRequest, stream grpc.ServerStreamingServer[palv1.StreamEvent]) error {
 	return b.fn(req, stream)
 }
 
-func startFakeEngineCustom(t *testing.T, srv lanternv1.WorkflowEngineServiceServer) (func(context.Context, string) (net.Conn, error), func()) {
+func startFakeEngineCustom(t *testing.T, srv palv1.WorkflowEngineServiceServer) (func(context.Context, string) (net.Conn, error), func()) {
 	t.Helper()
 	lis := bufconn.Listen(bufSize)
 	s := grpc.NewServer()
-	lanternv1.RegisterWorkflowEngineServiceServer(s, srv)
+	palv1.RegisterWorkflowEngineServiceServer(s, srv)
 	go func() {
 		if err := s.Serve(lis); err != nil && err != grpc.ErrServerStopped {
 			t.Logf("fake engine: %v", err)

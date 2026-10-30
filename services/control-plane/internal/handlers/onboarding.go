@@ -1,7 +1,7 @@
 package handlers
 
 // onboarding.go — server-side state + agent explanations for the agentic
-// onboarding flow (dashboard /onboarding, `lantern onboard`).
+// onboarding flow (dashboard /onboarding, `pal onboard`).
 //
 // State lives in tenants.settings->'onboarding' rather than a new table:
 // one small JSON document per tenant is all resume needs (YAGNI). `tenants`
@@ -26,8 +26,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // OnboardingHandler serves /v1/onboarding.
@@ -246,7 +246,7 @@ type onboardingExplainRequest struct {
 	Error     string `json:"error"`
 }
 
-const onboardingGuidePrompt = `You are Lantern's onboarding guide. The user just ran their first agent. You get their goal, the agent's output, and any error.
+const onboardingGuidePrompt = `You are PAL's onboarding guide. The user just ran their first agent. You get their goal, the agent's output, and any error.
 
 Rules:
 - At most 3 short sentences, plain text, no markdown, no filler ("Great!", "Certainly!").

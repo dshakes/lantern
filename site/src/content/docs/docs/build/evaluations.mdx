@@ -49,7 +49,7 @@ DELETE /v1/eval-suites/{id}        — delete suite
 
 ## Recording a run and the CI gate
 
-Run the agent on each case yourself (or use `lantern test`, which waits for each run to finish; `--timeout` caps the wait, default 2m), then post the per-case results. The server computes the score (mean of case scores) and compares it with the branch baseline. A regression returns **HTTP 422**, which fails a CI step.
+Run the agent on each case yourself (or use `pal test`, which waits for each run to finish; `--timeout` caps the wait, default 2m), then post the per-case results. The server computes the score (mean of case scores) and compares it with the branch baseline. A regression returns **HTTP 422**, which fails a CI step.
 
 ```http
 POST /v1/eval-runs
@@ -81,7 +81,7 @@ GET /v1/eval-runs?suiteId=&agentName=&branch=  — list runs (bare array)
 
 ## Baselines
 
-Pin an eval run as the baseline for an agent and branch. Later runs on that branch are compared against it. From the CLI: `lantern test --agent a --suite s --set-baseline`.
+Pin an eval run as the baseline for an agent and branch. Later runs on that branch are compared against it. From the CLI: `pal test --agent a --suite s --set-baseline`.
 
 ```http
 POST /v1/eval-baselines
@@ -212,7 +212,7 @@ GET /v1/agents/{name}/feedback               — aggregate summary
 
 ## Rehearsals
 
-Pull past failed or low-scored runs (feedback score of 2 or lower) as synthetic test cases, then replay them against a candidate version before you flip traffic. The endpoint returns the cases; `lantern test --rehearse` runs them.
+Pull past failed or low-scored runs (feedback score of 2 or lower) as synthetic test cases, then replay them against a candidate version before you flip traffic. The endpoint returns the cases; `pal test --rehearse` runs them.
 
 ```http
 POST /v1/runs/rehearse
@@ -230,4 +230,4 @@ Response: { "agentName", "window", "cases": [{ "originalRunId", "input",
 
 ## OTel traces
 
-Every HTTP request and gRPC call carries a span enriched with `lantern.tenant_id`, `lantern.run_id`, `lantern.step_id`, and `lantern.user_id` via `middleware.EnrichSpan`. Traces are no-op safe when `PAL_OTEL_ENABLED` is unset. Export to any OTel backend by setting `OTEL_EXPORTER_OTLP_ENDPOINT`.
+Every HTTP request and gRPC call carries a span enriched with `pal.tenant_id`, `pal.run_id`, `pal.step_id`, and `pal.user_id` via `middleware.EnrichSpan`. Traces are no-op safe when `PAL_OTEL_ENABLED` is unset. Export to any OTel backend by setting `OTEL_EXPORTER_OTLP_ENDPOINT`.

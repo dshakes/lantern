@@ -65,7 +65,7 @@ DELETE /v1/marketplace/{slug}     # unpublish
 ```
 
 <Aside type="caution">
-Anyone can read a published agent's manifest, including its system prompt. Do not put secrets in a manifest. Use `lantern.secret/...` refs, which each tenant resolves from its own store at run time.
+Anyone can read a published agent's manifest, including its system prompt. Do not put secrets in a manifest. Use `pal.secret/...` refs, which each tenant resolves from its own store at run time.
 </Aside>
 
 ## Discovering and forking agents

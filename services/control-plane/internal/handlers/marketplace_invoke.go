@@ -19,7 +19,7 @@ package handlers
 //
 // This is the wedge: nobody else combines A2A + signed receipts + budget
 // enforcement into a single settlement primitive. Two tenants seeded on
-// the same Lantern can demo end-to-end agent commerce.
+// the same PAL can demo end-to-end agent commerce.
 
 import (
 	"context"
@@ -34,10 +34,10 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc/metadata"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
 )
 
 // ---------- Input schema validation (M4) ----------
@@ -157,7 +157,7 @@ type marketplaceInvokeResponse struct {
 // ---------- Settlement helper ----------
 
 // signInvocation produces an HMAC-SHA256 signature over the invocation
-// fields a verifier needs to reproduce. Uses the same LANTERN_RECEIPT_SECRET
+// fields a verifier needs to reproduce. Uses the same PAL_RECEIPT_SECRET
 // as run receipts so a single key fingerprint covers both surfaces.
 func signInvocation(
 	invocationID, buyerTenant, sellerTenant, agentName, runID string,
@@ -285,10 +285,10 @@ func (h *MarketplaceHandler) Invoke(w http.ResponseWriter, r *http.Request) {
 	sellerCtx = metadata.NewIncomingContext(sellerCtx, metadata.Pairs("tenant_id", sellerTenant))
 
 	inputStruct, _ := structpb.NewStruct(body.Input)
-	run, runErr := h.runSvc.CreateRun(sellerCtx, &lanternv1.CreateRunRequest{
+	run, runErr := h.runSvc.CreateRun(sellerCtx, &palv1.CreateRunRequest{
 		AgentName:   agentName,
 		Input:       inputStruct,
-		TriggerKind: lanternv1.TriggerKind_TRIGGER_KIND_MANUAL,
+		TriggerKind: palv1.TriggerKind_TRIGGER_KIND_MANUAL,
 	})
 	if runErr != nil {
 		errMsg := runErr.Error()

@@ -12,15 +12,15 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // ShortcutsHandler — endpoints designed for Apple Shortcuts.app +
 // Siri integration. Each route is a single-purpose action (pause,
 // resume, status, etc.) that maps to ONE Shortcut step:
 //
-//   "Hey Siri, pause Lantern"
-//      → triggers Shortcut "Pause Lantern"
+//   "Hey Siri, pause PAL"
+//      → triggers Shortcut "Pause PAL"
 //      → makes a POST to /v1/shortcuts/pause
 //      → bridges hear about it via the control-plane → mute
 //
@@ -163,10 +163,10 @@ func (h *ShortcutsHandler) Pause(w http.ResponseWriter, r *http.Request) {
 		// For now, return success and tell Siri the user will need
 		// to /bot on manually. (Or use parseNLCommand path via a
 		// command-style API endpoint.)
-		h.textResponse(w, http.StatusOK, fmt.Sprintf("Lantern paused on %s for %s.", channel, durationStr))
+		h.textResponse(w, http.StatusOK, fmt.Sprintf("PAL paused on %s for %s.", channel, durationStr))
 		return
 	}
-	h.textResponse(w, http.StatusOK, fmt.Sprintf("Lantern paused on %s. Say 'resume Lantern' when ready.", channel))
+	h.textResponse(w, http.StatusOK, fmt.Sprintf("PAL paused on %s. Say 'resume PAL' when ready.", channel))
 }
 
 // ---- POST /v1/shortcuts/resume?channel=both -------------------------------
@@ -186,7 +186,7 @@ func (h *ShortcutsHandler) Resume(w http.ResponseWriter, r *http.Request) {
 		h.textResponse(w, http.StatusBadGateway, "Couldn't resume — bridge unreachable.")
 		return
 	}
-	h.textResponse(w, http.StatusOK, fmt.Sprintf("Lantern resumed on %s.", channel))
+	h.textResponse(w, http.StatusOK, fmt.Sprintf("PAL resumed on %s.", channel))
 }
 
 // ---- GET /v1/shortcuts/status?channel=both -------------------------------
@@ -232,12 +232,12 @@ func (h *ShortcutsHandler) Status(w http.ResponseWriter, r *http.Request) {
 		}
 		parts = append(parts, fmt.Sprintf("%s is %s, bot %s, %d paused", ch, state, muted, int(paused)))
 	}
-	h.textResponse(w, http.StatusOK, "Lantern: "+strings.Join(parts, "; "))
+	h.textResponse(w, http.StatusOK, "PAL: "+strings.Join(parts, "; "))
 }
 
 // ---- POST /v1/shortcuts/say { message } ----------------------------------
 // Generic catch-all so a Shortcut can send arbitrary text via the bot's
-// self-chat ("Hey Siri, tell Lantern I'm at lunch" → posts to self-chat
+// self-chat ("Hey Siri, tell PAL I'm at lunch" → posts to self-chat
 // so the user sees the reminder later, or for use as a Quick Note).
 
 func (h *ShortcutsHandler) Say(w http.ResponseWriter, r *http.Request) {

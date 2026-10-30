@@ -32,7 +32,7 @@ home-screen icon. Voice input → answer spoken back.
    ```bash
    export PAL_BRIDGE_TOKEN="$(openssl rand -hex 32)"
    ```
-   Add it to your `~/.lantern/whatsapp.env` so it survives restarts.
+   Add it to your `~/.pal/whatsapp.env` so it survives restarts.
    Save the token — the shortcut needs it.
 
 3. **The default tenant ID** (you almost certainly want this):
@@ -101,7 +101,7 @@ Open the **Shortcuts** app on your iPhone → tap **+** → name it
 - **"Could not connect to server"** → bridge isn't reachable. Verify
   with `curl https://YOUR-URL/session/00000000-0000-0000-0000-000000000001/jarvis/ask -X POST -H "Authorization: Bearer YOUR-TOKEN" -H "Content-Type: application/json" -d '{"text":"hi"}'` from your Mac/iPhone Safari.
 - **"unauthorized"** → token wrong. The bridge logs the failure;
-  check `~/Library/Logs/Lantern/whatsapp-bridge.err.log`.
+  check `~/Library/Logs/PAL/whatsapp-bridge.err.log`.
 - **Empty reply** → run is hitting the agent's 180s SSE timeout.
   Re-ask with a simpler query; check bridge logs for the actual
   failure mode (model unavailable, tool error, etc.).
@@ -114,7 +114,7 @@ Open the **Shortcuts** app on your iPhone → tap **+** → name it
 - The shortcut runs **entirely on your Mac**. Your dictated text
   goes to your bridge → control-plane on your machine → LLM provider
   (Anthropic/OpenAI) per your tenant's configured key. Nothing
-  Lantern-side is logged remotely.
+  PAL-side is logged remotely.
 - Apple's Dictation can be set to on-device only (Settings →
   General → Keyboard → Enable Dictation → "On-Device Mode") so even
   the speech-to-text never leaves your phone.

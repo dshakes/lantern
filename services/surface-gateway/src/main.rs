@@ -40,7 +40,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(
         listen_addr = %config.listen_addr,
         control_plane_addr = %config.control_plane_addr,
-        "starting lantern-surface-gateway"
+        "starting pal-surface-gateway"
     );
 
     let listen_addr = config.listen_addr;
@@ -71,7 +71,7 @@ async fn main() -> anyhow::Result<()> {
     ) {
         if config.whatsapp_app_secret.is_none() && is_prod_env() {
             anyhow::bail!(
-                "WHATSAPP_APP_SECRET must be set in production (LANTERN_ENV={:?}) — \
+                "WHATSAPP_APP_SECRET must be set in production (PAL_ENV={:?}) — \
                  WhatsApp POST webhooks would be accepted without X-Hub-Signature-256 \
                  verification, allowing forged inbound messages",
                 std::env::var("PAL_ENV").unwrap_or_default()
@@ -94,7 +94,7 @@ async fn main() -> anyhow::Result<()> {
     if let Some(bot_token) = &config.telegram_bot_token {
         if config.telegram_secret_token.is_none() && is_prod_env() {
             anyhow::bail!(
-                "TELEGRAM_SECRET_TOKEN must be set in production (LANTERN_ENV={:?}) — \
+                "TELEGRAM_SECRET_TOKEN must be set in production (PAL_ENV={:?}) — \
                  Telegram webhooks would be accepted without X-Telegram-Bot-Api-Secret-Token \
                  verification, allowing forged inbound messages",
                 std::env::var("PAL_ENV").unwrap_or_default()
@@ -109,7 +109,7 @@ async fn main() -> anyhow::Result<()> {
             if is_prod_env() {
                 anyhow::bail!(
                     "TELEGRAM_API_BASE_URL is a test-only fixture override and is refused in \
-                     production (LANTERN_ENV={:?}) — it would send bot replies to an arbitrary host",
+                     production (PAL_ENV={:?}) — it would send bot replies to an arbitrary host",
                     std::env::var("PAL_ENV").unwrap_or_default()
                 );
             }
@@ -130,7 +130,7 @@ async fn main() -> anyhow::Result<()> {
     ) {
         if config.twilio_webhook_base_url.is_none() && is_prod_env() {
             anyhow::bail!(
-                "SURFACE_GATEWAY_BASE_URL must be set in production (LANTERN_ENV={:?}) — \
+                "SURFACE_GATEWAY_BASE_URL must be set in production (PAL_ENV={:?}) — \
                  Twilio webhooks fall back to header-presence-only verification without it, \
                  allowing forged signatures from any sender that includes an x-twilio-signature header",
                 std::env::var("PAL_ENV").unwrap_or_default()
@@ -171,23 +171,23 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    let tenant_resolver = TenantResolver::new(config.lantern_tenant_id.clone());
-    if config.lantern_tenant_id.is_none() {
+    let tenant_resolver = TenantResolver::new(config.pal_tenant_id.clone());
+    if config.pal_tenant_id.is_none() {
         tracing::warn!(
-            "LANTERN_TENANT_ID is not set — all inbound webhooks will be rejected at \
-             tenant resolution; set this to the Lantern tenant UUID for this deployment"
+            "PAL_TENANT_ID is not set — all inbound webhooks will be rejected at \
+             tenant resolution; set this to the PAL tenant UUID for this deployment"
         );
     } else {
         tracing::info!(
-            tenant_id = ?config.lantern_tenant_id,
+            tenant_id = ?config.pal_tenant_id,
             "tenant resolver configured"
         );
     }
 
     if config.agent_name.is_none() {
         tracing::warn!(
-            "LANTERN_AGENT_NAME is not set — run creation will fail for every inbound \
-             message; set this to the Lantern agent name for this deployment"
+            "PAL_AGENT_NAME is not set — run creation will fail for every inbound \
+             message; set this to the PAL agent name for this deployment"
         );
     }
 
@@ -259,7 +259,7 @@ fn build_cors(origins: &[String]) -> CorsLayer {
     }
 }
 
-/// Returns true when `LANTERN_ENV` indicates a production-like environment.
+/// Returns true when `PAL_ENV` indicates a production-like environment.
 /// Mirrors the same helper in services/harness/src/tls.rs and
 /// services/gateway/src/tls.rs — one function per binary so crates stay
 /// self-contained.

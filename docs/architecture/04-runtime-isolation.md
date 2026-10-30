@@ -146,7 +146,7 @@ This is where PAL wins on cold start. The model:
    - Loads the agent bundle
    - Runs the agent's `init` hook (the per-version warmup: import deps, load config, open DB pools)
    - Pauses the VM at the moment the agent is ready to receive its first input
-   - Snapshots the VM state to S3 (`s3://lantern-snapshots-prod/runtimes/firecracker/<digest>/snapshot.fcs`)
+   - Snapshots the VM state to S3 (`s3://pal-snapshots-prod/runtimes/firecracker/<digest>/snapshot.fcs`)
 2. **Every subsequent run** of that version:
    - Looks up the snapshot by `(agent_version_digest, isolation_class)`
    - Restores the VM via `MAP_PRIVATE` mmap of the snapshot file (no copy, no boot)
@@ -163,7 +163,7 @@ Snapshots are invalidated when the agent version changes (different digest → d
 
 ```ts
 // In agent code
-import { agent } from "@lantern/sdk";
+import { agent } from "@pal/sdk";
 
 export default agent({
   name: "my-agent",
@@ -194,7 +194,7 @@ For `untrusted`, on top of Firecracker's isolation we add:
 3. **Egress allowlist enforced two ways:**
    - At the network namespace via NetworkPolicy + a per-tenant CNI ACL
    - In the agent SDK's HTTP client via a host whitelist (defense in depth)
-   - Default allowlist: nothing. Agents must declare `egress: [...]` in `agent.yaml`. Built-in `lantern.web` tool has its own approved egress list.
+   - Default allowlist: nothing. Agents must declare `egress: [...]` in `agent.yaml`. Built-in `pal.web` tool has its own approved egress list.
 4. **Memory + CPU caps** from `agent.yaml.limits` translated to cgroups + Firecracker MMIO config.
 5. **Filesystem quotas** on the scratch volume (default 1 GiB).
 6. **Time bomb.** Hard timeout from `agent.yaml.limits.timeout`; runtime manager kills the VM unconditionally at that mark.
@@ -263,7 +263,7 @@ These are p50 targets for the spike. Production p99 targets are stricter and tra
 
 ## What's intentionally NOT in this design
 
-- **No bring-your-own-K8s for the data plane in personal mode.** Personal users always run on Lantern-managed infrastructure. Enterprise can BYO clusters.
+- **No bring-your-own-K8s for the data plane in personal mode.** Personal users always run on PAL-managed infrastructure. Enterprise can BYO clusters.
 - **No nested virtualization.** Firecracker requires KVM; we run on bare-metal or KVM-enabled hosts only. Cloud providers' nested-virt instances are not supported.
 - **No Wasm for general agent code.** Wasm is for tools, not for whole agents — the WASI surface is too small.
 - **No "magic" snapshot restoration of agents that hold network connections.** Snapshots happen at the start of `run()`, not arbitrary points. If your agent holds a long-lived connection across `init` → `run`, it must reconnect inside `run`.

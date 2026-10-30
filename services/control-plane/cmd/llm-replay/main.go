@@ -1,7 +1,7 @@
 // Command llm-replay is the deterministic fixture LLM for CI and kiosk mode: run
 // it, then start the control-plane with
-// LANTERN_LLM_BASEURL_OPENAI=http://127.0.0.1:<port> and/or
-// LANTERN_LLM_BASEURL_ANTHROPIC=http://127.0.0.1:<port>. Optional -rules JSON file
+// PAL_LLM_BASEURL_OPENAI=http://127.0.0.1:<port> and/or
+// PAL_LLM_BASEURL_ANTHROPIC=http://127.0.0.1:<port>. Optional -rules JSON file
 // scripts replies and tool calls; recorded calls are at GET /__requests.
 package main
 
@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/llmreplay"
+	"github.com/dshakes/pal/services/control-plane/internal/llmreplay"
 )
 
 func main() {

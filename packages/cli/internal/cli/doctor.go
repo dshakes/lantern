@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dshakes/lantern/packages/cli/internal"
+	"github.com/dshakes/pal/packages/cli/internal"
 	"github.com/spf13/cobra"
 )
 
@@ -136,13 +136,13 @@ type healthzResponse struct {
 	LLMMode              string `json:"llmMode"`
 	RLSEnforce           bool   `json:"rlsEnforce"`
 	AppPoolActive        bool   `json:"appPoolActive"`
-	LanternAppRoleExists bool   `json:"lanternAppRoleExists"`
+	PalAppRoleExists bool   `json:"palAppRoleExists"`
 }
 
 // checkRLS checks RLS readiness by reading the fields the control-plane
 // exposes in /healthz.  It is read-only and requires no auth token.
 //
-// The "lanternAppRoleExists" field reflects whether the DB role was found by
+// The "palAppRoleExists" field reflects whether the DB role was found by
 // the running API — so it is only as fresh as the API process's last /healthz
 // call to Postgres.  "appPoolActive" is true only when PAL_RLS_ENFORCE=1
 // AND PAL_APP_DB_PASSWORD is set in the API process.
@@ -186,10 +186,10 @@ func checkRLS(restURL string, health checkResult) []checkResult {
 
 	return []checkResult{
 		{
-			label:  "lantern_app role exists in DB",
-			passed: h.LanternAppRoleExists,
+			label:  "pal_app role exists in DB",
+			passed: h.PalAppRoleExists,
 			detail: func() string {
-				if h.LanternAppRoleExists {
+				if h.PalAppRoleExists {
 					return "role present (migrations applied)"
 				}
 				return "missing — run migrations: make dev-infra && (restart API to re-migrate)"
@@ -201,7 +201,7 @@ func checkRLS(restURL string, health checkResult) []checkResult {
 			passed: h.AppPoolActive || !h.RLSEnforce,
 			detail: func() string {
 				if h.AppPoolActive {
-					return "set — AppPool connects as lantern_app"
+					return "set — AppPool connects as pal_app"
 				}
 				if h.RLSEnforce {
 					return "PAL_RLS_ENFORCE=1 but PAL_APP_DB_PASSWORD is unset — AppPool aliased to superuser pool; RLS not enforced at runtime"
@@ -215,7 +215,7 @@ func checkRLS(restURL string, health checkResult) []checkResult {
 			passed: h.RLSEnforce && h.AppPoolActive,
 			detail: func() string {
 				if h.RLSEnforce && h.AppPoolActive {
-					return "enforced — AppPool is the non-superuser lantern_app role"
+					return "enforced — AppPool is the non-superuser pal_app role"
 				}
 				if h.RLSEnforce {
 					return "flag set but AppPool still aliased to superuser (set PAL_APP_DB_PASSWORD)"
@@ -302,7 +302,7 @@ func checkAuth(restURL string) (checkResult, string) {
 	}
 
 	// Fall back to seeded dev credentials.
-	loginResp, err := client.Login("admin@lantern.dev", "lantern")
+	loginResp, err := client.Login("admin@pal.dev", "pal")
 	if err != nil {
 		return checkResult{
 			label:  "authentication",

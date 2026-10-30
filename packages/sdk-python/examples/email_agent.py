@@ -5,7 +5,7 @@ an LLM, and optionally sends them after human approval.
 
 Run locally::
 
-    export LANTERN_API_KEY="your-key"
+    export PAL_API_KEY="your-key"
     python -m pal.runtime.runner --agent email-triage --input '{"mode": "triage"}'
 
 Or use in a session (interactive multi-turn)::

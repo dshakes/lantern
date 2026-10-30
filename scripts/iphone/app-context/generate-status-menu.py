@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate ONE 'Lantern Status' menu Shortcut for the iPhone Action Button.
+"""Generate ONE 'PAL Status' menu Shortcut for the iPhone Action Button.
 
 Instead of five separate status shortcuts, this builds a single shortcut with a
 "Choose from Menu" block — Busy / Available / DND / Driving / Desk — each branch
@@ -13,8 +13,8 @@ The control-flow shape Shortcuts expects:
     choosefrommenu(mode=2, GID)                            # end menu
 All menu actions share ONE GroupingIdentifier (a UUID).
 
-Token: $LANTERN_SIGNAL_TOKEN, else read from the control-plane LaunchAgent plist.
-Output: ~/Desktop/Lantern-Status.shortcut (signed --mode anyone; token baked in,
+Token: $PAL_SIGNAL_TOKEN, else read from the control-plane LaunchAgent plist.
+Output: ~/Desktop/PAL-Status.shortcut (signed --mode anyone; token baked in,
 so it is NEVER committed).
 """
 
@@ -27,7 +27,7 @@ import uuid
 from pathlib import Path
 
 URL = os.environ.get(
-    "LANTERN_SIGNAL_URL",
+    "PAL_SIGNAL_URL",
     "https://macbook-pro-2.tail0be192.ts.net/v1/signals",
 )
 # (menu title, kind, detail) — title is what you tap; kind/detail is the signal.
@@ -41,16 +41,16 @@ ITEMS = [
 
 
 def resolve_token() -> str:
-    tok = (os.environ.get("PAL_SIGNAL_TOKEN") or os.environ.get("LANTERN_SIGNAL_TOKEN", "")).strip()
+    tok = (os.environ.get("PAL_SIGNAL_TOKEN") or os.environ.get("PAL_SIGNAL_TOKEN", "")).strip()
     if tok:
         return tok
-    plist = Path.home() / "Library/LaunchAgents/dev.lantern.api.plist"
+    plist = Path.home() / "Library/LaunchAgents/dev.pal.api.plist"
     if plist.exists():
         out = subprocess.run(
             [
                 "/usr/libexec/PlistBuddy",
                 "-c",
-                "Print :EnvironmentVariables:LANTERN_SIGNAL_TOKEN",
+                "Print :EnvironmentVariables:PAL_SIGNAL_TOKEN",
                 str(plist),
             ],
             capture_output=True,
@@ -58,7 +58,7 @@ def resolve_token() -> str:
         )
         if out.returncode == 0 and out.stdout.strip():
             return out.stdout.strip()
-    sys.exit("ERROR: no LANTERN_SIGNAL_TOKEN (env or plist).")
+    sys.exit("ERROR: no PAL_SIGNAL_TOKEN (env or plist).")
 
 
 def text_token(s: str) -> dict:
@@ -84,7 +84,7 @@ def post_action(token: str, kind: str, detail: str) -> dict:
             "WFURL": URL,
             "WFHTTPMethod": "POST",
             "ShowHeaders": True,
-            "WFHTTPHeaders": dict_field([("x-lantern-signal-token", token)]),
+            "WFHTTPHeaders": dict_field([("x-pal-signal-token", token)]),
             "WFHTTPBodyType": "JSON",
             "WFJSONValues": dict_field([("kind", kind), ("detail", detail)]),
         },
@@ -125,9 +125,9 @@ def main() -> None:
         "WFWorkflowActions": actions,
     }
 
-    out_dir = Path(os.environ.get("PAL_SHORTCUT_OUT") or os.environ.get("LANTERN_SHORTCUT_OUT", str(Path.home() / "Desktop")))
+    out_dir = Path(os.environ.get("PAL_SHORTCUT_OUT") or os.environ.get("PAL_SHORTCUT_OUT", str(Path.home() / "Desktop")))
     out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / "Lantern-Status.shortcut"
+    out = out_dir / "PAL-Status.shortcut"
     with tempfile.NamedTemporaryFile(suffix=".shortcut", delete=False) as tf:
         plistlib.dump(plist, tf)
         unsigned = tf.name
@@ -147,10 +147,10 @@ def main() -> None:
         )
     finally:
         os.unlink(unsigned)
-    print(f"  ✓ Lantern-Status  (menu: {', '.join(t for t, _, _ in ITEMS)})")
+    print(f"  ✓ PAL-Status  (menu: {', '.join(t for t, _, _ in ITEMS)})")
     print(f"Signed → {out}")
     print(
-        "Assign it to the Action Button: Settings → Action Button → Shortcut → Lantern-Status."
+        "Assign it to the Action Button: Settings → Action Button → Shortcut → PAL-Status."
     )
 
 

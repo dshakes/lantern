@@ -4,21 +4,21 @@
 //! handshake alone cannot tell a guest from the scheduler. This interceptor
 //! closes that gap:
 //!
-//! 1. A peer presenting a **VM cert** (`OU=lantern-vm`) is refused outright —
+//! 1. A peer presenting a **VM cert** (`OU=pal-vm`) is refused outright —
 //!    guests may only reach `RuntimeHarness`, whose methods bind the cert
 //!    CN/SAN to the request's `vm_id` per message.
-//! 2. Everyone else must present `x-lantern-service-token` ==
-//!    `LANTERN_GRPC_SERVICE_TOKEN` (constant-time compare) — the same shared
+//! 2. Everyone else must present `x-pal-service-token` ==
+//!    `PAL_GRPC_SERVICE_TOKEN` (constant-time compare) — the same shared
 //!    token the Go services use for their trust boundaries (invariant #7).
 //!
-//! Token unset: prod (`LANTERN_ENV` prod/production/staging) refuses to start;
+//! Token unset: prod (`PAL_ENV` prod/production/staging) refuses to start;
 //! dev warns and allows, matching the Go services.
 
 use std::sync::Arc;
 
 use tonic::{Request, Status};
 
-pub const SERVICE_TOKEN_HEADER: &str = "x-lantern-service-token";
+pub const SERVICE_TOKEN_HEADER: &str = "x-pal-service-token";
 pub const ENV_SERVICE_TOKEN: &str = "PAL_GRPC_SERVICE_TOKEN";
 
 /// Interceptor state. Cheap to clone (tonic clones it per connection).
@@ -59,7 +59,7 @@ impl ManagerAuth {
     }
 
     /// The pure decision: `peer_is_vm` = the TLS peer presented a VM cert;
-    /// `presented` = the raw `x-lantern-service-token` header value.
+    /// `presented` = the raw `x-pal-service-token` header value.
     // `Status` is large by design; this runs once per call.
     #[allow(clippy::result_large_err)]
     pub fn check(&self, peer_is_vm: bool, presented: Option<&[u8]>) -> Result<(), Status> {
@@ -74,7 +74,7 @@ impl ManagerAuth {
         match presented {
             Some(p) if ct_eq(p, expected.as_bytes()) => Ok(()),
             _ => Err(Status::unauthenticated(
-                "missing or invalid x-lantern-service-token",
+                "missing or invalid x-pal-service-token",
             )),
         }
     }

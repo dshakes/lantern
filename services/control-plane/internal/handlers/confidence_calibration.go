@@ -6,7 +6,7 @@ package handlers
 // thumbs-down feedback or run failure) back from the DB and lowers the
 // confidence score for node types that have burned the user.
 //
-// Feature is OFF by default (LANTERN_CONFIDENCE_CALIBRATE unset).
+// Feature is OFF by default (PAL_CONFIDENCE_CALIBRATE unset).
 // Opt-in; fail-safe everywhere — any error returns 0 (no calibration).
 
 import (
@@ -20,8 +20,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/db"
-	"github.com/dshakes/lantern/services/control-plane/internal/workflow"
+	"github.com/dshakes/pal/services/control-plane/internal/db"
+	"github.com/dshakes/pal/services/control-plane/internal/workflow"
 )
 
 // regretCacheTTL is how long a regret-rate lookup is cached per (tenant, agent, nodeType).
@@ -184,7 +184,7 @@ func computeRegretRate(total, regrets int64, minSamples int) float64 {
 	return rate
 }
 
-// confidenceCalibrateEnabled reports whether LANTERN_CONFIDENCE_CALIBRATE
+// confidenceCalibrateEnabled reports whether PAL_CONFIDENCE_CALIBRATE
 // is set to a truthy value. Default OFF.
 func confidenceCalibrateEnabled() bool {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv("PAL_CONFIDENCE_CALIBRATE")))

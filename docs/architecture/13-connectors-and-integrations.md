@@ -23,7 +23,7 @@
 Every connector is described by a `connector.yaml` plus implementation files. The minimum:
 
 ```yaml
-lantern_connector: 1
+pal_connector: 1
 id: gmail                       # globally unique
 name: Gmail
 description: Send and read email through Gmail.
@@ -107,7 +107,7 @@ package gmail
 
 import (
     "context"
-    "github.com/lantern/connector-sdk-go/connector"
+    "github.com/pal/connector-sdk-go/connector"
 )
 
 type Gmail struct{}
@@ -248,16 +248,16 @@ Each connector ships with:
 Users on team and enterprise tiers can build their own connectors using the `connector-sdk-ts` or `connector-sdk-go`. They publish into a private connector registry scoped to the tenant. Custom connectors go through the same framework — auth flow, vault, rate limits, observability — for free.
 
 ```bash
-$ lantern connector init my-internal-api
-$ lantern connector dev          # local hot-reload
-$ lantern connector publish      # to your tenant's private registry
+$ pal connector init my-internal-api
+$ pal connector dev          # local hot-reload
+$ pal connector publish      # to your tenant's private registry
 ```
 
 ---
 
 ## Marketplace (post-launch)
 
-A public marketplace for community-contributed connectors and templates. Templates are downloadable agent bundles that pin to specific connector versions. Lantern-verified connectors get a checkmark; community connectors are clearly labeled.
+A public marketplace for community-contributed connectors and templates. Templates are downloadable agent bundles that pin to specific connector versions. PAL-verified connectors get a checkmark; community connectors are clearly labeled.
 
 ---
 

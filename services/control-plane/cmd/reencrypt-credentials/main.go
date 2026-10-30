@@ -1,5 +1,5 @@
 // Command reencrypt-credentials re-writes stored credentials through the
-// current LANTERN_CREDENTIAL_KEY.
+// current PAL_CREDENTIAL_KEY.
 //
 // # Why this exists
 //
@@ -22,7 +22,7 @@
 //
 // Usage:
 //
-//	LANTERN_CREDENTIAL_KEY=... DATABASE_URL=... go run ./cmd/reencrypt-credentials [-dry-run]
+//	PAL_CREDENTIAL_KEY=... DATABASE_URL=... go run ./cmd/reencrypt-credentials [-dry-run]
 package main
 
 import (
@@ -35,7 +35,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
+	"github.com/dshakes/pal/services/control-plane/internal/secrets"
 )
 
 // target describes one credential-bearing column.
@@ -58,10 +58,10 @@ func main() {
 
 	enabled, err := secrets.EncryptionEnabled()
 	if err != nil {
-		fatalf("LANTERN_CREDENTIAL_KEY is malformed: %v", err)
+		fatalf("PAL_CREDENTIAL_KEY is malformed: %v", err)
 	}
 	if !enabled {
-		fatalf("LANTERN_CREDENTIAL_KEY is not set — nothing to re-encrypt to.\n" +
+		fatalf("PAL_CREDENTIAL_KEY is not set — nothing to re-encrypt to.\n" +
 			"Set a 32-byte key (openssl rand -hex 32) and re-run.")
 	}
 
@@ -191,7 +191,7 @@ func isEnveloped(stored []byte) bool {
 	if err := json.Unmarshal(stored, &probe); err != nil {
 		return false
 	}
-	_, ok := probe["__lantern_enc__"]
+	_, ok := probe["__pal_enc__"]
 	return ok
 }
 

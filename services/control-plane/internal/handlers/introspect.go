@@ -8,9 +8,9 @@ package handlers
 //
 // Auth mirrors middleware.UnaryServiceAuthInterceptor (the :50051 gRPC trust
 // boundary): the caller must present the shared service token in the
-// x-lantern-service-token header, constant-time compared against
-// LANTERN_GRPC_SERVICE_TOKEN. When that env is unset: dev → allow with a
-// one-time WARN; prod (LANTERN_ENV prod/production/staging) → 403 fail-closed.
+// x-pal-service-token header, constant-time compared against
+// PAL_GRPC_SERVICE_TOKEN. When that env is unset: dev → allow with a
+// one-time WARN; prod (PAL_ENV prod/production/staging) → 403 fail-closed.
 //
 // The raw key and the service token never appear in logs (invariant #10).
 
@@ -21,7 +21,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
 )
 
 const introspectServiceTokenEnv = "PAL_GRPC_SERVICE_TOKEN"
@@ -65,12 +65,12 @@ func (h *AuthHandler) authorizeIntrospect(w http.ResponseWriter, r *http.Request
 	expected := os.Getenv(introspectServiceTokenEnv)
 	if expected == "" {
 		if IsProd() {
-			h.logger().Warn("introspect-key: LANTERN_GRPC_SERVICE_TOKEN unset — refusing (fail-closed in prod)")
+			h.logger().Warn("introspect-key: PAL_GRPC_SERVICE_TOKEN unset — refusing (fail-closed in prod)")
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "introspection disabled"})
 			return false
 		}
 		introspectDevWarnOnce.Do(func() {
-			h.logger().Warn("introspect-key: LANTERN_GRPC_SERVICE_TOKEN unset — allowing unauthenticated calls (dev only)")
+			h.logger().Warn("introspect-key: PAL_GRPC_SERVICE_TOKEN unset — allowing unauthenticated calls (dev only)")
 		})
 		return true
 	}

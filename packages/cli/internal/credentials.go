@@ -17,8 +17,8 @@ type Credentials struct {
 }
 
 // ConfigDir is the CLI's config/state directory (ADR 0032): $PAL_HOME when set,
-// else ~/.pal when it exists, else the legacy ~/.lantern when it exists, else
-// ~/.pal. An existing ~/.lantern is used in place — user files are never moved.
+// else ~/.pal when it exists, else the legacy ~/.pal when it exists, else
+// ~/.pal. An existing ~/.pal is used in place — user files are never moved.
 func ConfigDir() (string, error) {
 	if d := os.Getenv("PAL_HOME"); d != "" {
 		return d, nil
@@ -28,7 +28,7 @@ func ConfigDir() (string, error) {
 		return "", fmt.Errorf("home directory: %w", err)
 	}
 	pal := filepath.Join(home, ".pal")
-	for _, d := range []string{pal, filepath.Join(home, ".lantern")} {
+	for _, d := range []string{pal, filepath.Join(home, ".pal")} {
 		if fi, err := os.Stat(d); err == nil && fi.IsDir() {
 			return d, nil
 		}

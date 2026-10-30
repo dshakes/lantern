@@ -20,8 +20,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/db"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/db"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // mintTestJWT creates a signed JWT for the given tenantID and role using the
@@ -29,12 +29,12 @@ import (
 func mintTestJWT(tenantID, role string) (string, error) {
 	secret := []byte(GetJWTSecret())
 	now := time.Now()
-	claims := LanternClaims{
+	claims := PalClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   "test-user-id",
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
-			Issuer:    "lantern",
+			Issuer:    "pal",
 		},
 		TenantID: tenantID,
 		Email:    "test@example.com",
@@ -156,7 +156,7 @@ func TestGDPR_OwnerCanPurgeSelf(t *testing.T) {
 	var tenantID string
 	err := pool.QueryRow(ctx, `
 		INSERT INTO tenants (slug, name, tier, k8s_namespace)
-		VALUES ('gdpr-test', 'GDPR Test', 'personal', 'lantern-t-gdpr-test')
+		VALUES ('gdpr-test', 'GDPR Test', 'personal', 'pal-t-gdpr-test')
 		RETURNING id
 	`).Scan(&tenantID)
 	if err != nil {
@@ -232,7 +232,7 @@ func TestGDPR_PurgeWithRun(t *testing.T) {
 	var tenantID string
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO tenants (slug, name, tier, k8s_namespace)
-		VALUES ('gdpr-run-test', 'GDPR Run Test', 'personal', 'lantern-t-gdpr-run-test')
+		VALUES ('gdpr-run-test', 'GDPR Run Test', 'personal', 'pal-t-gdpr-run-test')
 		ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name
 		RETURNING id
 	`).Scan(&tenantID); err != nil {
@@ -343,7 +343,7 @@ func TestGDPR_PurgeSweepsTablesWithoutTenantFK(t *testing.T) {
 	var tenantID string
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO tenants (slug, name, tier, k8s_namespace)
-		VALUES ('gdpr-sweep-test', 'GDPR Sweep Test', 'personal', 'lantern-t-gdpr-sweep-test')
+		VALUES ('gdpr-sweep-test', 'GDPR Sweep Test', 'personal', 'pal-t-gdpr-sweep-test')
 		ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name
 		RETURNING id
 	`).Scan(&tenantID); err != nil {

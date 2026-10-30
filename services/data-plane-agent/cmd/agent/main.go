@@ -14,9 +14,9 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/dshakes/lantern/services/data-plane-agent/internal/dispatcher"
-	"github.com/dshakes/lantern/services/data-plane-agent/internal/reporter"
-	"github.com/dshakes/lantern/services/data-plane-agent/internal/tunnel"
+	"github.com/dshakes/pal/services/data-plane-agent/internal/dispatcher"
+	"github.com/dshakes/pal/services/data-plane-agent/internal/reporter"
+	"github.com/dshakes/pal/services/data-plane-agent/internal/tunnel"
 )
 
 func main() {
@@ -143,7 +143,7 @@ type config struct {
 	AgentToken              string
 	WorkflowEngineAddr      string
 	RuntimeManagerAddr      string
-	GRPCServiceToken        string // LANTERN_GRPC_SERVICE_TOKEN; empty = no token (dev)
+	GRPCServiceToken        string // PAL_GRPC_SERVICE_TOKEN; empty = no token (dev)
 	LogLevel                string
 	HeartbeatIntervalSec    int
 	ReconnectInitialDelayMs int
@@ -154,7 +154,7 @@ type config struct {
 
 func loadConfig() config {
 	return config{
-		ControlPlaneEndpoint:    envOrDefault("CONTROL_PLANE_ENDPOINT", "https://api.lantern.run"),
+		ControlPlaneEndpoint:    envOrDefault("CONTROL_PLANE_ENDPOINT", "https://api.pal.run"),
 		ControlPlaneEndpoints:   splitEndpoints(os.Getenv("PAL_CONTROL_PLANE_ENDPOINTS")),
 		FailbackInterval:        envDuration("PAL_CONTROL_PLANE_FAILBACK_INTERVAL", 60*time.Second),
 		TenantID:                envOrDefault("TENANT_ID", ""),

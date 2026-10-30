@@ -10,7 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
 )
 
 const routeTenant = "00000000-0000-0000-0000-000000000001"
@@ -88,7 +88,7 @@ func TestRouteRun_PlaneConnected_PinsAndSends(t *testing.T) {
 	svc := newDPSvc(t, pool)
 	runID := seedQueuedRun(t, pool, routeTenant)
 
-	ch := make(chan *lanternv1.DpRunAssignment, 1)
+	ch := make(chan *palv1.DpRunAssignment, 1)
 	dereg := svc.Registry.register(routeTenant, "plane-A", ch)
 	defer dereg()
 
@@ -122,7 +122,7 @@ func TestRouteRun_DeliveryFailure_RollsBackPin(t *testing.T) {
 	runID := seedQueuedRun(t, pool, routeTenant)
 
 	// Unbuffered channel with no reader → Send hits the default branch → false.
-	ch := make(chan *lanternv1.DpRunAssignment)
+	ch := make(chan *palv1.DpRunAssignment)
 	dereg := svc.Registry.register(routeTenant, "plane-B", ch)
 	defer dereg()
 
@@ -147,7 +147,7 @@ func TestRouteRun_NonQueuedRun_NotHijacked(t *testing.T) {
 		t.Fatalf("set running: %v", err)
 	}
 
-	ch := make(chan *lanternv1.DpRunAssignment, 1)
+	ch := make(chan *palv1.DpRunAssignment, 1)
 	dereg := svc.Registry.register(routeTenant, "plane-A", ch)
 	defer dereg()
 
@@ -167,7 +167,7 @@ func TestRouteRun_NonQueuedRun_NotHijacked(t *testing.T) {
 // deterministic (smallest planeID).
 func TestPlaneForTenant_DeterministicAndScoped(t *testing.T) {
 	r := newPlaneRegistry()
-	ch := make(chan *lanternv1.DpRunAssignment, 1)
+	ch := make(chan *palv1.DpRunAssignment, 1)
 	defer r.register("t-1", "plane-z", ch)()
 	defer r.register("t-1", "plane-a", ch)()
 	defer r.register("t-2", "plane-other", ch)()

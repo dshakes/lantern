@@ -25,8 +25,8 @@
 
 set -euo pipefail
 
-PLIST="$HOME/Library/LaunchAgents/dev.lantern.imessage-bridge.plist"
-LABEL="dev.lantern.imessage-bridge"
+PLIST="$HOME/Library/LaunchAgents/dev.pal.imessage-bridge.plist"
+LABEL="dev.pal.imessage-bridge"
 CHATDB="$HOME/Library/Messages/chat.db"
 NODE_BIN="$(command -v node || true)"
 
@@ -58,7 +58,7 @@ pkill -f "imessage-bridge/src/index.ts" 2>/dev/null || true
 pkill -f "imessage-bridge/node_modules/.bin/tsx" 2>/dev/null || true
 sleep 2
 
-LOG="$HOME/Library/Logs/Lantern/imessage-bridge.out.log"
+LOG="$HOME/Library/Logs/PAL/imessage-bridge.out.log"
 # Truncate the log so our verify reads ONLY this attempt (avoids a stale
 # "opened chat.db" from a prior Terminal run masking a fresh failure, or
 # a stale "permission_required" masking a fresh success).

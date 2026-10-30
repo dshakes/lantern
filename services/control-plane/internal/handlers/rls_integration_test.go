@@ -5,31 +5,31 @@ package handlers
 // This is the reusable test harness for the staged handler cutover to
 // s.srv.WithTenant (see CLAUDE.md "Local development" + ADR 0011). Unlike the
 // catalog/GUC tests in internal/db/rls_test.go — which simulate the app role
-// with `SET LOCAL ROLE lantern_app` inside the superuser pool — this harness
+// with `SET LOCAL ROLE pal_app` inside the superuser pool — this harness
 // constructs a *real* server.Server whose TenantPool() (AppPool) connects to
-// Postgres AS the non-superuser `lantern_app` role over its own DSN. That means
+// Postgres AS the non-superuser `pal_app` role over its own DSN. That means
 // RLS is genuinely ENFORCED at the database for every query a handler routes
 // through s.srv.WithTenant, exactly as production behaves under
-// LANTERN_RLS_ENFORCE=1 + LANTERN_APP_DB_PASSWORD.
+// PAL_RLS_ENFORCE=1 + PAL_APP_DB_PASSWORD.
 //
 // The harness:
 //  1. Opens the privileged (superuser) pool from DATABASE_URL — used for schema
 //     migration + cross-tenant seeding (bypasses RLS, mirrors recovery sweeps).
-//  2. Runs Migrate() so the schema, the RLS policies, and the `lantern_app`
+//  2. Runs Migrate() so the schema, the RLS policies, and the `pal_app`
 //     LOGIN role all exist.
-//  3. ALTER ROLE lantern_app PASSWORD '<test-pw>' — the role is created LOGIN
+//  3. ALTER ROLE pal_app PASSWORD '<test-pw>' — the role is created LOGIN
 //     but password-less by the baseline migration; we set one for the test the
-//     same way an operator does in prod (CLAUDE.md: "ALTER ROLE lantern_app
+//     same way an operator does in prod (CLAUDE.md: "ALTER ROLE pal_app
 //     PASSWORD '<strong>'"). This is the documented setup, not a new scheme.
 //  4. Builds the app-pool DSN by reusing the EXACT production logic
-//     (cmd/server.buildAppPoolConfig): parse DATABASE_URL, swap user→lantern_app
+//     (cmd/server.buildAppPoolConfig): parse DATABASE_URL, swap user→pal_app
 //     and password, preserving every other DSN parameter. Replicated here as
-//     buildLanternAppPool because that helper lives in package main.
+//     buildPalAppPool because that helper lives in package main.
 //  5. Returns a *server.Server with Pool=superPool and AppPool=appPool, so
 //     s.srv.WithTenant(...) routes through the RLS-subject role.
 //
 // Skips cleanly when DATABASE_URL is unset, and skips (does not fail) when the
-// lantern_app role can't be made password-loginable on this DB — so it never
+// pal_app role can't be made password-loginable on this DB — so it never
 // breaks a contributor who only has a superuser DSN.
 
 import (
@@ -44,9 +44,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/db"
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/db"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // injectTenant is a thin alias over middleware.InjectTenantID for terse test
@@ -56,7 +56,7 @@ func injectTenant(ctx context.Context, tenantID string) context.Context {
 	return middleware.InjectTenantID(ctx, tenantID)
 }
 
-// rlsAppPassword is the test-only password stamped onto the lantern_app role so
+// rlsAppPassword is the test-only password stamped onto the pal_app role so
 // the harness can open a real login connection as that (non-superuser) role.
 // It never leaves the test process and is not a production credential.
 const rlsAppPassword = "rls_harness_app_pw_do_not_use_in_prod"
@@ -66,11 +66,11 @@ const rlsAppPassword = "rls_harness_app_pw_do_not_use_in_prod"
 type enforcedServer struct {
 	srv       *server.Server
 	superPool *pgxpool.Pool // BYPASSRLS — for migration, seeding, assertions
-	appPool   *pgxpool.Pool // connects as lantern_app — RLS ENFORCED
+	appPool   *pgxpool.Pool // connects as pal_app — RLS ENFORCED
 }
 
 // newEnforcedServer builds a *server.Server whose TenantPool() is the
-// lantern_app-backed AppPool, so RLS is actually enforced for any query routed
+// pal_app-backed AppPool, so RLS is actually enforced for any query routed
 // through s.srv.WithTenant. This is THE harness every future cutover batch
 // reuses. Skips (never fails) when DATABASE_URL is unset or the app role can't
 // be set up on this DB.
@@ -97,37 +97,37 @@ func newEnforcedServer(t *testing.T) *enforcedServer {
 	}
 	t.Cleanup(superPool.Close)
 
-	// Ensure schema + RLS policies + the lantern_app role exist.
+	// Ensure schema + RLS policies + the pal_app role exist.
 	if err := db.Migrate(ctx, superPool, false); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
-	// Stamp a password on the lantern_app role so we can open a login pool as it.
+	// Stamp a password on the pal_app role so we can open a login pool as it.
 	// The baseline migration creates the role LOGIN but password-less; this is
-	// the documented prod setup step (ALTER ROLE lantern_app PASSWORD ...).
+	// the documented prod setup step (ALTER ROLE pal_app PASSWORD ...).
 	if _, err := superPool.Exec(ctx,
-		fmt.Sprintf("ALTER ROLE lantern_app PASSWORD %s", quoteLiteral(rlsAppPassword)),
+		fmt.Sprintf("ALTER ROLE pal_app PASSWORD %s", quoteLiteral(rlsAppPassword)),
 	); err != nil {
-		t.Skipf("ALTER ROLE lantern_app PASSWORD failed (%v) — caller may lack privilege; skipping enforcement test", err)
+		t.Skipf("ALTER ROLE pal_app PASSWORD failed (%v) — caller may lack privilege; skipping enforcement test", err)
 	}
 
 	// Build the app-pool config the same way production does: parse DATABASE_URL,
-	// swap the user to lantern_app and the password, preserving all other DSN
+	// swap the user to pal_app and the password, preserving all other DSN
 	// params (sslmode, host, search_path, …).
 	appCfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		t.Fatalf("parse DATABASE_URL for app pool: %v", err)
 	}
-	appCfg.ConnConfig.User = "lantern_app"
+	appCfg.ConnConfig.User = "pal_app"
 	appCfg.ConnConfig.Password = rlsAppPassword
 
 	appPool, err := pgxpool.NewWithConfig(ctx, appCfg)
 	if err != nil {
-		t.Skipf("open lantern_app pool: %v — skipping enforcement test", err)
+		t.Skipf("open pal_app pool: %v — skipping enforcement test", err)
 	}
 	if err := appPool.Ping(ctx); err != nil {
 		appPool.Close()
-		t.Skipf("lantern_app pool ping: %v (role may not be loginable on this DB) — skipping enforcement test", err)
+		t.Skipf("pal_app pool ping: %v (role may not be loginable on this DB) — skipping enforcement test", err)
 	}
 	t.Cleanup(appPool.Close)
 
@@ -165,7 +165,7 @@ func seedEnforcedTenant(t *testing.T, e *enforcedServer, slug string) string {
 	var id string
 	if err := e.superPool.QueryRow(context.Background(), `
 		INSERT INTO tenants (slug, name, tier, k8s_namespace)
-		VALUES ($1, $1, 'personal', 'lantern-t-' || $1)
+		VALUES ($1, $1, 'personal', 'pal-t-' || $1)
 		RETURNING id
 	`, slug).Scan(&id); err != nil {
 		t.Fatalf("seed enforced tenant %q: %v", slug, err)

@@ -60,8 +60,8 @@ curl -X DELETE http://localhost:8080/v1/triggers/$ID -H "Authorization: Bearer $
 <TabItem label="TypeScript">
 
 ```ts
-import { LanternClient } from "@lantern/sdk";
-const client = new LanternClient({ apiKey: process.env.PAL_API_KEY, baseUrl: "http://localhost:8080" });
+import { PalClient } from "@pal/sdk";
+const client = new PalClient({ apiKey: process.env.PAL_API_KEY, baseUrl: "http://localhost:8080" });
 
 const t = await client.triggers.create("my-agent", { provider: "github" });
 console.log(t.hookPath, t.secret); // secret is present only here
@@ -75,9 +75,9 @@ await client.triggers.delete(t.id);
 <TabItem label="Python">
 
 ```python
-from lantern import LanternClient
+from pal import PalClient
 
-async with LanternClient(api_key="hlx_live_...", base_url="http://localhost:8080") as client:
+async with PalClient(api_key="hlx_live_...", base_url="http://localhost:8080") as client:
     t = await client.triggers.create("my-agent", provider="github")
     print(t["hookPath"], t.get("secret"))  # secret is present only here
 
@@ -90,15 +90,15 @@ async with LanternClient(api_key="hlx_live_...", base_url="http://localhost:8080
 <TabItem label="Go">
 
 ```go
-import lantern "github.com/dshakes/lantern/packages/sdk-go"
+import pal "github.com/dshakes/pal/packages/sdk-go"
 
-c := lantern.New(lantern.WithAPIKey(key), lantern.WithBaseURL("http://localhost:8080"))
+c := pal.New(pal.WithAPIKey(key), pal.WithBaseURL("http://localhost:8080"))
 
-t, err := c.CreateTrigger(ctx, "my-agent", lantern.TriggerCreate{Provider: "github"})
+t, err := c.CreateTrigger(ctx, "my-agent", pal.TriggerCreate{Provider: "github"})
 // t.Secret is set only here
 list, _ := c.ListTriggers(ctx, "my-agent")
 off := false
-_, _ = c.UpdateTrigger(ctx, t.ID, lantern.TriggerUpdate{Enabled: &off})
+_, _ = c.UpdateTrigger(ctx, t.ID, pal.TriggerUpdate{Enabled: &off})
 _ = c.DeleteTrigger(ctx, t.ID)
 ```
 
@@ -106,20 +106,20 @@ _ = c.DeleteTrigger(ctx, t.ID)
 <TabItem label="CLI">
 
 ```bash
-lantern hooks create my-agent --provider github   # prints the URL path and the secret once
-lantern hooks list my-agent
-lantern hooks get <trigger-id>
-lantern hooks update <trigger-id> --disable        # --enable, --template '<json>', --clear-template, --secret-stdin
-lantern hooks delete <trigger-id>
+pal hooks create my-agent --provider github   # prints the URL path and the secret once
+pal hooks list my-agent
+pal hooks get <trigger-id>
+pal hooks update <trigger-id> --disable        # --enable, --template '<json>', --clear-template, --secret-stdin
+pal hooks delete <trigger-id>
 
 # supply your own secret without it landing in shell history
-printf '%s' "$SECRET" | lantern hooks create my-agent --provider generic --secret-stdin
+printf '%s' "$SECRET" | pal hooks create my-agent --provider generic --secret-stdin
 ```
 
 </TabItem>
 </Tabs>
 
-`lantern hooks` is also reachable as `lantern hook` and `lantern triggers`. In the dashboard, open an agent and use **Manage** on its webhook triggers card (`/agents/{name}/triggers`): **New trigger** picks a provider, takes an optional secret and input template, then shows the payload URL and secret in a copy dialog. Each row has Enable/Disable, **Replace secret** and Delete.
+`pal hooks` is also reachable as `pal hook` and `pal triggers`. In the dashboard, open an agent and use **Manage** on its webhook triggers card (`/agents/{name}/triggers`): **New trigger** picks a provider, takes an optional secret and input template, then shows the payload URL and secret in a copy dialog. Each row has Enable/Disable, **Replace secret** and Delete.
 
 ## The URL and the secret
 
@@ -136,7 +136,7 @@ The public URL is the API base URL plus the trigger's `hookPath`, for example `h
 | `github` | `X-Hub-Signature-256: sha256=<hex>` | raw body | `X-GitHub-Delivery` |
 | `sentry` | `Sentry-Hook-Signature: <hex>` | raw body | `Request-ID` |
 | `pagerduty` | `X-PagerDuty-Signature: v1=<hex>[,v1=<hex>]` | raw body | `event.id` in the JSON body |
-| `generic` | `X-Lantern-Signature: t=<unix>,v1=<hex>[,v1=<hex>]` | `<t>.<raw body>` | `X-Lantern-Delivery` (optional) |
+| `generic` | `X-Pal-Signature: t=<unix>,v1=<hex>[,v1=<hex>]` | `<t>.<raw body>` | `X-Pal-Delivery` (optional) |
 
 All four are HMAC-SHA256 with the trigger secret, hex encoded.
 
@@ -149,7 +149,7 @@ Create a `github` trigger and let PAL Runtime generate the secret. In the reposi
 Sentry generates its own client secret, so you cannot choose it. Create a `sentry` trigger first (you need its URL for the Sentry integration), then paste Sentry's client secret into PAL Runtime:
 
 ```bash
-printf '%s' "<sentry client secret>" | lantern hooks update <trigger-id> --secret-stdin
+printf '%s' "<sentry client secret>" | pal hooks update <trigger-id> --secret-stdin
 ```
 
 Or use **Replace secret** in the dashboard, or `PATCH` with `secret`. The event is read from `Sentry-Hook-Resource`.
@@ -160,7 +160,7 @@ PagerDuty shows its signing secret after you create the webhook subscription, so
 
 ### Generic HMAC
 
-For anything else, sign `<unix-timestamp>.<body>` with HMAC-SHA256 and send `X-Lantern-Signature: t=<unix>,v1=<hex>`. The timestamp must be within five minutes of server time, in either direction. Send `X-Lantern-Delivery` as a stable id per event and optionally `X-Lantern-Event`.
+For anything else, sign `<unix-timestamp>.<body>` with HMAC-SHA256 and send `X-Pal-Signature: t=<unix>,v1=<hex>`. The timestamp must be within five minutes of server time, in either direction. Send `X-Pal-Delivery` as a stable id per event and optionally `X-Pal-Event`.
 
 ```bash
 SECRET=whsec_...   # from the create response
@@ -170,14 +170,14 @@ T=$(date +%s)
 SIG=$(printf '%s.%s' "$T" "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $NF}')
 
 curl -i -X POST "$HOOK" \
-  -H "X-Lantern-Signature: t=$T,v1=$SIG" \
-  -H "X-Lantern-Delivery: incident-42" \
+  -H "X-Pal-Signature: t=$T,v1=$SIG" \
+  -H "X-Pal-Delivery: incident-42" \
   -d "$BODY"
 # HTTP/1.1 202 Accepted
 # {"runId":"...","deliveryId":"incident-42"}
 ```
 
-Run it a second time within five minutes with the same `X-Lantern-Delivery` and you get the duplicate response below.
+Run it a second time within five minutes with the same `X-Pal-Delivery` and you get the duplicate response below.
 
 ## Responses
 
@@ -206,7 +206,7 @@ When run creation fails (402, 429, 500), the delivery id is released, so the pro
 
 ## Duplicate deliveries
 
-Every delivery is checked against two keys, each unique per trigger: the provider's delivery id (table above; for `generic` without `X-Lantern-Delivery`, and for any provider that sends no id, a hash of the signed bytes) and a SHA-256 of the signed bytes. A match on either returns `200 {"duplicate":true}` and starts no run.
+Every delivery is checked against two keys, each unique per trigger: the provider's delivery id (table above; for `generic` without `X-Pal-Delivery`, and for any provider that sends no id, a hash of the signed bytes) and a SHA-256 of the signed bytes. A match on either returns `200 {"duplicate":true}` and starts no run.
 
 The second key exists because GitHub, Sentry and PagerDuty sign only the body, not their delivery id headers, so someone holding a captured request could replay it with a fresh id.
 
@@ -232,7 +232,7 @@ If the body is not valid JSON, `payload` is the raw body as a string. `event` is
 An `inputTemplate` (a JSON object, set on create or update; `null` clears it) replaces that shape. Inside it, a string that is exactly `{{path}}` becomes the typed value at that dotted path in `{payload, event, provider, deliveryId, triggerId}` (or `null` if absent). A `{{path}}` inside a longer string is interpolated as text (empty if absent; non-strings are JSON-encoded). Nothing else is evaluated.
 
 ```bash
-lantern hooks create my-agent --provider github \
+pal hooks create my-agent --provider github \
   --template '{"pr":"{{payload.number}}","title":"{{payload.pull_request.title}}","note":"PR {{payload.number}} opened"}'
 ```
 

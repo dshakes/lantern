@@ -9,7 +9,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/data-plane-agent/internal/tunnel"
+	"github.com/dshakes/pal/services/data-plane-agent/internal/tunnel"
 )
 
 // Reporter buffers and delivers status updates and metrics to the control plane.

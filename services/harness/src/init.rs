@@ -5,9 +5,9 @@
 
 use anyhow::Result;
 
-/// Boot the guest: prep /run/lantern, mount tmpfs on /tmp, set rlimits.
+/// Boot the guest: prep /run/pal, mount tmpfs on /tmp, set rlimits.
 pub async fn boot() -> Result<()> {
-    let run_dir = std::env::var("PAL_RUN_DIR").unwrap_or_else(|_| "/run/lantern".to_string());
+    let run_dir = std::env::var("PAL_RUN_DIR").unwrap_or_else(|_| "/run/pal".to_string());
     if let Err(e) = tokio::fs::create_dir_all(&run_dir).await {
         tracing::warn!(error = %e, %run_dir, "init: could not create run dir (continuing)");
     }

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Deploy the support-desk example to a running PAL control-plane (stdlib only).
 
-    LANTERN_API_URL=http://localhost:8080 python3 setup.py
+    PAL_API_URL=http://localhost:8080 python3 setup.py
 
 Creates the agent from spec.json, uploads the documents listed in
 knowledge.json (idempotent: the ids are fixed, so re-running replaces them) and
 prints the widget snippet. Credentials default to the dev tenant; override with
-LANTERN_EMAIL / LANTERN_PASSWORD.
+PAL_EMAIL / PAL_PASSWORD.
 """
 import json
 import os
@@ -15,7 +15,7 @@ import urllib.error
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-BASE = (os.environ.get("PAL_API_URL") or os.environ.get("LANTERN_API_URL", "http://localhost:8080")).rstrip("/")
+BASE = (os.environ.get("PAL_API_URL") or os.environ.get("PAL_API_URL", "http://localhost:8080")).rstrip("/")
 
 
 def call(method, path, body=None, token=None, ok=(200, 201, 204)):
@@ -42,8 +42,8 @@ def load(name):
 
 def main():
     _, login = call("POST", "/auth/login", {
-        "email": os.environ.get("PAL_EMAIL") or os.environ.get("LANTERN_EMAIL", "admin@lantern.dev"),
-        "password": os.environ.get("PAL_PASSWORD") or os.environ.get("LANTERN_PASSWORD", "lantern"),
+        "email": os.environ.get("PAL_EMAIL") or os.environ.get("PAL_EMAIL", "admin@pal.dev"),
+        "password": os.environ.get("PAL_PASSWORD") or os.environ.get("PAL_PASSWORD", "pal"),
     })
     token = login["token"]
 
@@ -60,7 +60,7 @@ def main():
 
     print("\nNext: create an API key with scope runs:execute (Settings -> API keys), then paste on any page:\n")
     print('<script src="%s/widget.js" data-api-key="lk_..." data-agent="%s" data-api-base="%s" async defer></script>'
-          % (os.environ.get("PAL_DASHBOARD_URL") or os.environ.get("LANTERN_DASHBOARD_URL", "http://localhost:3001"), spec["name"], BASE))
+          % (os.environ.get("PAL_DASHBOARD_URL") or os.environ.get("PAL_DASHBOARD_URL", "http://localhost:3001"), spec["name"], BASE))
 
 
 if __name__ == "__main__":

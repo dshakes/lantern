@@ -71,7 +71,7 @@ pid_of_agent() {  # label -> the launchd job's own pid ("" if not loaded/running
   # same service running from another checkout. `launchctl print` reports
   # the actual job pid launchd is supervising.
   local label="$1" pid
-  pid="$(launchctl print "gui/$UID_/dev.lantern.$label" 2>/dev/null | awk '/^[[:space:]]*pid = [0-9]+/{print $NF; exit}')"
+  pid="$(launchctl print "gui/$UID_/dev.pal.$label" 2>/dev/null | awk '/^[[:space:]]*pid = [0-9]+/{print $NF; exit}')"
   [[ "$pid" =~ ^[0-9]+$ ]] && echo "$pid"
 }
 newest_source_epoch() {  # newest mtime among the given paths (files or dirs)
@@ -101,7 +101,7 @@ want_restart() {  # label, newest-source-epoch → decides + records reason
 
 # --- 2. Rust: rebuild when stale, restart when the binary outruns the process
 for rs in gateway model-router runtime-manager surface-gateway; do
-  dir="services/$rs"; bin="$dir/target/release/lantern-$rs"
+  dir="services/$rs"; bin="$dir/target/release/pal-$rs"
   [[ -d "$dir" ]] || continue
   src="$(newest_source_epoch "$dir/src" "$dir/Cargo.lock" "$dir/Cargo.toml")"
   b_before="$(stat -f %m "$bin" 2>/dev/null || echo 0)"
@@ -132,7 +132,7 @@ done
 # --- 5. restart + prove -------------------------------------------------------
 for label in "${RESTART[@]:-}"; do
   [[ -n "$label" ]] || continue
-  launchctl kickstart -k "gui/$UID_/dev.lantern.$label" 2>/dev/null || fail "$label: launchctl kickstart failed (is dev.lantern.$label installed?)"
+  launchctl kickstart -k "gui/$UID_/dev.pal.$label" 2>/dev/null || fail "$label: launchctl kickstart failed (is dev.pal.$label installed?)"
 done
 sleep 3
 for label in "${RESTART[@]:-}"; do

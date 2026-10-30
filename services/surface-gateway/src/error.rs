@@ -47,15 +47,15 @@ impl AppError {
     fn error_type(&self) -> &'static str {
         match self {
             AppError::WebhookVerification(_) => {
-                "https://lantern.run/errors/webhook-verification-failed"
+                "https://pal.run/errors/webhook-verification-failed"
             }
-            AppError::BadRequest(_) => "https://lantern.run/errors/bad-request",
-            AppError::NotFound(_) => "https://lantern.run/errors/not-found",
+            AppError::BadRequest(_) => "https://pal.run/errors/bad-request",
+            AppError::NotFound(_) => "https://pal.run/errors/not-found",
             AppError::AdapterNotConfigured(_) => {
-                "https://lantern.run/errors/adapter-not-configured"
+                "https://pal.run/errors/adapter-not-configured"
             }
-            AppError::Upstream(_) => "https://lantern.run/errors/upstream",
-            AppError::Internal(_) => "https://lantern.run/errors/internal",
+            AppError::Upstream(_) => "https://pal.run/errors/upstream",
+            AppError::Internal(_) => "https://pal.run/errors/internal",
         }
     }
 
@@ -96,7 +96,7 @@ impl IntoResponse for AppError {
                 "application/problem+json",
             )],
             serde_json::to_string(&body).unwrap_or_else(|_| {
-                r#"{"type":"https://lantern.run/errors/internal","title":"Internal Server Error","status":500,"detail":"failed to serialize error"}"#.to_string()
+                r#"{"type":"https://pal.run/errors/internal","title":"Internal Server Error","status":500,"detail":"failed to serialize error"}"#.to_string()
             }),
         )
             .into_response()

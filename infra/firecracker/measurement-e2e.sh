@@ -10,7 +10,7 @@
 #   3. under enforce, snapshot -> stop -> restore (resume) succeeds and a fork
 #      (new vm id) succeeds, each reporting the source's measurement;
 #   4. the manager refuses to START with gate=enforced (typo), with a malformed
-#      reference, and with LANTERN_ENV=production + enforce + no references;
+#      reference, and with PAL_ENV=production + enforce + no references;
 #   5. no manager log contains the measurement value or an instance token.
 #
 # Self-contained, like broker-e2e.sh: own port (LISTEN_PORT, default 51055),
@@ -24,12 +24,12 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PROTO_DIR="${REPO_ROOT}/packages/proto"
-PROTO_FILE="lantern/v1/runtime.proto"
+PROTO_FILE="pal/v1/runtime.proto"
 LISTEN_PORT="${LISTEN_PORT:-51055}"
 MANAGER_ADDR="127.0.0.1:${LISTEN_PORT}"
 WORK="$(mktemp -d /tmp/measurement-e2e.XXXXXX)"
 TENANT="00000000-0000-0000-0000-000000000001"
-HARNESS_CMD="/usr/local/bin/lantern-harness"
+HARNESS_CMD="/usr/local/bin/pal-harness"
 VM_IDS=()
 RESP=""
 TOKENS=()
@@ -44,13 +44,13 @@ fail() { printf '\033[1;31m[measurement-e2e] FAIL:\033[0m %b\n' "$*" >&2; exit 1
 { [ -s "${FC_KERNEL_PATH:-}" ] && [ -s "${FC_ROOTFS_PATH:-}" ]; } || fail "FC_KERNEL_PATH/FC_ROOTFS_PATH unset"
 [ -x "${FIRECRACKER_JAILER_PATH:-}" ] || fail "FIRECRACKER_JAILER_PATH unset — the fork assertion needs the jailer"
 for t in grpcurl jq openssl; do command -v "$t" >/dev/null || fail "missing $t"; done
-MANAGER_BIN="${MANAGER_BIN:-${REPO_ROOT}/services/runtime-manager/target/release/lantern-runtime-manager}"
+MANAGER_BIN="${MANAGER_BIN:-${REPO_ROOT}/services/runtime-manager/target/release/pal-runtime-manager}"
 [ -x "${MANAGER_BIN}" ] || fail "no manager at ${MANAGER_BIN}"
 
 g() { # g <json> <method> — grpcurl to our manager
   grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" \
     -servername localhost -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
-    -H "x-lantern-service-token: e2e-token" -d "$1" "${MANAGER_ADDR}" "lantern.v1.RuntimeManager/$2"
+    -H "x-pal-service-token: e2e-token" -d "$1" "${MANAGER_ADDR}" "pal.v1.RuntimeManager/$2"
 }
 port_open() { (exec 3<>"/dev/tcp/127.0.0.1/${LISTEN_PORT}") 2>/dev/null; }
 
@@ -82,7 +82,7 @@ cleanup() {
     [ -n "${id}" ] && [ -d "${jail_root}/${id}" ] && rm -rf -- "${jail_root:?}/${id:?}"
   done
   if [ -n "${SNAPSHOT_ID}" ]; then
-    find /var/lib/lantern/snapshots -mindepth 3 -maxdepth 3 -type d -name "${SNAPSHOT_ID}" \
+    find /var/lib/pal/snapshots -mindepth 3 -maxdepth 3 -type d -name "${SNAPSHOT_ID}" \
       -exec rm -r -- {} + 2>/dev/null
   fi
   echo "manager logs kept in ${WORK}" >&2
@@ -97,7 +97,7 @@ for who in server client; do
     -subj "/CN=${who}" >/dev/null 2>&1 || fail "${who} csr"
 done
 openssl x509 -req -in "${WORK}/server.csr" -CA "${WORK}/ca.crt" -CAkey "${WORK}/ca.key" -CAcreateserial \
-  -days 1 -out "${WORK}/server.crt" -extfile <(printf 'subjectAltName=IP:127.0.0.1,DNS:localhost,DNS:manager.lantern.internal\nextendedKeyUsage=serverAuth\nbasicConstraints=CA:FALSE') >/dev/null 2>&1 || fail server
+  -days 1 -out "${WORK}/server.crt" -extfile <(printf 'subjectAltName=IP:127.0.0.1,DNS:localhost,DNS:manager.pal.internal\nextendedKeyUsage=serverAuth\nbasicConstraints=CA:FALSE') >/dev/null 2>&1 || fail server
 openssl x509 -req -in "${WORK}/client.csr" -CA "${WORK}/ca.crt" -CAkey "${WORK}/ca.key" -CAcreateserial \
   -days 1 -out "${WORK}/client.crt" -extfile <(printf 'extendedKeyUsage=clientAuth\nbasicConstraints=CA:FALSE') >/dev/null 2>&1 || fail client
 
@@ -109,16 +109,16 @@ start_manager() {
   # shellcheck disable=SC2016  # $$ expands in the child bash
   setsid bash -c 'echo $$ >"$1"; shift; exec "$@"' _ "${WORK}/pgid" env \
     RUNTIME_BACKEND=firecracker LISTEN_ADDR="0.0.0.0:${LISTEN_PORT}" LOG_LEVEL=info \
-    LANTERN_GRPC_SERVICE_TOKEN=e2e-token \
+    PAL_GRPC_SERVICE_TOKEN=e2e-token \
     FC_KERNEL_PATH="${FC_KERNEL_PATH}" FC_ROOTFS_PATH="${FC_ROOTFS_PATH}" \
     FIRECRACKER_JAILER_PATH="${FIRECRACKER_JAILER_PATH}" \
     FIRECRACKER_JAILER_UID="${FIRECRACKER_JAILER_UID:-123}" \
     FIRECRACKER_JAILER_GID="${FIRECRACKER_JAILER_GID:-100}" \
     FIRECRACKER_CHROOT_BASE="${FIRECRACKER_CHROOT_BASE:-/srv/jailer}" \
-    LANTERN_MANAGER_TLS_CA="${WORK}/ca.crt" LANTERN_MANAGER_TLS_CERT="${WORK}/server.crt" \
-    LANTERN_MANAGER_TLS_KEY="${WORK}/server.key" \
-    LANTERN_VM_SIGNING_CA_CERT="${WORK}/ca.crt" LANTERN_VM_SIGNING_CA_KEY="${WORK}/ca.key" \
-    LANTERN_VM_CERT_DIR="${WORK}/vm-certs" \
+    PAL_MANAGER_TLS_CA="${WORK}/ca.crt" PAL_MANAGER_TLS_CERT="${WORK}/server.crt" \
+    PAL_MANAGER_TLS_KEY="${WORK}/server.key" \
+    PAL_VM_SIGNING_CA_CERT="${WORK}/ca.crt" PAL_VM_SIGNING_CA_KEY="${WORK}/ca.key" \
+    PAL_VM_CERT_DIR="${WORK}/vm-certs" \
     "$@" "${MANAGER_BIN}" >"${LOG}" 2>&1 &
   for _ in $(seq 50); do [ -s "${WORK}/pgid" ] && break; sleep 0.1; done
   MANAGER_PGID="$(tr -dc 0-9 <"${WORK}/pgid" 2>/dev/null)"
@@ -138,7 +138,7 @@ spec() {
     tenant_id:$t, image_digest:"sha256:0000000000000000000000000000000000000000000000000000000000000003",
     isolation:"ISOLATION_HOSTILE", limits:{vcpu:"1", memory:"128Mi", timeout:"120s"},
     run_id:"measurement-e2e", command:[$cmd],
-    env:{MODE:$mode, LANTERN_AGENT_INSTANCE_ID:("inst-" + ($tok | explode | reverse | implode)), LANTERN_AGENT_INSTANCE_TOKEN:$tok}}'
+    env:{MODE:$mode, PAL_AGENT_INSTANCE_ID:("inst-" + ($tok | explode | reverse | implode)), PAL_AGENT_INSTANCE_TOKEN:$tok}}'
 }
 
 new_id() { tr -d '\n' </proc/sys/kernel/random/uuid; }
@@ -176,23 +176,23 @@ wait_ready() {
 refuses_start() { # refuses_start <label> <expect-substring> VAR=value...
   local label="$1" want="$2" rc=0; shift 2
   timeout 30 env RUNTIME_BACKEND=firecracker LISTEN_ADDR="127.0.0.1:$((LISTEN_PORT + 1))" \
-    LANTERN_GRPC_SERVICE_TOKEN=e2e-token "$@" "${MANAGER_BIN}" >"${WORK}/refuse.log" 2>&1 || rc=$?
+    PAL_GRPC_SERVICE_TOKEN=e2e-token "$@" "${MANAGER_BIN}" >"${WORK}/refuse.log" 2>&1 || rc=$?
   if [ "${rc}" -eq 0 ] || [ "${rc}" -eq 124 ]; then
     fail "${label}: manager did not refuse to start (rc=${rc}):\n$(tail -10 "${WORK}/refuse.log")"
   fi
   grep -qF "${want}" "${WORK}/refuse.log" || fail "${label}: refusal lacks \"${want}\":\n$(tail -10 "${WORK}/refuse.log")"
   pass "manager refuses to start: ${label}"
 }
-refuses_start "gate=enforced (typo)" "invalid LANTERN_MEASUREMENT_GATE" LANTERN_MEASUREMENT_GATE=enforced
-refuses_start "malformed reference" "invalid LANTERN_REFERENCE_MEASUREMENTS" \
-  LANTERN_MEASUREMENT_GATE=warn LANTERN_REFERENCE_MEASUREMENTS=deadbeef
-refuses_start "production + enforce + no references" "LANTERN_MEASUREMENT_GATE=enforce in production" \
-  LANTERN_ENV=production LANTERN_MEASUREMENT_GATE=enforce
+refuses_start "gate=enforced (typo)" "invalid PAL_MEASUREMENT_GATE" PAL_MEASUREMENT_GATE=enforced
+refuses_start "malformed reference" "invalid PAL_REFERENCE_MEASUREMENTS" \
+  PAL_MEASUREMENT_GATE=warn PAL_REFERENCE_MEASUREMENTS=deadbeef
+refuses_start "production + enforce + no references" "PAL_MEASUREMENT_GATE=enforce in production" \
+  PAL_ENV=production PAL_MEASUREMENT_GATE=enforce
 
 # ---------------------------------------------------------------------------
 # (1) gate=warn: two VMs from one spec measure identically.
 # ---------------------------------------------------------------------------
-start_manager warn LANTERN_MEASUREMENT_GATE=warn
+start_manager warn PAL_MEASUREMENT_GATE=warn
 pass "manager up (gate=warn)"
 T1=$(newtok); T2=$(newtok); TOKENS+=("${T1}" "${T2}")
 V1=$(new_id); V2=$(new_id)
@@ -211,7 +211,7 @@ stop_manager
 # ---------------------------------------------------------------------------
 # (2) gate=enforce with that value as the reference.
 # ---------------------------------------------------------------------------
-start_manager enforce LANTERN_MEASUREMENT_GATE=enforce LANTERN_REFERENCE_MEASUREMENTS="${M}"
+start_manager enforce PAL_MEASUREMENT_GATE=enforce PAL_REFERENCE_MEASUREMENTS="${M}"
 pass "manager up (gate=enforce, reference = the warn-run measurement)"
 T3=$(newtok); TOKENS+=("${T3}")
 SRC=$(new_id)

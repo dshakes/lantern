@@ -69,12 +69,12 @@ pub const SPAWN_CONTRACT_VERSION: u32 = 1;
 pub const SPAWN_CONTRACT_FILE: &str = "spawn.json";
 /// Harness env var for the workload uid (secrets-socket peer auth). The
 /// manager owns this value; a caller-supplied one is dropped.
-pub const ENV_WORKLOAD_UID: &str = "LANTERN_WORKLOAD_UID";
+pub const ENV_WORKLOAD_UID: &str = "PAL_WORKLOAD_UID";
 /// The same key under the PAL name (ADR 0032). Never caller-set either.
 const ENV_WORKLOAD_UID_PAL: &str = "PAL_WORKLOAD_UID";
 /// The guest's environment class. Manager-owned: `schedule`/`restore` replace
 /// any caller value with the manager's own before a backend sees the request.
-pub const ENV_LANTERN_ENV: &str = "LANTERN_ENV";
+pub const ENV_PAL_ENV: &str = "PAL_ENV";
 const DEFAULT_WORKLOAD_UID: u32 = 1000;
 
 /// The manager → harness spawn contract (`spawn.json`).
@@ -104,17 +104,17 @@ pub struct SpawnContract {
     #[serde(default)]
     pub network: Option<ContractNetwork>,
     /// Bearer token the in-guest exec server accepts for THIS incarnation
-    /// (published to the harness as `LANTERN_HARNESS_EXEC_TOKEN`, withheld
+    /// (published to the harness as `PAL_HARNESS_EXEC_TOKEN`, withheld
     /// from the workload). Minted fresh per spawn and per restore, so a
     /// superseded incarnation's token stops working when the guest
     /// re-identifies. Lives only on the 0600 cert image.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub exec_token: String,
-    /// The manager's `LANTERN_ENV` (prod/staging/dev). A typed field so the
+    /// The manager's `PAL_ENV` (prod/staging/dev). A typed field so the
     /// harness never takes its environment class from the free-form `env`
     /// map. Empty = manager has none (dev).
     #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub lantern_env: String,
+    pub pal_env: String,
     /// `"broker"` = this VM has no NIC; egress leaves over vsock to the
     /// host-side broker (ADR 0026). Empty (omitted) = legacy in-guest proxy,
     /// so a guest-mode `spawn.json` is byte-identical to before. Additive: the
@@ -153,8 +153,8 @@ pub struct ContractNetwork {
 }
 
 impl SpawnContract {
-    /// Build from the spawn request; uid/gid from `LANTERN_WORKLOAD_UID_DEFAULT`
-    /// (default 1000) / `LANTERN_WORKLOAD_GID_DEFAULT` (default = uid).
+    /// Build from the spawn request; uid/gid from `PAL_WORKLOAD_UID_DEFAULT`
+    /// (default 1000) / `PAL_WORKLOAD_GID_DEFAULT` (default = uid).
     pub fn from_schedule(req: &ScheduleRequest) -> Self {
         let env_u32 = |k: &str| std::env::var(k).ok().and_then(|v| v.trim().parse().ok());
         let uid = env_u32("PAL_WORKLOAD_UID_DEFAULT").unwrap_or(DEFAULT_WORKLOAD_UID);
@@ -170,7 +170,7 @@ impl SpawnContract {
                 .env
                 .iter()
                 .filter(|(k, _)| {
-                    ![ENV_WORKLOAD_UID, ENV_WORKLOAD_UID_PAL, ENV_LANTERN_ENV].contains(&k.as_str())
+                    ![ENV_WORKLOAD_UID, ENV_WORKLOAD_UID_PAL, ENV_PAL_ENV].contains(&k.as_str())
                 })
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
@@ -188,7 +188,7 @@ impl SpawnContract {
             egress_ca_pem: String::new(),
             vsock_egress_port: 0,
             vsock_manager_port: 0,
-            lantern_env: req.env.get(ENV_LANTERN_ENV).cloned().unwrap_or_default(),
+            pal_env: req.env.get(ENV_PAL_ENV).cloned().unwrap_or_default(),
             workload_uid,
             workload_gid,
             vm_id: String::new(),
@@ -211,7 +211,7 @@ impl SpawnContract {
 /// paths, the TAP device, the jail dir and the cert CN.
 ///
 /// ASCII alphanumerics and `-` only (the jailer's `--id` charset — and no `/`
-/// or `..`, so it cannot escape `/run/lantern/...`), at most 64 bytes, and at
+/// or `..`, so it cannot escape `/run/pal/...`), at most 64 bytes, and at
 /// least 12 hex digits so the derived MAC and TAP name have entropy. The
 /// scheduler issues `vm-<uuid>`, which passes.
 pub fn validate_vm_id(vm_id: &str) -> Result<()> {
@@ -423,7 +423,7 @@ pub struct VmConfig {
     pub guest_mac: String,
     /// vsock UDS path for host-guest communication.
     pub vsock_uds_path: String,
-    /// Snapshot directory (e.g. `/run/lantern/snapshots/<vm-id>`).
+    /// Snapshot directory (e.g. `/run/pal/snapshots/<vm-id>`).
     pub snapshot_dir: String,
     /// Per-VM certificate paths for the harness mTLS contract.
     /// Generation runs in `provision_vm_cert` (Identity phase); these are the
@@ -434,7 +434,7 @@ pub struct VmConfig {
     pub manager_ca_path: String,
     /// Host path to the read-only block image carrying this VM's cert material,
     /// attached as a dedicated drive so the in-guest `tls_cert_path` etc.
-    /// resolve. Built from the provisioned `/run/lantern/certs/<vm_id>/` tree.
+    /// resolve. Built from the provisioned `/run/pal/certs/<vm_id>/` tree.
     pub certs_image_path: String,
     /// Point-to-point addressing for this VM's TAP link.
     pub network: VmNetwork,
@@ -519,12 +519,12 @@ impl VmConfig {
             &hex[8..10],
         );
 
-        // Build kernel boot_args; inject the Lantern env contract:
-        //   LANTERN_VM_ID, LANTERN_VM_TLS_CERT/KEY, LANTERN_MANAGER_TLS_CA.
+        // Build kernel boot_args; inject the PAL env contract:
+        //   PAL_VM_ID, PAL_VM_TLS_CERT/KEY, PAL_MANAGER_TLS_CA.
         // Note: per-VM cert generation is a paired follow-up.  We thread
         // the paths here so the boot-args contract is stable.
         //
-        // LANTERN_VM_CERT_DIR overrides the default /run/lantern/certs so that
+        // PAL_VM_CERT_DIR overrides the default /run/pal/certs so that
         // non-root dev environments (tests, CI, Lima) can write cert files.
         let cert_root = std::env::var(crate::tls::ENV_VM_CERT_DIR)
             .unwrap_or_else(|_| crate::tls::DEFAULT_VM_CERT_DIR.to_string());
@@ -571,8 +571,8 @@ impl VmConfig {
             mem_size_mib,
             tap_dev: tap_name(vm_id),
             guest_mac,
-            vsock_uds_path: format!("/run/lantern/vsock/{vm_id}.sock"),
-            snapshot_dir: format!("/run/lantern/snapshots/{vm_id}"),
+            vsock_uds_path: format!("/run/pal/vsock/{vm_id}.sock"),
+            snapshot_dir: format!("/run/pal/snapshots/{vm_id}"),
             tls_cert_path,
             tls_key_path,
             manager_ca_path,
@@ -650,7 +650,7 @@ impl VmConfig {
     /// Produce the VsockDevice body for PUT /vsock.
     pub fn vsock_device(&self) -> VsockDevice {
         VsockDevice {
-            vsock_id: "lantern-vsock".to_string(),
+            vsock_id: "pal-vsock".to_string(),
             guest_cid: 3,
             uds_path: self.vsock_uds_path.clone(),
         }
@@ -708,7 +708,7 @@ pub fn parse_mem_limit(mem: &str) -> Option<u32> {
 }
 
 /// Build the kernel `console=ttyS0 …` boot_args string, injecting the
-/// Lantern env contract as kernel parameters the init process picks up.
+/// PAL env contract as kernel parameters the init process picks up.
 ///
 /// Pure function — unit-testable.
 /// Number of /30 blocks carved out of 172.16.0.0/16 (4 addresses each).
@@ -855,13 +855,13 @@ pub fn build_boot_args(
     // serial console the manager logs — a caller value here (an instance token,
     // a `DATABASE_URL` with a password) would land in the log (invariant #10).
     // Only the manager-owned keys the harness reads BEFORE `spawn.json` are
-    // emitted: LANTERN_ENV (prod-ness decides how a malformed contract is
-    // handled), plus LANTERN_MANAGER_ADDR / LANTERN_WORKLOAD_UID below.
+    // emitted: PAL_ENV (prod-ness decides how a malformed contract is
+    // handled), plus PAL_MANAGER_ADDR / PAL_WORKLOAD_UID below.
     // Harnesses that predate `spawn.json` no longer receive caller env.
     let extra_env: String = req
         .env
-        .get(ENV_LANTERN_ENV)
-        .map(|v| format!(" lantern.env.{ENV_LANTERN_ENV}={}", cmdline_value(v)))
+        .get(ENV_PAL_ENV)
+        .map(|v| format!(" pal.env.{ENV_PAL_ENV}={}", cmdline_value(v)))
         .unwrap_or_default();
 
     // Static addressing via the kernel's ip= parameter, plus the manager
@@ -886,7 +886,7 @@ pub fn build_boot_args(
         .map(|s| {
             let env = cmdline_value(&s.env_var).replace('=', "_");
             let uri = cmdline_value(&s.vault_ref);
-            format!(" lantern.secret.{env}={uri}")
+            format!(" pal.secret.{env}={uri}")
         })
         .collect();
 
@@ -896,13 +896,13 @@ pub fn build_boot_args(
     format!(
         "console=ttyS0 reboot=k panic=1 pci=off \
          {ip_param} \
-         lantern.vm_id={vm_id} \
-         lantern.run_id={run_id} \
-         lantern.tls_cert={tls_cert_path} \
-         lantern.tls_key={tls_key_path} \
-         lantern.manager_ca={manager_ca_path} \
-         lantern.env.LANTERN_MANAGER_ADDR={manager_addr}{declared_secrets}{extra_env} \
-         lantern.env.{ENV_WORKLOAD_UID}={workload_uid}"
+         pal.vm_id={vm_id} \
+         pal.run_id={run_id} \
+         pal.tls_cert={tls_cert_path} \
+         pal.tls_key={tls_key_path} \
+         pal.manager_ca={manager_ca_path} \
+         pal.env.PAL_MANAGER_ADDR={manager_addr}{declared_secrets}{extra_env} \
+         pal.env.{ENV_WORKLOAD_UID}={workload_uid}"
     )
 }
 
@@ -959,10 +959,10 @@ fn manager_local_addr() -> std::net::SocketAddr {
 }
 
 /// Broker-mode boot args: drop the kernel `ip=` (there is no NIC to address)
-/// and point `LANTERN_MANAGER_ADDR` at the manager's NAME — the harness dials
+/// and point `PAL_MANAGER_ADDR` at the manager's NAME — the harness dials
 /// it over vsock, so the address only feeds the TLS server name.
 pub fn broker_boot_args(args: &str) -> String {
-    const KEY: &str = "lantern.env.LANTERN_MANAGER_ADDR=";
+    const KEY: &str = "pal.env.PAL_MANAGER_ADDR=";
     args.split_whitespace()
         .filter(|t| !t.starts_with("ip="))
         .map(|t| match t.strip_prefix(KEY) {
@@ -2148,10 +2148,10 @@ async fn stage_jailed_artifacts(
     let mut owned_paths = vec![
         chroot_root.to_string(),
         format!("{chroot_root}/run"),
-        format!("{chroot_root}/run/lantern"),
-        format!("{chroot_root}/run/lantern/vsock"),
-        format!("{chroot_root}/run/lantern/snapshots"),
-        format!("{chroot_root}/run/lantern/snapshots/{}", cfg.vm_id),
+        format!("{chroot_root}/run/pal"),
+        format!("{chroot_root}/run/pal/vsock"),
+        format!("{chroot_root}/run/pal/snapshots"),
+        format!("{chroot_root}/run/pal/snapshots/{}", cfg.vm_id),
     ];
     for dir in [&owned_paths[3], &owned_paths[5]] {
         tokio::fs::create_dir_all(dir)
@@ -2251,8 +2251,8 @@ pub enum SnapshotSource {
 /// `HostPath` mem-file derivation: the sibling file named `mem` in the
 /// vmstate's directory.  (Deliberately NOT the legacy bare-restore's
 /// substring `replace("/snapshot", "/mem")`, which also rewrites a
-/// `/snapshots/` directory segment — e.g. `/run/lantern/snapshots/<vm>/mem`
-/// would come out as `/run/lantern/mems/<vm>/mem`.  The bare restore path is
+/// `/snapshots/` directory segment — e.g. `/run/pal/snapshots/<vm>/mem`
+/// would come out as `/run/pal/mems/<vm>/mem`.  The bare restore path is
 /// left byte-identical; this parser is consumed by the jailed path only.)
 #[must_use]
 pub fn parse_snapshot_source(snapshot_uri: &str) -> SnapshotSource {
@@ -2388,12 +2388,12 @@ pub fn plan_identity_restore(
 /// Host path for the per-VM writable rootfs copy created during an unjailed
 /// restore.  Pure — no I/O.
 ///
-/// `/run/lantern/rootfs/<vm_id>.ext4` sits outside the snapshot directory
+/// `/run/pal/rootfs/<vm_id>.ext4` sits outside the snapshot directory
 /// so it does not collide with `(snapshot, mem)` artifacts written by
 /// Firecracker's `PUT /snapshot/create`.  `cancel()` removes it on teardown.
 #[must_use]
 pub fn per_vm_rootfs_path(vm_id: &str) -> String {
-    format!("/run/lantern/rootfs/{vm_id}.ext4")
+    format!("/run/pal/rootfs/{vm_id}.ext4")
 }
 
 /// Copy the restore's disk (the snapshot's captured rootfs, or the global
@@ -2412,7 +2412,7 @@ pub fn per_vm_rootfs_path(vm_id: &str) -> String {
 /// LINUX-RUNTIME-ONLY (live path): only reached on bare Firecracker, behind
 /// the `restore_needs_stopped_source` gate.
 async fn stage_unjailed_rootfs(source_disk: &str, vm_id: &str) -> Result<String> {
-    const ROOTFS_DIR: &str = "/run/lantern/rootfs";
+    const ROOTFS_DIR: &str = "/run/pal/rootfs";
     tokio::fs::create_dir_all(ROOTFS_DIR)
         .await
         .with_context(|| format!("create unjailed rootfs dir {ROOTFS_DIR}"))?;
@@ -2499,7 +2499,7 @@ pub struct JailedSnapshotStaging {
     /// Requires the snapshot directory and the jail chroot to be on the same
     /// XFS (with `reflink=1`) or btrfs filesystem.  On ext4/tmpfs or cross-device
     /// paths `FICLONE` returns `EOPNOTSUPP`/`EXDEV` and the stage fails closed
-    /// with a typed error — unless `LANTERN_ALLOW_FULL_COPY_FORK=1` is set, which
+    /// with a typed error — unless `PAL_ALLOW_FULL_COPY_FORK=1` is set, which
     /// falls back to a full byte copy (O(n) per fork, degrades fan-out).
     pub reflinks: Vec<(String, String)>,
 }
@@ -2526,10 +2526,10 @@ impl JailedSnapshotStaging {
 /// Pure — unit-tested on any platform.
 ///
 /// The vmstate + mem artifacts land at `<chroot_root>/snapshot/{vmstate,mem}`
-/// (in-jail `/snapshot/vmstate` + `/snapshot/mem`).  The `run/lantern/...`
+/// (in-jail `/snapshot/vmstate` + `/snapshot/mem`).  The `run/pal/...`
 /// directories are pre-created exactly as at boot so the restored VM can
 /// re-bind its vsock UDS and take further snapshots under
-/// `/run/lantern/snapshots/<new_vm_id>`.
+/// `/run/pal/snapshots/<new_vm_id>`.
 #[must_use]
 pub fn plan_jailed_snapshot_staging(
     chroot_root: &str,
@@ -2542,10 +2542,10 @@ pub fn plan_jailed_snapshot_staging(
         dirs: vec![
             root.to_string(),
             format!("{root}/run"),
-            format!("{root}/run/lantern"),
-            format!("{root}/run/lantern/vsock"),
-            format!("{root}/run/lantern/snapshots"),
-            format!("{root}/run/lantern/snapshots/{new_vm_id}"),
+            format!("{root}/run/pal"),
+            format!("{root}/run/pal/vsock"),
+            format!("{root}/run/pal/snapshots"),
+            format!("{root}/run/pal/snapshots/{new_vm_id}"),
             format!("{root}{JAILED_SNAPSHOT_DIR}"),
         ],
         copies: vec![
@@ -2588,10 +2588,10 @@ pub fn plan_jailed_fork_staging(
         dirs: vec![
             root.to_string(),
             format!("{root}/run"),
-            format!("{root}/run/lantern"),
-            format!("{root}/run/lantern/vsock"),
-            format!("{root}/run/lantern/snapshots"),
-            format!("{root}/run/lantern/snapshots/{new_vm_id}"),
+            format!("{root}/run/pal"),
+            format!("{root}/run/pal/vsock"),
+            format!("{root}/run/pal/snapshots"),
+            format!("{root}/run/pal/snapshots/{new_vm_id}"),
             format!("{root}{JAILED_SNAPSHOT_DIR}"),
         ],
         copies: vec![(
@@ -2642,7 +2642,7 @@ pub fn make_mem_readonly(path: &std::path::Path) -> Result<()> {
 /// - a per-staging structured `WARN` with `disk_staging="full_copy"`, `bytes`,
 ///   `elapsed_ms` fields for dashboards / cost alerting.
 ///
-/// **Strict mode** (`LANTERN_REQUIRE_REFLINK=1`): the fallback is suppressed.
+/// **Strict mode** (`PAL_REQUIRE_REFLINK=1`): the fallback is suppressed.
 /// Instead the function removes the empty dest artifact and returns a typed
 /// error naming the filesystem requirement.  Set this on production nodes whose
 /// snapshot directory is on XFS/btrfs to guarantee CoW fork scale.
@@ -2666,7 +2666,7 @@ pub async fn reflink_file_cow(src: &str, dest: &str) -> Result<()> {
 }
 
 /// Synchronous core of [`reflink_file_cow`].  `require_reflink` mirrors
-/// `LANTERN_REQUIRE_REFLINK=1`; accepting it as a parameter lets unit tests
+/// `PAL_REQUIRE_REFLINK=1`; accepting it as a parameter lets unit tests
 /// exercise both code paths without mutating process-global env vars.
 ///
 /// See [`reflink_file_cow`] for the full contract.
@@ -2729,10 +2729,10 @@ pub(crate) fn reflink_file_cow_sync(src: &str, dest: &str, require_reflink: bool
                 bail!(
                     "disk staging: FICLONE failed on '{src}' -> '{dest}' \
                      (errno {errno} = {err}). \
-                     LANTERN_REQUIRE_REFLINK=1 is set: the snapshot directory and \
+                     PAL_REQUIRE_REFLINK=1 is set: the snapshot directory and \
                      jail chroot must be on the SAME XFS filesystem (with reflink=1 \
                      mount option) or btrfs. ext4 and tmpfs do not support reflinks. \
-                     Unset LANTERN_REQUIRE_REFLINK to fall back to a full byte copy \
+                     Unset PAL_REQUIRE_REFLINK to fall back to a full byte copy \
                      (O(n) disk I/O, degrades fork fan-out)."
                 );
             }
@@ -2753,7 +2753,7 @@ pub(crate) fn reflink_file_cow_sync(src: &str, dest: &str, require_reflink: bool
                 bytes = src_bytes,
                 elapsed_ms,
                 "disk staged via full byte copy (FICLONE unavailable — EOPNOTSUPP/EXDEV). \
-                 Set LANTERN_REQUIRE_REFLINK=1 on XFS/btrfs nodes to enforce CoW staging \
+                 Set PAL_REQUIRE_REFLINK=1 on XFS/btrfs nodes to enforce CoW staging \
                  and catch filesystem misconfigurations early."
             );
             return Ok(());
@@ -2794,7 +2794,7 @@ fn emit_full_copy_warn_once(errno: i32) {
              (EOPNOTSUPP/EXDEV). All fork/restore disk staging on this node will use \
              full byte copy (O(n) disk I/O per fork). For CoW fork scale, mount the \
              snapshot directory on XFS (mkfs.xfs -m reflink=1) or btrfs and set \
-             LANTERN_REQUIRE_REFLINK=1 to enforce it. This message appears once."
+             PAL_REQUIRE_REFLINK=1 to enforce it. This message appears once."
         );
     });
 }
@@ -2858,7 +2858,7 @@ async fn stage_jailed_snapshot(plan: &JailedSnapshotStaging, jailer: &JailerConf
     }
     // Reflink the disk image via FICLONE (O(1) CoW — shared extents until a
     // write triggers block-level copy-on-write).  Fails closed on non-reflink
-    // filesystems unless LANTERN_ALLOW_FULL_COPY_FORK=1 is set.
+    // filesystems unless PAL_ALLOW_FULL_COPY_FORK=1 is set.
     for (src, dest) in &plan.reflinks {
         reflink_file_cow(src, dest)
             .await
@@ -2873,10 +2873,10 @@ async fn stage_jailed_snapshot(plan: &JailedSnapshotStaging, jailer: &JailerConf
 }
 
 /// Local snapshot-store root.  Must mirror `SnapshotStore::from_env`
-/// (`SNAPSHOT_DIR`, default `/var/lib/lantern/snapshots`).
+/// (`SNAPSHOT_DIR`, default `/var/lib/pal/snapshots`).
 fn snapshot_store_root() -> std::path::PathBuf {
     std::path::PathBuf::from(
-        std::env::var("SNAPSHOT_DIR").unwrap_or_else(|_| "/var/lib/lantern/snapshots".to_string()),
+        std::env::var("SNAPSHOT_DIR").unwrap_or_else(|_| "/var/lib/pal/snapshots".to_string()),
     )
 }
 
@@ -3161,10 +3161,10 @@ async fn resolve_store_snapshot(
 /// at construction time so the per-call overhead is a single boolean read.
 pub struct FirecrackerBackend {
     /// Path to the Linux kernel image for microVMs.
-    /// Defaults to `/opt/lantern/vmlinux`; override with `FC_KERNEL_PATH`.
+    /// Defaults to `/opt/pal/vmlinux`; override with `FC_KERNEL_PATH`.
     kernel_image_path: String,
     /// Path to the root filesystem image.
-    /// Defaults to `/opt/lantern/rootfs.ext4`; override with `FC_ROOTFS_PATH`.
+    /// Defaults to `/opt/pal/rootfs.ext4`; override with `FC_ROOTFS_PATH`.
     rootfs_path: String,
     /// Network bridge to attach TAP devices to.
     /// Defaults to `fcbridge0`; override with `FC_BRIDGE`.
@@ -3199,7 +3199,7 @@ pub struct FirecrackerBackend {
     /// vm_id → snapshot_id that was forked from, for decrement in `cancel()`.
     // ponytail: std Mutex, held for one map op, never across an await.
     fork_snap_source: Arc<Mutex<HashMap<String, String>>>,
-    /// `LANTERN_EGRESS_MODE` (ADR 0026), read once at construction.
+    /// `PAL_EGRESS_MODE` (ADR 0026), read once at construction.
     egress_mode: EgressMode,
     /// Resolver/audit/roots for broker mode; `None` until wired by `main`.
     broker_deps: Option<BrokerDeps>,
@@ -3210,9 +3210,9 @@ pub struct FirecrackerBackend {
     /// When `None` the harness is baked into the rootfs; its measurement
     /// component is 32 zero bytes.
     harness_path: Option<String>,
-    /// Software measurement gate (ADR 0031). `LANTERN_MEASUREMENT_GATE`.
+    /// Software measurement gate (ADR 0031). `PAL_MEASUREMENT_GATE`.
     measurement_gate: crate::measurement::MeasurementGate,
-    /// Known-good measurement hex strings (`LANTERN_REFERENCE_MEASUREMENTS`).
+    /// Known-good measurement hex strings (`PAL_REFERENCE_MEASUREMENTS`).
     reference_measurements: Vec<String>,
 }
 
@@ -3249,9 +3249,9 @@ impl FirecrackerBackend {
         let available = is_available_with_probe(&probe);
 
         let kernel_image_path =
-            std::env::var("FC_KERNEL_PATH").unwrap_or_else(|_| "/opt/lantern/vmlinux".to_string());
+            std::env::var("FC_KERNEL_PATH").unwrap_or_else(|_| "/opt/pal/vmlinux".to_string());
         let rootfs_path = std::env::var("FC_ROOTFS_PATH")
-            .unwrap_or_else(|_| "/opt/lantern/rootfs.ext4".to_string());
+            .unwrap_or_else(|_| "/opt/pal/rootfs.ext4".to_string());
         let bridge_name = std::env::var("FC_BRIDGE").ok().filter(|s| !s.is_empty());
         let binary_path = probe.firecracker_binary_path;
         let jailer = JailerConfig::from_env();
@@ -3309,7 +3309,7 @@ impl FirecrackerBackend {
     }
 
     /// Wire the host-side egress broker's dependencies (ADR 0026). Required
-    /// for `LANTERN_EGRESS_MODE=broker`; schedules fail closed without it.
+    /// for `PAL_EGRESS_MODE=broker`; schedules fail closed without it.
     #[must_use]
     pub fn with_egress_broker(mut self, deps: BrokerDeps) -> Self {
         self.broker_deps = Some(deps);
@@ -3406,7 +3406,7 @@ impl FirecrackerBackend {
             return Ok(None);
         }
         if self.broker_deps.is_none() {
-            bail!("LANTERN_EGRESS_MODE=broker but the egress broker is not wired");
+            bail!("PAL_EGRESS_MODE=broker but the egress broker is not wired");
         }
         let ca = MitmCa::for_rules(&cfg.vm_id, rules)?.map(Arc::new);
         if let Some(ca) = &ca {
@@ -3946,7 +3946,7 @@ impl FirecrackerBackend {
     /// its OWN writable copy; the snapshot's captured disk is never written.
     /// The disk is staged via `FICLONE` (O(1) CoW reflink) in the jailed path —
     /// forking N VMs costs ≈0 extra disk bytes and ≈0 I/O instead of N × disk_size.
-    /// Fails closed on non-reflink FS unless `LANTERN_ALLOW_FULL_COPY_FORK=1`.
+    /// Fails closed on non-reflink FS unless `PAL_ALLOW_FULL_COPY_FORK=1`.
     async fn restore_after_tap(
         &self,
         cfg: &VmConfig,
@@ -3987,7 +3987,7 @@ impl FirecrackerBackend {
                 // snapshot's device state points at).  Use FICLONE (O(1) CoW
                 // reflink) so forking N VMs costs ≈0 extra disk bytes instead
                 // of N × disk_size.  Fails closed when the FS does not support
-                // reflinks unless LANTERN_ALLOW_FULL_COPY_FORK=1.
+                // reflinks unless PAL_ALLOW_FULL_COPY_FORK=1.
                 plan.reflinks.push((
                     disk.to_string(),
                     format!("{chroot_root}{}", jail_artifact_path(&cfg.rootfs_path)),
@@ -4217,7 +4217,7 @@ impl RuntimeBackend for FirecrackerBackend {
         // Remove the vsock UDS that Firecracker owned on this VM's behalf.
         // On restore Firecracker tries to bind the same path and fails with
         // EADDRINUSE if the stale socket from the stopped VM remains.
-        let vsock_path = format!("/run/lantern/vsock/{handle_id}.sock");
+        let vsock_path = format!("/run/pal/vsock/{handle_id}.sock");
         let _ = tokio::fs::remove_file(&vsock_path).await;
 
         // LINUX-ONLY: TAP cleanup.
@@ -4295,7 +4295,7 @@ impl RuntimeBackend for FirecrackerBackend {
         // binding it here (remove + bind) would cut that channel off.
         let vsock_path = self.host_vm_path(
             handle_id,
-            &format!("/run/lantern/vsock/{vm_id}.sock_{EVENTS_VSOCK_PORT}"),
+            &format!("/run/pal/vsock/{vm_id}.sock_{EVENTS_VSOCK_PORT}"),
         );
 
         let (tx, rx) = tokio::sync::mpsc::channel::<RuntimeEvent>(256);
@@ -4361,7 +4361,7 @@ impl RuntimeBackend for FirecrackerBackend {
         let socket_path = self.api_socket_path(&req.handle_id);
         // In-jail-relative for jailed VMs (the chrooted firecracker writes
         // them inside the jail); identical to the host path for bare VMs.
-        let snapshot_dir = format!("/run/lantern/snapshots/{}", req.handle_id);
+        let snapshot_dir = format!("/run/pal/snapshots/{}", req.handle_id);
         let snapshot_path = format!("{snapshot_dir}/snapshot");
         let mem_file_path = format!("{snapshot_dir}/mem");
 
@@ -4633,8 +4633,8 @@ mod tests {
     fn measurement_compute_error_fails_closed_only_when_enforcing() {
         use crate::measurement::MeasurementGate;
         let inp = |gate, refs: Vec<String>| MeasurementInput {
-            kernel_path: "/nonexistent/lantern-kernel".into(),
-            rootfs_path: "/nonexistent/lantern-rootfs".into(),
+            kernel_path: "/nonexistent/pal-kernel".into(),
+            rootfs_path: "/nonexistent/pal-rootfs".into(),
             harness_path: None,
             boot_args: String::new(),
             contract: SpawnContract::from_schedule(&minimal_schedule_req()),
@@ -4677,9 +4677,9 @@ mod tests {
             }
             req.env.insert("MODE".into(), mode.into());
             req.env
-                .insert("LANTERN_AGENT_INSTANCE_ID".into(), inst.into());
+                .insert("PAL_AGENT_INSTANCE_ID".into(), inst.into());
             req.env
-                .insert("LANTERN_AGENT_INSTANCE_TOKEN".into(), tok.into());
+                .insert("PAL_AGENT_INSTANCE_TOKEN".into(), tok.into());
             let cfg = VmConfig::from_schedule_in_mode(&req, k, r, EgressMode::Guest).unwrap();
             crate::measurement::compute(k, r, None, &cfg.boot_args, &cfg.spawn_contract).unwrap()
         };
@@ -4697,12 +4697,12 @@ mod tests {
     fn boot_args_carry_no_caller_env_and_no_injected_tokens() {
         let mut req = minimal_schedule_req();
         req.vm_id = Uuid::new_v4().to_string();
-        req.run_id = "run\u{2003}lantern.vm_id=evil\tx".into();
+        req.run_id = "run\u{2003}pal.vm_id=evil\tx".into();
         for (k, v) in [
-            ("LANTERN_AGENT_INSTANCE_TOKEN", "tok-SECRET"),
+            ("PAL_AGENT_INSTANCE_TOKEN", "tok-SECRET"),
             ("DATABASE_URL", "postgres://u:pw@h/x"),
             ("MODE", "fast-mode-value"),
-            ("LANTERN_ENV", "prod"),
+            ("PAL_ENV", "prod"),
         ] {
             req.env.insert(k.into(), v.into());
         }
@@ -4718,11 +4718,11 @@ mod tests {
         ] {
             assert!(!args.contains(leaked), "{leaked} in boot args: {args}");
         }
-        assert!(args.contains("lantern.env.LANTERN_ENV=prod"), "{args}");
-        assert!(args.contains("lantern.env.LANTERN_MANAGER_ADDR="), "{args}");
+        assert!(args.contains("pal.env.PAL_ENV=prod"), "{args}");
+        assert!(args.contains("pal.env.PAL_MANAGER_ADDR="), "{args}");
         assert_eq!(
             args.split_whitespace()
-                .filter(|t| t.starts_with("lantern.vm_id="))
+                .filter(|t| t.starts_with("pal.vm_id="))
                 .count(),
             1,
             "run_id whitespace injected a token: {args}"
@@ -4732,7 +4732,7 @@ mod tests {
             "postgres://u:pw@h/x"
         );
         assert_eq!(
-            cfg.spawn_contract.env["LANTERN_AGENT_INSTANCE_TOKEN"],
+            cfg.spawn_contract.env["PAL_AGENT_INSTANCE_TOKEN"],
             "tok-SECRET"
         );
     }
@@ -4869,12 +4869,12 @@ mod tests {
     #[test]
     fn vsock_device_serializes_correctly() {
         let v = VsockDevice {
-            vsock_id: "lantern-vsock".to_string(),
+            vsock_id: "pal-vsock".to_string(),
             guest_cid: 3,
             uds_path: "/tmp/vsock.sock".to_string(),
         };
         let json: serde_json::Value = serde_json::to_value(&v).unwrap();
-        assert_eq!(json["vsock_id"], "lantern-vsock");
+        assert_eq!(json["vsock_id"], "pal-vsock");
         assert_eq!(json["guest_cid"], 3);
         assert_eq!(json["uds_path"], "/tmp/vsock.sock");
     }
@@ -5315,9 +5315,9 @@ mod tests {
         assert_eq!(orphaned_tap_names(out), vec!["fc-bbbbbbbb".to_string()]);
     }
 
-    /// Only Lantern's own devices are eligible — never the host's networking.
+    /// Only PAL's own devices are eligible — never the host's networking.
     #[test]
-    fn reconcile_ignores_non_lantern_devices() {
+    fn reconcile_ignores_non_pal_devices() {
         let out = concat!(
             "lo        UNKNOWN 00:00:00:00:00:00 <LOOPBACK,UP,LOWER_UP>\n",
             "eth0      DOWN    52:54:00:12:34:56 <BROADCAST,MULTICAST>\n",
@@ -5404,10 +5404,10 @@ mod tests {
             "{args}"
         );
         assert!(
-            args.contains("lantern.env.LANTERN_MANAGER_ADDR=172.16.0.1:"),
+            args.contains("pal.env.PAL_MANAGER_ADDR=172.16.0.1:"),
             "{args}"
         );
-        assert!(!args.contains("LANTERN_MANAGER_ADDR=127.0.0.1"), "{args}");
+        assert!(!args.contains("PAL_MANAGER_ADDR=127.0.0.1"), "{args}");
     }
 
     #[test]
@@ -5424,20 +5424,20 @@ mod tests {
             1000,
         );
         assert!(args.contains("console=ttyS0"));
-        assert!(args.contains("lantern.vm_id=vm-123"));
-        assert!(args.contains("lantern.run_id=run-456"));
-        assert!(args.contains("lantern.tls_cert=/certs/vm-123/tls.crt"));
-        assert!(args.contains("lantern.tls_key=/certs/vm-123/tls.key"));
-        assert!(args.contains("lantern.manager_ca=/certs/manager-ca.crt"));
+        assert!(args.contains("pal.vm_id=vm-123"));
+        assert!(args.contains("pal.run_id=run-456"));
+        assert!(args.contains("pal.tls_cert=/certs/vm-123/tls.crt"));
+        assert!(args.contains("pal.tls_key=/certs/vm-123/tls.key"));
+        assert!(args.contains("pal.manager_ca=/certs/manager-ca.crt"));
     }
 
     #[test]
     fn boot_args_carry_only_manager_owned_env() {
         let mut req = minimal_schedule_req();
         req.env
-            .insert("LANTERN_TENANT_ID".to_string(), "t-999".to_string());
+            .insert("PAL_TENANT_ID".to_string(), "t-999".to_string());
         req.env
-            .insert("LANTERN_ENV".to_string(), "staging".to_string());
+            .insert("PAL_ENV".to_string(), "staging".to_string());
         let args = build_boot_args(
             "vm-1",
             "run-1",
@@ -5449,9 +5449,9 @@ mod tests {
             1000,
         );
         // spawn.json is the env channel; only manager-owned keys the harness
-        // reads before it (LANTERN_ENV, manager addr, uid) are on the cmdline.
+        // reads before it (PAL_ENV, manager addr, uid) are on the cmdline.
         assert!(!args.contains("t-999"), "caller env on the cmdline: {args}");
-        assert!(args.contains("lantern.env.LANTERN_ENV=staging"), "{args}");
+        assert!(args.contains("pal.env.PAL_ENV=staging"), "{args}");
     }
 
     // ---- ADR 0025: spawn contract (spawn.json) ----
@@ -5545,10 +5545,10 @@ mod tests {
             4242,
         );
         assert!(
-            args.contains("lantern.env.LANTERN_WORKLOAD_UID=4242"),
+            args.contains("pal.env.PAL_WORKLOAD_UID=4242"),
             "{args}"
         );
-        assert!(!args.contains("LANTERN_WORKLOAD_UID=0"), "{args}");
+        assert!(!args.contains("PAL_WORKLOAD_UID=0"), "{args}");
         assert!(!args.contains("PAL_WORKLOAD_UID"), "{args}");
     }
 
@@ -5586,8 +5586,8 @@ mod tests {
     fn boot_args_sanitizes_spaces_in_env_values() {
         let mut req = minimal_schedule_req();
         req.env.insert(
-            "LANTERN_ENV".to_string(),
-            "dev\u{a0}x\tlantern.vm_id=y".to_string(),
+            "PAL_ENV".to_string(),
+            "dev\u{a0}x\tpal.vm_id=y".to_string(),
         );
         let args = build_boot_args(
             "vm-1",
@@ -5602,12 +5602,12 @@ mod tests {
         // ALL whitespace (not just ASCII space) becomes `_`, so a value can
         // never split into another token.
         assert!(
-            args.contains("lantern.env.LANTERN_ENV=dev_x_lantern.vm_id=y"),
+            args.contains("pal.env.PAL_ENV=dev_x_pal.vm_id=y"),
             "sanitized value must appear: {args}"
         );
         assert_eq!(
             args.split_whitespace()
-                .filter(|t| t.starts_with("lantern.vm_id="))
+                .filter(|t| t.starts_with("pal.vm_id="))
                 .count(),
             1
         );
@@ -6107,9 +6107,9 @@ mod tests {
             j.host_path(
                 "/usr/bin/firecracker",
                 "vm-1",
-                "/run/lantern/vsock/vm-1.sock"
+                "/run/pal/vsock/vm-1.sock"
             ),
-            "/srv/jailer/firecracker/vm-1/root/run/lantern/vsock/vm-1.sock"
+            "/srv/jailer/firecracker/vm-1/root/run/pal/vsock/vm-1.sock"
         );
 
         // Trailing slash on the base + non-standard exec basename.
@@ -6123,13 +6123,13 @@ mod tests {
 
     #[test]
     fn jail_artifact_path_maps_to_root_basename() {
-        assert_eq!(jail_artifact_path("/opt/lantern/vmlinux"), "/vmlinux");
+        assert_eq!(jail_artifact_path("/opt/pal/vmlinux"), "/vmlinux");
         assert_eq!(
-            jail_artifact_path("/opt/lantern/rootfs.ext4"),
+            jail_artifact_path("/opt/pal/rootfs.ext4"),
             "/rootfs.ext4"
         );
         assert_eq!(
-            jail_artifact_path("/run/lantern/certs/vm-1/certs.img"),
+            jail_artifact_path("/run/pal/certs/vm-1/certs.img"),
             "/certs.img"
         );
     }
@@ -6188,19 +6188,19 @@ mod tests {
     #[test]
     fn mke2fs_argv_populates_from_dir_as_plain_file() {
         let argv = build_mke2fs_argv(
-            "/run/lantern/certs/vm-1/certs.img",
-            "/run/lantern/certs/vm-1/img-src",
+            "/run/pal/certs/vm-1/certs.img",
+            "/run/pal/certs/vm-1/img-src",
             1024,
         );
         // -d <dir> populates the fs; -F lets mke2fs write a plain file.
         assert!(
             argv.windows(2)
-                .any(|w| w == ["-d", "/run/lantern/certs/vm-1/img-src"])
+                .any(|w| w == ["-d", "/run/pal/certs/vm-1/img-src"])
         );
         assert!(argv.iter().any(|a| a == "-F"));
         assert!(argv.iter().any(|a| a == "ext4"));
         // image path then block count are the trailing positional args.
-        assert_eq!(argv[argv.len() - 2], "/run/lantern/certs/vm-1/certs.img");
+        assert_eq!(argv[argv.len() - 2], "/run/pal/certs/vm-1/certs.img");
         assert_eq!(argv.last().unwrap(), "1024");
     }
 
@@ -6264,8 +6264,8 @@ mod tests {
     fn snapshot_load_body_jailed_uses_in_jail_relative_paths() {
         let body = build_snapshot_load_body(
             true,
-            "/var/lib/lantern/snapshots/av/vm/id/snapshot",
-            "/var/lib/lantern/snapshots/av/vm/id/mem",
+            "/var/lib/pal/snapshots/av/vm/id/snapshot",
+            "/var/lib/pal/snapshots/av/vm/id/mem",
         );
         // In-jail RELATIVE paths only — the host staging locations must
         // never be sent to the chrooted firecracker.
@@ -6291,17 +6291,17 @@ mod tests {
     fn snapshot_load_body_bare_matches_legacy_host_path_contract() {
         let body = build_snapshot_load_body(
             false,
-            "/run/lantern/snapshots/vm-1/snapshot",
-            "/run/lantern/snapshots/vm-1/mem",
+            "/run/pal/snapshots/vm-1/snapshot",
+            "/run/pal/snapshots/vm-1/mem",
         );
         // Byte-identical to the body the pre-jailer restore always sent.
         assert_eq!(
             body,
             SnapshotLoadParams {
-                snapshot_path: "/run/lantern/snapshots/vm-1/snapshot".to_string(),
+                snapshot_path: "/run/pal/snapshots/vm-1/snapshot".to_string(),
                 mem_backend: MemBackend {
                     backend_type: "File".to_string(),
-                    backend_path: "/run/lantern/snapshots/vm-1/mem".to_string(),
+                    backend_path: "/run/pal/snapshots/vm-1/mem".to_string(),
                 },
                 enable_diff_snapshots: Some(true),
                 resume_vm: Some(true),
@@ -6325,12 +6325,12 @@ mod tests {
         // The mem file is the vmstate's SIBLING named `mem` — and the
         // `/snapshots/` directory segment must survive intact (the legacy
         // substring-replace would have mangled it to `/mems/`).
-        let fc = parse_snapshot_source("fc:///run/lantern/snapshots/vm-1/snapshot");
+        let fc = parse_snapshot_source("fc:///run/pal/snapshots/vm-1/snapshot");
         assert_eq!(
             fc,
             SnapshotSource::HostPath {
-                vmstate_path: "/run/lantern/snapshots/vm-1/snapshot".to_string(),
-                mem_path: "/run/lantern/snapshots/vm-1/mem".to_string(),
+                vmstate_path: "/run/pal/snapshots/vm-1/snapshot".to_string(),
+                mem_path: "/run/pal/snapshots/vm-1/mem".to_string(),
             }
         );
         let bare = parse_snapshot_source("/snaps/vm-2/snapshot");
@@ -6348,18 +6348,18 @@ mod tests {
         let plan = plan_jailed_snapshot_staging(
             "/srv/jailer/firecracker/vm-new/root",
             "vm-new",
-            "/var/lib/lantern/snapshots/av/vm-old/snap-1/snapshot",
-            "/var/lib/lantern/snapshots/av/vm-old/snap-1/mem",
+            "/var/lib/pal/snapshots/av/vm-old/snap-1/snapshot",
+            "/var/lib/pal/snapshots/av/vm-old/snap-1/mem",
         );
         assert_eq!(
             plan.copies,
             vec![
                 (
-                    "/var/lib/lantern/snapshots/av/vm-old/snap-1/snapshot".to_string(),
+                    "/var/lib/pal/snapshots/av/vm-old/snap-1/snapshot".to_string(),
                     "/srv/jailer/firecracker/vm-new/root/snapshot/vmstate".to_string(),
                 ),
                 (
-                    "/var/lib/lantern/snapshots/av/vm-old/snap-1/mem".to_string(),
+                    "/var/lib/pal/snapshots/av/vm-old/snap-1/mem".to_string(),
                     "/srv/jailer/firecracker/vm-new/root/snapshot/mem".to_string(),
                 ),
             ]
@@ -6372,10 +6372,10 @@ mod tests {
             vec![
                 "/srv/jailer/firecracker/vm-new/root".to_string(),
                 "/srv/jailer/firecracker/vm-new/root/run".to_string(),
-                "/srv/jailer/firecracker/vm-new/root/run/lantern".to_string(),
-                "/srv/jailer/firecracker/vm-new/root/run/lantern/vsock".to_string(),
-                "/srv/jailer/firecracker/vm-new/root/run/lantern/snapshots".to_string(),
-                "/srv/jailer/firecracker/vm-new/root/run/lantern/snapshots/vm-new".to_string(),
+                "/srv/jailer/firecracker/vm-new/root/run/pal".to_string(),
+                "/srv/jailer/firecracker/vm-new/root/run/pal/vsock".to_string(),
+                "/srv/jailer/firecracker/vm-new/root/run/pal/snapshots".to_string(),
+                "/srv/jailer/firecracker/vm-new/root/run/pal/snapshots/vm-new".to_string(),
                 "/srv/jailer/firecracker/vm-new/root/snapshot".to_string(),
             ]
         );
@@ -6569,7 +6569,7 @@ mod tests {
         );
     }
 
-    /// Strict mode (`require_reflink = true`, `LANTERN_REQUIRE_REFLINK=1`):
+    /// Strict mode (`require_reflink = true`, `PAL_REQUIRE_REFLINK=1`):
     /// on a filesystem that does not support FICLONE (EOPNOTSUPP — typical for
     /// Linux tmpfs/ext4 in CI), the function must return a typed error that
     /// mentions the filesystem requirement and must not leave a stale empty
@@ -6602,15 +6602,15 @@ mod tests {
             }
             Err(e) => {
                 // EOPNOTSUPP/EXDEV: strict mode — error message must name the
-                // LANTERN_REQUIRE_REFLINK setting and the FS requirement.
+                // PAL_REQUIRE_REFLINK setting and the FS requirement.
                 let msg = e.to_string();
                 assert!(
                     msg.contains("FICLONE") || msg.contains("XFS") || msg.contains("reflink"),
                     "error must mention reflink/XFS requirement, got: {msg}"
                 );
                 assert!(
-                    msg.contains("LANTERN_REQUIRE_REFLINK"),
-                    "error must name LANTERN_REQUIRE_REFLINK, got: {msg}"
+                    msg.contains("PAL_REQUIRE_REFLINK"),
+                    "error must name PAL_REQUIRE_REFLINK, got: {msg}"
                 );
                 // Stale empty dest must be cleaned up.
                 assert!(
@@ -6928,7 +6928,7 @@ mod tests {
         // Cert CN/SAN (issued for cfg.vm_id), harness vm_id (boot-args +
         // spawn.json) and the registry key (Handle.id = cfg.vm_id) are one id.
         assert_eq!(cfg.vm_id, WIRE);
-        assert!(cfg.boot_args.contains(&format!("lantern.vm_id={WIRE} ")));
+        assert!(cfg.boot_args.contains(&format!("pal.vm_id={WIRE} ")));
         assert_eq!(cfg.spawn_contract.vm_id, WIRE);
         assert!(cfg.certs_image_path.contains(WIRE));
         assert_eq!(cfg.tap_dev, tap_name(WIRE));
@@ -6953,13 +6953,13 @@ mod tests {
         req.secrets = vec![
             crate::proto::SecretRef {
                 alias: "K".into(),
-                vault_ref: "lantern.secret://t/K".into(),
+                vault_ref: "pal.secret://t/K".into(),
                 env_var: "K".into(),
             },
             // Undeclarable (no env var) — dropped, as on the cmdline.
             crate::proto::SecretRef {
                 alias: String::new(),
-                vault_ref: "lantern.secret://t/X".into(),
+                vault_ref: "pal.secret://t/X".into(),
                 env_var: String::new(),
             },
         ];
@@ -6968,7 +6968,7 @@ mod tests {
         assert_eq!(json["vm_id"], WIRE);
         assert_eq!(
             json["declared_secrets"],
-            serde_json::json!([{"env_name":"K","secret_uri":"lantern.secret://t/K"}])
+            serde_json::json!([{"env_name":"K","secret_uri":"pal.secret://t/K"}])
         );
         assert_eq!(json["network"]["netmask"], "255.255.255.252");
     }
@@ -6983,7 +6983,7 @@ mod tests {
             env: HashMap::from([("A".to_string(), "fork".to_string())]),
             secrets: vec![crate::proto::SecretRef {
                 alias: "K".into(),
-                vault_ref: "lantern.secret://t/K2".into(),
+                vault_ref: "pal.secret://t/K2".into(),
                 env_var: "K".into(),
             }],
             vm_id: WIRE.into(),
@@ -6999,13 +6999,13 @@ mod tests {
         let c = &cfg.spawn_contract;
         assert_eq!(c.vm_id, WIRE);
         assert_eq!(c.env["A"], "fork");
-        assert_eq!(c.declared_secrets[0].secret_uri, "lantern.secret://t/K2");
+        assert_eq!(c.declared_secrets[0].secret_uri, "pal.secret://t/K2");
         assert_eq!(c.egress_rules, req.egress_rules);
         assert!(
             c.workload_cmd.is_empty(),
             "restored workload is already running"
         );
-        assert!(cfg.boot_args.contains("lantern.run_id=run-fork-2"));
+        assert!(cfg.boot_args.contains("pal.run_id=run-fork-2"));
     }
 
     #[test]
@@ -7044,8 +7044,8 @@ mod tests {
         let plan = plan_identity_restore(
             load,
             Some("fc-aabbccdd"),
-            "/run/lantern/certs/fc-aabbccdd.img",
-            Some("/run/lantern/rootfs/fc-aabbccdd.ext4"),
+            "/run/pal/certs/fc-aabbccdd.img",
+            Some("/run/pal/rootfs/fc-aabbccdd.ext4"),
         )
         .unwrap();
         let seq: Vec<(&str, &str)> = plan.iter().map(|c| (c.method, c.path.as_str())).collect();
@@ -7061,7 +7061,7 @@ mod tests {
         );
         assert_eq!(
             plan[2].body,
-            serde_json::json!({"drive_id":"rootfs","path_on_host":"/run/lantern/rootfs/fc-aabbccdd.ext4"})
+            serde_json::json!({"drive_id":"rootfs","path_on_host":"/run/pal/rootfs/fc-aabbccdd.ext4"})
         );
         assert_eq!(plan[3].body, serde_json::json!({"state":"Resumed"}));
     }
@@ -7070,7 +7070,7 @@ mod tests {
     fn per_vm_rootfs_path_is_deterministic() {
         assert_eq!(
             per_vm_rootfs_path("fc-aabb1122"),
-            "/run/lantern/rootfs/fc-aabb1122.ext4"
+            "/run/pal/rootfs/fc-aabb1122.ext4"
         );
     }
 
@@ -7206,14 +7206,14 @@ mod tests {
         );
         assert!(
             cfg.boot_args
-                .contains(&format!("LANTERN_MANAGER_ADDR={MANAGER_HOSTNAME}:")),
+                .contains(&format!("PAL_MANAGER_ADDR={MANAGER_HOSTNAME}:")),
             "{}",
             cfg.boot_args
         );
         assert!(cfg.spawn_contract.network.is_none());
         assert_eq!(
             cfg.vsock_port_path(EGRESS_VSOCK_PORT),
-            "/run/lantern/vsock/aaaabbbbccccdddd0000111122223333.sock_3128"
+            "/run/pal/vsock/aaaabbbbccccdddd0000111122223333.sock_3128"
         );
     }
 
@@ -7270,11 +7270,11 @@ mod tests {
     #[test]
     fn broker_boot_args_rewrite() {
         let args = "console=ttyS0 ip=172.16.0.2::172.16.0.1:255.255.255.252::eth0:off \
-                    lantern.vm_id=v lantern.env.LANTERN_MANAGER_ADDR=172.16.0.1:50054 lantern.env.X=1";
+                    pal.vm_id=v pal.env.PAL_MANAGER_ADDR=172.16.0.1:50054 pal.env.X=1";
         assert_eq!(
             broker_boot_args(args),
-            "console=ttyS0 lantern.vm_id=v \
-             lantern.env.LANTERN_MANAGER_ADDR=manager.lantern.internal:50054 lantern.env.X=1"
+            "console=ttyS0 pal.vm_id=v \
+             pal.env.PAL_MANAGER_ADDR=manager.pal.internal:50054 pal.env.X=1"
         );
     }
 

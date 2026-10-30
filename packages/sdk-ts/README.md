@@ -1,15 +1,15 @@
 # @pal-runtime/sdk
 
-The official TypeScript SDK for [PAL Runtime](https://github.com/dshakes/lantern) (Personal Agentic Layer) — the open-source runtime for production AI agents with VPC deployment, pre-run cost forecasts, policy budgets, and eval-in-CI.
+The official TypeScript SDK for [PAL Runtime](https://github.com/dshakes/pal) (Personal Agentic Layer) — the open-source runtime for production AI agents with VPC deployment, pre-run cost forecasts, policy budgets, and eval-in-CI.
 
 Registry packages are not published yet: `npm install @pal-runtime/sdk` fails. Install from a checkout of the repo:
 
 ```bash
 ( cd packages/sdk-ts && npm install && npm run build )
-npm install /path/to/lantern/packages/sdk-ts      # in your project
+npm install /path/to/pal/packages/sdk-ts      # in your project
 ```
 
-> **Renamed (ADR 0032).** This package was `@lantern/sdk`. `LanternClient`, `LanternApiError`, `LanternRuntime` and every `Lantern*Error` remain as **deprecated aliases** of the `Pal*` names (same class objects, so `instanceof` works across both). The `lantern-run` bin is kept next to `pal-run`. `LANTERN_*` env vars are still read as a fallback when the `PAL_*` name is unset.
+> **Renamed (ADR 0032).** This package was `@pal/sdk`. `PalClient`, `PalApiError`, `PalRuntime` and every `PAL*Error` remain as **deprecated aliases** of the `Pal*` names (same class objects, so `instanceof` works across both). The `pal-run` bin is kept next to `pal-run`. `PAL_*` env vars are still read as a fallback when the `PAL_*` name is unset.
 
 ## Quick start
 
@@ -18,7 +18,7 @@ import { PalClient } from "@pal-runtime/sdk";
 
 const pal = new PalClient({
   apiKey: process.env.PAL_API_KEY,
-  baseURL: process.env.PAL_API_URL, // defaults to https://api.lantern.run
+  baseURL: process.env.PAL_API_URL, // defaults to https://api.pal.run
 });
 
 // 1. Create an agent
@@ -54,7 +54,7 @@ const run = await pal.runs.create({
 |---|---|
 | `pal.runs.forecast(...)` | Pre-run cost + confidence. HTTP 402 if a hard-fail budget would be exceeded. |
 | `pal.budgets.upsert(...)` | Policy-as-code: per-day cost, per-run cost, tokens/day, per-tool rate limits. |
-| `pal.evalSuites.upsert(...)` + `pal.evalRuns.record(...)` | Declarative eval suites. Record returns `{ regressed: true }` when the score drops below branch baseline. Pairs with `lantern test --against=last-green` in CI. |
+| `pal.evalSuites.upsert(...)` + `pal.evalRuns.record(...)` | Declarative eval suites. Record returns `{ regressed: true }` when the score drops below branch baseline. Pairs with `pal test --against=last-green` in CI. |
 | `pal.experiments.create(...)` | Deterministic A/B splits. Auto-promote on >2% lift. |
 | `pal.marketplace.*` | Publish / fork / star agents across tenants. |
 | `pal.sessions.*` | Interactive multi-turn agent sessions (create, send message, SSE events). |
@@ -97,11 +97,11 @@ export default agent({
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `PAL_API_URL` | `https://api.lantern.run` | Control-plane base URL |
+| `PAL_API_URL` | `https://api.pal.run` | Control-plane base URL |
 | `PAL_API_KEY` | — | API key (required) |
 | `PAL_TENANT_ID` | — | Optional tenant override (enterprise multi-tenant) |
 
-Each `PAL_*` variable falls back to its legacy `LANTERN_*` name.
+Each `PAL_*` variable falls back to its legacy `PAL_*` name.
 
 ## License
 

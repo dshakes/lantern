@@ -33,7 +33,7 @@ Network` or `ifconfig en0`). This only works when both devices are on the
 same network.
 
 **Option B — tunnel (works from anywhere)**
-If you run `lantern dev` or a reverse tunnel (ngrok, Cloudflare Tunnel, etc.),
+If you run `pal dev` or a reverse tunnel (ngrok, Cloudflare Tunnel, etc.),
 use the tunnel's public HTTPS URL:
 ```
 https://macbook-pro-2.tail0be192.ts.net
@@ -58,7 +58,7 @@ The tunnel must forward to port `8080` (the control-plane REST port).
 
 1. Open **Scriptable** on your iPhone.
 2. Tap **+** (top right) to create a new script.
-3. Paste the entire contents of `lantern-automations-widget.js` into the editor.
+3. Paste the entire contents of `pal-automations-widget.js` into the editor.
 4. At the top of the script, edit the two config lines:
 
 ```js

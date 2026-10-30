@@ -141,4 +141,4 @@ def create_journal_step_runner(journal: StepJournal) -> Callable[
 
 def get_journal_path() -> str:
     """Get the journal file path from the runtime environment."""
-    return os.environ.get("PAL_JOURNAL_PATH", "/tmp/lantern-journal.jsonl")
+    return os.environ.get("PAL_JOURNAL_PATH", "/tmp/pal-journal.jsonl")

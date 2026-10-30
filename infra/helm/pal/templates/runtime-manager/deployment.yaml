@@ -42,10 +42,10 @@ spec:
                   name: {{ include "pal.fullname" . }}-config
                   key: LOG_LEVEL
             # Fail-closed in prod-like PAL_ENV without the service token
-            # (callers present it as x-lantern-service-token). Without
+            # (callers present it as x-pal-service-token). Without
             # PAL_ENV the service assumes dev and accepts unauthenticated calls.
             - name: PAL_ENV
-              value: {{ .Values.runtimeManager.env.PAL_ENV | default .Values.runtimeManager.env.LANTERN_ENV | default "production" | quote }}
+              value: {{ .Values.runtimeManager.env.PAL_ENV | default .Values.runtimeManager.env.PAL_ENV | default "production" | quote }}
             - name: PAL_GRPC_SERVICE_TOKEN
               valueFrom:
                 secretKeyRef:

@@ -64,7 +64,7 @@ async fn main() -> anyhow::Result<()> {
         listen_addr = %config.listen_addr,
         backend = ?config.runtime_backend,
         agent_image = %config.agent_image,
-        "starting lantern-runtime-manager"
+        "starting pal-runtime-manager"
     );
 
     // ADR 0044: workload image admission (digest pinning + repo allowlist).
@@ -83,7 +83,7 @@ async fn main() -> anyhow::Result<()> {
     image_policy::install(config.image_policy.clone(), config.agent_image.clone());
 
     // Secret resolver — build() selects the relay (ADR 0008) when both
-    // LANTERN_CONTROL_PLANE_URL and LANTERN_RUNTIME_SECRET_TOKEN are set;
+    // PAL_CONTROL_PLANE_URL and PAL_RUNTIME_SECRET_TOKEN are set;
     // otherwise falls back to EnvSecretResolver (dev/CI default). Built before
     // the backend: the Firecracker egress broker resolves injected credentials
     // with it (ADR 0026).

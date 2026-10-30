@@ -49,7 +49,7 @@ Session turns are not journaled. A control-plane crash mid-turn loses that turn;
 ### SDK
 
 ```ts
-const client = new LanternClient({ apiKey: "..." });
+const client = new PalClient({ apiKey: "..." });
 
 // Create
 const session = await client.sessions.create({ agent: "my-agent" });

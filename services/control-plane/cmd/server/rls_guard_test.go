@@ -4,7 +4,7 @@ package main
 // prod-fail-closed contract without triggering os.Exit in tests.
 //
 // The table covers:
-//   (d) LANTERN_ENV=prod + RLS unset → fatal=true (the prod guard fires).
+//   (d) PAL_ENV=prod + RLS unset → fatal=true (the prod guard fires).
 //   Corollaries:
 //     - prod + enforce=1 but no password → fatal=true (incomplete config).
 //     - prod + enforce=1 + password set  → fatal=false (correctly configured).
@@ -31,7 +31,7 @@ func TestRLSGuardDecision(t *testing.T) {
 			rlsEnforce: "",
 			appPwd:     "",
 			wantFatal:  true,
-			wantMsgHas: "LANTERN_RLS_ENFORCE",
+			wantMsgHas: "PAL_RLS_ENFORCE",
 		},
 		{
 			name:       "prod_enforce_but_no_pwd",
@@ -39,7 +39,7 @@ func TestRLSGuardDecision(t *testing.T) {
 			rlsEnforce: "1",
 			appPwd:     "",
 			wantFatal:  true,
-			wantMsgHas: "LANTERN_APP_DB_PASSWORD",
+			wantMsgHas: "PAL_APP_DB_PASSWORD",
 		},
 		{
 			name:       "prod_fully_configured",
@@ -55,7 +55,7 @@ func TestRLSGuardDecision(t *testing.T) {
 			rlsEnforce: "true",
 			appPwd:     "s3cr3t",
 			wantFatal:  true, // must be exactly "1"
-			wantMsgHas: "LANTERN_RLS_ENFORCE",
+			wantMsgHas: "PAL_RLS_ENFORCE",
 		},
 
 		// --- dev cases (advisory only, never fatal) ---
@@ -65,7 +65,7 @@ func TestRLSGuardDecision(t *testing.T) {
 			rlsEnforce: "",
 			appPwd:     "",
 			wantFatal:  false,
-			wantMsgHas: "LANTERN_RLS_ENFORCE", // warn present
+			wantMsgHas: "PAL_RLS_ENFORCE", // warn present
 		},
 		{
 			name:       "dev_enforce_but_no_pwd",
@@ -73,7 +73,7 @@ func TestRLSGuardDecision(t *testing.T) {
 			rlsEnforce: "1",
 			appPwd:     "",
 			wantFatal:  false,
-			wantMsgHas: "LANTERN_RLS_ENFORCE", // warn present
+			wantMsgHas: "PAL_RLS_ENFORCE", // warn present
 		},
 		{
 			name:       "dev_fully_configured",

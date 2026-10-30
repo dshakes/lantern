@@ -17,8 +17,8 @@
 //!   workloads inside the repos the admission policy and signing identities
 //!   cover.
 //!
-//! `PAL_VERIFY_SIGNATURES` (`LANTERN_` alias via `pal_env`): `on` | `off`;
-//! default ON when `LANTERN_ENV` is prod/production/staging, OFF otherwise.
+//! `PAL_VERIFY_SIGNATURES` (`PAL_` alias via `pal_env`): `on` | `off`;
+//! default ON when `PAL_ENV` is prod/production/staging, OFF otherwise.
 //! An explicit `off` in prod is honoured (documented migration valve) but
 //! logged at ERROR on every start. An unparseable value fails closed.
 //!
@@ -170,14 +170,14 @@ mod tests {
     }
 
     // Regression: from_env once passed the bare suffix to pal_env, so neither
-    // PAL_ nor LANTERN_ names were ever read. Only the allowlist var is set
+    // PAL_ nor PAL_ names were ever read. Only the allowlist var is set
     // here — `enforce` is untouched, so a concurrent lazy `admit()` init in
     // another test cannot change behaviour.
     #[test]
-    fn from_env_reads_pal_and_lantern_names() {
+    fn from_env_reads_pal_and_pal_names() {
         // SAFETY: no other test reads or writes these two variables' values in a
         // way that affects its outcome (see comment above).
-        unsafe { std::env::set_var("LANTERN_IMAGE_ALLOWED_REPOS", "ghcr.io/legacy") };
+        unsafe { std::env::set_var("PAL_IMAGE_ALLOWED_REPOS", "ghcr.io/legacy") };
         assert_eq!(
             ImagePolicy::from_env().unwrap().allowed_repos,
             ["ghcr.io/legacy"]
@@ -189,7 +189,7 @@ mod tests {
         );
         unsafe {
             std::env::remove_var("PAL_IMAGE_ALLOWED_REPOS");
-            std::env::remove_var("LANTERN_IMAGE_ALLOWED_REPOS");
+            std::env::remove_var("PAL_IMAGE_ALLOWED_REPOS");
         }
     }
 
@@ -234,7 +234,7 @@ mod tests {
         assert!(p.check("k8s", D, &pinned).is_ok());
         assert!(p.check("k8s", "", &pinned).is_ok());
         assert!(
-            p.check("k8s", D, "ghcr.io/lantern/agent-runner:latest")
+            p.check("k8s", D, "ghcr.io/pal/agent-runner:latest")
                 .is_err()
         );
         assert!(p.check("k8s", "sha256:nothex", &pinned).is_err());

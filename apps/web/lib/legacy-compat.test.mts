@@ -18,25 +18,25 @@ function run(store: Map<string, string>) {
   return doc.documentElement.dataset.theme;
 }
 
-test("legacy lantern-* / lantern_* localStorage keys migrate to pal-*", () => {
-  const s = new Map([["lantern-theme", "light"], ["lantern_token", "tok"], ["lantern_chat_a", "x"]]);
+test("legacy pal-* / pal_* localStorage keys migrate to pal-*", () => {
+  const s = new Map([["pal-theme", "light"], ["pal_token", "tok"], ["pal_chat_a", "x"]]);
   assert.equal(run(s), "light");
   assert.equal(s.get("pal_token"), "tok");
   assert.equal(s.get("pal_chat_a"), "x");
 });
 
 test("an existing pal key is never overwritten by a legacy one", () => {
-  const s = new Map([["lantern-theme", "light"], ["pal-theme", "dark"]]);
+  const s = new Map([["pal-theme", "light"], ["pal-theme", "dark"]]);
   assert.equal(run(s), "dark");
 });
 
-test("stateDir: PAL_STATE_DIR > ~/.pal if present > ~/.lantern", () => {
+test("stateDir: PAL_STATE_DIR > ~/.pal if present > ~/.pal", () => {
   const home = mkdtempSync(join(tmpdir(), "palhome-"));
   const saved = { HOME: process.env.HOME, S: process.env.PAL_STATE_DIR };
   try {
     process.env.HOME = home;
     delete process.env.PAL_STATE_DIR;
-    assert.equal(stateDir(), join(home, ".lantern"));
+    assert.equal(stateDir(), join(home, ".pal"));
     mkdirSync(join(home, ".pal"));
     assert.equal(stateDir(), join(home, ".pal"));
     process.env.PAL_STATE_DIR = "/x/y";

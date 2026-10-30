@@ -1,11 +1,11 @@
 [package]
-name = "lantern-harness"
+name = "pal-harness"
 version = "0.1.0"
 edition = "2024"
-description = "Lantern RuntimeHarness — PID 1 init process running inside every Lantern microVM"
+description = "PAL RuntimeHarness — PID 1 init process running inside every PAL microVM"
 
 [[bin]]
-name = "lantern-harness"
+name = "pal-harness"
 path = "src/main.rs"
 
 [dependencies]
@@ -22,7 +22,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # the distributed trace started by the control-plane at spawn time.
 # No OTLP exporter here: the harness forwards raw OTLP bytes via the Report
 # stream, so the OTel pipeline for workload spans is in the workload itself.
-# We only need the propagation API to read LANTERN_TRACE_PARENT and inject
+# We only need the propagation API to read PAL_TRACE_PARENT and inject
 # traceparent into outgoing gRPC calls to the manager.
 opentelemetry = { version = "0.27", features = ["trace"] }
 opentelemetry_sdk = { version = "0.27" }

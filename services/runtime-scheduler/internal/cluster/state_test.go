@@ -6,8 +6,8 @@ import (
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/cluster"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/cluster"
 )
 
 // TestUpsertNode_RoundTripsCCFields verifies the confidential-compute capability
@@ -45,9 +45,9 @@ func TestReservation_CreateVMReducesEffectiveCapacity(t *testing.T) {
 	})
 
 	vm := &cluster.VM{
-		Handle:   &lanternv1.VmHandle{VmId: "vm-1", Node: "n1", CreatedAt: timestamppb.Now()},
-		Spec:     &lanternv1.AgentSpec{TenantId: "t1", Limits: &lanternv1.ResourceLimits{Vcpu: "2", Memory: "4Gi"}},
-		State:    lanternv1.VmState_VM_STATE_PENDING,
+		Handle:   &palv1.VmHandle{VmId: "vm-1", Node: "n1", CreatedAt: timestamppb.Now()},
+		Spec:     &palv1.AgentSpec{TenantId: "t1", Limits: &palv1.ResourceLimits{Vcpu: "2", Memory: "4Gi"}},
+		State:    palv1.VmState_VM_STATE_PENDING,
 		TenantID: "t1",
 		NodeName: "n1",
 	}
@@ -77,9 +77,9 @@ func TestReservation_DeleteVMReleasesCapacity(t *testing.T) {
 		LastHeartbeat:   time.Now(),
 	})
 	vm := &cluster.VM{
-		Handle:   &lanternv1.VmHandle{VmId: "vm-2", Node: "n1", CreatedAt: timestamppb.Now()},
-		Spec:     &lanternv1.AgentSpec{TenantId: "t1", Limits: &lanternv1.ResourceLimits{Vcpu: "2", Memory: "4Gi"}},
-		State:    lanternv1.VmState_VM_STATE_PENDING,
+		Handle:   &palv1.VmHandle{VmId: "vm-2", Node: "n1", CreatedAt: timestamppb.Now()},
+		Spec:     &palv1.AgentSpec{TenantId: "t1", Limits: &palv1.ResourceLimits{Vcpu: "2", Memory: "4Gi"}},
+		State:    palv1.VmState_VM_STATE_PENDING,
 		TenantID: "t1",
 		NodeName: "n1",
 	}
@@ -99,9 +99,9 @@ func TestReservation_DeleteVMReleasesCapacity(t *testing.T) {
 // newRunningVM seeds a RUNNING VM with IdleTimeoutSecs set.
 func newRunningVM(id, tenant string, idleTimeout int32) *cluster.VM {
 	return &cluster.VM{
-		Handle:          &lanternv1.VmHandle{VmId: id},
-		Spec:            &lanternv1.AgentSpec{TenantId: tenant, IdleTimeoutSecs: idleTimeout},
-		State:           lanternv1.VmState_VM_STATE_RUNNING,
+		Handle:          &palv1.VmHandle{VmId: id},
+		Spec:            &palv1.AgentSpec{TenantId: tenant, IdleTimeoutSecs: idleTimeout},
+		State:           palv1.VmState_VM_STATE_RUNNING,
 		TenantID:        tenant,
 		NodeName:        "n1",
 		IdleTimeoutSecs: idleTimeout,
@@ -123,9 +123,9 @@ func TestUpdateVMActivity_StaleGuestTimestampAfterResume(t *testing.T) {
 
 	// Create as PAUSED — the VM was previously idle-suspended.
 	paused := &cluster.VM{
-		Handle:          &lanternv1.VmHandle{VmId: "vm-1"},
-		Spec:            &lanternv1.AgentSpec{TenantId: "t1", IdleTimeoutSecs: 60},
-		State:           lanternv1.VmState_VM_STATE_PAUSED,
+		Handle:          &palv1.VmHandle{VmId: "vm-1"},
+		Spec:            &palv1.AgentSpec{TenantId: "t1", IdleTimeoutSecs: 60},
+		State:           palv1.VmState_VM_STATE_PAUSED,
 		TenantID:        "t1",
 		NodeName:        "n1",
 		IdleTimeoutSecs: 60,
@@ -138,8 +138,8 @@ func TestUpdateVMActivity_StaleGuestTimestampAfterResume(t *testing.T) {
 
 	// Resume: transitions PAUSED→RUNNING — this must reset LastActivityAt.
 	ok := s.TransitionVMState("vm-1",
-		lanternv1.VmState_VM_STATE_PAUSED, "",
-		lanternv1.VmState_VM_STATE_RUNNING, "resume",
+		palv1.VmState_VM_STATE_PAUSED, "",
+		palv1.VmState_VM_STATE_RUNNING, "resume",
 		receiveTime,
 	)
 	if !ok {
@@ -265,9 +265,9 @@ func TestUpdateVMActivity_NoChangeSignal_DoesNotAdvanceClock(t *testing.T) {
 func TestTransitionToRunning_ResetsLastActivityAt(t *testing.T) {
 	s := cluster.NewInMemoryStore()
 	vm := &cluster.VM{
-		Handle:          &lanternv1.VmHandle{VmId: "vm-5"},
-		Spec:            &lanternv1.AgentSpec{IdleTimeoutSecs: 30},
-		State:           lanternv1.VmState_VM_STATE_PAUSED,
+		Handle:          &palv1.VmHandle{VmId: "vm-5"},
+		Spec:            &palv1.AgentSpec{IdleTimeoutSecs: 30},
+		State:           palv1.VmState_VM_STATE_PAUSED,
 		TenantID:        "t1",
 		NodeName:        "n1",
 		IdleTimeoutSecs: 30,
@@ -277,8 +277,8 @@ func TestTransitionToRunning_ResetsLastActivityAt(t *testing.T) {
 
 	// Simulate operator resume.
 	s.TransitionVMState("vm-5",
-		lanternv1.VmState_VM_STATE_PAUSED, "",
-		lanternv1.VmState_VM_STATE_RUNNING, "resume",
+		palv1.VmState_VM_STATE_PAUSED, "",
+		palv1.VmState_VM_STATE_RUNNING, "resume",
 		time.Now(),
 	)
 	got, _ := s.GetVM("vm-5")
@@ -296,9 +296,9 @@ func TestIdleSweeper_NoSuspendAfterResume(t *testing.T) {
 
 	// VM that was idling before resume: give it a stale LastActivityAt.
 	vm := &cluster.VM{
-		Handle:          &lanternv1.VmHandle{VmId: "vm-r", Node: "n1"},
-		Spec:            &lanternv1.AgentSpec{IdleTimeoutSecs: 60},
-		State:           lanternv1.VmState_VM_STATE_RUNNING,
+		Handle:          &palv1.VmHandle{VmId: "vm-r", Node: "n1"},
+		Spec:            &palv1.AgentSpec{IdleTimeoutSecs: 60},
+		State:           palv1.VmState_VM_STATE_RUNNING,
 		TenantID:        "t1",
 		NodeName:        "n1",
 		IdleTimeoutSecs: 60,
@@ -335,9 +335,9 @@ func TestReservation_HeartbeatClearsReservation(t *testing.T) {
 		LastHeartbeat:   time.Now(),
 	})
 	vm := &cluster.VM{
-		Handle:   &lanternv1.VmHandle{VmId: "vm-3", Node: "n1", CreatedAt: timestamppb.Now()},
-		Spec:     &lanternv1.AgentSpec{TenantId: "t1", Limits: &lanternv1.ResourceLimits{Vcpu: "2", Memory: "4Gi"}},
-		State:    lanternv1.VmState_VM_STATE_PENDING,
+		Handle:   &palv1.VmHandle{VmId: "vm-3", Node: "n1", CreatedAt: timestamppb.Now()},
+		Spec:     &palv1.AgentSpec{TenantId: "t1", Limits: &palv1.ResourceLimits{Vcpu: "2", Memory: "4Gi"}},
+		State:    palv1.VmState_VM_STATE_PENDING,
 		TenantID: "t1",
 		NodeName: "n1",
 	}
@@ -370,9 +370,9 @@ func TestReservation_TwoVMsOnSameNode(t *testing.T) {
 	for i, vmID := range []string{"vm-a", "vm-b"} {
 		_ = i
 		vm := &cluster.VM{
-			Handle:   &lanternv1.VmHandle{VmId: vmID, Node: "n1", CreatedAt: timestamppb.Now()},
-			Spec:     &lanternv1.AgentSpec{TenantId: "t1", Limits: &lanternv1.ResourceLimits{Vcpu: "2"}},
-			State:    lanternv1.VmState_VM_STATE_PENDING,
+			Handle:   &palv1.VmHandle{VmId: vmID, Node: "n1", CreatedAt: timestamppb.Now()},
+			Spec:     &palv1.AgentSpec{TenantId: "t1", Limits: &palv1.ResourceLimits{Vcpu: "2"}},
+			State:    palv1.VmState_VM_STATE_PENDING,
 			TenantID: "t1",
 			NodeName: "n1",
 		}
@@ -391,9 +391,9 @@ func TestReservation_TwoVMsOnSameNode(t *testing.T) {
 func TestSetVMMeasurement_CopyOnWrite(t *testing.T) {
 	s := cluster.NewInMemoryStore()
 	s.CreateVM(&cluster.VM{
-		Handle:   &lanternv1.VmHandle{VmId: "vm-m", Node: "n1", CreatedAt: timestamppb.Now()},
-		Spec:     &lanternv1.AgentSpec{TenantId: "t1"},
-		State:    lanternv1.VmState_VM_STATE_PENDING,
+		Handle:   &palv1.VmHandle{VmId: "vm-m", Node: "n1", CreatedAt: timestamppb.Now()},
+		Spec:     &palv1.AgentSpec{TenantId: "t1"},
+		State:    palv1.VmState_VM_STATE_PENDING,
 		TenantID: "t1",
 		NodeName: "n1",
 	})

@@ -1,14 +1,14 @@
 # Env vars are emitted as PAL_* (ADR 0032). The binaries still accept the legacy
-# LANTERN_* names, so existing overrides keep working; PAL_* wins if both are set.
+# PAL_* names, so existing overrides keep working; PAL_* wins if both are set.
 #
 # Upgrading a release created before the PAL rename (ADR 0032): the chart name changed, so
-# resource names change with it (release "lantern" -> "lantern-<chart>"). To keep the old
+# resource names change with it (release "pal" -> "pal-<chart>"). To keep the old
 # names, and the Postgres/MinIO PVCs bound to them, pass --set fullnameOverride=<old fullname>.
 #
 global:
   image:
     registry: ghcr.io
-    repository: dshakes/lantern
+    repository: dshakes/pal
     tag: "0.1.0"
     pullPolicy: IfNotPresent
   logLevel: info
@@ -166,8 +166,8 @@ postgresql:
     repository: pgvector/pgvector      # pgvector is a hard requirement
     tag: 0.8.0-pg16
   auth:                                # also the user/db names used with externalDatabase
-    username: lantern
-    database: lantern
+    username: pal
+    database: pal
   persistence:
     size: 10Gi
     storageClass: ""
@@ -193,8 +193,8 @@ minio:                                 # S3-compatible store (SeaweedFS image; n
     repository: chrislusf/seaweedfs
     tag: "3.80"
   auth:
-    rootUser: lantern                  # secret key is secrets.minioPassword
-  defaultBuckets: "lantern-bundles,lantern-snapshots,lantern-dev,lantern-backups"
+    rootUser: pal                  # secret key is secrets.minioPassword
+  defaultBuckets: "pal-bundles,pal-snapshots,pal-dev,pal-backups"
   persistence:
     size: 10Gi
     storageClass: ""
@@ -206,19 +206,19 @@ externalS3:                            # used when minio.enabled=false
   endpoint: ""                         # e.g. https://s3.us-east-1.amazonaws.com
   region: us-east-1                    # must match the bucket region (SigV4 signs it)
   accessKeyId: ""                      # secret key is secrets.minioPassword
-  bucket: lantern-dev
+  bucket: pal-dev
 
 ingress:
   enabled: false
   className: nginx
   annotations: {}
   hosts:
-    - host: api.lantern.run
+    - host: api.pal.run
       paths:
         - path: /
           pathType: Prefix
           service: gateway
-    - host: app.lantern.run
+    - host: app.pal.run
       paths:
         - path: /
           pathType: Prefix
@@ -302,7 +302,7 @@ backup:
   schedule: "0 2 * * *"            # 02:00 daily (cluster TZ)
   image: pgvector/pgvector:pg16    # must match the server major version
   uploaderImage: amazon/aws-cli:2.15.17
-  s3Bucket: lantern-backups
+  s3Bucket: pal-backups
   s3Endpoint: ""                   # "" = AWS S3; with useChartMinio=true the release's MinIO is used
   s3Region: us-east-1
   retentionDays: 14
@@ -323,8 +323,8 @@ secrets:
   # Required in prod by the scheduler (REST heartbeat auth).
   schedulerNodeToken: ""
   appDbPassword: ""
-  postgresPassword: "lantern"
-  minioPassword: "lanternsecret"
+  postgresPassword: "pal"
+  minioPassword: "palsecret"
 
 serviceAccount:
   create: true
@@ -355,7 +355,7 @@ monitoring:
   slos:
     control-plane-api-availability:
       service: control-plane
-      job: (pal|lantern)-control-plane
+      job: (pal|pal)-control-plane
       objective: 0.999
       minEventsPerHour: 0
       expectTraffic: true
@@ -367,7 +367,7 @@ monitoring:
         sum(rate(http_server_request_duration_seconds_count{__J__,pal_traffic="api"}[__W__]))
     control-plane-api-latency:
       service: control-plane
-      job: (pal|lantern)-control-plane
+      job: (pal|pal)-control-plane
       objective: 0.99
       minEventsPerHour: 0
       expectTraffic: true
@@ -379,97 +379,97 @@ monitoring:
         sum(rate(http_server_request_duration_seconds_count{__J__,pal_traffic="api"}[__W__]))
     run-success:
       service: control-plane
-      job: (pal|lantern)-control-plane
+      job: (pal|pal)-control-plane
       objective: 0.98
       minEventsPerHour: 10
       expectTraffic: false
       runbook: slo-run-success.md
       description: "Inline-executor runs that finish succeeded rather than failed. Includes agent-logic failures: it is a product-health SLI, not purely a platform one."
       bad: |-
-        sum(rate(lantern_run_total{__J__,lantern_status="failed"}[__W__]))
+        sum(rate(pal_run_total{__J__,pal_status="failed"}[__W__]))
       total: |-
-        sum(rate(lantern_run_total{__J__}[__W__]))
+        sum(rate(pal_run_total{__J__}[__W__]))
     scheduling-availability:
       service: runtime-scheduler
-      job: (pal|lantern)-runtime-scheduler
+      job: (pal|pal)-runtime-scheduler
       objective: 0.995
       minEventsPerHour: 10
       expectTraffic: false
       runbook: slo-scheduling.md
       description: "Schedule RPCs that place a VM rather than error. Quota rejections and standby replies are not failures."
       bad: |-
-        sum(rate(lantern_scheduler_schedule_total{__J__,result="error"}[__W__]))
+        sum(rate(pal_scheduler_schedule_total{__J__,result="error"}[__W__]))
       total: |-
-        sum(rate(lantern_scheduler_schedule_total{__J__,result=~"ok|error"}[__W__]))
+        sum(rate(pal_scheduler_schedule_total{__J__,result=~"ok|error"}[__W__]))
     scheduling-latency:
       service: runtime-scheduler
-      job: (pal|lantern)-runtime-scheduler
+      job: (pal|pal)-runtime-scheduler
       objective: 0.99
       minEventsPerHour: 10
       expectTraffic: false
       runbook: slo-scheduling.md
       description: "Successful Schedule RPCs answered in under 1s (placement decision; spawn dispatch is async)."
       bad: |-
-        sum(rate(lantern_scheduler_schedule_duration_seconds_count{__J__,result="ok"}[__W__])) - sum(rate(lantern_scheduler_schedule_duration_seconds_bucket{__J__,result="ok",le="1"}[__W__]))
+        sum(rate(pal_scheduler_schedule_duration_seconds_count{__J__,result="ok"}[__W__])) - sum(rate(pal_scheduler_schedule_duration_seconds_bucket{__J__,result="ok",le="1"}[__W__]))
       total: |-
-        sum(rate(lantern_scheduler_schedule_duration_seconds_count{__J__,result="ok"}[__W__]))
+        sum(rate(pal_scheduler_schedule_duration_seconds_count{__J__,result="ok"}[__W__]))
     model-router-errors:
       service: model-router
-      job: (pal|lantern)-model-router
+      job: (pal|pal)-model-router
       objective: 0.995
       minEventsPerHour: 20
       expectTraffic: false
       runbook: slo-model-router-errors.md
       description: "ModelService RPCs that succeed. Caller errors (invalid argument, auth) are excluded; provider exhaustion, timeouts and unavailability count as failures."
       bad: |-
-        sum(rate(lantern_model_router_requests_total{__J__,outcome="error"}[__W__]))
+        sum(rate(pal_model_router_requests_total{__J__,outcome="error"}[__W__]))
       total: |-
-        sum(rate(lantern_model_router_requests_total{__J__,outcome=~"ok|error"}[__W__]))
+        sum(rate(pal_model_router_requests_total{__J__,outcome=~"ok|error"}[__W__]))
     microvm-spawn-availability:
       service: runtime-manager
-      job: (pal|lantern)-runtime-manager
+      job: (pal|pal)-runtime-manager
       objective: 0.995
       minEventsPerHour: 10
       expectTraffic: false
       runbook: slo-microvm-spawn.md
       description: "RuntimeManager.Spawn calls (cold boot and snapshot restore) that boot a VM rather than error."
       bad: |-
-        sum(rate(lantern_manager_spawn_duration_seconds_count{__J__,outcome="error"}[__W__]))
+        sum(rate(pal_manager_spawn_duration_seconds_count{__J__,outcome="error"}[__W__]))
       total: |-
-        sum(rate(lantern_manager_spawn_duration_seconds_count{__J__}[__W__]))
+        sum(rate(pal_manager_spawn_duration_seconds_count{__J__}[__W__]))
     microvm-cold-boot-latency:
       service: runtime-manager
-      job: (pal|lantern)-runtime-manager
+      job: (pal|pal)-runtime-manager
       objective: 0.95
       minEventsPerHour: 10
       expectTraffic: false
       runbook: slo-microvm-spawn.md
       description: "Successful cold boots completed in under 5s."
       bad: |-
-        sum(rate(lantern_manager_spawn_duration_seconds_count{__J__,kind="cold",outcome="ok"}[__W__])) - sum(rate(lantern_manager_spawn_duration_seconds_bucket{__J__,kind="cold",outcome="ok",le="5"}[__W__]))
+        sum(rate(pal_manager_spawn_duration_seconds_count{__J__,kind="cold",outcome="ok"}[__W__])) - sum(rate(pal_manager_spawn_duration_seconds_bucket{__J__,kind="cold",outcome="ok",le="5"}[__W__]))
       total: |-
-        sum(rate(lantern_manager_spawn_duration_seconds_count{__J__,kind="cold",outcome="ok"}[__W__]))
+        sum(rate(pal_manager_spawn_duration_seconds_count{__J__,kind="cold",outcome="ok"}[__W__]))
     microvm-restore-latency:
       service: runtime-manager
-      job: (pal|lantern)-runtime-manager
+      job: (pal|pal)-runtime-manager
       objective: 0.99
       minEventsPerHour: 10
       expectTraffic: false
       runbook: slo-microvm-spawn.md
       description: "Successful snapshot restores completed in under 2s."
       bad: |-
-        sum(rate(lantern_manager_spawn_duration_seconds_count{__J__,kind="restore",outcome="ok"}[__W__])) - sum(rate(lantern_manager_spawn_duration_seconds_bucket{__J__,kind="restore",outcome="ok",le="2"}[__W__]))
+        sum(rate(pal_manager_spawn_duration_seconds_count{__J__,kind="restore",outcome="ok"}[__W__])) - sum(rate(pal_manager_spawn_duration_seconds_bucket{__J__,kind="restore",outcome="ok",le="2"}[__W__]))
       total: |-
-        sum(rate(lantern_manager_spawn_duration_seconds_count{__J__,kind="restore",outcome="ok"}[__W__]))
+        sum(rate(pal_manager_spawn_duration_seconds_count{__J__,kind="restore",outcome="ok"}[__W__]))
     egress-broker-errors:
       service: runtime-manager
-      job: (pal|lantern)-runtime-manager
+      job: (pal|pal)-runtime-manager
       objective: 0.995
       minEventsPerHour: 50
       expectTraffic: false
       runbook: slo-egress-broker.md
       description: "Egress broker decisions that are not a platform fault. Policy denies are correct behaviour and count as good; DNS, upstream-connect and credential-resolution failures count as bad."
       bad: |-
-        sum(rate(lantern_egress_broker_decisions_total{__J__,outcome="error"}[__W__]))
+        sum(rate(pal_egress_broker_decisions_total{__J__,outcome="error"}[__W__]))
       total: |-
-        sum(rate(lantern_egress_broker_decisions_total{__J__}[__W__]))
+        sum(rate(pal_egress_broker_decisions_total{__J__}[__W__]))

@@ -134,7 +134,7 @@ interface WhatsAppPairingProps {
 // ---------------------------------------------------------------------------
 //
 // All REST calls to the bridge go through the server-side Route Handler at
-// /api/bridge/whatsapp/... which injects the LANTERN_BRIDGE_TOKEN server env
+// /api/bridge/whatsapp/... which injects the PAL_BRIDGE_TOKEN server env
 // var.  The token never reaches the browser.
 
 // Route all fetch calls through the same-origin proxy.
@@ -650,7 +650,7 @@ export function WhatsAppPairing({
       );
       if (statusRes.status === 401) {
         setState("auth_required");
-        setStateReason("Bridge rejected the shared token (check LANTERN_BRIDGE_TOKEN on the server).");
+        setStateReason("Bridge rejected the shared token (check PAL_BRIDGE_TOKEN on the server).");
         return;
       }
       if (!statusRes.ok) {
@@ -877,7 +877,7 @@ export function WhatsAppPairing({
       });
       if (res.status === 401) {
         setState("auth_required");
-        setStateReason("Bridge rejected the shared token (check LANTERN_BRIDGE_TOKEN on the server).");
+        setStateReason("Bridge rejected the shared token (check PAL_BRIDGE_TOKEN on the server).");
         return;
       }
       if (!res.ok) {
@@ -1174,7 +1174,7 @@ export function WhatsAppPairing({
               <p className="text-[12px] leading-relaxed text-zinc-400">
                 {stateReason ?? "Add the token to your dashboard env and reload."}
               </p>
-              <CopyableCommand cmd="LANTERN_BRIDGE_TOKEN=<same as bridge LANTERN_BRIDGE_TOKEN>" />
+              <CopyableCommand cmd="PAL_BRIDGE_TOKEN=<same as bridge PAL_BRIDGE_TOKEN>" />
             </div>
           </div>
           <Button onClick={probeBridge} icon={<RefreshCw className="h-3 w-3" />} size="sm">
@@ -1356,9 +1356,9 @@ export function WhatsAppPairing({
             </header>
             <ul className="space-y-2 text-[12px]">
               {[
-                { cmd: "/lantern status", what: "Bridge uptime, agent state, last error if any." },
-                { cmd: "/lantern ping", what: "Quickest health check — replies with 🏓 reaction." },
-                { cmd: "/lantern help", what: "Full command reference, replied as a self-message." },
+                { cmd: "/pal status", what: "Bridge uptime, agent state, last error if any." },
+                { cmd: "/pal ping", what: "Quickest health check — replies with 🏓 reaction." },
+                { cmd: "/pal help", what: "Full command reference, replied as a self-message." },
                 { cmd: "/bot off", what: "Silence the agent everywhere (or in a specific thread)." },
                 { cmd: "/bot on", what: "Un-silence — works alongside /bot off." },
                 { cmd: "/bot status", what: "Mute state + paused-contacts + monitored-groups counts." },
@@ -1486,7 +1486,7 @@ export function WhatsAppPairing({
             label="Token required"
             value={
               serviceDiagnostics?.authRequired
-                ? "yes (token injected server-side via LANTERN_BRIDGE_TOKEN)"
+                ? "yes (token injected server-side via PAL_BRIDGE_TOKEN)"
                 : "no"
             }
           />
@@ -1496,7 +1496,7 @@ export function WhatsAppPairing({
           />
           <DiagRow
             label="Agent auto-reply"
-            value={serviceDiagnostics?.agentEnabled ? "enabled" : "disabled (set LANTERN_API_TOKEN on bridge)"}
+            value={serviceDiagnostics?.agentEnabled ? "enabled" : "disabled (set PAL_API_TOKEN on bridge)"}
           />
           {sessionDiagnostics?.lastError ? (
             <DiagRow

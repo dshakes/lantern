@@ -38,7 +38,7 @@ CREATE TABLE tenants (
   tier          TEXT NOT NULL CHECK (tier IN ('personal','team','enterprise')),
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   settings      JSONB NOT NULL DEFAULT '{}'::jsonb,
-  k8s_namespace TEXT NOT NULL UNIQUE                   -- 'lantern-t-<uuid>'
+  k8s_namespace TEXT NOT NULL UNIQUE                   -- 'pal-t-<uuid>'
 );
 
 CREATE TABLE users (
@@ -235,7 +235,7 @@ CREATE INDEX schedules_next_fire_idx ON schedules (next_fire_at) WHERE next_fire
 CREATE TABLE webhook_subscriptions (
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   trigger_id        UUID NOT NULL REFERENCES triggers(id) ON DELETE CASCADE,
-  ingest_url        TEXT NOT NULL UNIQUE,                -- https://hooks.lantern.run/<uuid>
+  ingest_url        TEXT NOT NULL UNIQUE,                -- https://hooks.pal.run/<uuid>
   signing_secret    BYTEA NOT NULL,                      -- HMAC verification
   vendor            TEXT,                                -- 'github', 'stripe', ...
   vendor_handle     TEXT                                 -- subscription id at vendor
@@ -269,7 +269,7 @@ CREATE TABLE vault_secrets (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id     UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   user_id       UUID REFERENCES users(id) ON DELETE CASCADE,    -- null = tenant-scoped
-  alias         TEXT NOT NULL,                          -- the lantern.secret/<alias> ref
+  alias         TEXT NOT NULL,                          -- the pal.secret/<alias> ref
   ciphertext    BYTEA NOT NULL,                         -- envelope-encrypted
   wrapping      TEXT NOT NULL,                          -- 'tenant-kms' | 'user-key'
   kid           TEXT NOT NULL,                          -- key ID at the wrapping KMS
@@ -389,7 +389,7 @@ CREATE TABLE budgets (
 ## S3 layout
 
 ```
-s3://lantern-bundles-prod/
+s3://pal-bundles-prod/
   tenants/<tenant_id>/
     agents/<agent_name>/
       versions/<sha256>/
@@ -397,7 +397,7 @@ s3://lantern-bundles-prod/
         manifest.lock.json
         signature.cosign.bundle
 
-s3://lantern-runs-prod/
+s3://pal-runs-prod/
   tenants/<tenant_id>/
     runs/<yyyy>/<mm>/<dd>/<run_id>/
       input.json
@@ -406,12 +406,12 @@ s3://lantern-runs-prod/
       logs/<step_id>.log.zst
       artifacts/<name>           # files the agent produced
 
-s3://lantern-snapshots-prod/
+s3://pal-snapshots-prod/
   runtimes/firecracker/<digest>/
     snapshot.fcs
     memfile.bin
 
-s3://lantern-attachments-prod/
+s3://pal-attachments-prod/
   tenants/<tenant_id>/
     surface/<session_id>/<attachment_id>     # encrypted blobs from chat
 ```

@@ -1,5 +1,5 @@
 // Package tunnel manages the persistent gRPC connection between the data plane
-// agent and the Lantern control plane. It handles connection establishment,
+// agent and the PAL control plane. It handles connection establishment,
 // reconnection with exponential backoff, registration, heartbeats, metrics
 // reporting, token refresh, and bidirectional run-dispatch via RunStream.
 package tunnel
@@ -22,10 +22,10 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
 )
 
-var tracer = otel.Tracer("lantern.data-plane-agent.tunnel")
+var tracer = otel.Tracer("pal.data-plane-agent.tunnel")
 
 // Config holds the tunnel configuration.
 type Config struct {
@@ -33,7 +33,7 @@ type Config struct {
 	// ControlPlaneEndpoints is an ordered, priority-first list of control-plane
 	// endpoints for multi-region failover (ADR 0046). When it has more than one
 	// entry the tunnel connects to the first one whose gRPC health check reports
-	// lantern.v1.DataPlaneService SERVING, and fails back to a higher-priority
+	// pal.v1.DataPlaneService SERVING, and fails back to a higher-priority
 	// endpoint once it is healthy again. Empty → ControlPlaneEndpoint only, with
 	// no health probing (the single-region behaviour).
 	ControlPlaneEndpoints []string
@@ -294,7 +294,7 @@ func (t *Tunnel) connectAndServe(ctx context.Context) error {
 	defer cancelSession(nil)
 	go t.watchFailback(ctx, idx, cancelSession)
 
-	dpClient := lanternv1.NewDataPlaneServiceClient(conn)
+	dpClient := palv1.NewDataPlaneServiceClient(conn)
 
 	// --- Register ---
 	planeID, sessionToken, tokenExpiry, err := t.register(ctx, dpClient)
@@ -336,7 +336,7 @@ func (t *Tunnel) connectAndServe(ctx context.Context) error {
 }
 
 // register calls DataPlaneService.Register and returns (planeID, sessionToken, expiry).
-func (t *Tunnel) register(ctx context.Context, client lanternv1.DataPlaneServiceClient) (planeID, sessionToken string, expiry time.Time, err error) {
+func (t *Tunnel) register(ctx context.Context, client palv1.DataPlaneServiceClient) (planeID, sessionToken string, expiry time.Time, err error) {
 	ctx, span := tracer.Start(ctx, "tunnel.register")
 	defer span.End()
 
@@ -347,7 +347,7 @@ func (t *Tunnel) register(ctx context.Context, client lanternv1.DataPlaneService
 		return "", "", time.Time{}, fmt.Errorf("agent_token is required")
 	}
 
-	req := &lanternv1.DpRegisterRequest{
+	req := &palv1.DpRegisterRequest{
 		TenantId:     t.cfg.TenantID,
 		AgentToken:   t.cfg.AgentToken,
 		AgentVersion: t.cfg.AgentVersion,
@@ -373,7 +373,7 @@ func (t *Tunnel) register(ctx context.Context, client lanternv1.DataPlaneService
 
 // messageLoop runs the heartbeat ticker, metrics ticker, token refresh, and
 // the RunStream — all concurrently inside a single select loop.
-func (t *Tunnel) messageLoop(ctx context.Context, client lanternv1.DataPlaneServiceClient) error {
+func (t *Tunnel) messageLoop(ctx context.Context, client palv1.DataPlaneServiceClient) error {
 	heartbeatTicker := time.NewTicker(t.cfg.HeartbeatInterval)
 	defer heartbeatTicker.Stop()
 
@@ -433,14 +433,14 @@ func (t *Tunnel) messageLoop(ctx context.Context, client lanternv1.DataPlaneServ
 }
 
 // sendHeartbeat calls DataPlaneService.Heartbeat.
-func (t *Tunnel) sendHeartbeat(ctx context.Context, client lanternv1.DataPlaneServiceClient) error {
+func (t *Tunnel) sendHeartbeat(ctx context.Context, client palv1.DataPlaneServiceClient) error {
 	ctx, span := tracer.Start(ctx, "tunnel.heartbeat")
 	defer span.End()
 
 	planeID, sessionToken, _ := t.session.get()
 	activeRuns := int32(t.dispatcher.ActiveRunCount())
 
-	resp, err := client.Heartbeat(ctx, &lanternv1.DpHeartbeatRequest{
+	resp, err := client.Heartbeat(ctx, &palv1.DpHeartbeatRequest{
 		PlaneId:      planeID,
 		SessionToken: sessionToken,
 		ActiveRuns:   activeRuns,
@@ -464,7 +464,7 @@ func (t *Tunnel) sendHeartbeat(ctx context.Context, client lanternv1.DataPlaneSe
 }
 
 // sendMetrics calls DataPlaneService.ReportMetrics.
-func (t *Tunnel) sendMetrics(ctx context.Context, client lanternv1.DataPlaneServiceClient) {
+func (t *Tunnel) sendMetrics(ctx context.Context, client palv1.DataPlaneServiceClient) {
 	_, span := tracer.Start(ctx, "tunnel.metrics")
 	defer span.End()
 
@@ -477,7 +477,7 @@ func (t *Tunnel) sendMetrics(ctx context.Context, client lanternv1.DataPlaneServ
 	}
 	t.reporter.OnMetrics(metrics)
 
-	_, err := client.ReportMetrics(ctx, &lanternv1.DpMetricsReport{
+	_, err := client.ReportMetrics(ctx, &palv1.DpMetricsReport{
 		PlaneId:      planeID,
 		SessionToken: sessionToken,
 		ActiveRuns:   int32(activeRuns),
@@ -491,13 +491,13 @@ func (t *Tunnel) sendMetrics(ctx context.Context, client lanternv1.DataPlaneServ
 }
 
 // refreshToken calls DataPlaneService.RefreshToken and stores the new token.
-func (t *Tunnel) refreshToken(ctx context.Context, client lanternv1.DataPlaneServiceClient) error {
+func (t *Tunnel) refreshToken(ctx context.Context, client palv1.DataPlaneServiceClient) error {
 	_, span := tracer.Start(ctx, "tunnel.refreshToken")
 	defer span.End()
 
 	planeID, sessionToken, _ := t.session.get()
 
-	resp, err := client.RefreshToken(ctx, &lanternv1.DpRefreshTokenRequest{
+	resp, err := client.RefreshToken(ctx, &palv1.DpRefreshTokenRequest{
 		PlaneId:      planeID,
 		SessionToken: sessionToken,
 	})
@@ -518,7 +518,7 @@ func (t *Tunnel) refreshToken(ctx context.Context, client lanternv1.DataPlaneSer
 // runStream opens the DataPlaneService.RunStream bidi stream, sends DpHello,
 // then loops: receiving server frames (assignments, pings) and sending client
 // frames (accepted, status, completed, pongs).
-func (t *Tunnel) runStream(ctx context.Context, client lanternv1.DataPlaneServiceClient) error {
+func (t *Tunnel) runStream(ctx context.Context, client palv1.DataPlaneServiceClient) error {
 	planeID, sessionToken, _ := t.session.get()
 
 	stream, err := client.RunStream(ctx)
@@ -527,9 +527,9 @@ func (t *Tunnel) runStream(ctx context.Context, client lanternv1.DataPlaneServic
 	}
 
 	// First frame: DpHello to authenticate the stream.
-	if err := stream.Send(&lanternv1.DpRunStreamClientMsg{
-		Msg: &lanternv1.DpRunStreamClientMsg_Hello{
-			Hello: &lanternv1.DpHello{
+	if err := stream.Send(&palv1.DpRunStreamClientMsg{
+		Msg: &palv1.DpRunStreamClientMsg_Hello{
+			Hello: &palv1.DpHello{
 				PlaneId:      planeID,
 				SessionToken: sessionToken,
 			},
@@ -556,17 +556,17 @@ func (t *Tunnel) runStream(ctx context.Context, client lanternv1.DataPlaneServic
 		}
 
 		switch v := msg.GetMsg().(type) {
-		case *lanternv1.DpRunStreamServerMsg_Assignment:
+		case *palv1.DpRunStreamServerMsg_Assignment:
 			t.handleAssignment(ctx, stream, v.Assignment)
 
-		case *lanternv1.DpRunStreamServerMsg_Ping:
-			if err := stream.Send(&lanternv1.DpRunStreamClientMsg{
-				Msg: &lanternv1.DpRunStreamClientMsg_Pong{Pong: &lanternv1.DpPong{}},
+		case *palv1.DpRunStreamServerMsg_Ping:
+			if err := stream.Send(&palv1.DpRunStreamClientMsg{
+				Msg: &palv1.DpRunStreamClientMsg_Pong{Pong: &palv1.DpPong{}},
 			}); err != nil {
 				return fmt.Errorf("send Pong: %w", err)
 			}
 
-		case *lanternv1.DpRunStreamServerMsg_Cancel:
+		case *palv1.DpRunStreamServerMsg_Cancel:
 			t.logger.Info("run cancel received",
 				zap.String("run_id", v.Cancel.GetRunId()),
 			)
@@ -578,8 +578,8 @@ func (t *Tunnel) runStream(ctx context.Context, client lanternv1.DataPlaneServic
 // handleAssignment dispatches a run assignment from the control plane.
 func (t *Tunnel) handleAssignment(
 	ctx context.Context,
-	stream lanternv1.DataPlaneService_RunStreamClient,
-	a *lanternv1.DpRunAssignment,
+	stream palv1.DataPlaneService_RunStreamClient,
+	a *palv1.DpRunAssignment,
 ) {
 	runID := a.GetRunId()
 
@@ -598,9 +598,9 @@ func (t *Tunnel) handleAssignment(
 	)
 
 	// Send RunAccepted before dispatching so the CP knows we have it.
-	if err := stream.Send(&lanternv1.DpRunStreamClientMsg{
-		Msg: &lanternv1.DpRunStreamClientMsg_Accepted{
-			Accepted: &lanternv1.DpRunAccepted{RunId: runID},
+	if err := stream.Send(&palv1.DpRunStreamClientMsg{
+		Msg: &palv1.DpRunStreamClientMsg_Accepted{
+			Accepted: &palv1.DpRunAccepted{RunId: runID},
 		},
 	}); err != nil {
 		t.logger.Warn("send RunAccepted failed", zap.String("run_id", runID), zap.Error(err))

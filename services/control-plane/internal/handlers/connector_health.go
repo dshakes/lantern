@@ -4,9 +4,9 @@ package handlers
 //
 // # The failure this exists for
 //
-// The Gmail OAuth token was encrypted with a LANTERN_CREDENTIAL_KEY that no
+// The Gmail OAuth token was encrypted with a PAL_CREDENTIAL_KEY that no
 // longer exists on the host. Every decrypt returned "credential is encrypted
-// but LANTERN_CREDENTIAL_KEY is not set". The install still reported
+// but PAL_CREDENTIAL_KEY is not set". The install still reported
 // status='connected', so three cron-scheduled agents re-attempted it hourly
 // and failed identically: 124 failed runs across 7 days, each one creating a
 // run row and spending LLM tokens on prompt assembly before reaching a failure
@@ -88,15 +88,15 @@ func permanentCredentialFailure(err error) (reason string, permanent bool) {
 	switch {
 	// The exact failure observed: ciphertext present, decryption key absent.
 	// Only restoring the key or re-authorizing can fix this.
-	case strings.Contains(msg, "lantern_credential_key is not set"):
-		return "stored credential is encrypted, but the server has no LANTERN_CREDENTIAL_KEY to decrypt it. " +
-			"Set LANTERN_CREDENTIAL_KEY (so new tokens are encrypted at rest), then re-authorize this connector", true
+	case strings.Contains(msg, "pal_credential_key is not set"):
+		return "stored credential is encrypted, but the server has no PAL_CREDENTIAL_KEY to decrypt it. " +
+			"Set PAL_CREDENTIAL_KEY (so new tokens are encrypted at rest), then re-authorize this connector", true
 
 	// Key present but wrong, or the ciphertext is damaged.
 	case strings.Contains(msg, "cipher: message authentication failed"),
 		strings.Contains(msg, "message authentication failed"),
 		strings.Contains(msg, "malformed ciphertext"):
-		return "stored credential cannot be decrypted with the current LANTERN_CREDENTIAL_KEY " +
+		return "stored credential cannot be decrypted with the current PAL_CREDENTIAL_KEY " +
 			"(wrong key, or the stored value is corrupt). Re-authorize this connector", true
 
 	// The provider has rejected the grant itself.

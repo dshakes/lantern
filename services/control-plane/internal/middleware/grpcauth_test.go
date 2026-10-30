@@ -11,7 +11,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const testMethod = "/lantern.v1.AgentService/ListAgents"
+const testMethod = "/pal.v1.AgentService/ListAgents"
 
 func ctxWithToken(tok string) context.Context {
 	md := metadata.New(map[string]string{ServiceTokenMetadataKey: tok})
@@ -69,8 +69,8 @@ func TestAuthenticateServiceToken_HealthAndDataPlaneExempt(t *testing.T) {
 	exempt := []string{
 		"/grpc.health.v1.Health/Check",
 		"/grpc.reflection.v1.ServerReflection/ServerReflectionInfo",
-		"/lantern.v1.DataPlaneService/Register",
-		"/lantern.v1.DataPlaneService/RunStream",
+		"/pal.v1.DataPlaneService/Register",
+		"/pal.v1.DataPlaneService/RunStream",
 	}
 	for _, m := range exempt {
 		t.Run(m, func(t *testing.T) {

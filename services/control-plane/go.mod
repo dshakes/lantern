@@ -1,4 +1,4 @@
-module github.com/dshakes/lantern/services/control-plane
+module github.com/dshakes/pal/services/control-plane
 
 go 1.26.0
 
@@ -17,7 +17,7 @@ require (
 )
 
 require (
-	github.com/dshakes/lantern/gen/go v0.0.0
+	github.com/dshakes/pal/gen/go v0.0.0
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/google/uuid v1.6.0
 	github.com/minio/minio-go/v7 v7.2.1
@@ -74,5 +74,5 @@ require (
 	gopkg.in/ini.v1 v1.67.2 // indirect
 )
 
-replace github.com/dshakes/lantern/gen/go => ../../gen/go
+replace github.com/dshakes/pal/gen/go => ../../gen/go
 

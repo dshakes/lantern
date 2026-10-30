@@ -13,7 +13,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/dshakes/lantern/packages/cli/internal"
+	"github.com/dshakes/pal/packages/cli/internal"
 )
 
 // runtimeEnv is the injectable environment for the runtime checks.

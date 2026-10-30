@@ -61,9 +61,9 @@ tests:
   - name: low_traffic_guard
     interval: 1m
     input_series:
-      - series: 'lantern_scheduler_schedule_total{job="pal-runtime-scheduler",result="error"}'
+      - series: 'pal_scheduler_schedule_total{job="pal-runtime-scheduler",result="error"}'
         values: '0x10 1x120'
-      - series: 'lantern_scheduler_schedule_total{job="pal-runtime-scheduler",result="ok"}'
+      - series: 'pal_scheduler_schedule_total{job="pal-runtime-scheduler",result="ok"}'
         values: '0+0.0833x130'
     alert_rule_test:
       - eval_time: 100m
@@ -74,9 +74,9 @@ tests:
   - name: scheduling_latency_burn
     interval: 1m
     input_series:
-      - series: 'lantern_scheduler_schedule_duration_seconds_count{job="pal-runtime-scheduler",result="ok"}'
+      - series: 'pal_scheduler_schedule_duration_seconds_count{job="pal-runtime-scheduler",result="ok"}'
         values: '0+100x120'
-      - series: 'lantern_scheduler_schedule_duration_seconds_bucket{job="pal-runtime-scheduler",result="ok",le="1"}'
+      - series: 'pal_scheduler_schedule_duration_seconds_bucket{job="pal-runtime-scheduler",result="ok",le="1"}'
         values: '0+80x120'
     alert_rule_test:
       - eval_time: 10m
@@ -98,9 +98,9 @@ tests:
   - name: egress_denies_do_not_burn_but_errors_do
     interval: 1m
     input_series:
-      - series: 'lantern_egress_broker_decisions_total{job="pal-runtime-manager",outcome="allow"}'
+      - series: 'pal_egress_broker_decisions_total{job="pal-runtime-manager",outcome="allow"}'
         values: '0+50x120'
-      - series: 'lantern_egress_broker_decisions_total{job="pal-runtime-manager",outcome="deny"}'
+      - series: 'pal_egress_broker_decisions_total{job="pal-runtime-manager",outcome="deny"}'
         values: '0+30x120'
     alert_rule_test:
       - eval_time: 70m
@@ -112,9 +112,9 @@ tests:
   - name: egress_errors_burn
     interval: 1m
     input_series:
-      - series: 'lantern_egress_broker_decisions_total{job="pal-runtime-manager",outcome="allow"}'
+      - series: 'pal_egress_broker_decisions_total{job="pal-runtime-manager",outcome="allow"}'
         values: '0+90x120'
-      - series: 'lantern_egress_broker_decisions_total{job="pal-runtime-manager",outcome="error"}'
+      - series: 'pal_egress_broker_decisions_total{job="pal-runtime-manager",outcome="error"}'
         values: '0+10x120'
     alert_rule_test:
       - eval_time: 10m
@@ -138,10 +138,10 @@ tests:
           - exp_labels: {severity: warning, slo: control-plane-api-availability, service: control-plane}
             exp_annotations:
               summary: "control-plane-api-availability: SLI has no data for 30m"
-              description: "The SLI for control-plane-api-availability produced no series for 30m, so the burn alerts above cannot fire. Check the scrape target and the `job` label ((pal|lantern)-control-plane); a silent SLO is worse than a red one."
+              description: "The SLI for control-plane-api-availability produced no series for 30m, so the burn alerts above cannot fire. Check the scrape target and the `job` label ((pal|pal)-control-plane); a silent SLO is worse than a red one."
               runbook_url: "https://github.com/dshakes/pal/blob/master/docs/runbooks/slo-control-plane-api.md"
           - exp_labels: {severity: warning, slo: control-plane-api-latency, service: control-plane}
             exp_annotations:
               summary: "control-plane-api-latency: SLI has no data for 30m"
-              description: "The SLI for control-plane-api-latency produced no series for 30m, so the burn alerts above cannot fire. Check the scrape target and the `job` label ((pal|lantern)-control-plane); a silent SLO is worse than a red one."
+              description: "The SLI for control-plane-api-latency produced no series for 30m, so the burn alerts above cannot fire. Check the scrape target and the `job` label ((pal|pal)-control-plane); a silent SLO is worse than a red one."
               runbook_url: "https://github.com/dshakes/pal/blob/master/docs/runbooks/slo-control-plane-api.md"

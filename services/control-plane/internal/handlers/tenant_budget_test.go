@@ -12,9 +12,9 @@ import (
 	grpccodes "google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 func setTenantCap(t *testing.T, tenantID string, capUsd float64, hardFail bool) {
@@ -199,7 +199,7 @@ func TestTenantBudget_SentinelNameRejected(t *testing.T) {
 	}
 
 	svc := NewAgentService(srv)
-	_, err := svc.CreateAgent(middleware.InjectTenantID(context.Background(), tenant), &lanternv1.CreateAgentRequest{Name: TenantBudgetAgent})
+	_, err := svc.CreateAgent(middleware.InjectTenantID(context.Background(), tenant), &palv1.CreateAgentRequest{Name: TenantBudgetAgent})
 	if status.Code(err) != grpccodes.InvalidArgument {
 		t.Errorf("CreateAgent(\"*\") = %v, want InvalidArgument", err)
 	}

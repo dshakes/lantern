@@ -68,7 +68,7 @@
       },
       "targets": [
         {
-          "expr": "up{job=~\"(pal|lantern)-control-plane\"}",
+          "expr": "up{job=~\"(pal|pal)-control-plane\"}",
           "refId": "A",
           "legendFormat": "control-plane",
           "datasource": {
@@ -121,7 +121,7 @@
       },
       "targets": [
         {
-          "expr": "up{job=~\"(pal|lantern)-gateway\"}",
+          "expr": "up{job=~\"(pal|pal)-gateway\"}",
           "refId": "A",
           "legendFormat": "gateway",
           "datasource": {
@@ -174,7 +174,7 @@
       },
       "targets": [
         {
-          "expr": "up{job=~\"(pal|lantern)-model-router\"}",
+          "expr": "up{job=~\"(pal|pal)-model-router\"}",
           "refId": "A",
           "legendFormat": "model-router",
           "datasource": {
@@ -227,7 +227,7 @@
       },
       "targets": [
         {
-          "expr": "probe_success{job=~\"(pal|lantern)-control-plane-readyz\"}",
+          "expr": "probe_success{job=~\"(pal|pal)-control-plane-readyz\"}",
           "refId": "A",
           "legendFormat": "readyz",
           "datasource": {
@@ -280,7 +280,7 @@
       },
       "targets": [
         {
-          "expr": "sum(lantern_scheduler_is_leader)",
+          "expr": "sum(pal_scheduler_is_leader)",
           "refId": "A",
           "legendFormat": "leaders",
           "datasource": {
@@ -331,7 +331,7 @@
       },
       "targets": [
         {
-          "expr": "max(pal_schedules_overdue or lantern_schedules_overdue)",
+          "expr": "max(pal_schedules_overdue or pal_schedules_overdue)",
           "refId": "A",
           "legendFormat": "overdue",
           "datasource": {
@@ -380,7 +380,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(lantern_scheduler_schedule_total[5m])) by (result)",
+          "expr": "sum(rate(pal_scheduler_schedule_total[5m])) by (result)",
           "refId": "A",
           "legendFormat": "{{result}}",
           "datasource": {
@@ -437,7 +437,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(lantern_scheduler_schedule_errors_total[5m])) / clamp_min(sum(rate(lantern_scheduler_schedule_total[5m])),0.001)",
+          "expr": "sum(rate(pal_scheduler_schedule_errors_total[5m])) / clamp_min(sum(rate(pal_scheduler_schedule_total[5m])),0.001)",
           "refId": "A",
           "legendFormat": "error fraction",
           "datasource": {
@@ -496,7 +496,7 @@
       },
       "targets": [
         {
-          "expr": "sum(pg_stat_database_numbackends{job=~\"(pal|lantern)-postgres-exporter\"}) / max(pg_settings_max_connections{job=~\"(pal|lantern)-postgres-exporter\"})",
+          "expr": "sum(pg_stat_database_numbackends{job=~\"(pal|pal)-postgres-exporter\"}) / max(pg_settings_max_connections{job=~\"(pal|pal)-postgres-exporter\"})",
           "refId": "A",
           "legendFormat": "connection saturation",
           "datasource": {
@@ -518,7 +518,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "### Not emitted yet — do not trust as live\n\nThese metrics are **not exported** today. They exist only as **OTel traces**, not Prometheus series. Panels are intentionally omitted until instrumentation lands.\n\n| Metric | Intended panel |\n| --- | --- |\n| `lantern_http_requests_total` | control-plane 5xx error rate |\n| `lantern_runs_completed_total` | run failure rate |\n| `lantern_budget_denied_total` | API budget 402 rate |\n| `lantern_gateway_request_duration_seconds_bucket` | gateway p99 latency |\n| `lantern_model_router_request_duration_seconds_bucket` | model-router p99 latency |\n\n_When these land, replace this panel with the corresponding live panels._"
+        "content": "### Not emitted yet — do not trust as live\n\nThese metrics are **not exported** today. They exist only as **OTel traces**, not Prometheus series. Panels are intentionally omitted until instrumentation lands.\n\n| Metric | Intended panel |\n| --- | --- |\n| `pal_http_requests_total` | control-plane 5xx error rate |\n| `pal_runs_completed_total` | run failure rate |\n| `pal_budget_denied_total` | API budget 402 rate |\n| `pal_gateway_request_duration_seconds_bucket` | gateway p99 latency |\n| `pal_model_router_request_duration_seconds_bucket` | model-router p99 latency |\n\n_When these land, replace this panel with the corresponding live panels._"
       }
     }
   ]

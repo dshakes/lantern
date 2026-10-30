@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Stable, private remote access to the Lantern harness via Tailscale Serve.
+# Stable, private remote access to the PAL harness via Tailscale Serve.
 # Fronts the control-plane API (:8080) AND the dashboard (:3001) on ONE tailnet
 # HTTPS host, same-origin — no public exposure, URL survives reboots.
 #
@@ -19,8 +19,8 @@ if [ -z "$TS" ]; then
   else echo "tailscale CLI not found (install Tailscale + sign in)"; exit 1; fi
 fi
 
-API_PORT="${PAL_API_PORT:-${LANTERN_API_PORT:-8080}}"
-DASH_PORT="${PAL_DASHBOARD_PORT:-${LANTERN_DASHBOARD_PORT:-3001}}"
+API_PORT="${PAL_API_PORT:-${PAL_API_PORT:-8080}}"
+DASH_PORT="${PAL_DASHBOARD_PORT:-${PAL_DASHBOARD_PORT:-3001}}"
 
 echo "Resetting serve config..."
 "$TS" serve reset
@@ -34,5 +34,5 @@ echo "Mounting API ($API_PORT) under /v1 /auth /.well-known and dashboard ($DASH
 echo
 "$TS" serve status
 echo
-echo "Done. Reminder: set NEXT_PUBLIC_API_URL (dashboard) + LANTERN_SIGNAL_TOKEN (api+dashboard)"
+echo "Done. Reminder: set NEXT_PUBLIC_API_URL (dashboard) + PAL_SIGNAL_TOKEN (api+dashboard)"
 echo "to your tailnet host, per docs/personal/REMOTE-ACCESS.md."

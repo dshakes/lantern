@@ -974,7 +974,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "lantern-surface-gateway"
+name = "pal-surface-gateway"
 version = "0.1.0"
 dependencies = [
  "anyhow",

@@ -4,7 +4,7 @@
 // no flow decisions here — page.tsx owns those (via onboarding-logic.ts).
 //
 // Styling is centralized in `ui` below and uses only theme tokens (zinc /
-// surface / lantern scales remap under light mode in globals.css), so the
+// surface / pal scales remap under light mode in globals.css), so the
 // brand refresh can swap tokens without touching this file's markup.
 
 import { forwardRef, type ReactNode } from "react";

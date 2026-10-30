@@ -5,8 +5,8 @@ import (
 	"io"
 	"os"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/packages/cli/internal"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/packages/cli/internal"
 	"github.com/spf13/cobra"
 )
 
@@ -27,7 +27,7 @@ func newLogsCommand() *cobra.Command {
 			}
 			defer clients.Close()
 
-			stream, err := clients.Runs.StreamRunEvents(cmd.Context(), &lanternv1.StreamRunEventsRequest{
+			stream, err := clients.Runs.StreamRunEvents(cmd.Context(), &palv1.StreamRunEventsRequest{
 				RunId: runID,
 				Live:  follow,
 			})
@@ -54,7 +54,7 @@ func newLogsCommand() *cobra.Command {
 				printStreamEvent(event)
 
 				// Stop on stream end unless following.
-				if _, ok := event.GetPayload().(*lanternv1.StreamEvent_End); ok && !follow {
+				if _, ok := event.GetPayload().(*palv1.StreamEvent_End); ok && !follow {
 					return nil
 				}
 			}

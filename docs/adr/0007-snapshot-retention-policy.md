@@ -32,7 +32,7 @@ Two-tier retention policy:
 ### Tier 2 — runtime snapshots (per live VM, for HA + forensics)
 - **Keep:** the last **3** snapshots per `vm_id` (rolling window).
 - **Retention:** **7 days** after the VM terminates.
-- **Storage:** `s3://lantern-snapshots-prod/runtimes/firecracker/<tenant_id>/<vm_id>/<snapshot_id>.fcs`.
+- **Storage:** `s3://pal-snapshots-prod/runtimes/firecracker/<tenant_id>/<vm_id>/<snapshot_id>.fcs`.
 - **Lifecycle:** S3 lifecycle rule deletes objects 7 days after `last-modified` on the prefix. Tagged `LegalHold=false` by default; security flips the tag on incidents and the lifecycle skips them.
 - **Indexing:** scheduler stores the snapshot metadata (sha256, bytes, taken_at, vm_id, run_id) in Postgres for queryability.
 
@@ -75,5 +75,5 @@ Then a frequently-updated agent loses HA snapshots fast. Retention should be VM-
 
 - [`docs/architecture/04-runtime-isolation.md`](../architecture/04-runtime-isolation.md) — snapshot mechanics
 - [`docs/architecture/04b-microvm-productionization.md`](../architecture/04b-microvm-productionization.md) — node-death recovery flow
-- [`packages/proto/lantern/v1/runtime.proto`](../../packages/proto/lantern/v1/runtime.proto) — `Snapshot`, `restore_snapshot_id`
+- [`packages/proto/pal/v1/runtime.proto`](../../packages/proto/pal/v1/runtime.proto) — `Snapshot`, `restore_snapshot_id`
 - [Firecracker snapshotting](https://github.com/firecracker-microvm/firecracker/blob/main/docs/snapshotting/snapshot-support.md)

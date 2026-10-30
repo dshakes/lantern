@@ -1,9 +1,9 @@
 # PAL Runtime Go SDK
 
-The official Go SDK for [PAL Runtime](https://github.com/dshakes/lantern) — the open-source runtime for production AI agents with VPC deployment, pre-run cost forecasts, policy budgets, and eval-in-CI.
+The official Go SDK for [PAL Runtime](https://github.com/dshakes/pal) — the open-source runtime for production AI agents with VPC deployment, pre-run cost forecasts, policy budgets, and eval-in-CI.
 
 ```bash
-go get github.com/dshakes/lantern/packages/sdk-go
+go get github.com/dshakes/pal/packages/sdk-go
 ```
 
 ## Quick start
@@ -16,12 +16,12 @@ import (
     "fmt"
     "log"
 
-    lantern "github.com/dshakes/lantern/packages/sdk-go"
+    pal "github.com/dshakes/pal/packages/sdk-go"
 )
 
 func main() {
     // Reads PAL_API_URL and PAL_API_KEY from the environment by default.
-    c := lantern.New()
+    c := pal.New()
     ctx := context.Background()
 
     // 1. Create an agent.
@@ -31,7 +31,7 @@ func main() {
 
     // 2. Hard-cap spend — $25/day, $0.10/run, block on breach.
     perDay, perRun := 25.0, 0.10
-    if err := c.UpsertBudget(ctx, "triage", lantern.Budget{
+    if err := c.UpsertBudget(ctx, "triage", pal.Budget{
         MaxCostUsdPerDay: &perDay,
         MaxCostUsdPerRun: &perRun,
         HardFail:         true,
@@ -48,7 +48,7 @@ func main() {
         f.EstimatedCostUsd, f.Confidence*100, f.WouldExceedBudget)
 
     // 4. Run.
-    r, err := c.CreateRun(ctx, lantern.RunOptions{
+    r, err := c.CreateRun(ctx, pal.RunOptions{
         AgentName: "triage",
         Input:     map[string]string{"email": "..."},
     })
@@ -62,19 +62,19 @@ func main() {
 ## Options
 
 ```go
-c := lantern.New(
-    lantern.WithBaseURL("https://my-control-plane.example.com"),
-    lantern.WithAPIKey("lnt_..."),
-    lantern.WithHTTPClient(myHTTPClient),
+c := pal.New(
+    pal.WithBaseURL("https://my-control-plane.example.com"),
+    pal.WithAPIKey("lnt_..."),
+    pal.WithHTTPClient(myHTTPClient),
 )
 ```
 
 ## Errors
 
-Non-2xx responses surface as `*lantern.APIError`:
+Non-2xx responses surface as `*pal.APIError`:
 
 ```go
-if apiErr := (&lantern.APIError{}); errors.As(err, &apiErr) {
+if apiErr := (&pal.APIError{}); errors.As(err, &apiErr) {
     if apiErr.Status == http.StatusPaymentRequired {
         // Hard-fail budget blocked the run.
     }

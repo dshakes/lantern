@@ -45,7 +45,7 @@ class PalClient:
 
     Usage::
 
-        client = PalClient()  # reads LANTERN_API_URL / LANTERN_API_KEY
+        client = PalClient()  # reads PAL_API_URL / PAL_API_KEY
         agent = await client.agents.create(name="my-agent")
         run = await client.runs.create(agent="my-agent", input={"q": "hi"})
 
@@ -61,7 +61,7 @@ class PalClient:
         timeout: float = 30.0,
         route_strategy: str | None = None,
     ) -> None:
-        self.base_url = (base_url or os.environ.get("PAL_API_URL") or "https://api.lantern.run").rstrip("/")
+        self.base_url = (base_url or os.environ.get("PAL_API_URL") or "https://api.pal.run").rstrip("/")
         self._api_key = api_key or os.environ.get("PAL_API_KEY") or ""
         self._timeout = timeout
         self._route_strategy = route_strategy or os.environ.get("PAL_ROUTE_STRATEGY") or "auto"
@@ -117,7 +117,7 @@ class PalClient:
             h["Authorization"] = f"Bearer {self._api_key}"
         if self._route_strategy and self._route_strategy != "auto":
             # legacy header name sent too while servers migrate (ADR 0032)
-            h["X-Pal-Route-Strategy"] = h["X-Lantern-Route-Strategy"] = self._route_strategy
+            h["X-Pal-Route-Strategy"] = h["X-Pal-Route-Strategy"] = self._route_strategy
         return h
 
     async def _request(
@@ -1149,7 +1149,7 @@ class PalClient:
             return VmResumeResult.model_validate(data)
 
         async def fork(self, vm_id: str, *, count: int = 1) -> VmForkResult:
-            """Fork ``count`` (1..LANTERN_MAX_FORK_COUNT, default cap 100) VMs from a snapshot. Per-fork failures are in ``forks[].error``."""
+            """Fork ``count`` (1..PAL_MAX_FORK_COUNT, default cap 100) VMs from a snapshot. Per-fork failures are in ``forks[].error``."""
             data = await self._c._request("POST", f"/v1/runtime/vms/{vm_id}/fork", body={"count": count})
             return VmForkResult.model_validate(data)
 
@@ -1168,8 +1168,8 @@ class PalClient:
             )
             if not resp.is_success:
                 raise PalApiError(resp.status_code, resp.text)
-            # x-lantern-truncated: legacy fallback
-            truncated = resp.headers.get("x-pal-truncated") or resp.headers.get("x-lantern-truncated")
+            # x-pal-truncated: legacy fallback
+            truncated = resp.headers.get("x-pal-truncated") or resp.headers.get("x-pal-truncated")
             return {"content": resp.text, "truncated": truncated == "true"}
 
         async def write_file(self, vm_id: str, path: str, content: str) -> dict[str, Any]:

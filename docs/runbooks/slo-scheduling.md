@@ -12,8 +12,8 @@ burning at 14.4x (1h/5m) or 6x (6h/30m), i.e. 2% to 5% of the 28-day budget is g
 
 ## What the SLI measures
 
-Runtime-scheduler `:8085/metrics`: `lantern_scheduler_schedule_total{result}` (bad = `error`; `quota` and
-`standby` are not failures) and `lantern_scheduler_schedule_duration_seconds` (placement decision under 1s;
+Runtime-scheduler `:8085/metrics`: `pal_scheduler_schedule_total{result}` (bad = `error`; `quota` and
+`standby` are not failures) and `pal_scheduler_schedule_duration_seconds` (placement decision under 1s;
 the spawn dispatch to the runtime-manager is asynchronous and is covered by
 [slo-microvm-spawn.md](slo-microvm-spawn.md)). Burn alerts are suppressed below 10 schedules per hour.
 

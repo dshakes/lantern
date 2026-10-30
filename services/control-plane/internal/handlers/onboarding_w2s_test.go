@@ -4,7 +4,7 @@ package handlers
 // onboarding transition metric. DB-gated like the rest of the package; use a
 // dedicated database (parallel agents share the dev one):
 //
-//	DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern_w2s?sslmode=disable \
+//	DATABASE_URL=postgres://pal:pal@localhost:5432/pal_w2s?sslmode=disable \
 //	  go test ./internal/handlers/ -run W2S -count=1
 
 import (
@@ -123,7 +123,7 @@ func TestW2S_ApplyFreeTierDefaults(t *testing.T) {
 	h := newAuthTestHandler(t)
 	ctx := context.Background()
 	var tenantID string
-	if err := h.srv.Pool.QueryRow(ctx, `INSERT INTO tenants (slug,name,tier,k8s_namespace) VALUES ('w2s-'||substr(md5(random()::text),1,8),'w2s','personal','lantern-t-w2s-'||substr(md5(random()::text),1,8)) RETURNING id`).Scan(&tenantID); err != nil {
+	if err := h.srv.Pool.QueryRow(ctx, `INSERT INTO tenants (slug,name,tier,k8s_namespace) VALUES ('w2s-'||substr(md5(random()::text),1,8),'w2s','personal','pal-t-w2s-'||substr(md5(random()::text),1,8)) RETURNING id`).Scan(&tenantID); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _, _ = h.srv.Pool.Exec(ctx, `DELETE FROM tenants WHERE id=$1`, tenantID) })
@@ -156,7 +156,7 @@ func TestW2S_VerifyGate(t *testing.T) {
 	h := newAuthTestHandler(t)
 	ctx := context.Background()
 	mk := func(provider string, verified bool) (tenant, user string) {
-		if err := h.srv.Pool.QueryRow(ctx, `INSERT INTO tenants (slug,name,tier,k8s_namespace) VALUES ('w2sv-'||substr(md5(random()::text),1,8),'w2s','personal','lantern-t-w2sv-'||substr(md5(random()::text),1,8)) RETURNING id`).Scan(&tenant); err != nil {
+		if err := h.srv.Pool.QueryRow(ctx, `INSERT INTO tenants (slug,name,tier,k8s_namespace) VALUES ('w2sv-'||substr(md5(random()::text),1,8),'w2s','personal','pal-t-w2sv-'||substr(md5(random()::text),1,8)) RETURNING id`).Scan(&tenant); err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _, _ = h.srv.Pool.Exec(ctx, `DELETE FROM tenants WHERE id=$1`, tenant) })

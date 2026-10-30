@@ -4,9 +4,9 @@ package handlers
 // runtime.go, runtime_report.go, runtime_secrets.go) after the P1.1b cutover to
 // s.srv.WithTenant.
 //
-// Runs against the lantern_app-backed harness (newEnforcedServer): every query
+// Runs against the pal_app-backed harness (newEnforcedServer): every query
 // the handlers route through s.srv.WithTenant runs as the non-superuser
-// `lantern_app` role with RLS genuinely enforced at Postgres. Proves:
+// `pal_app` role with RLS genuinely enforced at Postgres. Proves:
 //
 //	(a) a SAME-TENANT caller still writes + reads its OWN voice numbers and
 //	    runtime VMs (rows returned, NOT zero — the regression check), and
@@ -25,7 +25,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/agentidentity"
+	"github.com/dshakes/pal/services/control-plane/internal/agentidentity"
 )
 
 // newEnforcedVoiceHandler builds the voice handler on the RLS-enforced server.

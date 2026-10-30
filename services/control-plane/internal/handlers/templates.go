@@ -21,7 +21,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
 )
 
 type TemplateHandler struct {
@@ -149,16 +149,16 @@ Rules:
 		Connectors:    []string{"github", "linear", "gmail", "google-calendar"},
 		Surfaces:      []string{"whatsapp"},
 	},
-	"lantern-guide": {
-		ID:          "lantern-guide",
-		Name:        "lantern-guide",
-		Description: "Lantern's onboarding guide — explains what your first run did and suggests the next command.",
+	"pal-guide": {
+		ID:          "pal-guide",
+		Name:        "pal-guide",
+		Description: "PAL's onboarding guide — explains what your first run did and suggests the next command.",
 		Model:       "auto",
-		SystemPrompt: `You are Lantern's onboarding guide. You receive the output (and any error) from the user's very first agent run and must explain it clearly.
+		SystemPrompt: `You are PAL's onboarding guide. You receive the output (and any error) from the user's very first agent run and must explain it clearly.
 
 Rules:
 - Respond in AT MOST 3 sentences: what happened, why it matters, and what to try next.
-- End with ONE concrete next command the user can copy-paste (e.g. lantern runs create --agent ...).
+- End with ONE concrete next command the user can copy-paste (e.g. pal runs create --agent ...).
 - Friendly and accurate. No markdown headers. No filler ("Great!", "Certainly!"). If there was an error, say so plainly and tell them how to fix it.`,
 		MaxCostUsdDay: 0.50,
 		MaxCostRun:    0.05,
@@ -372,7 +372,7 @@ func (h *TemplateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 2. Create the agent via the existing service.
-	agent, err := h.rest.agentSvc.CreateAgent(ctx, &lanternv1.CreateAgentRequest{
+	agent, err := h.rest.agentSvc.CreateAgent(ctx, &palv1.CreateAgentRequest{
 		Name:        agentName,
 		Description: tpl.Description,
 	})
@@ -386,9 +386,9 @@ func (h *TemplateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 	//    template ID + required connectors/surfaces into labels JSONB so
 	//    the /setup gate can re-derive what's missing on a later visit.
 	labelsPatch, _ := json.Marshal(map[string]any{
-		"lantern.template":            tpl.ID,
-		"lantern.required_connectors": tpl.Connectors,
-		"lantern.required_surfaces":   tpl.Surfaces,
+		"pal.template":            tpl.ID,
+		"pal.required_connectors": tpl.Connectors,
+		"pal.required_surfaces":   tpl.Surfaces,
 	})
 	//    CreateAgent stores nil labels as JSON null, which COALESCE doesn't
 	//    catch and `null || {...}` turns into an array — hence the NULLIF.
@@ -503,9 +503,9 @@ func (h *TemplateHandler) SetupStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var labels struct {
-		TemplateID         string   `json:"lantern.template"`
-		RequiredConnectors []string `json:"lantern.required_connectors"`
-		RequiredSurfaces   []string `json:"lantern.required_surfaces"`
+		TemplateID         string   `json:"pal.template"`
+		RequiredConnectors []string `json:"pal.required_connectors"`
+		RequiredSurfaces   []string `json:"pal.required_surfaces"`
 	}
 	_ = json.Unmarshal(labelsBytes, &labels)
 

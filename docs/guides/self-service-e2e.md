@@ -2,16 +2,16 @@
 
 **What:** the full agent lifecycle, develop, test, deploy, run, observe, improve, as copy-pasteable commands.
 **Why:** eval gating (HTTP 422), hard budgets (HTTP 402) and signed receipts are the parts that make an agent safe to ship.
-**Try it:** `lantern doctor`, then step 1. Optional or flag-gated steps say so.
+**Try it:** `pal doctor`, then step 1. Optional or flag-gated steps say so.
 
-**Prerequisites:** a running stack (`make dev` or `lantern dev`) and the `lantern` CLI installed:
+**Prerequisites:** a running stack (`make dev` or `pal dev`) and the `pal` CLI installed:
 
 ```bash
-( cd packages/cli && go install ./cmd/lantern )
-lantern doctor   # verifies stack health, auth, LLM provider, and a live test run
+( cd packages/cli && go install ./cmd/pal )
+pal doctor   # verifies stack health, auth, LLM provider, and a live test run
 ```
 
-Dashboard: `http://localhost:3001` · API: `http://localhost:8080` · Credentials: `admin@lantern.dev` / `lantern`
+Dashboard: `http://localhost:3001` · API: `http://localhost:8080` · Credentials: `admin@pal.dev` / `pal`
 
 ---
 
@@ -21,12 +21,12 @@ Dashboard: `http://localhost:3001` · API: `http://localhost:8080` · Credential
 
 ```bash
 # Via the CLI (scaffolds an agent directory)
-lantern init triage
+pal init triage
 
 # Or directly via REST
 export TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"email":"admin@lantern.dev","password":"lantern"}' | jq -r .token)
+  -d '{"email":"admin@pal.dev","password":"pal"}' | jq -r .token)
 
 curl -s -X POST http://localhost:8080/v1/agents \
   -H "Authorization: Bearer $TOKEN" \
@@ -91,7 +91,7 @@ export SUITE_ID=<id from above>
 
 ```bash
 # Run the suite (CI usage: fails with HTTP 422 if score regresses vs. branch baseline)
-lantern test --agent=triage --suite=golden
+pal test --agent=triage --suite=golden
 
 # Or via REST — record a run result
 curl -s -X POST http://localhost:8080/v1/eval-runs \
@@ -119,7 +119,7 @@ curl -s -X POST http://localhost:8080/v1/eval-baselines \
   -d '{"agentName": "triage", "branch": "main", "evalRunId": "'$EVAL_RUN_ID'"}'
 ```
 
-Future `POST /v1/eval-runs` calls on the `main` branch now return HTTP 422 if `score` drops more than 2% below this baseline. Wire `lantern test --against=last-green` into CI to gate PRs.
+Future `POST /v1/eval-runs` calls on the `main` branch now return HTTP 422 if `score` drops more than 2% below this baseline. Wire `pal test --against=last-green` into CI to gate PRs.
 
 ### 6. Forecast cost before running
 
@@ -193,7 +193,7 @@ curl -s -N "http://localhost:8080/v1/runs/$RUN_ID/events" \
 Or from the CLI:
 
 ```bash
-lantern logs $RUN_ID -f
+pal logs $RUN_ID -f
 ```
 
 ### 10. Flip an agent to the microVM tier
@@ -216,7 +216,7 @@ curl -s -X POST http://localhost:8080/v1/agents \
     "description": "Triage — microVM tier",
     "manifest": {
       "isolation": "microvm",
-      "image_digest": "lantern/triage@sha256:...",
+      "image_digest": "pal/triage@sha256:...",
       "limits": {"vcpu": "250m", "memory": "128Mi", "timeout": "60s"},
       "egress_rules": [{"host": "api.openai.com"}],
       "idempotent": true
@@ -227,10 +227,10 @@ curl -s -X POST http://localhost:8080/v1/agents \
 You can also run a headless agent directly via the CLI:
 
 ```bash
-lantern run examples/headless-agents/01-hello/agent.yaml \
+pal run examples/headless-agents/01-hello/agent.yaml \
   --input '{"name": "world"}'
 # → vm_id: vm_01abc...
-lantern vm logs vm_01abc -f
+pal vm logs vm_01abc -f
 ```
 
 When the scheduler is unreachable and `isolation: "microvm"` is declared, the run fails explicitly with code `microvm_unavailable`. It never silently falls back to the shared tier.
@@ -251,7 +251,7 @@ The health sweep runs every 60s and fires a self-chat alert on the first DOWN tr
 
 ### 12. Read OTel traces
 
-All spans carry `lantern.tenant_id`, `lantern.run_id`, `lantern.step_id`. Filter by run in your trace backend (Tempo, Jaeger, etc.) using `lantern.run_id = "<run-id>"`. W3C `traceparent` propagates from the control-plane through scheduler → manager → harness, so one trace covers the full spawn chain.
+All spans carry `pal.tenant_id`, `pal.run_id`, `pal.step_id`. Filter by run in your trace backend (Tempo, Jaeger, etc.) using `pal.run_id = "<run-id>"`. W3C `traceparent` propagates from the control-plane through scheduler → manager → harness, so one trace covers the full spawn chain.
 
 Set `PAL_OTEL_ENABLED=1` + `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318` to enable OTel export (no-op when unset).
 
@@ -274,7 +274,7 @@ EOF
 # No auth required.
 ```
 
-The signing algorithm and key fingerprint are published at `http://localhost:8080/.well-known/lantern-receipts`.
+The signing algorithm and key fingerprint are published at `http://localhost:8080/.well-known/pal-receipts`.
 
 ---
 
@@ -301,7 +301,7 @@ Feedback feeds:
 After deploying a better version, re-run the suite and pin the new run:
 
 ```bash
-lantern test --agent=triage --suite=golden --set-baseline
+pal test --agent=triage --suite=golden --set-baseline
 ```
 
 Or via REST: run `POST /v1/eval-runs` with the new results, then `POST /v1/eval-baselines` to pin it as the new `main` branch baseline.
@@ -316,7 +316,7 @@ Or via REST: run `POST /v1/eval-runs` with the new results, then `POST /v1/eval-
 | `POST /v1/runs` returns 402 | Budget exceeded — check `GET /v1/agents/triage/budget` and today's usage |
 | microVM run fails with `microvm_unavailable` | Scheduler unreachable — `GET /v1/system/health`, then check `PAL_SCHEDULER_GRPC_ADDR` |
 | Eval run returns 422 | Regression against the branch baseline — compare `score` to `GET /v1/eval-baselines?agentName=triage&branch=main` |
-| Receipt verify fails | `journal_events` were tampered or the signing key changed — check `/.well-known/lantern-receipts` |
+| Receipt verify fails | `journal_events` were tampered or the signing key changed — check `/.well-known/pal-receipts` |
 
 ---
 
@@ -326,7 +326,7 @@ These features exist in the code but are off by default:
 
 | Feature | Flag | Notes |
 |---|---|---|
-| RLS enforcement | `PAL_RLS_ENFORCE=1` | Requires `lantern_app` DB role; set `PAL_APP_DB_PASSWORD` first |
+| RLS enforcement | `PAL_RLS_ENFORCE=1` | Requires `pal_app` DB role; set `PAL_APP_DB_PASSWORD` first |
 | Model-router cutover | `PAL_USE_MODEL_ROUTER=1` | Enables routing completions through the model-router service |
 | Confidence gate | `PAL_CONFIDENCE_GATE=1` | Routes low-confidence side-effecting nodes to human approval |
 | Confidence calibration | `PAL_CONFIDENCE_CALIBRATE=1` | Wraps the estimator with regret-based score adjustment |

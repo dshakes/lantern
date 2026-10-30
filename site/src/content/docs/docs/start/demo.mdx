@@ -2,30 +2,30 @@
 title: Demo mode
 description: Run the whole stack in kiosk mode with private per-visitor workspaces, recorded answers and no API key.
 glance:
-  what: "lantern demo starts the whole stack in kiosk mode with private per-visitor workspaces, sample agents and recorded answers."
+  what: "pal demo starts the whole stack in kiosk mode with private per-visitor workspaces, sample agents and recorded answers."
   why: "It needs only Docker, no LLM key and no sign-up, and each workspace is deleted after 30 minutes."
-  how: "Run make demo or lantern demo as shown under Try it."
+  how: "Run make demo or pal demo as shown under Try it."
 sidebar:
   order: 1
 ---
 
-`lantern demo` starts the whole stack in kiosk mode: every visitor gets a private workspace with sample agents, a guided tour, and no sign-up. The workspace is deleted after 30 minutes. It needs Docker and nothing else: no LLM key.
+`pal demo` starts the whole stack in kiosk mode: every visitor gets a private workspace with sample agents, a guided tour, and no sign-up. The workspace is deleted after 30 minutes. It needs Docker and nothing else: no LLM key.
 
 Kiosk mode answers from **recorded replays** served by a local fixture server, labels every answer "replay", and gives each visitor a throwaway tenant that the database itself isolates from every other visitor.
 
 ## Try it
 
 ```bash
-# From a Lantern checkout. Needs Docker; make demo also needs openssl.
+# From a PAL checkout. Needs Docker; make demo also needs openssl.
 make demo               # builds, starts; prints "demo: http://localhost:3001/kiosk"
 make demo-down          # stop and delete all demo data
 
-# Same stack through the CLI (go install ./cmd/lantern from packages/cli):
-lantern demo            # builds, waits until healthy, opens the browser (--no-open to skip)
-lantern demo --down     # stop and delete all demo data
+# Same stack through the CLI (go install ./cmd/pal from packages/cli):
+pal demo            # builds, waits until healthy, opens the browser (--no-open to skip)
+pal demo --down     # stop and delete all demo data
 ```
 
-The stack is a separate compose project named `lantern-demo` and starts only Postgres, Redis, the control plane, the dashboard and the replay server (no gateway, model router, workflow engine or MinIO). The first run builds images, so it takes a while. The control plane is published on `:8080` and the dashboard on `:3001`, the same host ports as `make dev`: stop one before starting the other, or set `KIOSK_API_PORT` and `KIOSK_WEB_PORT` (both `lantern demo` and `make demo` honour them). If something fails to start, use `docker compose -p lantern-demo logs`.
+The stack is a separate compose project named `pal-demo` and starts only Postgres, Redis, the control plane, the dashboard and the replay server (no gateway, model router, workflow engine or MinIO). The first run builds images, so it takes a while. The control plane is published on `:8080` and the dashboard on `:3001`, the same host ports as `make dev`: stop one before starting the other, or set `KIOSK_API_PORT` and `KIOSK_WEB_PORT` (both `pal demo` and `make demo` honour them). If something fails to start, use `docker compose -p pal-demo logs`.
 
 Press **Start demo**. The tour has five steps over real pages: the inbox, running an agent (watch the step waterfall), a budget that returns HTTP 402, a signed-receipt check at `/proof`, and the sandbox view. After 120 seconds without input, or when the 30-minute timer ends, the session is closed and the workspace deleted.
 
@@ -46,7 +46,7 @@ Press **Start demo**. The tour has five steps over real pages: the inbox, runnin
 | `PAL_KIOSK_SWEEP_SEC` | 60 | How often expired sessions are purged. |
 | `PAL_KIOSK_MAX_SESSIONS` | 20 | Live-session cap; over it returns 503. |
 | `PAL_KIOSK_IP_PER_HOUR` | 3 | Sessions per client address per hour; over it returns 429. |
-| `KIOSK_JWT_SECRET` | random per start | Compose overlay. Required; `make demo` and `lantern demo` generate a random one. The control-plane refuses to start kiosk mode with an empty or dev-default `JWT_SECRET`. |
+| `KIOSK_JWT_SECRET` | random per start | Compose overlay. Required; `make demo` and `pal demo` generate a random one. The control-plane refuses to start kiosk mode with an empty or dev-default `JWT_SECRET`. |
 
 Kiosk mode also requires `PAL_RLS_ENFORCE=1`, `PAL_AUTHZ_ENFORCE=1` and an explicit `JWT_SECRET`; the compose overlay `infra/docker/docker-compose.kiosk.yml` sets all of them and points `PAL_LLM_BASEURL_OPENAI`/`_ANTHROPIC` at the replay server.
 

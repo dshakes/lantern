@@ -24,18 +24,18 @@ The installer:
 3. Writes them to `~/Library/LaunchAgents/`.
 4. Loads them via `launchctl load`.
 
-Logs land in `~/Library/Logs/Lantern/<bridge>.{out,err}.log`. Tail with:
+Logs land in `~/Library/Logs/PAL/<bridge>.{out,err}.log`. Tail with:
 
 ```bash
-tail -f ~/Library/Logs/Lantern/imessage-bridge.err.log
-tail -f ~/Library/Logs/Lantern/whatsapp-bridge.err.log
+tail -f ~/Library/Logs/PAL/imessage-bridge.err.log
+tail -f ~/Library/Logs/PAL/whatsapp-bridge.err.log
 ```
 
 ## Service wiring lives in one place
 
 The `make run-*` targets and the plists used to define the same ports and
 addresses separately, and they agreed only by luck. When they drifted the
-failure was silent: `dev.lantern.runtime-manager.plist` was missing
+failure was silent: `dev.pal.runtime-manager.plist` was missing
 `SCHEDULER_URL`, so under launchd the runtime-manager never self-registered —
 the scheduler marked the node draining and every placement failed with
 `FailedPrecondition`, while the manager process itself stayed healthy and
@@ -73,7 +73,7 @@ provider.
 openssl rand -hex 32
 ```
 
-It lives in **`~/.lantern/control-plane.env`** (mode `0600`), sourced only by
+It lives in **`~/.pal/control-plane.env`** (mode `0600`), sourced only by
 `run-api-wrapper.sh`. Deliberately *not* in `bridge.env`: that file is also
 sourced by the dashboard and both bridge wrappers, and none of them need the
 key. Least privilege — it exists only in the process that encrypts with it.
@@ -179,9 +179,9 @@ new launchd process:
 ## Status / stop / start
 
 ```bash
-launchctl list | grep lantern      # see what's loaded
-launchctl unload ~/Library/LaunchAgents/dev.lantern.imessage-bridge.plist  # stop
-launchctl load ~/Library/LaunchAgents/dev.lantern.imessage-bridge.plist    # start
+launchctl list | grep pal      # see what's loaded
+launchctl unload ~/Library/LaunchAgents/dev.pal.imessage-bridge.plist  # stop
+launchctl load ~/Library/LaunchAgents/dev.pal.imessage-bridge.plist    # start
 ```
 
 ## Uninstall
@@ -201,11 +201,11 @@ template here does NOT update the installed version. To change config:
 2. Re-run the installer: `./scripts/launchd/install.sh`.
 
 OR edit the installed plist directly at
-`~/Library/LaunchAgents/dev.lantern.<bridge>-bridge.plist`, then:
+`~/Library/LaunchAgents/dev.pal.<bridge>-bridge.plist`, then:
 
 ```bash
-launchctl unload ~/Library/LaunchAgents/dev.lantern.imessage-bridge.plist
-launchctl load   ~/Library/LaunchAgents/dev.lantern.imessage-bridge.plist
+launchctl unload ~/Library/LaunchAgents/dev.pal.imessage-bridge.plist
+launchctl load   ~/Library/LaunchAgents/dev.pal.imessage-bridge.plist
 ```
 
 ## Troubleshooting
@@ -213,7 +213,7 @@ launchctl load   ~/Library/LaunchAgents/dev.lantern.imessage-bridge.plist
 **Bridge not responding on its port**: check the err log.
 
 ```bash
-tail -20 ~/Library/Logs/Lantern/imessage-bridge.err.log
+tail -20 ~/Library/Logs/PAL/imessage-bridge.err.log
 ```
 
 Common causes:

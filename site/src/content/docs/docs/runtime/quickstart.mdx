@@ -16,7 +16,7 @@ Write your first `agent.yaml`, pick an isolation class, run it, watch its logs, 
 "Headless" means no conversation: the agent is a background worker, not a chatbot. You package your code as a container image, describe it in a short `agent.yaml` (what to run, how much CPU and memory, how strong a sandbox, which sites it may reach) and hand it to PAL Runtime. It finds a machine, builds the sandbox, runs it, streams the logs and cleans up.
 
 <Aside>
-The CLI and packages are still named `lantern` while the rename lands.
+The CLI and packages are still named `pal` while the rename lands.
 </Aside>
 
 ## Prerequisites
@@ -37,14 +37,14 @@ Docker on the host is enough for the `trusted` and `standard` classes. You also 
 An `agent.yaml` declares the image, the isolation class, limits, and any egress or secrets. This is the minimal one: a first-party script that only writes to stdout, so it picks `trusted` and asks for no network.
 
 ```yaml
-apiVersion: lantern.dev/v1
+apiVersion: pal.dev/v1
 kind: AgentSpec
 metadata:
   name: hello
   labels:
-    owner: lantern-team
+    owner: pal-team
 spec:
-  image_digest: lantern/demos/hello@sha256:0000...0001
+  image_digest: pal/demos/hello@sha256:0000...0001
   isolation: trusted        # first-party, no package loading
   limits:
     vcpu: "100m"            # 0.1 vCPU
@@ -75,7 +75,7 @@ Demo 02 (`web-scraper`) uses `untrusted` because it pulls `requests` and `beauti
 The CLI schedules the spec:
 
 ```bash
-lantern run examples/headless-agents/01-hello/agent.yaml \
+pal run examples/headless-agents/01-hello/agent.yaml \
   --input '{"name": "Ada"}'
 ```
 

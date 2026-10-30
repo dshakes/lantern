@@ -75,8 +75,8 @@
   <text class="t-b" x="56" y="404">A channel is an entry point, not a fork of your agent</text>
   <rect class="node" x="608" y="304" width="552" height="124" rx="18"/>
   <text class="t-h" x="624" y="330">Developer experience</text>
-  <text class="t-b" x="624" y="350">TypeScript, Python and Go SDKs · lantern CLI</text>
-  <text class="t-b" x="624" y="368">lantern onboard, lantern doctor, lantern agents dev</text>
+  <text class="t-b" x="624" y="350">TypeScript, Python and Go SDKs · pal CLI</text>
+  <text class="t-b" x="624" y="368">pal onboard, pal doctor, pal agents dev</text>
   <text class="t-b" x="624" y="386">Visual workflow editor that executes</text>
   <text class="t-b" x="624" y="404">MCP registry · A2A cards · agent marketplace</text>
   <rect class="group" x="40" y="448" width="1120" height="64" rx="18"/>

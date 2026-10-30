@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package pal.v1;
+
+option go_package = "github.com/dshakes/pal/gen/go/pal/v1;palv1";
+
+import "google/protobuf/struct.proto";
+import "pal/v1/runs.proto";
+
+// ---------------------------------------------------------------------------
+// Workflow Engine (internal only — not exposed to clients)
+// ---------------------------------------------------------------------------
+//
+// The headless runtime (Schedule / Spawn / Snapshot / Logs / Exec) lives in
+// runtime.proto. The W12 productionization moved those types out of this
+// file; the old `RuntimeManagerService` and its supporting messages were
+// removed because nothing implemented them — the real implementation is
+// `pal.v1.RuntimeManager` in runtime.proto, backed by
+// `services/runtime-manager` (Rust + tonic).
+
+service WorkflowEngineService {
+  rpc ExecuteRun(ExecuteRunRequest) returns (stream StreamEvent);
+  rpc ResumeRun(ResumeRunRequest) returns (stream StreamEvent);
+  rpc SignalRun(SignalRunRequest) returns (SignalRunResponse);
+  rpc CancelRun(CancelRunRequest) returns (CancelRunResponse);
+  rpc QueryRun(QueryRunRequest) returns (QueryRunResponse);
+}
+
+message ExecuteRunRequest {
+  string run_id = 1;
+  string agent_version_id = 2;
+  string bundle_uri = 3;
+  google.protobuf.Struct manifest = 4;
+  google.protobuf.Struct input = 5;
+  map<string, string> env = 6;
+}
+
+message ResumeRunRequest {
+  string run_id = 1;
+}
+
+message CancelRunResponse {}

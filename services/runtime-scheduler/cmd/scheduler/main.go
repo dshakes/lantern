@@ -33,16 +33,16 @@ import (
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/cluster"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/dialer"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/handlers"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/leader"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/metrics"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/middleware"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/placement"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/scoring"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/store"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/cluster"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/dialer"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/handlers"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/leader"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/metrics"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/middleware"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/placement"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/scoring"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/store"
 )
 
 func main() {
@@ -148,7 +148,7 @@ func main() {
 	var managerDialer dialer.ManagerDialer
 	if os.Getenv("PAL_DIALER") == "stub" || os.Getenv("PAL_DEFAULT_MANAGER_ADDR") == "" {
 		managerDialer = dialer.NewLogOnlyDialer(logger)
-		logger.Info("using stub manager dialer (no LANTERN_DEFAULT_MANAGER_ADDR set)")
+		logger.Info("using stub manager dialer (no PAL_DEFAULT_MANAGER_ADDR set)")
 	} else {
 		// The manager requires the service token and, in prod, mTLS.
 		mgrCreds, err := dialer.ManagerTransportCreds(dialer.IsProd())
@@ -198,16 +198,16 @@ func main() {
 
 	// --- Service-token auth startup guard ---
 	// In prod, the gRPC server must refuse calls without the shared token
-	// (LANTERN_GRPC_SERVICE_TOKEN). Without this guard the :50055 gRPC port is
+	// (PAL_GRPC_SERVICE_TOKEN). Without this guard the :50055 gRPC port is
 	// reachable by any in-cluster caller who can supply an arbitrary tenant_id,
-	// enabling cross-tenant microVM compute takeover. In dev (LANTERN_ENV unset)
+	// enabling cross-tenant microVM compute takeover. In dev (PAL_ENV unset)
 	// we warn and allow unauthenticated calls so `make dev` keeps working.
 	if cfg.ServiceToken == "" {
 		if dialer.IsProd() {
-			logger.Fatal("LANTERN_GRPC_SERVICE_TOKEN is required in production — " +
+			logger.Fatal("PAL_GRPC_SERVICE_TOKEN is required in production — " +
 				"without it any in-cluster caller can spoof tenant_id on the gRPC port")
 		}
-		logger.Warn("LANTERN_GRPC_SERVICE_TOKEN unset — gRPC service-token check disabled (dev mode)")
+		logger.Warn("PAL_GRPC_SERVICE_TOKEN unset — gRPC service-token check disabled (dev mode)")
 	}
 
 	// --- Node-heartbeat token startup guard ---
@@ -238,11 +238,11 @@ func main() {
 			middleware.StreamTenantInterceptor(logger),
 		),
 	)
-	lanternv1.RegisterRuntimeSchedulerServer(grpcServer, schedSvc)
+	palv1.RegisterRuntimeSchedulerServer(grpcServer, schedSvc)
 
 	healthSvc := health.NewServer()
 	healthpb.RegisterHealthServer(grpcServer, healthSvc)
-	healthSvc.SetServingStatus("lantern.v1.RuntimeScheduler", healthpb.HealthCheckResponse_SERVING)
+	healthSvc.SetServingStatus("pal.v1.RuntimeScheduler", healthpb.HealthCheckResponse_SERVING)
 	reflection.Register(grpcServer)
 
 	lis, err := net.Listen("tcp", cfg.GRPCAddr)
@@ -316,7 +316,7 @@ func main() {
 		logger.Fatal("HTTP server failed", zap.Error(err))
 	}
 
-	healthSvc.SetServingStatus("lantern.v1.RuntimeScheduler", healthpb.HealthCheckResponse_NOT_SERVING)
+	healthSvc.SetServingStatus("pal.v1.RuntimeScheduler", healthpb.HealthCheckResponse_NOT_SERVING)
 	grpcServer.GracefulStop()
 	logger.Info("gRPC server stopped")
 
@@ -338,7 +338,7 @@ type config struct {
 	JWTSecret string
 	NodeToken string
 	// ServiceToken is the shared secret that callers must present as
-	// x-lantern-service-token in gRPC metadata. When empty the check is
+	// x-pal-service-token in gRPC metadata. When empty the check is
 	// disabled (dev mode); the startup guard aborts in prod.
 	ServiceToken    string
 	LogLevel        string
@@ -355,7 +355,7 @@ func loadConfig() config {
 	return config{
 		GRPCAddr:        envOrDefault("LISTEN_ADDR", ":50055"),
 		HTTPAddr:        envOrDefault("HTTP_ADDR", ":8085"),
-		JWTSecret:       envOrDefault("JWT_SECRET", "lantern-dev-jwt-secret-do-not-use-in-production"),
+		JWTSecret:       envOrDefault("JWT_SECRET", "pal-dev-jwt-secret-do-not-use-in-production"),
 		NodeToken:       os.Getenv("SCHEDULER_NODE_TOKEN"),
 		ServiceToken:    os.Getenv("PAL_GRPC_SERVICE_TOKEN"),
 		LogLevel:        envOrDefault("LOG_LEVEL", "info"),

@@ -188,7 +188,7 @@ func TestVerify_WrongTyp(t *testing.T) {
 	}
 }
 
-// TestVerify_FallbackSecret verifies that when LANTERN_AGENT_IDENTITY_SECRET
+// TestVerify_FallbackSecret verifies that when PAL_AGENT_IDENTITY_SECRET
 // is unset, the issuer falls back to the provided secret and tokens verify
 // correctly against it.
 func TestVerify_FallbackSecret(t *testing.T) {
@@ -302,7 +302,7 @@ func TestEd25519_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestHS256_BackCompat verifies that when LANTERN_AGENT_IDENTITY_ED25519_SEED
+// TestHS256_BackCompat verifies that when PAL_AGENT_IDENTITY_ED25519_SEED
 // is unset, Issue() still signs with HS256 and Verify() still works.
 func TestHS256_BackCompat(t *testing.T) {
 	// Ensure Ed25519 seed env var is unset.

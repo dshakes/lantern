@@ -26,25 +26,25 @@ test("PAL_STATE_DIR wins", () => {
   });
 });
 
-test("legacy ~/.lantern when ~/.pal does not exist", () => {
+test("legacy ~/.pal when ~/.pal does not exist", () => {
   const home = mkdtempSync(join(tmpdir(), "pal-sd-"));
-  mkdirSync(join(home, ".lantern"));
-  withEnv({ PAL_STATE_DIR: undefined, HOME: home }, () => {
-    assert.equal(palStateDir(), join(home, ".lantern"));
-  });
-});
-
-test("~/.pal once it exists", () => {
-  const home = mkdtempSync(join(tmpdir(), "pal-sd-"));
-  mkdirSync(join(home, ".lantern"));
   mkdirSync(join(home, ".pal"));
   withEnv({ PAL_STATE_DIR: undefined, HOME: home }, () => {
     assert.equal(palStateDir(), join(home, ".pal"));
   });
 });
 
-test("legacy LANTERN_STATE_DIR honoured without the env-compat mirror", () => {
-  withEnv({ PAL_STATE_DIR: undefined, LANTERN_STATE_DIR: "/legacy/state" }, () => {
+test("~/.pal once it exists", () => {
+  const home = mkdtempSync(join(tmpdir(), "pal-sd-"));
+  mkdirSync(join(home, ".pal"));
+  mkdirSync(join(home, ".pal"));
+  withEnv({ PAL_STATE_DIR: undefined, HOME: home }, () => {
+    assert.equal(palStateDir(), join(home, ".pal"));
+  });
+});
+
+test("legacy PAL_STATE_DIR honoured without the env-compat mirror", () => {
+  withEnv({ PAL_STATE_DIR: undefined, PAL_STATE_DIR: "/legacy/state" }, () => {
     assert.equal(palStateDir(), "/legacy/state");
   });
 });

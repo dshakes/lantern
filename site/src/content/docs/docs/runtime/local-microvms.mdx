@@ -50,13 +50,13 @@ make lima-broker-e2e  # broker egress mode (ADR 0026): no NIC, vsock-only, crede
 | Target | What it does |
 | --- | --- |
 | `make lima-up` | Creates the VM from `firecracker-dev.yaml` if absent, starts it if stopped, does nothing if running. Fails fast on M1/M2 or macOS older than 15. |
-| `make lima-image` | Builds `vmlinux` + `rootfs.ext4` with the current harness as PID 1. Cached at `~/.cache/lantern-lima/image` in the VM; rebuilt only when the harness binary or `build-image.sh` changes. |
-| `make lima-e2e` | `lima-image`, then builds the runtime-manager and runs `infra/firecracker/integration-test.sh` jailed with `EXPECT_VENDSECRET=1`: boot, snapshot, stop, restore, fork x3. Timing table saved to `~/.cache/lantern-lima/timing/lifecycle-timing.md` in the VM. |
+| `make lima-image` | Builds `vmlinux` + `rootfs.ext4` with the current harness as PID 1. Cached at `~/.cache/pal-lima/image` in the VM; rebuilt only when the harness binary or `build-image.sh` changes. |
+| `make lima-e2e` | `lima-image`, then builds the runtime-manager and runs `infra/firecracker/integration-test.sh` jailed with `EXPECT_VENDSECRET=1`: boot, snapshot, stop, restore, fork x3. Timing table saved to `~/.cache/pal-lima/timing/lifecycle-timing.md` in the VM. |
 | `make lima-broker-e2e` | Same build, then `infra/firecracker/broker-e2e.sh`. Needs outbound HTTPS to `httpbin.org`. |
 | `make lima-down` | Stops the VM. |
 | `make lima-clean` | Drops the VM's cached cargo target and microVM image. |
 
-Both e2e targets fail if a run leaves a firecracker process, snapshot directory or jail behind. If another run already holds the manager port (`:50054`, broker `:51054`) they wait for it, up to `LIMA_PORT_WAIT_SECS` (default 1800), instead of killing it. Builds refuse to start when the VM disk is over `LIMA_DISK_MAX_PCT` (default 85%); `make lima-clean` frees the caches. All build output goes to `~/.cache/lantern-lima` in the VM, never into the repo.
+Both e2e targets fail if a run leaves a firecracker process, snapshot directory or jail behind. If another run already holds the manager port (`:50054`, broker `:51054`) they wait for it, up to `LIMA_PORT_WAIT_SECS` (default 1800), instead of killing it. Builds refuse to start when the VM disk is over `LIMA_DISK_MAX_PCT` (default 85%); `make lima-clean` frees the caches. All build output goes to `~/.cache/pal-lima` in the VM, never into the repo.
 
 ## Manual steps
 
@@ -101,12 +101,12 @@ sudo apt-get install -y musl-tools e2fsprogs jq curl protobuf-compiler
 rustup target add aarch64-unknown-linux-musl
 
 # The repo is read-only in the guest: build into a cache under ~
-TARGET=~/.cache/lantern-lima/target
+TARGET=~/.cache/pal-lima/target
 
 # Harness (musl, static)
-cargo build --release --bin lantern-harness --target aarch64-unknown-linux-musl \
+cargo build --release --bin pal-harness --target aarch64-unknown-linux-musl \
   --manifest-path services/harness/Cargo.toml --target-dir "$TARGET"
-HARNESS_BIN="$TARGET/aarch64-unknown-linux-musl/release/lantern-harness"
+HARNESS_BIN="$TARGET/aarch64-unknown-linux-musl/release/pal-harness"
 
 # Kernel + rootfs (sudo for loop-mount; harness passed via env)
 sudo FC_HARNESS_BIN="$HARNESS_BIN" \
@@ -117,7 +117,7 @@ sudo mkdir -p /srv/jailer
 
 # Runtime-manager
 cargo build --release --manifest-path services/runtime-manager/Cargo.toml --target-dir "$TARGET"
-MANAGER_BIN="$TARGET/release/lantern-runtime-manager"
+MANAGER_BIN="$TARGET/release/pal-runtime-manager"
 
 # The test (root: TAP + firecracker + loop devices)
 sudo \

@@ -33,7 +33,7 @@ func NewEmailDeliverer(logger *zap.Logger) *EmailDeliverer {
 		smtpPort:  envOrDefault("SMTP_PORT", "587"),
 		smtpUser:  os.Getenv("SMTP_USER"),
 		smtpPass:  os.Getenv("SMTP_PASS"),
-		fromAddr:  envOrDefault("EMAIL_FROM", "noreply@lantern.dev"),
+		fromAddr:  envOrDefault("EMAIL_FROM", "noreply@pal.dev"),
 		resendKey: os.Getenv("RESEND_API_KEY"),
 		client:    &http.Client{Timeout: 30 * time.Second},
 		logger:    logger.Named("email"),
@@ -121,7 +121,7 @@ func (e *EmailDeliverer) deliverViaResend(ctx context.Context, n *Notification) 
 func (e *EmailDeliverer) deliverViaSMTP(_ context.Context, n *Notification) (*DeliveryResult, error) {
 	subject := n.Subject
 	if subject == "" {
-		subject = "Lantern Notification"
+		subject = "PAL Notification"
 	}
 
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nContent-Type: text/html; charset=utf-8\r\n\r\n%s",

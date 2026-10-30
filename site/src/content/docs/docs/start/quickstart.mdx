@@ -13,7 +13,7 @@ import { Aside, Steps, LinkCard, CardGrid } from '@astrojs/starlight/components'
 
 Describe what you want your agent to do in plain language. PAL's onboarding agent designs it, checks your model key with a real call, creates it, and runs it so you see real output. This takes about five minutes.
 
-<Aside type="note">The CLI and packages are still named `lantern` while the rename lands.</Aside>
+<Aside type="note">The CLI and packages are still named `pal` while the rename lands.</Aside>
 
 <Aside type="tip" title="No API key yet?">
 Run `make demo` from a checkout. It needs Docker only, answers from recorded replays and opens at `http://localhost:3001/kiosk`. See [Demo mode](/docs/start/demo/). The rest of this page runs your own agent against your own key.
@@ -23,15 +23,15 @@ Three terms used throughout: an *agent* is an AI worker with a name and instruct
 
 ## Before you start
 
-- A running stack: `lantern dev` (or `make dev-infra`, which starts Postgres and Redis only, + `make run-api` + `make dashboard-dev`). See [Installation](/docs/start/installation/).
+- A running stack: `pal dev` (or `make dev-infra`, which starts Postgres and Redis only, + `make run-api` + `make dashboard-dev`). See [Installation](/docs/start/installation/).
 - An OpenAI or Anthropic API key. You can add it during onboarding.
-- The CLI, if you want the terminal path: `( cd packages/cli && go install ./cmd/lantern )`. Run `lantern doctor` to check the stack, including whether the sandbox runtime is wired.
+- The CLI, if you want the terminal path: `( cd packages/cli && go install ./cmd/pal )`. Run `pal doctor` to check the stack, including whether the sandbox runtime is wired.
 
 ## In the dashboard
 
 Where email verification is required (see [Accounts](/docs/build/accounts/)), creating a run before you verify returns `403` with `code: "email_unverified"`; onboarding shows a **Resend verification email** button and an **I've verified, try again** button instead of failing silently.
 
-Open [localhost:3001/onboarding](http://localhost:3001/onboarding) and sign in (dev: `admin@lantern.dev` / `lantern`). The page is a conversation on the right and a progress rail on the left. Each step moves on only after the platform confirms it actually worked.
+Open [localhost:3001/onboarding](http://localhost:3001/onboarding) and sign in (dev: `admin@pal.dev` / `pal`). The page is a conversation on the right and a progress rail on the left. Each step moves on only after the platform confirms it actually worked.
 
 <Steps>
 
@@ -45,7 +45,7 @@ Open [localhost:3001/onboarding](http://localhost:3001/onboarding) and sign in (
 
 5. **Create and run.** The agent is created with the instructions you approved. The first run streams live: each step appears as it starts and finishes. The output is then shown, with a short explanation of what the agent did and what to try next.
 
-6. **Optional: run it in a sandbox.** Starts a microVM, runs one command inside it, and shuts it down. On a stack without a runtime scheduler this step says **Sandbox unavailable** and nothing runs. `lantern doctor` tells you which piece is missing.
+6. **Optional: run it in a sandbox.** Starts a microVM, runs one command inside it, and shuts it down. On a stack without a runtime scheduler this step says **Sandbox unavailable** and nothing runs. `pal doctor` tells you which piece is missing.
 
 </Steps>
 
@@ -64,7 +64,7 @@ When something fails, the page says what went wrong and gives the one action mos
 ## In the terminal
 
 ```bash
-lantern onboard
+pal onboard
 ```
 
 It checks health, signs in (stored credentials or the dev seed), and test-calls your provider key, asking for one if needed. Then it asks *"What do you want your agent to do?"*, shows the proposed agent, creates it when you confirm, and streams the first run using the design's own first task.
@@ -72,7 +72,7 @@ It checks health, signs in (stored credentials or the dev seed), and test-calls 
 For CI, use the non-interactive mode. It never prompts and fails loudly at the first broken step:
 
 ```bash
-lantern onboard --yes \
+pal onboard --yes \
   --provider anthropic --api-key "$ANTHROPIC_API_KEY" \
   --description "Summarize support tickets into one-line triage notes"
 ```
@@ -84,7 +84,7 @@ Both paths use the same public endpoints, so you can script them yourself:
 ```bash
 export PAL_TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"admin@lantern.dev","password":"lantern"}' | jq -r .token)
+  -d '{"email":"admin@pal.dev","password":"pal"}' | jq -r .token)
 H="Authorization: Bearer $PAL_TOKEN"
 
 # 1. Provider key + a real test call

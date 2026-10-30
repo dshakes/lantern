@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run the Lantern dashboard as an always-on PRODUCTION service under launchd.
+# Run the PAL dashboard as an always-on PRODUCTION service under launchd.
 #
 # Why production, not `next dev`: dev mode compiles on demand, grows memory over
 # days of uptime, and corrupts `.next` when the process is killed mid-write —
@@ -17,23 +17,23 @@ cd "$REPO_ROOT/apps/web"
 
 # Shared bridge env — same file the bridge wrapper sources. The dashboard's
 # server-side bridge proxy (app/api/bridge/[channel]/…) authenticates to the
-# bridges with LANTERN_IMESSAGE_BRIDGE_TOKEN / LANTERN_BRIDGE_TOKEN; keeping all
+# bridges with PAL_IMESSAGE_BRIDGE_TOKEN / PAL_BRIDGE_TOKEN; keeping all
 # three services on one file means a plain `kickstart -k` reloads the token
 # (these are read at RUNTIME, not build time). Loaded before `next start`.
-if [ -f "$HOME/.lantern/bridge.env" ]; then
+if [ -f "$HOME/.pal/bridge.env" ]; then
   set -a
   # shellcheck disable=SC1091
-  . "$HOME/.lantern/bridge.env"
+  . "$HOME/.pal/bridge.env"
   set +a
 fi
 
 # SERVER-SIDE API base for the auth middleware. The middleware validates the
-# lantern_token cookie by calling <base>/auth/me on every gated request, with a
+# pal_token cookie by calling <base>/auth/me on every gated request, with a
 # short timeout. It must hit the LOCAL API (localhost:8080), NOT the public
 # NEXT_PUBLIC_API_URL (Tailscale) — a slow/unreachable remote validation "fails
 # closed" and bounces /agents → /login forever (blank screen redirect loop).
-# PAL_API_URL (LANTERN_API_URL still accepted) wins over NEXT_PUBLIC_API_URL in controlPlaneBaseUrl().
-export PAL_API_URL="${PAL_API_URL:-${LANTERN_API_URL:-http://localhost:8080}}"
+# PAL_API_URL (PAL_API_URL still accepted) wins over NEXT_PUBLIC_API_URL in controlPlaneBaseUrl().
+export PAL_API_URL="${PAL_API_URL:-${PAL_API_URL:-http://localhost:8080}}"
 
 # Wait up to 60s for the API so we don't flash "API offline" during boot.
 for i in {1..30}; do
@@ -67,7 +67,7 @@ start_standalone() {
 # slow type-checked rebuild — that fast recovery is the whole point of "always up".
 # To deploy new dashboard code, rebuild explicitly and restart:
 #   (cd apps/web && rm -rf .next && npm run build)
-#   launchctl kickstart -k gui/$(id -u)/dev.lantern.dashboard
+#   launchctl kickstart -k gui/$(id -u)/dev.pal.dashboard
 if [[ ! -f .next/standalone/server.js ]]; then
   echo "[$(date +%T)] no standalone build present — building (one-time)…"
   if ! npm run build; then

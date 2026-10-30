@@ -9,7 +9,7 @@ context — so when you ask the bot "what have I been on" or "am I doomscrolling
 it actually knows.
 
 **This is owner-only and local.** The signals live in a file on your Mac
-(`~/.lantern/device-signals.jsonl`, owner-readable only). The bot never reveals
+(`~/.pal/device-signals.jsonl`, owner-readable only). The bot never reveals
 them to anyone but you. The only time a signal leaves your phone is the single
 HTTPS POST that delivers it over the same Cloudflare tunnel that already serves
 your dashboard.
@@ -54,7 +54,7 @@ You'll build this once, then call it from every app automation.
    - Tap **Show More**.
    - **Method**: `POST`
    - **Headers** → **Add new header**:
-     - Key: `x-lantern-signal-token`
+     - Key: `x-pal-signal-token`
      - Value: `<your-token>` (the same secret from above)
      - Add a second header — Key: `Content-Type`, Value: `application/json`
    - **Request Body**: `JSON`, with these fields:
@@ -130,12 +130,12 @@ After a few app opens, check the last signals from your Mac (replace the host
 and token):
 
 ```bash
-curl -s -H "x-lantern-signal-token: <your-token>" \
+curl -s -H "x-pal-signal-token: <your-token>" \
   "https://macbook-pro-2.tail0be192.ts.net/v1/signals?limit=10"
 ```
 
 You should see a JSON `{ "signals": [ … ] }` array of your recent events. You
-can also just open `~/.lantern/device-signals.jsonl` on the Mac — one JSON
+can also just open `~/.pal/device-signals.jsonl` on the Mac — one JSON
 object per line.
 
 Then, in your self-chat, ask the bot something like "what have I been on my
@@ -146,7 +146,7 @@ min) it'll have the summary in context.
 
 ## Body reference
 
-`POST /v1/signals` — header `x-lantern-signal-token: <token>`, JSON body:
+`POST /v1/signals` — header `x-pal-signal-token: <token>`, JSON body:
 
 | Field    | Required | Notes                                                        |
 | -------- | -------- | ------------------------------------------------------------ |
@@ -162,7 +162,7 @@ returns **400**.
 
 ## Privacy recap
 
-- Signals are stored **only** on your Mac in `~/.lantern/device-signals.jsonl`
+- Signals are stored **only** on your Mac in `~/.pal/device-signals.jsonl`
   (mode `0600` — your user only). The file is auto-trimmed to the most recent
   few thousand lines.
 - The summary is injected **only** into your own self-chat assistant context.

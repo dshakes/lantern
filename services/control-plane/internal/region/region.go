@@ -16,7 +16,7 @@
 //     writers do not start.
 //
 // The env vars are PAL_* names; palenv.Bridge() (called first in main) makes
-// the LANTERN_* spellings visible under these names too (ADR 0032).
+// the PAL_* spellings visible under these names too (ADR 0032).
 package region
 
 import (
@@ -142,14 +142,14 @@ func (c Config) ReadOnlyHTTP(next http.Handler) http.Handler {
 // write — is UNAVAILABLE on a standby, which makes a data-plane agent move on
 // to its next control-plane endpoint.
 var readOnlyAllowedGRPC = map[string]bool{
-	"/lantern.v1.AgentService/GetAgent":          true,
-	"/lantern.v1.AgentService/ListAgents":        true,
-	"/lantern.v1.AgentService/GetAgentVersion":   true,
-	"/lantern.v1.AgentService/ListAgentVersions": true,
-	"/lantern.v1.RunService/GetRun":              true,
-	"/lantern.v1.RunService/ListRuns":            true,
-	"/lantern.v1.RunService/StreamRunEvents":     true,
-	"/lantern.v1.RunService/QueryRun":            true,
+	"/pal.v1.AgentService/GetAgent":          true,
+	"/pal.v1.AgentService/ListAgents":        true,
+	"/pal.v1.AgentService/GetAgentVersion":   true,
+	"/pal.v1.AgentService/ListAgentVersions": true,
+	"/pal.v1.RunService/GetRun":              true,
+	"/pal.v1.RunService/ListRuns":            true,
+	"/pal.v1.RunService/StreamRunEvents":     true,
+	"/pal.v1.RunService/QueryRun":            true,
 }
 
 func (c Config) grpcAllowed(method string) bool {

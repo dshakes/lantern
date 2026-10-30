@@ -68,10 +68,10 @@ const GOAL_EXAMPLES = [
 
 // The smallest runnable demo workload (examples/headless-agents/01-hello).
 const SANDBOX_SPEC = {
-  imageDigest: "lantern/demos/hello:latest",
+  imageDigest: "pal/demos/hello:latest",
   isolation: "untrusted",
   limits: { vcpu: "100m", memory: "64Mi", timeout_secs: 30 },
-  env: { LANTERN_ONBOARDING: "1" },
+  env: { PAL_ONBOARDING: "1" },
 };
 
 interface Failure {
@@ -1153,7 +1153,7 @@ function SandboxResult({
           <p className="font-medium text-zinc-50">Sandbox unavailable on this stack</p>
           <p className="mt-1 text-zinc-400">{display.reason}</p>
           <p className="mt-1 text-zinc-400">
-            Nothing ran. Run <span className={ui.mono}>lantern doctor</span> to see what the runtime needs (scheduler,
+            Nothing ran. Run <span className={ui.mono}>pal doctor</span> to see what the runtime needs (scheduler,
             runtime manager, KVM).
           </p>
         </Notice>

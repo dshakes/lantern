@@ -119,7 +119,7 @@ async def test_read_file_raw_text_and_truncation():
 
 
 async def test_read_file_truncation_legacy_header_fallback():
-    t = _Raw(200, b"x", {"X-Lantern-Truncated": "true"})
+    t = _Raw(200, b"x", {"X-Pal-Truncated": "true"})
     assert (await _client(t).runtime.read_file("vm1", "a"))["truncated"] is True  # type: ignore[arg-type]
     t = _Raw(200, b"x", {})
     assert (await _client(t).runtime.read_file("vm1", "a"))["truncated"] is False  # type: ignore[arg-type]

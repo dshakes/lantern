@@ -1,11 +1,11 @@
-module github.com/dshakes/lantern/services/runtime-scheduler
+module github.com/dshakes/pal/services/runtime-scheduler
 
 go 1.25.0
 
 toolchain go1.26.6
 
 require (
-	github.com/dshakes/lantern/gen/go v0.0.0
+	github.com/dshakes/pal/gen/go v0.0.0
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.7.4
@@ -43,5 +43,5 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 )
 
-replace github.com/dshakes/lantern/gen/go => ../../gen/go
+replace github.com/dshakes/pal/gen/go => ../../gen/go
 

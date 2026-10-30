@@ -12,7 +12,7 @@
 //	POST /v1/browser/propose                  — store a browser_act proposal (no side effect)
 //	POST /v1/browser/commitments/{id}/execute — SOLE write path; owner confirm required
 //
-// Feature-gated behind LANTERN_BROWSER_SKILL=on/1/true (default OFF).
+// Feature-gated behind PAL_BROWSER_SKILL=on/1/true (default OFF).
 package handlers
 
 import (
@@ -27,22 +27,22 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // browserSkillEnabled reports whether the browser-as-skill feature is enabled.
-// Default OFF — set LANTERN_BROWSER_SKILL=on/1/true to enable.
+// Default OFF — set PAL_BROWSER_SKILL=on/1/true to enable.
 func browserSkillEnabled() bool {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv("PAL_BROWSER_SKILL")))
 	return v == "on" || v == "1" || v == "true"
 }
 
 // browserExecFn is the injectable seam for RuntimeManager.ExecTool calls.
-// Production: built from a real lanternv1.RuntimeManagerClient via SetRuntimeClient.
+// Production: built from a real palv1.RuntimeManagerClient via SetRuntimeClient.
 // Tests: a stub func that returns UNAVAILABLE or OK without a real gRPC server.
-type browserExecFn func(ctx context.Context, toolName string, args map[string]any) (*lanternv1.ExecToolResponse, error)
+type browserExecFn func(ctx context.Context, toolName string, args map[string]any) (*palv1.ExecToolResponse, error)
 
 // browserActPlan is stored as commitments.action_plan for kind='browser_act'.
 // ExecutionResult is populated only after Execute confirms successfully.
@@ -69,10 +69,10 @@ func NewBrowserHandler(srv *server.Server, auth *AuthHandler) *BrowserHandler {
 }
 
 // SetRuntimeClient wires the real RuntimeManagerClient (called from main.go
-// when LANTERN_RUNTIME_MANAGER_ADDR is set). Wraps ExecTool in a closure
+// when PAL_RUNTIME_MANAGER_ADDR is set). Wraps ExecTool in a closure
 // that handles map→structpb conversion.
-func (h *BrowserHandler) SetRuntimeClient(cl lanternv1.RuntimeManagerClient) {
-	h.execFn = func(ctx context.Context, toolName string, args map[string]any) (*lanternv1.ExecToolResponse, error) {
+func (h *BrowserHandler) SetRuntimeClient(cl palv1.RuntimeManagerClient) {
+	h.execFn = func(ctx context.Context, toolName string, args map[string]any) (*palv1.ExecToolResponse, error) {
 		var argsStruct *structpb.Struct
 		if len(args) > 0 {
 			s, err := structpb.NewStruct(args)
@@ -81,7 +81,7 @@ func (h *BrowserHandler) SetRuntimeClient(cl lanternv1.RuntimeManagerClient) {
 			}
 			argsStruct = s
 		}
-		return cl.ExecTool(ctx, &lanternv1.ExecToolRequest{
+		return cl.ExecTool(ctx, &palv1.ExecToolRequest{
 			ToolName: toolName,
 			Args:     argsStruct,
 		})
@@ -103,7 +103,7 @@ func (h *BrowserHandler) logger() *zap.Logger {
 // Body: {url, task}
 func (h *BrowserHandler) Read(w http.ResponseWriter, r *http.Request) {
 	if !browserSkillEnabled() {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "browser skill disabled (set LANTERN_BROWSER_SKILL=on)"})
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "browser skill disabled (set PAL_BROWSER_SKILL=on)"})
 		return
 	}
 
@@ -144,13 +144,13 @@ func (h *BrowserHandler) Read(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch resp.GetStatus() {
-	case lanternv1.ToolStatus_TOOL_STATUS_OK:
+	case palv1.ToolStatus_TOOL_STATUS_OK:
 		var resultMap map[string]any
 		if r := resp.GetResult(); r != nil {
 			resultMap = r.AsMap()
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"result": resultMap})
-	case lanternv1.ToolStatus_TOOL_STATUS_ERROR:
+	case palv1.ToolStatus_TOOL_STATUS_ERROR:
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": resp.GetError()})
 	default: // UNAVAILABLE or UNSPECIFIED
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "browser runtime not yet available (increment 2)"})
@@ -167,7 +167,7 @@ func (h *BrowserHandler) Read(w http.ResponseWriter, r *http.Request) {
 // Returns: {id}
 func (h *BrowserHandler) Propose(w http.ResponseWriter, r *http.Request) {
 	if !browserSkillEnabled() {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "browser skill disabled (set LANTERN_BROWSER_SKILL=on)"})
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "browser skill disabled (set PAL_BROWSER_SKILL=on)"})
 		return
 	}
 
@@ -237,7 +237,7 @@ func (h *BrowserHandler) Propose(w http.ResponseWriter, r *http.Request) {
 // this endpoint constitutes explicit confirmation.
 //
 // Safety invariants enforced (mirrors cross_app.ExecuteAction):
-//   - Feature-gated: same LANTERN_BROWSER_SKILL flag.
+//   - Feature-gated: same PAL_BROWSER_SKILL flag.
 //   - Owner/admin role gate: non-owners get 403 before any DB access.
 //   - Runtime check: no manager configured → 503 without touching the commitment.
 //   - Atomic exclusive claim: UPDATE WHERE status='suggested' RETURNING — only
@@ -248,7 +248,7 @@ func (h *BrowserHandler) Propose(w http.ResponseWriter, r *http.Request) {
 //   - ERROR: status set to 'failed'; owner must re-propose. Returns 502.
 func (h *BrowserHandler) Execute(w http.ResponseWriter, r *http.Request) {
 	if !browserSkillEnabled() {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "browser skill disabled (set LANTERN_BROWSER_SKILL=on)"})
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "browser skill disabled (set PAL_BROWSER_SKILL=on)"})
 		return
 	}
 
@@ -371,7 +371,7 @@ func (h *BrowserHandler) Execute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch resp.GetStatus() {
-	case lanternv1.ToolStatus_TOOL_STATUS_OK:
+	case palv1.ToolStatus_TOOL_STATUS_OK:
 		var resultMap map[string]any
 		if r := resp.GetResult(); r != nil {
 			resultMap = r.AsMap()
@@ -409,7 +409,7 @@ func (h *BrowserHandler) Execute(w http.ResponseWriter, r *http.Request) {
 			"result": resultMap,
 		})
 
-	case lanternv1.ToolStatus_TOOL_STATUS_ERROR:
+	case palv1.ToolStatus_TOOL_STATUS_ERROR:
 		// Tool ran but failed — mark 'failed'. Receipt remains, blocking retry.
 		// Owner must re-propose.
 		h.setCommitmentStatus(ctx, id, tenantID, "failed")

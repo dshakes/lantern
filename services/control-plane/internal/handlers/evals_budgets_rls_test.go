@@ -4,7 +4,7 @@ package handlers
 // (evals.go, experiments.go, budgets.go, forecaster.go) after the P1.1b cutover
 // to s.srv.WithTenant.
 //
-// Runs against the lantern_app-backed harness (newEnforcedServer). Proves:
+// Runs against the pal_app-backed harness (newEnforcedServer). Proves:
 //
 //	(a) a SAME-TENANT caller still writes + reads its OWN budgets and eval
 //	    suites (rows returned, NOT zero — the regression check), and

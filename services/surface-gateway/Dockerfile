@@ -8,6 +8,6 @@ RUN cargo build --release
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libssl3 && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/services/surface-gateway/target/release/lantern-surface-gateway /usr/local/bin/
+COPY --from=builder /app/services/surface-gateway/target/release/pal-surface-gateway /usr/local/bin/
 EXPOSE 8444
-CMD ["lantern-surface-gateway"]
+CMD ["pal-surface-gateway"]

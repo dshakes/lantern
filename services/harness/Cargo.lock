@@ -709,7 +709,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "lantern-harness"
+name = "pal-harness"
 version = "0.1.0"
 dependencies = [
  "anyhow",

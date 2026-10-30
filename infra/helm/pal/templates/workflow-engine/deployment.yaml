@@ -69,9 +69,9 @@ spec:
             # was silently dropped: the deployment came up healthy with RLS
             # completely off — a fail-open on the tenant-isolation control.
             - name: PAL_ENV
-              value: {{ .Values.workflowEngine.env.PAL_ENV | default .Values.workflowEngine.env.LANTERN_ENV | default "production" | quote }}
+              value: {{ .Values.workflowEngine.env.PAL_ENV | default .Values.workflowEngine.env.PAL_ENV | default "production" | quote }}
             - name: PAL_RLS_ENFORCE
-              value: {{ .Values.workflowEngine.env.PAL_RLS_ENFORCE | default .Values.workflowEngine.env.LANTERN_RLS_ENFORCE | default "" | quote }}
+              value: {{ .Values.workflowEngine.env.PAL_RLS_ENFORCE | default .Values.workflowEngine.env.PAL_RLS_ENFORCE | default "" | quote }}
             - name: PAL_APP_DB_PASSWORD
               valueFrom:
                 secretKeyRef:

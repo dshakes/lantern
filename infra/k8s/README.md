@@ -66,7 +66,7 @@ run under `--execution`:
   bare runc pod would share the host kernel (identical), which is treated as a
   fail-open isolation breach.
 - **(i)** the HOSTILE pod's node is **dedicated**: no pod from a different
-  `lantern-t-*` tenant namespace shares it (the `NoSchedule` taint is enforced).
+  `pal-t-*` tenant namespace shares it (the `NoSchedule` taint is enforced).
 
 ### Running the execution legs
 
@@ -103,7 +103,7 @@ the policy, not broken networking.
 | File | Purpose |
 | --- | --- |
 | `kind-cluster.yaml` | throwaway single-node cluster, default CNI disabled, Calico pod subnet |
-| `manifests/00-namespace.yaml` | `lantern-t-validate` namespace (PSA `restricted`) + `lantern-agent-runner` SA |
+| `manifests/00-namespace.yaml` | `pal-t-validate` namespace (PSA `restricted`) + `pal-agent-runner` SA |
 | `manifests/10-networkpolicy.yaml` | per-run default-deny ingress+egress fence; allow DNS + runtime manager only |
 | `manifests/20-job.yaml` | sample workload Job mirroring `build_job()` in `k8s.rs` (busybox+sleep so probes can exec) |
 | `manifests/90-escalation-probe.yaml` | negative probe — root/privileged pod that admission must reject |
@@ -127,9 +127,9 @@ Gaps the validation manifests harden beyond today's `k8s.rs`:
 2. **No manager-allow egress rule** — `k8s.rs` allows only DNS + CIDR
    allowlist peers; the harness→runtime-manager channel (TCP 50054) would be
    fenced too. `10-networkpolicy.yaml` adds an explicit allow to the manager
-   pod in `lantern-system`.
+   pod in `pal-system`.
 3. **Namespace/SA/PSA provisioning is assumed** — `k8s.rs` never creates the
-   `lantern-t-<tenant>` namespace, the `lantern-agent-runner` ServiceAccount,
+   `pal-t-<tenant>` namespace, the `pal-agent-runner` ServiceAccount,
    or the `pod-security.kubernetes.io/enforce: restricted` label. Tenant
    namespace provisioning must produce `00-namespace.yaml`'s shape, otherwise
    Job creation fails (missing SA) and assertion (d) has no admission backstop.

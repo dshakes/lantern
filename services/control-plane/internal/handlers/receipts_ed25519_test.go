@@ -7,11 +7,11 @@ package handlers
 //   (b) Offline external verify — only the public key from WellKnown is in scope;
 //       no private key used; mimics what an external auditor does
 //   (c) Tamper detection — mutate one payload byte → verify fails
-//   (d) HMAC regression — HMAC path still works when only LANTERN_RECEIPT_SECRET
+//   (d) HMAC regression — HMAC path still works when only PAL_RECEIPT_SECRET
 //       is set (Ed25519 seed absent)
 //   (e) Unknown algorithm rejected (extends existing TestVerifyReceipt_UnsupportedAlgorithm)
 //
-// Each test that changes LANTERN_RECEIPT_ED25519_SEED calls resetEd25519OnceForTest()
+// Each test that changes PAL_RECEIPT_ED25519_SEED calls resetEd25519OnceForTest()
 // first so the package-level sync.Once re-runs for that test's environment.
 // t.Setenv restores the original env after the test, and resetEd25519OnceForTest
 // is called again in t.Cleanup to clear the cached key so later tests start fresh.
@@ -40,7 +40,7 @@ func generateTestSeed(t *testing.T) string {
 	return base64.StdEncoding.EncodeToString(seed)
 }
 
-// setEd25519Seed sets LANTERN_RECEIPT_ED25519_SEED, resets the once so the new
+// setEd25519Seed sets PAL_RECEIPT_ED25519_SEED, resets the once so the new
 // value is picked up, and registers cleanup to reset again after the test so
 // subsequent tests don't inherit a stale cached key.
 func setEd25519Seed(t *testing.T, seedB64 string) {
@@ -123,7 +123,7 @@ func TestReceipt_Ed25519_IssueVerifyRoundTrip(t *testing.T) {
 //  3. Verify the signature using ONLY the public key + canonical JSON bytes.
 //
 // No private key is referenced after derivation; the test verifies that the
-// public key alone (as published at /.well-known/lantern-receipts) is
+// public key alone (as published at /.well-known/pal-receipts) is
 // sufficient for offline verification.
 func TestReceipt_Ed25519_ExternalVerify(t *testing.T) {
 	seedB64 := generateTestSeed(t)
@@ -156,7 +156,7 @@ func TestReceipt_Ed25519_ExternalVerify(t *testing.T) {
 
 	// Step 3: external verifier obtains public key from WellKnown.
 	hwk := &ReceiptHandler{srv: nil}
-	wkReq := httptest.NewRequest(http.MethodGet, "/.well-known/lantern-receipts", nil)
+	wkReq := httptest.NewRequest(http.MethodGet, "/.well-known/pal-receipts", nil)
 	wkRec := httptest.NewRecorder()
 	hwk.WellKnown(wkRec, wkReq)
 
@@ -258,7 +258,7 @@ func TestReceipt_Ed25519_TamperDetection(t *testing.T) {
 // ---------- (d) HMAC regression ----------
 
 // TestReceipt_HMAC_RegressionWhenNoEd25519Seed verifies that when only
-// LANTERN_RECEIPT_SECRET is set (no Ed25519 seed), the handler issues and
+// PAL_RECEIPT_SECRET is set (no Ed25519 seed), the handler issues and
 // verifies HMAC-SHA256 receipts exactly as before the Ed25519 migration.
 func TestReceipt_HMAC_RegressionWhenNoEd25519Seed(t *testing.T) {
 	clearEd25519Seed(t)
@@ -310,7 +310,7 @@ func TestReceipt_HMAC_WellKnownWhenNoEd25519(t *testing.T) {
 	t.Setenv("PAL_RECEIPT_SECRET", "wk-hmac-secret")
 
 	h := &ReceiptHandler{srv: nil}
-	r := httptest.NewRequest(http.MethodGet, "/.well-known/lantern-receipts", nil)
+	r := httptest.NewRequest(http.MethodGet, "/.well-known/pal-receipts", nil)
 	rr := httptest.NewRecorder()
 	h.WellKnown(rr, r)
 
@@ -378,7 +378,7 @@ func TestReceipt_Ed25519_WellKnownShape(t *testing.T) {
 	}
 
 	h := &ReceiptHandler{srv: nil}
-	r := httptest.NewRequest(http.MethodGet, "/.well-known/lantern-receipts", nil)
+	r := httptest.NewRequest(http.MethodGet, "/.well-known/pal-receipts", nil)
 	rr := httptest.NewRecorder()
 	h.WellKnown(rr, r)
 

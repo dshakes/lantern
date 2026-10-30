@@ -59,7 +59,7 @@ pub struct AuthLayer {
 
 impl AuthLayer {
     /// `introspector` is `None` when API-key auth is unconfigured
-    /// (LANTERN_CONTROL_PLANE_URL / LANTERN_GRPC_SERVICE_TOKEN unset) — the
+    /// (PAL_CONTROL_PLANE_URL / PAL_GRPC_SERVICE_TOKEN unset) — the
     /// API-key path then stays fail-closed.
     pub fn new(jwt_secret: String, introspector: Option<Arc<ApiKeyIntrospector>>) -> Self {
         Self {
@@ -187,7 +187,7 @@ async fn resolve_claims(
             Some(i) => i.introspect(&key).await,
             None => Err(AppError::Auth(
                 "API-key authentication is not configured at this gateway (set \
-                 LANTERN_CONTROL_PLANE_URL and LANTERN_GRPC_SERVICE_TOKEN)"
+                 PAL_CONTROL_PLANE_URL and PAL_GRPC_SERVICE_TOKEN)"
                     .to_string(),
             )),
         },

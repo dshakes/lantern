@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dshakes/lantern/e2e/internal/e2ekit"
+	"github.com/dshakes/pal/e2e/internal/e2ekit"
 )
 
 const (

@@ -1,5 +1,5 @@
 // OTel pass-through: reads pre-serialized OTLP span batches from a unix
-// socket (`/run/lantern/otlp.sock`) and forwards them via the Report
+// socket (`/run/pal/otlp.sock`) and forwards them via the Report
 // stream. The workload's tracing setup writes OTLP/protobuf bytes here.
 //
 // Wire protocol: length-prefixed (u32 big-endian) OTLP batches. One batch
@@ -26,7 +26,7 @@ const MAX_BATCH_BYTES: usize = 1024 * 1024;
 
 pub async fn run(manager: ManagerClient) -> Result<()> {
     let path: PathBuf = std::env::var("PAL_OTLP_SOCKET")
-        .unwrap_or_else(|_| "/run/lantern/otlp.sock".to_string())
+        .unwrap_or_else(|_| "/run/pal/otlp.sock".to_string())
         .into();
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await.ok();
@@ -102,7 +102,7 @@ async fn flush(manager: &ManagerClient, pending: &mut Vec<u8>) {
 // W3C trace-context propagation
 // ---------------------------------------------------------------------------
 //
-// The manager injects `LANTERN_TRACE_PARENT` into the VM's environment at
+// The manager injects `PAL_TRACE_PARENT` into the VM's environment at
 // spawn time.  `init_propagator` must be called once at startup (before any
 // gRPC calls to the manager); it sets the global W3C propagator and returns
 // the root `Context` parsed from that env var.  Subsequent calls to
@@ -115,7 +115,7 @@ use opentelemetry::{Context, global};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use tonic::metadata::MetadataMap;
 
-/// Single-key carrier that presents `LANTERN_TRACE_PARENT` as the W3C
+/// Single-key carrier that presents `PAL_TRACE_PARENT` as the W3C
 /// `traceparent` key so the propagator can extract from it.
 struct EnvCarrier(String);
 
@@ -146,7 +146,7 @@ impl Injector for MetadataInjector<'_> {
     }
 }
 
-/// Initialise the W3C propagator globally and parse `LANTERN_TRACE_PARENT`
+/// Initialise the W3C propagator globally and parse `PAL_TRACE_PARENT`
 /// into a root `Context`.
 ///
 /// Call once, early in `main()`, before any outgoing gRPC calls.  Returns
@@ -168,17 +168,17 @@ pub fn init_propagator() -> Context {
             if sc.is_valid() {
                 tracing::debug!(
                     trace_id = %format!("{:032x}", sc.trace_id()),
-                    "otel: joined distributed trace from LANTERN_TRACE_PARENT"
+                    "otel: joined distributed trace from PAL_TRACE_PARENT"
                 );
             } else {
                 tracing::debug!(
-                    "otel: LANTERN_TRACE_PARENT present but malformed; starting fresh trace"
+                    "otel: PAL_TRACE_PARENT present but malformed; starting fresh trace"
                 );
             }
             cx
         }
         None => {
-            tracing::debug!("otel: LANTERN_TRACE_PARENT not set; starting fresh trace");
+            tracing::debug!("otel: PAL_TRACE_PARENT not set; starting fresh trace");
             Context::default()
         }
     }

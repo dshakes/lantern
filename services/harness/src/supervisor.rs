@@ -76,7 +76,7 @@ fn parse_identity(uid: Option<&str>, gid: Option<&str>) -> Option<WorkloadIdenti
     Some(WorkloadIdentity { uid, gid })
 }
 
-/// `LANTERN_WORKLOAD_UID` / `LANTERN_WORKLOAD_GID`, if set. Unset is the dev
+/// `PAL_WORKLOAD_UID` / `PAL_WORKLOAD_GID`, if set. Unset is the dev
 /// path (children keep the harness uid); prod refuses to boot without a uid
 /// (see `SecretCache::serve`).
 pub fn workload_identity() -> Option<WorkloadIdentity> {
@@ -96,47 +96,47 @@ pub fn apply_workload_identity(cmd: &mut Command, id: Option<WorkloadIdentity>) 
     cmd
 }
 
-/// `LANTERN_*` keys a workload child may see: identity/locator values the
+/// `PAL_*` keys a workload child may see: identity/locator values the
 /// workload SDK reads, none of them secret. Each is also accepted, and
 /// emitted, as `PAL_*` (ADR 0032).
-const WORKLOAD_VISIBLE_LANTERN_KEYS: [&str; 14] = [
+const WORKLOAD_VISIBLE_PAL_KEYS: [&str; 14] = [
     // Crash re-drive marker: the agent skips steps already in the journal (09-agent-runtime.md).
-    "LANTERN_RESUME",
-    "LANTERN_VM_ID",
-    "LANTERN_RUN_ID",
+    "PAL_RESUME",
+    "PAL_VM_ID",
+    "PAL_RUN_ID",
     // Manager-stamped from the authenticated spawn (the SDK reads the tenant).
-    "LANTERN_TENANT_ID",
-    "LANTERN_AGENT_VERSION_ID",
-    "LANTERN_ENV",
-    "LANTERN_SECRETS_SOCKET",
-    "LANTERN_OTLP_SOCKET",
-    "LANTERN_WORKSPACE",
-    "LANTERN_TRACE_PARENT",
-    "LANTERN_WORKLOAD_UID",
-    "LANTERN_WORKLOAD_GID",
-    "LANTERN_WORKLOAD_CMD",
-    "LANTERN_WORKLOAD_ARGV",
+    "PAL_TENANT_ID",
+    "PAL_AGENT_VERSION_ID",
+    "PAL_ENV",
+    "PAL_SECRETS_SOCKET",
+    "PAL_OTLP_SOCKET",
+    "PAL_WORKSPACE",
+    "PAL_TRACE_PARENT",
+    "PAL_WORKLOAD_UID",
+    "PAL_WORKLOAD_GID",
+    "PAL_WORKLOAD_CMD",
+    "PAL_WORKLOAD_ARGV",
 ];
 
 /// Whether an env var of the harness may be passed to a workload child.
 ///
-/// Every variable the harness itself reads lives in the `LANTERN_*`
+/// Every variable the harness itself reads lives in the `PAL_*`
 /// namespace — exec token, agent-instance token, TLS key/cert/CA paths,
 /// declared secret URIs, manager address. All of it is withheld except the
 /// allowlist above. Everything else (PATH, HOME, the spec's own env from
-/// spawn.json / `lantern.env.*` / a container runtime) is the workload's and
+/// spawn.json / `pal.env.*` / a container runtime) is the workload's and
 /// passes through.
 ///
 /// ponytail: namespace rule, so a user env key that itself starts with
-/// `LANTERN_` is withheld too. Track declared keys explicitly if a spec ever
+/// `PAL_` is withheld too. Track declared keys explicitly if a spec ever
 /// needs one.
 ///
 /// `PAL_*` is the same namespace under its new name (ADR 0032): withheld
-/// exactly like `LANTERN_*`, and `PAL_X` is visible iff `LANTERN_X` is.
+/// exactly like `PAL_*`, and `PAL_X` is visible iff `PAL_X` is.
 fn workload_may_see(key: &str) -> bool {
     match key.strip_prefix("PAL_") {
-        Some(rest) => WORKLOAD_VISIBLE_LANTERN_KEYS.contains(&format!("LANTERN_{rest}").as_str()),
-        None => !key.starts_with("LANTERN_") || WORKLOAD_VISIBLE_LANTERN_KEYS.contains(&key),
+        Some(rest) => WORKLOAD_VISIBLE_PAL_KEYS.contains(&format!("PAL_{rest}").as_str()),
+        None => !key.starts_with("PAL_") || WORKLOAD_VISIBLE_PAL_KEYS.contains(&key),
     }
 }
 
@@ -145,7 +145,7 @@ fn workload_may_see(key: &str) -> bool {
 /// workload SDKs read the same value. If the harness env has both and they
 /// differ, `PAL_X` wins whichever arrives first. Output order: pass-through
 /// keys in input order, then the harness pairs sorted by suffix, each as
-/// `LANTERN_X` then `PAL_X`.
+/// `PAL_X` then `PAL_X`.
 fn workload_env_from(
     vars: impl Iterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
 ) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
@@ -157,10 +157,10 @@ fn workload_env_from(
             continue;
         };
         if let Some(rest) = key.strip_prefix("PAL_") {
-            // PAL_ always overwrites an earlier LANTERN_ twin...
+            // PAL_ always overwrites an earlier PAL_ twin...
             ns.insert(rest.to_owned(), v);
-        } else if let Some(rest) = key.strip_prefix("LANTERN_") {
-            // ...and LANTERN_ never overwrites an earlier PAL_ one.
+        } else if let Some(rest) = key.strip_prefix("PAL_") {
+            // ...and PAL_ never overwrites an earlier PAL_ one.
             if let Entry::Vacant(e) = ns.entry(rest.to_owned()) {
                 e.insert(v);
             }
@@ -169,7 +169,7 @@ fn workload_env_from(
         }
     }
     for (rest, v) in ns {
-        out.push((format!("LANTERN_{rest}").into(), v.clone()));
+        out.push((format!("PAL_{rest}").into(), v.clone()));
         out.push((format!("PAL_{rest}").into(), v));
     }
     out
@@ -185,7 +185,7 @@ pub fn as_workload(cmd: &mut Command) -> &mut Command {
 }
 
 /// The proxy address the workload should be pointed at — the same bind the
-/// egress proxy listens on (`LANTERN_EGRESS_BIND`, default `127.0.0.1:3128`).
+/// egress proxy listens on (`PAL_EGRESS_BIND`, default `127.0.0.1:3128`).
 fn egress_proxy_addr() -> String {
     std::env::var("PAL_EGRESS_BIND").unwrap_or_else(|_| "127.0.0.1:3128".to_string())
 }
@@ -277,7 +277,7 @@ impl Supervisor {
     /// `stdio_tx` channel.
     pub async fn run(self, stdio_tx: tokio::sync::mpsc::Sender<WorkloadStdio>) -> Result<i32> {
         if self.workload_cmd.is_empty() {
-            anyhow::bail!("LANTERN_WORKLOAD_CMD is empty — nothing to supervise");
+            anyhow::bail!("PAL_WORKLOAD_CMD is empty — nothing to supervise");
         }
 
         loop {
@@ -407,7 +407,7 @@ mod tests {
     #[test]
     fn workload_sees_resume_marker() {
         let env = workload_env_from(
-            [("LANTERN_RESUME", "1"), ("LANTERN_EGRESS_FAIL_CLOSED", "0")]
+            [("PAL_RESUME", "1"), ("PAL_EGRESS_FAIL_CLOSED", "0")]
                 .into_iter()
                 .map(|(k, v)| (k.into(), v.into())),
         );
@@ -415,8 +415,8 @@ mod tests {
             .iter()
             .map(|(k, _)| k.to_string_lossy().into_owned())
             .collect();
-        assert!(keys.contains(&"LANTERN_RESUME".to_string()));
-        assert!(!keys.contains(&"LANTERN_EGRESS_FAIL_CLOSED".to_string()));
+        assert!(keys.contains(&"PAL_RESUME".to_string()));
+        assert!(!keys.contains(&"PAL_EGRESS_FAIL_CLOSED".to_string()));
     }
 
     fn env_map(vars: &[(&str, &str)]) -> std::collections::BTreeMap<String, String> {
@@ -428,7 +428,7 @@ mod tests {
 
     /// ADR 0032: `PAL_*` is the harness's own namespace too. Its secrets
     /// (exec token, agent-instance token, TLS paths, declared secret URIs)
-    /// must be withheld from the workload exactly like their `LANTERN_*` twins.
+    /// must be withheld from the workload exactly like their `PAL_*` twins.
     #[test]
     fn workload_never_sees_pal_harness_config() {
         let env = env_map(&[
@@ -438,7 +438,7 @@ mod tests {
             ("PAL_DECLARED_SECRETS", "[]"),
             ("PAL_EGRESS_FAIL_CLOSED", "0"),
             ("PAL_", "x"),
-            ("LANTERN_HARNESS_EXEC_TOKEN", "secret"),
+            ("PAL_HARNESS_EXEC_TOKEN", "secret"),
             ("PATH", "/bin"),
         ]);
         assert_eq!(env.keys().collect::<Vec<_>>(), vec!["PATH"]);
@@ -449,28 +449,28 @@ mod tests {
     #[test]
     fn visible_keys_are_dual_emitted() {
         let env = env_map(&[
-            ("LANTERN_RUN_ID", "r1"),
+            ("PAL_RUN_ID", "r1"),
             ("PAL_VM_ID", "vm1"),
-            ("LANTERN_TENANT_ID", "old"),
+            ("PAL_TENANT_ID", "old"),
             ("PAL_TENANT_ID", "new"),
             ("PAL_WORKSPACE", "/w"),
-            ("LANTERN_WORKSPACE", "/legacy"),
+            ("PAL_WORKSPACE", "/legacy"),
         ]);
         for (k, v) in [
-            ("LANTERN_RUN_ID", "r1"),
             ("PAL_RUN_ID", "r1"),
-            ("LANTERN_VM_ID", "vm1"),
+            ("PAL_RUN_ID", "r1"),
             ("PAL_VM_ID", "vm1"),
-            ("LANTERN_TENANT_ID", "new"),
+            ("PAL_VM_ID", "vm1"),
             ("PAL_TENANT_ID", "new"),
-            ("LANTERN_WORKSPACE", "/w"),
+            ("PAL_TENANT_ID", "new"),
+            ("PAL_WORKSPACE", "/w"),
             ("PAL_WORKSPACE", "/w"),
         ] {
             assert_eq!(env.get(k).map(String::as_str), Some(v), "{k}");
         }
         assert_eq!(env.len(), 8);
-        for key in WORKLOAD_VISIBLE_LANTERN_KEYS {
-            let pal = format!("PAL_{}", key.strip_prefix("LANTERN_").unwrap());
+        for key in WORKLOAD_VISIBLE_PAL_KEYS {
+            let pal = format!("PAL_{}", key.strip_prefix("PAL_").unwrap());
             assert!(workload_may_see(key) && workload_may_see(&pal), "{key}");
         }
     }
@@ -574,13 +574,13 @@ mod tests {
     #[test]
     fn workload_env_withholds_harness_namespace() {
         for k in [
-            "LANTERN_HARNESS_EXEC_TOKEN",
-            "LANTERN_AGENT_INSTANCE_TOKEN",
-            "LANTERN_VM_TLS_KEY",
-            "LANTERN_VM_TLS_CERT",
-            "LANTERN_MANAGER_TLS_CA",
-            "LANTERN_DECLARED_SECRETS",
-            "LANTERN_MANAGER_ADDR",
+            "PAL_HARNESS_EXEC_TOKEN",
+            "PAL_AGENT_INSTANCE_TOKEN",
+            "PAL_VM_TLS_KEY",
+            "PAL_VM_TLS_CERT",
+            "PAL_MANAGER_TLS_CA",
+            "PAL_DECLARED_SECRETS",
+            "PAL_MANAGER_ADDR",
         ] {
             assert!(!workload_may_see(k), "{k} must not reach the workload");
         }
@@ -588,10 +588,10 @@ mod tests {
             "PATH",
             "HOME",
             "OPENAI_BASE_URL",
-            "LANTERN_SECRETS_SOCKET",
-            "LANTERN_VM_ID",
-            "LANTERN_TENANT_ID",
-            "LANTERN_AGENT_VERSION_ID",
+            "PAL_SECRETS_SOCKET",
+            "PAL_VM_ID",
+            "PAL_TENANT_ID",
+            "PAL_AGENT_VERSION_ID",
         ] {
             assert!(workload_may_see(k), "{k} must reach the workload");
         }
@@ -601,8 +601,8 @@ mod tests {
     #[tokio::test]
     async fn child_does_not_inherit_exec_token() {
         let vars = [
-            ("LANTERN_HARNESS_EXEC_TOKEN", "tok-secret"),
-            ("LANTERN_VM_TLS_KEY", "/run/lantern/harness/tls.key"),
+            ("PAL_HARNESS_EXEC_TOKEN", "tok-secret"),
+            ("PAL_VM_TLS_KEY", "/run/pal/harness/tls.key"),
             ("PATH", "/usr/bin:/bin"),
             ("MY_APP_VAR", "kept"),
         ]
@@ -611,7 +611,7 @@ mod tests {
         cmd.env_clear().envs(workload_env_from(vars.into_iter()));
         let out = cmd.output().await.expect("spawn env");
         let env = String::from_utf8_lossy(&out.stdout);
-        assert!(!env.contains("LANTERN_HARNESS_EXEC_TOKEN"), "{env}");
+        assert!(!env.contains("PAL_HARNESS_EXEC_TOKEN"), "{env}");
         assert!(!env.contains("tok-secret"), "{env}");
         assert!(!env.contains("tls.key"), "{env}");
         assert!(env.contains("MY_APP_VAR=kept"), "{env}");

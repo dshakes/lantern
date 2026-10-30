@@ -1,7 +1,7 @@
 // Auth helper shared by all pal bridges (WhatsApp + iMessage + any
 // future ones). Each bridge initializes once with its own logger; the
 // auth mode (static service token vs auto-login + relogin) is read
-// from env so the same code works in dev (admin@lantern.dev fallback)
+// from env so the same code works in dev (admin@pal.dev fallback)
 // and prod (long-lived PAL_API_TOKEN).
 //
 // Previously copied between bridges; now the single source of truth.
@@ -38,8 +38,8 @@ function isJWTExpired(token: string): boolean {
 
 const STATIC_TOKEN = isJWTExpired(RAW_STATIC_TOKEN) ? "" : RAW_STATIC_TOKEN;
 
-const EMAIL = process.env.PAL_BRIDGE_EMAIL || "admin@lantern.dev";
-const PASSWORD = process.env.PAL_BRIDGE_PASSWORD || "lantern";
+const EMAIL = process.env.PAL_BRIDGE_EMAIL || "admin@pal.dev";
+const PASSWORD = process.env.PAL_BRIDGE_PASSWORD || "pal";
 
 let runtimeToken = STATIC_TOKEN;
 let loginInflight: Promise<string | null> | null = null;

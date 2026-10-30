@@ -1,11 +1,11 @@
-module github.com/dshakes/lantern/services/workflow-engine
+module github.com/dshakes/pal/services/workflow-engine
 
 go 1.25.0
 
 toolchain go1.26.6
 
 require (
-	github.com/dshakes/lantern/gen/go v0.0.0
+	github.com/dshakes/pal/gen/go v0.0.0
 	github.com/jackc/pgx/v5 v5.7.4
 	github.com/redis/go-redis/v9 v9.7.3
 	go.opentelemetry.io/otel v1.43.0
@@ -34,5 +34,5 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478 // indirect
 )
 
-replace github.com/dshakes/lantern/gen/go => ../../gen/go
+replace github.com/dshakes/pal/gen/go => ../../gen/go
 

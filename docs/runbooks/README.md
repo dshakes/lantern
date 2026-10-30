@@ -35,8 +35,8 @@ Each alert's `runbook:` annotation points at one of the files below.
 
 > **Update (ADR 0041):** four services now expose Prometheus `/metrics`: control-plane `:9464`,
 > runtime-scheduler `:8085`, model-router `:9465` and runtime-manager `:9466` (the last two are opt-in via
-> `PAL_METRICS_ADDR`, set by the Helm chart). The SLO rules key off job labels `lantern-control-plane`,
-> `lantern-runtime-scheduler`, `lantern-model-router`, `lantern-runtime-manager` (override per SLO in
+> `PAL_METRICS_ADDR`, set by the Helm chart). The SLO rules key off job labels `pal-control-plane`,
+> `pal-runtime-scheduler`, `pal-model-router`, `pal-runtime-manager` (override per SLO in
 > `monitoring.slos.<name>.job`). The gateway and workflow-engine still emit traces only. The paragraphs below
 > predate this and describe the original state.
 
@@ -48,26 +48,26 @@ As of GA prep, only the **runtime-scheduler** emits Prometheus metrics
 Service liveness uses `up` / blackbox `/readyz` probes.
 
 Several SLO alerts need in-app metrics that are **not emitted yet** and are
-parked, commented, in the `lantern-TODO-needs-instrumentation` group of
+parked, commented, in the `pal-TODO-needs-instrumentation` group of
 `alerts.yml`. They are flagged **(TODO)** above and in their runbooks. Do not
 enable a TODO rule until its metric ships and the series is confirmed in
 Prometheus — a rule over a non-existent series is silently always-green.
 
 | SLO | Metric to add | Where it should be emitted |
 | --- | ------------- | -------------------------- |
-| control-plane 5xx rate | `lantern_http_requests_total{method,route,status}` | control-plane HTTP mux middleware + `/metrics` |
-| run failure rate | `lantern_runs_completed_total{status}` | workflow-engine journal terminal status / inline run executor |
-| API budget 402 surge | `lantern_budget_denied_total{reason}` | control-plane budget enforcer (runs/completions/voice) |
-| gateway/model-router p99 | `lantern_{gateway,model_router}_request_duration_seconds_bucket` | Rust hot-path histogram + `/metrics` (traces only today) |
+| control-plane 5xx rate | `pal_http_requests_total{method,route,status}` | control-plane HTTP mux middleware + `/metrics` |
+| run failure rate | `pal_runs_completed_total{status}` | workflow-engine journal terminal status / inline run executor |
+| API budget 402 surge | `pal_budget_denied_total{reason}` | control-plane budget enforcer (runs/completions/voice) |
+| gateway/model-router p99 | `pal_{gateway,model_router}_request_duration_seconds_bucket` | Rust hot-path histogram + `/metrics` (traces only today) |
 
 ## Scrape-job naming (must match `alerts.yml`)
 
 The alert expressions key off these Prometheus `job` labels — configure your
 scrape config / ServiceMonitors accordingly:
 
-- `lantern-runtime-scheduler` → runtime-scheduler `:8085/metrics`
-- `lantern-postgres-exporter` → postgres_exporter (control-plane DB)
-- `lantern-control-plane`, `lantern-gateway`, `lantern-model-router` → `up`
+- `pal-runtime-scheduler` → runtime-scheduler `:8085/metrics`
+- `pal-postgres-exporter` → postgres_exporter (control-plane DB)
+- `pal-control-plane`, `pal-gateway`, `pal-model-router` → `up`
   liveness targets
-- `lantern-control-plane-readyz` → blackbox-exporter probe of
+- `pal-control-plane-readyz` → blackbox-exporter probe of
   `http://<control-plane>:8080/readyz`

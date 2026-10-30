@@ -15,13 +15,13 @@ make run-api            # control-plane on :8080
 make dashboard-dev      # Next.js dashboard on :3001
 ```
 
-Log in at <http://localhost:3001> as `admin@lantern.dev` / `lantern`. Then
+Log in at <http://localhost:3001> as `admin@pal.dev` / `pal`. Then
 grab a JWT for CLI/curl use:
 
 ```bash
 export TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"email":"admin@lantern.dev","password":"lantern"}' | jq -r .token)
+  -d '{"email":"admin@pal.dev","password":"pal"}' | jq -r .token)
 echo "$TOKEN" | head -c 40 ; echo …
 ```
 
@@ -273,7 +273,7 @@ documents what it proves about the platform:
   once a real microVM image is built that includes it.
 - Generated tonic server stubs for `RuntimeScheduler`, `RuntimeManager`,
   and `RuntimeHarness` services (runtime-manager only — scheduler still
-  has hand-stub Go code in `gen/go/lantern/v1/`).
+  has hand-stub Go code in `gen/go/pal/v1/`).
 
 **Honest gaps that remain:**
 - **`vm exec`**: ✅ FIXED. Backed for the Docker and Kata backends, and

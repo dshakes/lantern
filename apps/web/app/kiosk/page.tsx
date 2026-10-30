@@ -5,7 +5,7 @@ import { Button } from "@/components/button";
 import { api } from "@/lib/api";
 import { KIOSK_STORAGE_KEY } from "./kiosk-logic";
 
-// Public landing for `lantern demo`: one button that mints an ephemeral demo
+// Public landing for `pal demo`: one button that mints an ephemeral demo
 // workspace (POST /v1/kiosk/session) and drops the visitor into the dashboard.
 export default function KioskStart() {
   const [busy, setBusy] = useState(false);

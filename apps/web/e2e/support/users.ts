@@ -1,7 +1,7 @@
 import type { Page } from "@playwright/test";
 
 export const PASSWORD = "e2e-correct-horse-battery";
-export const uniqueEmail = (tag: string) => `${tag}-${Date.now()}-${Math.floor(Math.random() * 1e6)}@e2e.lantern.test`;
+export const uniqueEmail = (tag: string) => `${tag}-${Date.now()}-${Math.floor(Math.random() * 1e6)}@e2e.pal.test`;
 
 // Drive the real sign-up form (dev mode: no email verification gate).
 export async function signUp(page: Page, email: string, name = "E2E User") {

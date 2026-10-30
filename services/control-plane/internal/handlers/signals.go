@@ -13,20 +13,20 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // SignalHandler exposes a token-gated personal device-signals endpoint.
 //
 // The owner's iPhone Shortcuts POST app-context signals here THROUGH the
 // existing cloudflared tunnel (which fronts the API on :8080, not the
-// dashboard on :3001). The bridge reads ~/.lantern/device-signals.jsonl and
+// dashboard on :3001). The bridge reads ~/.pal/device-signals.jsonl and
 // summarizes the signals into owner context. A parallel dashboard route at
 // apps/web/app/api/signals/route.ts writes the SAME contract on :3001 — this
 // handler exists so the write path is reachable over the tunnel.
 //
 // This is a single-owner PERSONAL endpoint: it is NOT JWT/tenant-scoped. It is
-// gated by a shared secret (LANTERN_SIGNAL_TOKEN), exactly like the bridge
+// gated by a shared secret (PAL_SIGNAL_TOKEN), exactly like the bridge
 // heartbeat shared-token pattern in surfaces.go, and fails closed when the env
 // var is unset.
 //
@@ -55,7 +55,7 @@ func (h *SignalHandler) logger() *zap.Logger {
 	return h.srv.Logger.Named("signals")
 }
 
-// signalEntry is one line in ~/.lantern/device-signals.jsonl. The on-disk
+// signalEntry is one line in ~/.pal/device-signals.jsonl. The on-disk
 // field names (app/kind/detail/metric/value/ts) are the contract the bridge's
 // device-signals reader expects — do not rename without updating the bridge.
 // omitempty keeps lines compact: app_open lines omit metric/value; health
@@ -84,18 +84,18 @@ const (
 // 401. The token is never logged.
 func (h *SignalHandler) authorize(w http.ResponseWriter, r *http.Request) bool {
 	expected := os.Getenv("PAL_SIGNAL_TOKEN")
-	provided := r.Header.Get("x-lantern-signal-token")
+	provided := r.Header.Get("x-pal-signal-token")
 	if expected == "" || provided == "" ||
 		subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {
 		// Log the rejection (never the token) — a silent 401 is undebuggable.
 		// The "server token unset" case is the giveaway that the wrong API
-		// (one without LANTERN_SIGNAL_TOKEN) is serving this port.
+		// (one without PAL_SIGNAL_TOKEN) is serving this port.
 		reason := "token mismatch"
 		switch {
 		case expected == "":
-			reason = "LANTERN_SIGNAL_TOKEN unset on the server — this API instance cannot accept signals"
+			reason = "PAL_SIGNAL_TOKEN unset on the server — this API instance cannot accept signals"
 		case provided == "":
-			reason = "request missing x-lantern-signal-token header"
+			reason = "request missing x-pal-signal-token header"
 		}
 		h.logger().Warn("signal rejected (401)", zap.String("reason", reason), zap.String("from", r.RemoteAddr))
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
@@ -104,14 +104,14 @@ func (h *SignalHandler) authorize(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-// signalsFilePath returns ~/.lantern/device-signals.jsonl, honoring HOME so
+// signalsFilePath returns ~/.pal/device-signals.jsonl, honoring HOME so
 // tests can isolate writes to a temp dir.
 func signalsFilePath() (dir, path string, err error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", "", err
 	}
-	dir = filepath.Join(home, ".lantern")
+	dir = filepath.Join(home, ".pal")
 	return dir, filepath.Join(dir, "device-signals.jsonl"), nil
 }
 
@@ -236,7 +236,7 @@ func (h *SignalHandler) ListSignals(w http.ResponseWriter, r *http.Request) {
 }
 
 // appendSignal appends one compact JSON line to the device-signals file,
-// creating ~/.lantern (0700) and the file (0600) as needed, then bounds the
+// creating ~/.pal (0700) and the file (0600) as needed, then bounds the
 // file: if it grows past signalFileMaxLines it is rewritten keeping the last
 // signalFileKeepLine lines.
 func appendSignal(entry signalEntry) error {

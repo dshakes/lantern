@@ -8,11 +8,11 @@ fails, the scheduler picks a new node and the workload resumes from
 the same state.json.
 
 Key contract with harness:
-  * `LANTERN_RESTORE_HINT` env is set when the VM was restored from a
+  * `PAL_RESTORE_HINT` env is set when the VM was restored from a
     snapshot — workload uses it to know it should pick up where it
     left off instead of starting fresh.
   * SIGUSR1 handler flushes + ACKs by writing "ready" to
-    `/run/lantern/snapshot.ready`. Harness then triggers Firecracker.
+    `/run/pal/snapshot.ready`. Harness then triggers Firecracker.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from pathlib import Path
 
 WORKSPACE = Path("./workspace")
 STATE = WORKSPACE / "state.json"
-SNAPSHOT_READY = Path("/run/lantern/snapshot.ready")
+SNAPSHOT_READY = Path("/run/pal/snapshot.ready")
 
 _paused = False
 
@@ -63,7 +63,7 @@ def research_step(state: dict, topic: str) -> dict:
 def main() -> int:
     signal.signal(signal.SIGUSR1, handle_snapshot)
 
-    restore_hint = os.environ.get("PAL_RESTORE_HINT") or os.environ.get("LANTERN_RESTORE_HINT", "")
+    restore_hint = os.environ.get("PAL_RESTORE_HINT") or os.environ.get("PAL_RESTORE_HINT", "")
     state = load_state()
 
     if restore_hint:

@@ -1,7 +1,7 @@
 "use client";
 
 // /personal/groups — searchable group picker. The user said the
-// /lantern groups list was empty from their phone because the bridge
+// /pal groups list was empty from their phone because the bridge
 // doesn't have group metadata until it fetches it once. This page
 // triggers that fetch and renders the result with a toggle per row.
 //

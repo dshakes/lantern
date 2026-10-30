@@ -91,7 +91,7 @@ export class PalLlmJsonError extends PalLlmError {
 
 /** Raised when a tool invocation fails. */
 export class PalToolError extends PalError {
-  /** Tool identifier (e.g. "lantern.web", "lantern.python"). */
+  /** Tool identifier (e.g. "pal.web", "pal.python"). */
   public readonly toolName: string;
 
   constructor(toolName: string, message: string) {

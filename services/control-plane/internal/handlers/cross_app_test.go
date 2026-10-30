@@ -23,7 +23,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // ---------------------------------------------------------------------------
@@ -605,7 +605,7 @@ func TestCrossApp_ExecuteAction_ConcurrentExactlyOnce(t *testing.T) {
 }
 
 // TestCrossApp_DisabledByDefault verifies propose returns 404 when
-// LANTERN_CROSS_APP is unset.
+// PAL_CROSS_APP is unset.
 func TestCrossApp_DisabledByDefault(t *testing.T) {
 	pool := openTestPool(t)
 	tenantID := seedCrossAppTenant(t, pool)

@@ -7,7 +7,7 @@ package handlers
 // DB-backed (skip when DATABASE_URL is unset): CRUD, cross-tenant 404, every
 // provider end-to-end, bad signature, replay, duplicate delivery, disabled
 // hook, budget 402, per-hook rate limit, missing scope 403, and RLS enforced on
-// the lantern_app pool.
+// the pal_app pool.
 
 import (
 	"bytes"
@@ -27,8 +27,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 const hookTestSecret = "whsec_test_secret_0123456789abcdef"
@@ -46,9 +46,9 @@ func signedHookHeaders(provider, secret string, body []byte, deliveryID string, 
 	switch provider {
 	case "generic":
 		ts := strconv.FormatInt(now.Unix(), 10)
-		h.Set("X-Lantern-Signature", "t="+ts+",v1="+hmacHex(secret, append([]byte(ts+"."), body...)))
-		h.Set("X-Lantern-Delivery", deliveryID)
-		h.Set("X-Lantern-Event", "custom.event")
+		h.Set("X-Pal-Signature", "t="+ts+",v1="+hmacHex(secret, append([]byte(ts+"."), body...)))
+		h.Set("X-Pal-Delivery", deliveryID)
+		h.Set("X-Pal-Event", "custom.event")
 	case "github":
 		h.Set("X-Hub-Signature-256", "sha256="+hmacHex(secret, body))
 		h.Set("X-GitHub-Delivery", deliveryID)
@@ -100,7 +100,7 @@ func TestVerifyHookDelivery(t *testing.T) {
 		{"sentry non-hex sig", "sentry", body, http.Header{"Sentry-Hook-Signature": {"zz-not-hex"}}, true, "", ""},
 		{"generic stale timestamp", "generic", body, signedHookHeaders("generic", hookTestSecret, body, "g", now.Add(-6*time.Minute)), true, "", ""},
 		{"generic future timestamp", "generic", body, signedHookHeaders("generic", hookTestSecret, body, "g", now.Add(6*time.Minute)), true, "", ""},
-		{"generic no timestamp", "generic", body, http.Header{"X-Lantern-Signature": {"v1=" + hmacHex(hookTestSecret, body)}}, true, "", ""},
+		{"generic no timestamp", "generic", body, http.Header{"X-Pal-Signature": {"v1=" + hmacHex(hookTestSecret, body)}}, true, "", ""},
 		{"unknown provider", "gitlab", body, signedHookHeaders("github", hookTestSecret, body, "g", now), true, "", ""},
 	}
 	for _, tc := range tests {
@@ -212,7 +212,7 @@ func TestHookRunInput_DefaultAndNonJSON(t *testing.T) {
 }
 
 func TestRunTriggerKind_DefaultsToAPI(t *testing.T) {
-	if k := runTriggerKind(context.Background()); k != lanternv1.TriggerKind_TRIGGER_KIND_API {
+	if k := runTriggerKind(context.Background()); k != palv1.TriggerKind_TRIGGER_KIND_API {
 		t.Errorf("default kind = %v, want API", k)
 	}
 }
@@ -273,7 +273,7 @@ func seedTriggerTenant(t *testing.T, env *triggerEnv, agentName string) string {
 	id := uuid.NewString()
 	if _, err := pool.Exec(context.Background(), `
 		INSERT INTO tenants (id, slug, name, tier, k8s_namespace)
-		VALUES ($1, $2, 'Trigger Test', 'personal', 'lantern-t-' || $2)`, id, "trg-"+id[:8]); err != nil {
+		VALUES ($1, $2, 'Trigger Test', 'personal', 'pal-t-' || $2)`, id, "trg-"+id[:8]); err != nil {
 		t.Fatalf("seed tenant: %v", err)
 	}
 	cleanupAgent := ensureAgentForBudgetTest(t, env.rest, id, agentName)
@@ -669,7 +669,7 @@ func TestTriggers_MissingScope403(t *testing.T) {
 }
 
 // TestRLSTriggers_EnforcedAppPool runs CRUD and a delivery with the handler's
-// tenant-scoped work on the lantern_app pool, where RLS genuinely applies —
+// tenant-scoped work on the pal_app pool, where RLS genuinely applies —
 // proving both the policies and the GRANTs in migration 0024.
 func TestRLSTriggers_EnforcedAppPool(t *testing.T) {
 	e := newEnforcedServer(t)

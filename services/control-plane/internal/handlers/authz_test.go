@@ -12,7 +12,7 @@ package handlers
 //
 // Run all (needs dev-infra):
 //
-//	DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable \
+//	DATABASE_URL=postgres://pal:pal@localhost:5432/pal?sslmode=disable \
 //	  go test ./internal/handlers/ -run TestWithScope -count=1 -v
 
 import (
@@ -24,18 +24,18 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 	"go.uber.org/zap"
 )
 
 // ---------- Pure scope-implication tests (no DB) ----------
 
 func TestHasScope(t *testing.T) {
-	jwtOwner := &LanternClaims{Role: "owner"} // JWT: bypasses scope checks
+	jwtOwner := &PalClaims{Role: "owner"} // JWT: bypasses scope checks
 
 	cases := []struct {
 		name     string
-		claims   *LanternClaims
+		claims   *PalClaims
 		required Scope
 		want     bool
 	}{
@@ -108,7 +108,7 @@ func TestHasScope(t *testing.T) {
 
 // TestWithScope_JWT_AlwaysPasses confirms that JWT-authenticated requests
 // (Role != "service") reach the handler for any scope requirement, regardless
-// of LANTERN_AUTHZ_ENFORCE.
+// of PAL_AUTHZ_ENFORCE.
 func TestWithScope_JWT_AlwaysPasses(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	// nil Pool is fine: JWT validation is crypto-only, no DB access.
@@ -263,7 +263,7 @@ func TestWithScope_APIKey_Enforcement(t *testing.T) {
 
 // ---------- helpers ----------
 
-// serviceKey returns LanternClaims with Role="service" (API key) and the given scopes.
-func serviceKey(scopes []string) *LanternClaims {
-	return &LanternClaims{Role: "service", TenantID: devTenantID, Scopes: scopes}
+// serviceKey returns PalClaims with Role="service" (API key) and the given scopes.
+func serviceKey(scopes []string) *PalClaims {
+	return &PalClaims{Role: "service", TenantID: devTenantID, Scopes: scopes}
 }

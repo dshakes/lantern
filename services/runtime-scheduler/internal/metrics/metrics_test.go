@@ -9,7 +9,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/metrics"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/metrics"
 )
 
 // TestMetricsEndpoint verifies that:
@@ -49,13 +49,13 @@ func TestMetricsEndpoint(t *testing.T) {
 	text := string(body)
 
 	wantMetrics := []string{
-		"lantern_scheduler_schedule_total",
-		"lantern_scheduler_schedule_errors_total",
-		"lantern_scheduler_placement_score",
-		"lantern_scheduler_schedule_duration_seconds",
-		"lantern_scheduler_active_vms",
-		"lantern_scheduler_nodes",
-		"lantern_scheduler_is_leader",
+		"pal_scheduler_schedule_total",
+		"pal_scheduler_schedule_errors_total",
+		"pal_scheduler_placement_score",
+		"pal_scheduler_schedule_duration_seconds",
+		"pal_scheduler_active_vms",
+		"pal_scheduler_nodes",
+		"pal_scheduler_is_leader",
 	}
 	for _, name := range wantMetrics {
 		if !strings.Contains(text, name) {
@@ -74,21 +74,21 @@ func TestIsLeaderGaugeReflectsState(t *testing.T) {
 
 	// Default: is_leader unset (zero value = 0).
 	resp := scrape(t, srv.URL)
-	if !strings.Contains(resp, "lantern_scheduler_is_leader 0") {
+	if !strings.Contains(resp, "pal_scheduler_is_leader 0") {
 		t.Errorf("expected is_leader 0 before setting; body:\n%s", resp)
 	}
 
 	// Set to 1 (leader).
 	m.IsLeader.Set(1)
 	resp = scrape(t, srv.URL)
-	if !strings.Contains(resp, "lantern_scheduler_is_leader 1") {
+	if !strings.Contains(resp, "pal_scheduler_is_leader 1") {
 		t.Errorf("expected is_leader 1 after leader acquired; body:\n%s", resp)
 	}
 
 	// Set to 0 (standby).
 	m.IsLeader.Set(0)
 	resp = scrape(t, srv.URL)
-	if !strings.Contains(resp, "lantern_scheduler_is_leader 0") {
+	if !strings.Contains(resp, "pal_scheduler_is_leader 0") {
 		t.Errorf("expected is_leader 0 after leader released; body:\n%s", resp)
 	}
 }

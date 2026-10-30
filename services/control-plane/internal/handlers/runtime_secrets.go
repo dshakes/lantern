@@ -2,7 +2,7 @@ package handlers
 
 // runtime_secrets.go — POST /v1/runtime/secrets/resolve
 //
-// This endpoint allows the runtime-manager to resolve lantern.secret/... refs
+// This endpoint allows the runtime-manager to resolve pal.secret/... refs
 // into plaintext credential values on behalf of a specific VM and its tenant.
 // See docs/adr/0008-runtime-secret-relay.md for the full design rationale.
 //
@@ -10,17 +10,17 @@ package handlers
 //
 // Three sub-types are supported:
 //
-//	lantern.secret/llm/<provider>
+//	pal.secret/llm/<provider>
 //	    Resolves api_key_encrypted from llm_provider_configs for the tenant +
 //	    provider. Provider examples: "anthropic", "openai", "gemini".
 //
-//	lantern.secret/connector/<install_id>/<config_key>
+//	pal.secret/connector/<install_id>/<config_key>
 //	    Resolves the string value at config_key inside the decrypted config JSONB
 //	    blob from connector_installs for the tenant + install UUID.
 //	    install_id must be a valid UUID; only top-level string values are
 //	    supported.
 //
-//	lantern.secret/connector/<install_id>/oauth
+//	pal.secret/connector/<install_id>/oauth
 //	    Resolves oauth_token_encrypted (JSONB) for the named connector install.
 //	    Returns the raw decrypted JSON string (the entire token blob).
 //	    The reserved key name "oauth" is distinguished from ordinary config keys
@@ -33,11 +33,11 @@ package handlers
 // # Authentication
 //
 // Service-to-service auth uses a pre-shared token in the
-// X-Lantern-Runtime-Token request header. The token bytes are SHA-256-hashed
+// X-Pal-Runtime-Token request header. The token bytes are SHA-256-hashed
 // before comparison so that crypto/subtle.ConstantTimeCompare operates on
 // fixed-size inputs (eliminates length-based timing side-channel).
 //
-// FAIL-CLOSED: if LANTERN_RUNTIME_SECRET_TOKEN is unset, the endpoint returns
+// FAIL-CLOSED: if PAL_RUNTIME_SECRET_TOKEN is unset, the endpoint returns
 // 403 {"error":"relay disabled"} for every call regardless of the token
 // supplied. The feature is off by default; a deployment with no token
 // configured cannot be used as a credential oracle.
@@ -81,10 +81,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/agentidentity"
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/agentidentity"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/secrets"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 const (
@@ -93,10 +93,10 @@ const (
 	envRuntimeSecretToken = "PAL_RUNTIME_SECRET_TOKEN"
 
 	// runtimeTokenHeader is the HTTP header name carrying the service token.
-	runtimeTokenHeader = "X-Lantern-Runtime-Token"
+	runtimeTokenHeader = "X-Pal-Runtime-Token"
 
 	// secretRefPrefix is the required prefix for every ref.
-	secretRefPrefix = "lantern.secret/"
+	secretRefPrefix = "pal.secret/"
 
 	// secretBodyLimit caps the request body at 64 KiB to prevent DoS via
 	// unbounded body reads.
@@ -171,8 +171,8 @@ func tokenHash(s string) [32]byte {
 	return sha256.Sum256([]byte(s))
 }
 
-// authenticateRuntimeToken validates the X-Lantern-Runtime-Token header
-// against LANTERN_RUNTIME_SECRET_TOKEN. Both values are SHA-256-hashed before
+// authenticateRuntimeToken validates the X-Pal-Runtime-Token header
+// against PAL_RUNTIME_SECRET_TOKEN. Both values are SHA-256-hashed before
 // crypto/subtle.ConstantTimeCompare so the comparison is constant-time over
 // fixed-size inputs regardless of token length.
 //
@@ -210,7 +210,7 @@ func (e *authError) Error() string { return e.msg }
 // falls within one of these CIDRs will X-Forwarded-For be trusted. Default
 // empty = never trust XFF (safe default for direct-connect deployments).
 //
-// Example: LANTERN_TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+// Example: PAL_TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
 const envTrustedProxies = "PAL_TRUSTED_PROXIES"
 
 // parseTrustedProxies parses a comma-separated CIDR string and returns the
@@ -271,7 +271,7 @@ func isTrustedProxy(hostPort string, proxies []*net.IPNet) bool {
 // changing that header on every attempt, defeating the limiter entirely.
 //
 // We honor X-Forwarded-For ONLY when the immediate TCP peer is within a
-// configured trusted-proxy CIDR (LANTERN_TRUSTED_PROXIES, default empty).
+// configured trusted-proxy CIDR (PAL_TRUSTED_PROXIES, default empty).
 // In that case the first (leftmost) XFF element is the original client IP
 // that the trusted proxy inserted and which the attacker cannot forge past
 // the proxy. When no trusted proxies are configured (the default), we always
@@ -320,7 +320,7 @@ func (h *RuntimeSecretsHandler) recordAuthFailure(ip string) bool {
 
 // ---------- Ref parser ----------
 
-// parsedRef holds the decomposed form of a lantern.secret/... string.
+// parsedRef holds the decomposed form of a pal.secret/... string.
 type parsedRef struct {
 	raw   string
 	scope string // "llm" | "connector" | ""
@@ -368,7 +368,7 @@ func parseRef(ref string) parsedRef {
 
 // ---------- Resolver helpers ----------
 
-// resolveLLMRef resolves a lantern.secret/llm/<provider> ref for the given
+// resolveLLMRef resolves a pal.secret/llm/<provider> ref for the given
 // tenant. Returns the decrypted API key or ("", false) when not found.
 // Errors are logged; the caller gets a "not found" response (no error oracle).
 func (h *RuntimeSecretsHandler) resolveLLMRef(ctx context.Context, tenantID, provider string) (string, bool) {
@@ -406,7 +406,7 @@ func (h *RuntimeSecretsHandler) resolveLLMRef(ctx context.Context, tenantID, pro
 	return string(dec), true
 }
 
-// resolveConnectorConfigRef resolves a lantern.secret/connector/<id>/<key>
+// resolveConnectorConfigRef resolves a pal.secret/connector/<id>/<key>
 // ref where key != "oauth". It decrypts the config JSONB and returns the
 // top-level string at config_key.
 func (h *RuntimeSecretsHandler) resolveConnectorConfigRef(ctx context.Context, tenantID, installID, configKey string) (string, bool) {
@@ -465,7 +465,7 @@ func (h *RuntimeSecretsHandler) resolveConnectorConfigRef(ctx context.Context, t
 }
 
 // resolveConnectorOAuthRef resolves the "oauth" sub-type:
-// lantern.secret/connector/<install_id>/oauth reads oauth_token_encrypted
+// pal.secret/connector/<install_id>/oauth reads oauth_token_encrypted
 // (a JSONB column) and returns its raw decrypted JSON string.
 func (h *RuntimeSecretsHandler) resolveConnectorOAuthRef(ctx context.Context, tenantID, installID string) (string, bool) {
 	// oauth_token_encrypted is JSONB in production (see internal/db/migrate.go).
@@ -721,8 +721,8 @@ func (h *RuntimeSecretsHandler) auditSecretResolve(ctx context.Context, tenantID
 
 // ResolveSecrets handles POST /v1/runtime/secrets/resolve.
 //
-// Authentication: X-Lantern-Runtime-Token pre-shared token (service-to-service).
-// LANTERN_RUNTIME_SECRET_TOKEN must be set; if unset this endpoint returns 403
+// Authentication: X-Pal-Runtime-Token pre-shared token (service-to-service).
+// PAL_RUNTIME_SECRET_TOKEN must be set; if unset this endpoint returns 403
 // ("relay disabled") for every call — fail-closed by design.
 //
 // Body is limited to 64 KiB; refs array is capped at 64 entries.
@@ -740,7 +740,7 @@ func (h *RuntimeSecretsHandler) ResolveSecrets(w http.ResponseWriter, r *http.Re
 	ok, authErr := authenticateRuntimeToken(r)
 	if !ok {
 		if authErr == errRelayDisabled {
-			h.logger().Warn("secret relay: disabled (LANTERN_RUNTIME_SECRET_TOKEN not set)")
+			h.logger().Warn("secret relay: disabled (PAL_RUNTIME_SECRET_TOKEN not set)")
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "relay disabled"})
 			return
 		}

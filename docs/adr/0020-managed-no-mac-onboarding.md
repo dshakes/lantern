@@ -10,7 +10,7 @@
 Today a new user of the *personal* side of PAL Runtime effectively needs a Mac they
 control: the bridges read `chat.db` (Full Disk Access), drive Messages/Calendar/
 Notes/Mail via AppleScript automation, read `knowledgeC.db`, and keep all state
-in local `~/.lantern/*.jsonl`. That is a hard onboarding wall — it excludes
+in local `~/.pal/*.jsonl`. That is a hard onboarding wall — it excludes
 everyone without an always-on Mac and makes "sign up and go" impossible.
 
 But this framing conflates two products that the architecture already separates:
@@ -41,7 +41,7 @@ up any infrastructure:
 - **Signup** → existing `auth.go` register / OIDC (and SSO once ADR 0019 lands)
   creates the tenant + owner user. No change.
 - **Execution target** — two modes, both already in the model:
-  - **Managed cloud (default, zero-infra):** agent runs execute on Lantern-
+  - **Managed cloud (default, zero-infra):** agent runs execute on PAL-
     operated runtime nodes. The runtime-scheduler + runtime-manager +
     Firecracker/Kata path (ADR 0002–0008, W12) is exactly this. Onboarding just
     needs the managed node pool provisioned and the scheduler addr wired
@@ -54,7 +54,7 @@ up any infrastructure:
   collects the tenant's LLM provider key (stored encrypted, `llm_provider_configs`),
   (2) offers a starter agent from the marketplace, (3) for BYO-cloud, walks the
   data-plane registration + bootstrap token. This is dashboard + CLI work
-  (`lantern onboard`/`doctor` already exists per the Phase-2 effort), not a new
+  (`pal onboard`/`doctor` already exists per the Phase-2 effort), not a new
   runtime.
 
 **Conclusion for Part A:** no architecture change required. The de-Mac'd managed
@@ -74,7 +74,7 @@ The bridges bundle features with very different portability. Classify them:
 | Personal-docs (`PAL_PERSONAL_DOCS_ROOTS`, OCR) | **Mac-bound (local FS)** | Reads the user's local disk. Managed alternative: Google Drive / iCloud-web / Dropbox connector as the doc source; OCR already goes through the control-plane `/v1/vision/ocr` endpoint, which is portable. |
 | `knowledgeC.db` app-usage signal | **HARD Mac-bound** | Reads a private macOS DB. No cloud equivalent; drop in managed mode. |
 | iPhone Shortcuts device signals (`/v1/signals`) | **Portable** | Already an HTTP endpoint on the control-plane through the tunnel — the iPhone posts directly, no Mac in the path. Works in managed mode unchanged. |
-| Owner-profile, episodes, topic index, dislikes, all `~/.lantern/*.jsonl` state | **Portable (needs relocation)** | Logic is host-agnostic; only the *storage location* is local. For managed WhatsApp, this state moves to per-tenant encrypted storage (Postgres/S3, reusing the encrypt-at-rest posture) instead of `~/.lantern`. |
+| Owner-profile, episodes, topic index, dislikes, all `~/.pal/*.jsonl` state | **Portable (needs relocation)** | Logic is host-agnostic; only the *storage location* is local. For managed WhatsApp, this state moves to per-tenant encrypted storage (Postgres/S3, reusing the encrypt-at-rest posture) instead of `~/.pal`. |
 | Intelligence layer (identity, presence, thread-peek, working-memory) | **Mostly portable** | Pure modules over the state above. `thread-peek` into `chat.db` is Mac-bound; the WhatsApp thread source (wa-history) is portable. |
 
 ### Part C — The managed WhatsApp-personal path (the concrete de-Mac'd offering)
@@ -85,7 +85,7 @@ The one personal channel that can be fully managed is **WhatsApp**. Design:
   isolation primitive W12 already provides (a managed runtime container per
   tenant). One bridge process per tenant; the QR-pair happens in the dashboard,
   Baileys creds persist to per-tenant encrypted storage.
-- **State relocation:** the `~/.lantern` JSONL stores become per-tenant rows/
+- **State relocation:** the `~/.pal` JSONL stores become per-tenant rows/
   objects. The `secure-store.ts` AES-GCM envelope already used for the highest-
   PII stores is the pattern; extend it so the *storage backend* is pluggable
   (local file for self-host, encrypted Postgres/S3 for managed) behind the
@@ -113,7 +113,7 @@ Mac; everything else — WhatsApp, agents, connectors — runs in our cloud."
   honest capability matrix for the pricing/marketing page instead of an
   all-or-nothing "you need a Mac".
 - **−** The state-storage seam (local file ↔ encrypted Postgres/S3) must be
-  introduced across ~a dozen `~/.lantern/*.jsonl` stores. It is mechanical but
+  introduced across ~a dozen `~/.pal/*.jsonl` stores. It is mechanical but
   broad; do it behind the existing store interfaces, one store at a time.
 - **−** Managed WhatsApp puts a long-lived per-tenant Baileys session in our
   infra — an availability + WhatsApp-ToS surface (unofficial protocol) we do not

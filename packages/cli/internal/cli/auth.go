@@ -7,7 +7,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/dshakes/lantern/packages/cli/internal"
+	"github.com/dshakes/pal/packages/cli/internal"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -27,7 +27,7 @@ If --email and --password are provided, login is non-interactive.
 Otherwise, you will be prompted for credentials.
 
 The session token is stored in credentials.json under $PAL_HOME, ~/.pal,
-or (for logins made before the rename) the legacy ~/.lantern.`,
+or (for logins made before the rename) the legacy ~/.pal.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Interactive mode: prompt for email and password.
 			if email == "" {

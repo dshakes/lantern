@@ -1,6 +1,6 @@
 package handlers
 
-// GET /v1/usage — accurate spend + run-health for the Lantern dashboard.
+// GET /v1/usage — accurate spend + run-health for the PAL dashboard.
 //
 // Two sources by design:
 //   - cost + tokens  → agent_usage_daily (authoritative; includes bridge /
@@ -18,7 +18,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // UsageHandler serves GET /v1/usage.

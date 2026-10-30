@@ -1,8 +1,8 @@
 //! Prometheus SLI metrics + optional scrape listener (ADR 0041).
 //!
-//! * `lantern_manager_spawn_duration_seconds{kind,outcome}` - microVM boot
+//! * `pal_manager_spawn_duration_seconds{kind,outcome}` - microVM boot
 //!   latency, `kind` = `cold` | `restore` (snapshot), `outcome` = `ok` | `error`.
-//! * `lantern_egress_broker_decisions_total{outcome}` - `allow`, `deny` (policy:
+//! * `pal_egress_broker_decisions_total{outcome}` - `allow`, `deny` (policy:
 //!   the guest asked for something the allowlist refuses) or `error` (platform:
 //!   DNS/upstream/credential-resolution failure). Only `error` burns the SLO.
 //!
@@ -19,7 +19,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 static SPAWN: LazyLock<HistogramVec> = LazyLock::new(|| {
     register_histogram_vec!(
-        "lantern_manager_spawn_duration_seconds",
+        "pal_manager_spawn_duration_seconds",
         "RuntimeManager.Spawn boot latency (the backend schedule/restore call).",
         &["kind", "outcome"],
         vec![0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0]
@@ -29,7 +29,7 @@ static SPAWN: LazyLock<HistogramVec> = LazyLock::new(|| {
 
 static EGRESS: LazyLock<IntCounterVec> = LazyLock::new(|| {
     register_int_counter_vec!(
-        "lantern_egress_broker_decisions_total",
+        "pal_egress_broker_decisions_total",
         "Egress broker decisions by outcome (allow|deny|error).",
         &["outcome"]
     )
@@ -130,20 +130,20 @@ mod tests {
         egress_decision(Some("upstream connect failed"));
         let out = String::from_utf8(render()).unwrap();
         assert!(out.contains(
-            r#"lantern_manager_spawn_duration_seconds_count{kind="restore",outcome="ok"} "#
+            r#"pal_manager_spawn_duration_seconds_count{kind="restore",outcome="ok"} "#
         ));
         assert!(out.contains(
-            r#"lantern_manager_spawn_duration_seconds_count{kind="cold",outcome="error"} "#
+            r#"pal_manager_spawn_duration_seconds_count{kind="cold",outcome="error"} "#
         ));
         // The SLO rules select these exact bucket labels (le="5" cold, le="2" restore).
         for le in ["2", "5"] {
             assert!(out.contains(&format!(
-                r#"lantern_manager_spawn_duration_seconds_bucket{{kind="restore",outcome="ok",le="{le}"}}"#
+                r#"pal_manager_spawn_duration_seconds_bucket{{kind="restore",outcome="ok",le="{le}"}}"#
             )));
         }
         for o in ["allow", "deny", "error"] {
             assert!(out.contains(&format!(
-                r#"lantern_egress_broker_decisions_total{{outcome="{o}"}} "#
+                r#"pal_egress_broker_decisions_total{{outcome="{o}"}} "#
             )));
         }
     }

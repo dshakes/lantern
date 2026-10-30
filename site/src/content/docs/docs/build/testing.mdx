@@ -55,8 +55,8 @@ The quickstart suite posts 3 runs per invocation against one slot, and the cap i
 | --- | --- | --- |
 | `PAL_E2E_API_URL` | `http://localhost:8080` | Target API. Canonical; always set it explicitly. |
 | `PAL_API_URL` | unset | Alias, used only when the canonical var is unset |
-| `PAL_E2E_EMAIL` | `admin@lantern.dev` | Login email (seeded dev user) |
-| `PAL_E2E_PASSWORD` | `lantern` | Login password |
+| `PAL_E2E_EMAIL` | `admin@pal.dev` | Login email (seeded dev user) |
+| `PAL_E2E_PASSWORD` | `pal` | Login password |
 | `PAL_E2E_IMAGE_DIGEST` | placeholder digest | Image to schedule in the runtime suite; needed on two-tier stacks |
 | `E2E_ALLOW_SKIP` | unset | `1` turns a down stack into a skip |
 
@@ -95,7 +95,7 @@ npm ci && npx playwright install chromium
 npm run test:e2e
 ```
 
-It boots its own stack on spare ports (web 3411, API 8411, llm-replay 9412): a throwaway Postgres database, a private Redis db index, the control-plane (with `PAL_CORS_ORIGINS` set to the dashboard origin), llm-replay and `next dev`. It never touches :8080, :3001 or the shared `lantern` database, and tears everything down afterwards. Needs Go, `psql`, and Postgres and Redis reachable (the `make dev-infra` defaults work; override with `E2E_PG_ADMIN_URL`, `E2E_REDIS_*`). Details and kiosk-spec hooks: `apps/web/e2e/README.md`.
+It boots its own stack on spare ports (web 3411, API 8411, llm-replay 9412): a throwaway Postgres database, a private Redis db index, the control-plane (with `PAL_CORS_ORIGINS` set to the dashboard origin), llm-replay and `next dev`. It never touches :8080, :3001 or the shared `pal` database, and tears everything down afterwards. Needs Go, `psql`, and Postgres and Redis reachable (the `make dev-infra` defaults work; override with `E2E_PG_ADMIN_URL`, `E2E_REDIS_*`). Details and kiosk-spec hooks: `apps/web/e2e/README.md`.
 
 ## CI
 

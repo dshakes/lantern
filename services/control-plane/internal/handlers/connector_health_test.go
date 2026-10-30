@@ -8,10 +8,10 @@ import (
 )
 
 // The live failure: 124 runs across 7 days, all identical, all unfixable by
-// retrying — "credential is encrypted but LANTERN_CREDENTIAL_KEY is not set".
+// retrying — "credential is encrypted but PAL_CREDENTIAL_KEY is not set".
 func TestPermanentCredentialFailure_MissingKey(t *testing.T) {
 	err := fmt.Errorf("decrypt connector oauth token: %w",
-		errors.New("credential is encrypted but LANTERN_CREDENTIAL_KEY is not set"))
+		errors.New("credential is encrypted but PAL_CREDENTIAL_KEY is not set"))
 
 	reason, permanent := permanentCredentialFailure(err)
 	if !permanent {
@@ -21,7 +21,7 @@ func TestPermanentCredentialFailure_MissingKey(t *testing.T) {
 		t.Fatal("a permanent failure must carry an operator-facing reason")
 	}
 	// The reason has to say what to DO, not just what broke.
-	for _, want := range []string{"LANTERN_CREDENTIAL_KEY", "re-authorize"} {
+	for _, want := range []string{"PAL_CREDENTIAL_KEY", "re-authorize"} {
 		if !strings.Contains(reason, want) {
 			t.Errorf("reason should mention %q; got: %s", want, reason)
 		}
@@ -70,7 +70,7 @@ func TestPermanentCredentialFailure_NilIsTransient(t *testing.T) {
 // Classification must survive wrapping, since the error crosses package
 // boundaries as wrapped text.
 func TestPermanentCredentialFailure_SurvivesWrapping(t *testing.T) {
-	inner := errors.New("credential is encrypted but LANTERN_CREDENTIAL_KEY is not set")
+	inner := errors.New("credential is encrypted but PAL_CREDENTIAL_KEY is not set")
 	wrapped := fmt.Errorf("inbox-triage: gmail fetch: %w",
 		fmt.Errorf("decrypt connector oauth token: %w", inner))
 

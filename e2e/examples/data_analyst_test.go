@@ -4,7 +4,7 @@
 // VM, put a CSV in it, run pandas via exec, read JSON + a chart back, prove
 // egress is denied, and have a fixture-LLM agent explain the result.
 //
-// Tiers (LANTERN_E2E_ANALYST_TIER):
+// Tiers (PAL_E2E_ANALYST_TIER):
 //
 //	docker       (default) runtime-manager docker backend, network none. The files
 //	             API and ExecTool are Firecracker-only there (503), so the CSV goes
@@ -12,9 +12,9 @@
 //	firecracker  KVM nightly: CSV via PUT files/content, egress deny in the audit.
 //
 // Preconditions: a stack with scheduler + runtime-manager (AGENT_IMAGE =
-// lantern-analyst:dev for the docker tier, built from examples/data-analyst),
+// pal-analyst:dev for the docker tier, built from examples/data-analyst),
 // cmd/llm-replay with examples/data-analyst/replay-rules.json behind
-// LANTERN_LLM_BASEURL_OPENAI, and an openai provider key seeded. See the README.
+// PAL_LLM_BASEURL_OPENAI, and an openai provider key seeded. See the README.
 // Never point this at the owner's live :8080 stack.
 package examples_e2e
 
@@ -28,7 +28,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dshakes/lantern/e2e/internal/e2ekit"
+	"github.com/dshakes/pal/e2e/internal/e2ekit"
 )
 
 func exampleFile(t *testing.T, name string) []byte {
@@ -48,11 +48,11 @@ type execOut struct {
 
 func TestDataAnalystSandbox(t *testing.T) {
 	k := e2ekit.Connect(t)
-	tier := e2ekit.EnvOr("LANTERN_E2E_ANALYST_TIER", "docker")
+	tier := e2ekit.EnvOr("PAL_E2E_ANALYST_TIER", "docker")
 	fc := tier == "firecracker"
 
 	spec := map[string]any{
-		"imageDigest": e2ekit.EnvOr("LANTERN_E2E_ANALYST_IMAGE",
+		"imageDigest": e2ekit.EnvOr("PAL_E2E_ANALYST_IMAGE",
 			"sha256:0000000000000000000000000000000000000000000000000000000000000005"),
 		"isolation": "standard",
 		"network":   "none",
@@ -73,7 +73,7 @@ func TestDataAnalystSandbox(t *testing.T) {
 		t.Fatalf("schedule: HTTP %d: %s", st, raw)
 	}
 	if sched.Stub {
-		t.Fatal("schedule hit the stub scheduler: nothing was spawned (wire LANTERN_SCHEDULER_GRPC_ADDR)")
+		t.Fatal("schedule hit the stub scheduler: nothing was spawned (wire PAL_SCHEDULER_GRPC_ADDR)")
 	}
 	vm := sched.VmID
 	t.Cleanup(func() { k.DoAuth(t, http.MethodDelete, "/v1/runtime/vms/"+vm+"?grace=2s", nil, nil) })

@@ -105,10 +105,10 @@ impl DockerBackend {
     /// Build the environment variable list for the container.
     fn build_env(req: &ScheduleRequest) -> Vec<String> {
         let mut env: Vec<String> = vec![
-            format!("LANTERN_RUN_ID={}", req.run_id),
-            format!("LANTERN_BUNDLE_URI={}", req.bundle_uri),
+            format!("PAL_RUN_ID={}", req.run_id),
+            format!("PAL_BUNDLE_URI={}", req.bundle_uri),
             format!(
-                "LANTERN_INPUT={}",
+                "PAL_INPUT={}",
                 serde_json::to_string(&req.input).unwrap_or_default()
             ),
         ];
@@ -121,7 +121,7 @@ impl DockerBackend {
         // The agent runner resolves them at execution time.
         for secret in &req.secrets {
             env.push(format!(
-                "{}=lantern.secret/{}",
+                "{}=pal.secret/{}",
                 secret.env_var, secret.vault_ref
             ));
         }
@@ -172,7 +172,7 @@ impl DockerBackend {
         }
     }
 
-    /// Build the `CreateExecOptions` for a TTY exec (`lantern vm exec -t`
+    /// Build the `CreateExecOptions` for a TTY exec (`pal vm exec -t`
     /// against a docker-backed VM). Factored out of [`Self::exec_command_tty`]
     /// so the option wiring is unit-testable without a Docker daemon.
     fn build_tty_exec_options(
@@ -201,7 +201,7 @@ impl DockerBackend {
 
     /// Parse a line of output from the container, looking for structured events.
     fn parse_line(line: &str) -> RuntimeEvent {
-        const EVENT_PREFIX: &str = "__LANTERN_EVENT__:";
+        const EVENT_PREFIX: &str = "__PAL_EVENT__:";
 
         if let Some(json_str) = line.strip_prefix(EVENT_PREFIX) {
             match serde_json::from_str::<RuntimeEvent>(json_str.trim()) {
@@ -233,7 +233,7 @@ impl RuntimeBackend for DockerBackend {
         // The image string can be:
         //   * a tag:  python:3.11-slim
         //   * a digest: sha256:abc...
-        //   * a fully-qualified ref: ghcr.io/lantern/agent-runner@sha256:...
+        //   * a fully-qualified ref: ghcr.io/pal/agent-runner@sha256:...
         // Pure-digest strings ("sha256:abc...") aren't pullable on their own —
         // we treat them as opaque pool keys and fall back to the manager
         // default image. Real prod ships with a content-addressed registry
@@ -246,7 +246,7 @@ impl RuntimeBackend for DockerBackend {
         let resolved_image = self.ensure_image(pullable).await?;
 
         let container_name = format!(
-            "lantern-run-{}-{}",
+            "pal-run-{}-{}",
             req.run_id,
             &Uuid::new_v4().to_string()[..8]
         );
@@ -320,9 +320,9 @@ impl RuntimeBackend for DockerBackend {
             cmd,
             host_config: Some(host_config),
             labels: Some(HashMap::from([
-                ("lantern.run_id".to_string(), req.run_id.clone()),
+                ("pal.run_id".to_string(), req.run_id.clone()),
                 (
-                    "lantern.isolation_class".to_string(),
+                    "pal.isolation_class".to_string(),
                     format!("{:?}", req.isolation_class),
                 ),
             ])),
@@ -464,7 +464,7 @@ impl RuntimeBackend for DockerBackend {
 
     async fn snapshot(&self, req: &SnapshotRequest) -> Result<SnapshotInfo> {
         let short_id = &Uuid::new_v4().to_string()[..8];
-        let repo = "lantern-snapshot";
+        let repo = "pal-snapshot";
         let tag = short_id;
 
         tracing::info!(
@@ -517,15 +517,15 @@ impl RuntimeBackend for DockerBackend {
             .unwrap_or(snapshot_uri);
 
         let container_name = format!(
-            "lantern-restored-{}-{}",
+            "pal-restored-{}-{}",
             req.run_id,
             &Uuid::new_v4().to_string()[..8]
         );
 
         let mut env = vec![
-            format!("LANTERN_RUN_ID={}", req.run_id),
+            format!("PAL_RUN_ID={}", req.run_id),
             format!(
-                "LANTERN_INPUT={}",
+                "PAL_INPUT={}",
                 serde_json::to_string(&req.input).unwrap_or_default()
             ),
         ];
@@ -536,7 +536,7 @@ impl RuntimeBackend for DockerBackend {
 
         for secret in &req.secrets {
             env.push(format!(
-                "{}=lantern.secret/{}",
+                "{}=pal.secret/{}",
                 secret.env_var, secret.vault_ref
             ));
         }

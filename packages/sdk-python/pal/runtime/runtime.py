@@ -19,7 +19,7 @@ class RuntimeMode(StrEnum):
 def detect_mode() -> RuntimeMode:
     """Detect whether we are in production or dev mode.
 
-    The PAL runtime sets ``LANTERN_RUNTIME=1`` in the sandbox
+    The PAL runtime sets ``PAL_RUNTIME=1`` in the sandbox
     environment.  Anything else is treated as dev mode.
     """
     if os.environ.get("PAL_RUNTIME") == "1":
@@ -42,13 +42,13 @@ def require_runtime_env(key: str) -> str:
 
 # Well-known environment variables set by the PAL runtime
 RUNTIME_ENV_KEYS = {
-    "LANTERN_RUNTIME": "Set to '1' inside the sandbox",
-    "LANTERN_RUN_ID": "Current run ID",
-    "LANTERN_TENANT_ID": "Tenant ID",
-    "LANTERN_AGENT_NAME": "Agent name",
-    "LANTERN_AGENT_VERSION": "Agent version",
-    "LANTERN_GRPC_ENDPOINT": "gRPC endpoint for runtime services",
-    "LANTERN_JOURNAL_PATH": "Path to the step journal (local file in sandbox)",
-    "LANTERN_API_URL": "HTTP API base URL",
-    "LANTERN_API_KEY": "API key (set as a resolved secret)",
+    "PAL_RUNTIME": "Set to '1' inside the sandbox",
+    "PAL_RUN_ID": "Current run ID",
+    "PAL_TENANT_ID": "Tenant ID",
+    "PAL_AGENT_NAME": "Agent name",
+    "PAL_AGENT_VERSION": "Agent version",
+    "PAL_GRPC_ENDPOINT": "gRPC endpoint for runtime services",
+    "PAL_JOURNAL_PATH": "Path to the step journal (local file in sandbox)",
+    "PAL_API_URL": "HTTP API base URL",
+    "PAL_API_KEY": "API key (set as a resolved secret)",
 }

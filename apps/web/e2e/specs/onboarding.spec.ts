@@ -23,7 +23,7 @@ test("free-text goal -> spec review -> key test -> create -> first run streams t
   await page.getByRole("button", { name: "Design my agent" }).click();
 
   // Design needs a model key first. Add a dummy OpenAI one; the control-plane's
-  // test call and the design call both hit llm-replay (LANTERN_LLM_BASEURL_OPENAI).
+  // test call and the design call both hit llm-replay (PAL_LLM_BASEURL_OPENAI).
   await page.getByRole("button", { name: "Add a model key" }).click();
   await page.getByText("OpenAI", { exact: true }).click();
   await page.getByLabel("API key").fill("sk-e2e-dummy-key");

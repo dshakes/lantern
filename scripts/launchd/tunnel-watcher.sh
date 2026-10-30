@@ -1,5 +1,5 @@
 #!/bin/bash
-# tunnel-watcher — keep Twilio webhooks + LANTERN_PUBLIC_BASE_URL in
+# tunnel-watcher — keep Twilio webhooks + PAL_PUBLIC_BASE_URL in
 # sync with the current Cloudflare Tunnel URL.
 #
 # The quick-tunnel mode of cloudflared (`tunnel --url http://...`)
@@ -10,21 +10,21 @@
 # 15 seconds, detects the current URL, and re-points everything when
 # it changes.
 #
-# Wired in as a LaunchAgent via dev.lantern.tunnel-watcher.plist.
-# Logs to ~/Library/Logs/Lantern/tunnel-watcher.{out,err}.log.
+# Wired in as a LaunchAgent via dev.pal.tunnel-watcher.plist.
+# Logs to ~/Library/Logs/PAL/tunnel-watcher.{out,err}.log.
 #
 # Exits non-zero on irrecoverable errors so launchd restarts it.
 
 set -u
 
-CFLOG=~/Library/Logs/Lantern/cloudflared.err.log
-SECONDARY_LOG=~/Library/Logs/Lantern/cloudflared.log  # legacy nohup path
-STATE_FILE=~/.lantern/tunnel-current-url
-API_PLIST=~/Library/LaunchAgents/dev.lantern.api.plist
+CFLOG=~/Library/Logs/PAL/cloudflared.err.log
+SECONDARY_LOG=~/Library/Logs/PAL/cloudflared.log  # legacy nohup path
+STATE_FILE=~/.pal/tunnel-current-url
+API_PLIST=~/Library/LaunchAgents/dev.pal.api.plist
 TWILIO_NUMBER_ENV="+15128819998"
 
 mkdir -p "$(dirname "$STATE_FILE")"
-mkdir -p ~/Library/Logs/Lantern
+mkdir -p ~/Library/Logs/PAL
 
 log() {
   echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $*"
@@ -48,7 +48,7 @@ fetch_twilio_creds() {
   local jwt sid auth pn
   jwt=$(curl -s -m 5 -X POST http://127.0.0.1:8080/auth/login \
     -H 'content-type: application/json' \
-    -d '{"email":"admin@lantern.dev","password":"lantern"}' \
+    -d '{"email":"admin@pal.dev","password":"pal"}' \
     | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
   [ -z "$jwt" ] && return 1
   local resp
@@ -96,15 +96,15 @@ if nums: print(nums[0]['sid'])
   log "✅ Twilio webhooks repointed to $new_url"
 }
 
-# Update LANTERN_PUBLIC_BASE_URL in the API plist + reload the API
+# Update PAL_PUBLIC_BASE_URL in the API plist + reload the API
 # so signature verification works against the new URL.
 update_api_plist() {
   local new_url="$1"
   /usr/libexec/PlistBuddy -c \
-    "Set :EnvironmentVariables:LANTERN_PUBLIC_BASE_URL $new_url" \
+    "Set :EnvironmentVariables:PAL_PUBLIC_BASE_URL $new_url" \
     "$API_PLIST" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c \
-      "Add :EnvironmentVariables:LANTERN_PUBLIC_BASE_URL string $new_url" \
+      "Add :EnvironmentVariables:PAL_PUBLIC_BASE_URL string $new_url" \
       "$API_PLIST" 2>/dev/null
   # Reload the API so the new env var is picked up.
   local uid
@@ -112,8 +112,8 @@ update_api_plist() {
   launchctl unload "$API_PLIST" 2>/dev/null || true
   sleep 1
   launchctl load "$API_PLIST" 2>/dev/null || true
-  launchctl kickstart "gui/$uid/dev.lantern.api" 2>/dev/null || true
-  log "✅ API plist LANTERN_PUBLIC_BASE_URL set; control-plane reloaded"
+  launchctl kickstart "gui/$uid/dev.pal.api" 2>/dev/null || true
+  log "✅ API plist PAL_PUBLIC_BASE_URL set; control-plane reloaded"
 }
 
 last_url=""

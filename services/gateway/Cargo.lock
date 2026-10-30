@@ -998,7 +998,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "lantern-gateway"
+name = "pal-gateway"
 version = "0.1.0"
 dependencies = [
  "anyhow",

@@ -1,6 +1,6 @@
 "use client";
 
-// "Schedule VM" modal — gives the UI parity with `lantern run agent.yaml`
+// "Schedule VM" modal — gives the UI parity with `pal run agent.yaml`
 // + `POST /v1/runtime/schedule`. Lets an operator stand up a one-off
 // headless agent without dropping to the CLI or curl.
 //
@@ -202,7 +202,7 @@ export function ScheduleModal({ open, onClose, onScheduled }: ScheduleModalProps
 
         <ModalField
           label="Image"
-          hint="Container image — tag or fully-qualified ref (e.g. alpine:latest, ghcr.io/lantern/agent-runner:v1)."
+          hint="Container image — tag or fully-qualified ref (e.g. alpine:latest, ghcr.io/pal/agent-runner:v1)."
         >
           <input
             value={form.image}

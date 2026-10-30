@@ -83,7 +83,7 @@ export interface ParsedCommand {
 
 // "pal" is an everyday word ("hey pal, how are you"), so it needs punctuation
 // right after it; the legacy "pal" form keeps its looser match.
-const INVOCATION_PREFIX = /^(?:(?:hey\s+)?lantern[,!:\s]+|(?:hey\s+)?pal[,!:]\s*)/i;
+const INVOCATION_PREFIX = /^(?:(?:hey\s+)?pal[,!:\s]+|(?:hey\s+)?pal[,!:]\s*)/i;
 
 // Full-body anchored: the verb must BE the message (optionally + a recognized
 // scope/duration), never just appear inside a sentence. "pause and tell me how
@@ -223,11 +223,11 @@ function parseDuration(text: string): { ms?: number; phrase?: string } {
 //   callMessage:  the spoken body (for voicemail/task)
 //   callReason:   1-line context for risk-tier classifier
 const CALL_CONFERENCE_RE =
-  /^(?:(?:lantern|pal),?\s+)?(?:(?:get|put)\s+me\s+on\s+(?:a\s+)?(?:call|line)\s+with|conference\s+me\s+with|(?:three[-\s]?way|3[-\s]?way)\s+(?:me\s+)?with|bridge\s+me\s+with|connect\s+me\s+(?:with|to)|dial\s+me\s+in\s+with)\s+(\S.+)$/i;
+  /^(?:(?:pal|pal),?\s+)?(?:(?:get|put)\s+me\s+on\s+(?:a\s+)?(?:call|line)\s+with|conference\s+me\s+with|(?:three[-\s]?way|3[-\s]?way)\s+(?:me\s+)?with|bridge\s+me\s+with|connect\s+me\s+(?:with|to)|dial\s+me\s+in\s+with)\s+(\S.+)$/i;
 const CALL_VOICEMAIL_RE =
-  /^(?:(?:lantern|pal),?\s+)?leave\s+(?:a\s+)?(?:voice\s*mail|voicemail|message|note)\s+(?:for|to|with)\s+([\w'.\s+-]+?)\s+(?:saying|that\s+says|with|telling|that|—|-)\s+(.+)$/i;
+  /^(?:(?:pal|pal),?\s+)?leave\s+(?:a\s+)?(?:voice\s*mail|voicemail|message|note)\s+(?:for|to|with)\s+([\w'.\s+-]+?)\s+(?:saying|that\s+says|with|telling|that|—|-)\s+(.+)$/i;
 const CALL_TASK_RE =
-  /^(?:(?:lantern|pal),?\s+)?(?:call|ring|dial|phone)\s+([\w'.\s+-]+?)(?:\s+(?:and|to|about|for|regarding|saying|that|—|-)\s+(.+))?$/i;
+  /^(?:(?:pal|pal),?\s+)?(?:call|ring|dial|phone)\s+([\w'.\s+-]+?)(?:\s+(?:and|to|about|for|regarding|saying|that|—|-)\s+(.+))?$/i;
 
 function parseCallCommands(body: string): ParsedCommand | null {
   // Conference takes priority — most specific phrasing.
@@ -284,7 +284,7 @@ export function parseNLCommand(input: string): ParsedCommand | null {
   const raw = input.trim();
 
   // First: check the slash forms (backward-compatible).
-  if (/^\/(?:bot|pal|lantern)\b/i.test(raw)) {
+  if (/^\/(?:bot|pal|pal)\b/i.test(raw)) {
     return parseSlash(raw);
   }
 
@@ -426,7 +426,7 @@ function parseSlash(raw: string): ParsedCommand | null {
         return { action: "help", echo: "help", explicit };
     }
   }
-  if (cmd === "/pal" || cmd === "/lantern") {
+  if (cmd === "/pal" || cmd === "/pal") {
     switch (sub) {
       case "ping":
         return { action: "ping", echo: "pong", explicit };
@@ -582,12 +582,12 @@ const QUICK_STATUS: Array<{
 ];
 
 const PRESENCE_CLEAR_RE =
-  /^(?:(?:lantern|pal),?\s+)?(?:i'?m\s+back|back\s+now|status\s+off|clear\s+(?:my\s+)?status|i'?m\s+(?:free|available|around)|presence\s+off|status\s+clear)\s*[!.]?$/i;
+  /^(?:(?:pal|pal),?\s+)?(?:i'?m\s+back|back\s+now|status\s+off|clear\s+(?:my\s+)?status|i'?m\s+(?:free|available|around)|presence\s+off|status\s+clear)\s*[!.]?$/i;
 
 // "I'm at the temple", "I'm in a meeting", "I'm driving", "set status: at the gym",
 // "away: lunch", "status: at the dentist" — optionally "for 2h" / "until 5pm".
 const PRESENCE_SET_RE =
-  /^(?:(?:lantern|pal),?\s+)?(?:(?:set\s+)?status\s*[:=]\s*|away\s*[:=]\s*|presence\s*[:=]\s*|(?:i'?m|i\s+am|i'?ll\s+be|i\s+will\s+be)\s+(?:at\s+|in\s+|on\s+)?)(.+?)(?:\s+(?:for\s+(\d+)\s*(h|hr|hrs|hours?|m|min|mins|minutes?)|(?:until|till|til)\s+(.+?)))?\s*[!.]?$/i;
+  /^(?:(?:pal|pal),?\s+)?(?:(?:set\s+)?status\s*[:=]\s*|away\s*[:=]\s*|presence\s*[:=]\s*|(?:i'?m|i\s+am|i'?ll\s+be|i\s+will\s+be)\s+(?:at\s+|in\s+|on\s+)?)(.+?)(?:\s+(?:for\s+(\d+)\s*(h|hr|hrs|hours?|m|min|mins|minutes?)|(?:until|till|til)\s+(.+?)))?\s*[!.]?$/i;
 
 function parseDurationMs(num?: string, unit?: string, untilText?: string): number | undefined {
   if (num && unit) {

@@ -6,7 +6,7 @@ package handlers
 //
 // Skipped automatically when DATABASE_URL is unset. Run with:
 //
-//	DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable \
+//	DATABASE_URL=postgres://pal:pal@localhost:5432/pal?sslmode=disable \
 //	  go test ./internal/handlers/ -run A2A -count=1
 
 import (
@@ -20,7 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // newA2ATestHandler builds an A2AHandler backed by a real pool, using the
@@ -92,7 +92,7 @@ func seedA2ATenant(t *testing.T, pool *pgxpool.Pool, slug string) string {
 	var id string
 	err := pool.QueryRow(ctx, `
 		INSERT INTO tenants (slug, name, tier, k8s_namespace)
-		VALUES ($1, $1, 'personal', 'lantern-t-' || $1)
+		VALUES ($1, $1, 'personal', 'pal-t-' || $1)
 		RETURNING id
 	`, slug).Scan(&id)
 	if err != nil {

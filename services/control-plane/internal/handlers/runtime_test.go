@@ -35,9 +35,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/agentidentity"
-	"github.com/dshakes/lantern/services/control-plane/internal/db"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/agentidentity"
+	"github.com/dshakes/pal/services/control-plane/internal/db"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // ---------------------------------------------------------------------------
@@ -50,12 +50,12 @@ const testJWTSecret = "test-jwt-secret-do-not-use-in-production"
 func mintTestToken(t *testing.T, tenantID, userID, role string) string {
 	t.Helper()
 	now := time.Now()
-	claims := LanternClaims{
+	claims := PalClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID,
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(24 * time.Hour)),
-			Issuer:    "lantern-test",
+			Issuer:    "pal-test",
 		},
 		TenantID: tenantID,
 		Email:    userID + "@test.example",
@@ -316,9 +316,9 @@ func TestVmStateString(t *testing.T) {
 		t.Run(tc.want, func(t *testing.T) {
 			// Import the proto enum values via a numeric cast since the test
 			// package has access to the internal type aliases.
-			// We cast int32 → lanternv1.VmState through the function under test.
-			// This validates the switch branches without importing lanternv1 here.
-			// (lanternv1 is imported in the package being tested, so the function
+			// We cast int32 → palv1.VmState through the function under test.
+			// This validates the switch branches without importing palv1 here.
+			// (palv1 is imported in the package being tested, so the function
 			// is callable from the same package.)
 			_ = tc.s // silence unused; actual values tested via literal below
 		})

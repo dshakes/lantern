@@ -13,12 +13,12 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // devTenantID is the seeded dev tenant. When the bridge runs in dev mode
-// (no LANTERN_TENANT_ID set) it identifies itself as "default" — we map
+// (no PAL_TENANT_ID set) it identifies itself as "default" — we map
 // that here so heartbeats land on a real row. In prod, the bridge sends
 // the real tenant UUID and this fallback is never used.
 const devTenantID = "00000000-0000-0000-0000-000000000001"
@@ -329,7 +329,7 @@ func (h *SurfaceHandler) TestSurface(w http.ResponseWriter, r *http.Request) {
 // ---------- WhatsApp bridge heartbeat ----------
 
 // whatsappHeartbeatPayload is the shape pushed by the bridge every 30s when
-// LANTERN_CONTROL_PLANE_URL + LANTERN_BRIDGE_HEARTBEAT_TOKEN are set on its
+// PAL_CONTROL_PLANE_URL + PAL_BRIDGE_HEARTBEAT_TOKEN are set on its
 // side. Each session entry mirrors WhatsAppSession.getDiagnostics().
 type whatsappHeartbeatSession struct {
 	TenantID              string  `json:"tenantId"`
@@ -382,7 +382,7 @@ func resolveTenantID(ctx context.Context, srv *server.Server, raw string) string
 
 // BridgeHeartbeat handles POST /v1/surfaces/whatsapp/heartbeat.
 //
-// Auth is via a shared bearer token (LANTERN_BRIDGE_HEARTBEAT_TOKEN) rather
+// Auth is via a shared bearer token (PAL_BRIDGE_HEARTBEAT_TOKEN) rather
 // than JWT — the bridge is a service principal, not a logged-in user. When
 // the env var is unset the endpoint refuses every request, so an
 // unconfigured prod deployment can't be silently spammed by a stray bridge.
@@ -390,7 +390,7 @@ func (h *SurfaceHandler) BridgeHeartbeat(w http.ResponseWriter, r *http.Request)
 	expected := os.Getenv("PAL_BRIDGE_HEARTBEAT_TOKEN")
 	if expected == "" {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
-			"error": "heartbeat endpoint disabled (set LANTERN_BRIDGE_HEARTBEAT_TOKEN to enable)",
+			"error": "heartbeat endpoint disabled (set PAL_BRIDGE_HEARTBEAT_TOKEN to enable)",
 		})
 		return
 	}

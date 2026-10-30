@@ -118,10 +118,10 @@ const PERSONAL_RUN_META: Record<string, { runs: string; via: string }> = {
   "relationship-keeper": { runs: "weekly",       via: "self-chat" },
   "morning-brief":       { runs: "daily 8am",   via: "self-chat" },
   "inbox-concierge":     { runs: "daily AM",    via: "self-chat" },
-  "commute-copilot":     { runs: "bridge",       via: "self-chat · LANTERN_COMMUTE" },
-  "energy-guardian":     { runs: "bridge",       via: "self-chat · LANTERN_ENERGY" },
-  "health-coach":        { runs: "bridge",       via: "self-chat · LANTERN_HEALTH" },
-  "focus-guardian":      { runs: "bridge",       via: "self-chat · LANTERN_FOCUS" },
+  "commute-copilot":     { runs: "bridge",       via: "self-chat · PAL_COMMUTE" },
+  "energy-guardian":     { runs: "bridge",       via: "self-chat · PAL_ENERGY" },
+  "health-coach":        { runs: "bridge",       via: "self-chat · PAL_HEALTH" },
+  "focus-guardian":      { runs: "bridge",       via: "self-chat · PAL_FOCUS" },
   "whatsapp-assistant":  { runs: "reactive",     via: "your contacts" },
   "imessage-assistant":  { runs: "reactive",     via: "your contacts" },
 };
@@ -278,7 +278,7 @@ export default function AgentsPage() {
           {error.message}. Make sure the control-plane API is reachable.
         </p>
         <code className="mt-3 rounded-lg border border-zinc-800 bg-surface-0 px-3 py-1.5 font-mono text-[12px] text-zinc-300">
-          lantern dev
+          pal dev
         </code>
         <Button size="sm" variant="secondary" className="mt-4" icon={<RefreshCw className="h-3 w-3" />} onClick={() => window.location.reload()}>
           Retry

@@ -10,8 +10,8 @@
 //! Each received message is forwarded via:
 //!
 //! ```text
-//! POST {LANTERN_CONTROL_PLANE_URL}/v1/runtime/report
-//! X-Lantern-Runtime-Token: {LANTERN_RUNTIME_SECRET_TOKEN}
+//! POST {PAL_CONTROL_PLANE_URL}/v1/runtime/report
+//! X-Pal-Runtime-Token: {PAL_RUNTIME_SECRET_TOKEN}
 //! Content-Type: application/json
 //! ```
 //!
@@ -39,7 +39,7 @@
 //!   reconnect and replay).
 //! - Audit events that fail to forward are logged at ERROR level so they appear
 //!   in the manager's own log trail — never silently dropped.
-//! - When `LANTERN_CONTROL_PLANE_URL` / `LANTERN_RUNTIME_SECRET_TOKEN` are
+//! - When `PAL_CONTROL_PLANE_URL` / `PAL_RUNTIME_SECRET_TOKEN` are
 //!   unset (dev), messages are logged locally instead of forwarded.
 //!
 //! # Pure request-construction function
@@ -229,7 +229,7 @@ pub async fn forward_report(
 
     let result = client
         .post(&url)
-        .header("X-Lantern-Runtime-Token", token)
+        .header("X-Pal-Runtime-Token", token)
         .header("Content-Type", "application/json")
         .json(payload)
         .send()
@@ -289,7 +289,7 @@ pub async fn forward_report(
 /// Drain host-side egress-broker audit events (ADR 0026) into the same
 /// control-plane report path harness audits use, stamped with the VM's
 /// registry tenant/run. Unconfigured (dev): the broker already logged each
-/// event locally under `lantern_audit`, so there is nothing more to do.
+/// event locally under `pal_audit`, so there is nothing more to do.
 pub async fn forward_broker_audits(
     mut rx: tokio::sync::mpsc::Receiver<pb::AuditEvent>,
     registry: std::sync::Arc<crate::handle_registry::HandleRegistry>,

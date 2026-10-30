@@ -1,14 +1,14 @@
-// lantern-harness — PID 1 init process running inside every Lantern microVM.
+// pal-harness — PID 1 init process running inside every PAL microVM.
 //
 // Responsibilities (see README.md for the full boot contract):
-//   1. Init: prep /run/lantern, mount tmpfs, set rlimits.
+//   1. Init: prep /run/pal, mount tmpfs, set rlimits.
 //   2. Supervisor: spawn the workload as a child, restart on crash, exit
 //      clean on success.
 //   3. Heartbeat: bidirectional gRPC stream to runtime-manager.
-//   4. Secrets: vend + cache + refresh, exposed at /run/lantern/secrets.sock.
+//   4. Secrets: vend + cache + refresh, exposed at /run/pal/secrets.sock.
 //   5. Egress: HTTP CONNECT proxy on 127.0.0.1:3128 with allowlist.
 //   6. Logs: tail workload stdio, forward as LogLine via Report stream.
-//   7. OTel: read OTLP from /run/lantern/otlp.sock, batch + forward.
+//   7. OTel: read OTLP from /run/pal/otlp.sock, batch + forward.
 //   8. Signals: SIGTERM=drain, SIGUSR1=snapshot, SIGCHLD=reap zombies.
 //   9. Audit: emit on every secret vend, egress decision, exec, snapshot.
 
@@ -68,7 +68,7 @@ fn require_workload_identity(
 ) -> Result<()> {
     if prod && identity.is_none() {
         anyhow::bail!(
-            "LANTERN_WORKLOAD_UID must be set to a numeric uid in production — \
+            "PAL_WORKLOAD_UID must be set to a numeric uid in production — \
              refusing to start a workload as the harness (root) uid"
         );
     }
@@ -77,18 +77,18 @@ fn require_workload_identity(
 
 fn parse_env() -> Result<HarnessEnv> {
     require_workload_identity(tls::is_prod_env(), supervisor::workload_identity())?;
-    let vm_id = std::env::var("PAL_VM_ID").context("LANTERN_VM_ID env var required")?;
+    let vm_id = std::env::var("PAL_VM_ID").context("PAL_VM_ID env var required")?;
     let manager_addr =
         std::env::var("PAL_MANAGER_ADDR").unwrap_or_else(|_| "127.0.0.1:50054".to_string());
-    // LANTERN_WORKLOAD_ARGV (JSON array, from spawn.json) is authoritative —
+    // PAL_WORKLOAD_ARGV (JSON array, from spawn.json) is authoritative —
     // it is the only form in which an argument containing a space survives.
-    // Otherwise LANTERN_WORKLOAD_CMD, space-separated. A VM may legitimately
+    // Otherwise PAL_WORKLOAD_CMD, space-separated. A VM may legitimately
     // declare NO workload — a boot/verification VM whose job is to come up,
     // serve the secrets + exec channels, and heartbeat until it is stopped.
     // Absent or blank therefore means "supervise nothing", not an error.
     let workload_cmd: Vec<String> = match std::env::var("PAL_WORKLOAD_ARGV") {
         Ok(json) => serde_json::from_str(&json)
-            .context("LANTERN_WORKLOAD_ARGV must be a JSON array of strings")?,
+            .context("PAL_WORKLOAD_ARGV must be a JSON array of strings")?,
         Err(_) => std::env::var("PAL_WORKLOAD_CMD")
             .unwrap_or_default()
             .split_whitespace()
@@ -96,7 +96,7 @@ fn parse_env() -> Result<HarnessEnv> {
             .collect(),
     };
 
-    // LANTERN_DECLARED_SECRETS is a JSON array of {env_name, secret_uri}.
+    // PAL_DECLARED_SECRETS is a JSON array of {env_name, secret_uri}.
     // Missing or unparseable -> empty list; secrets module rejects all
     // requests in that case.
     let declared_secrets: Vec<SecretRef> = std::env::var("PAL_DECLARED_SECRETS")
@@ -104,7 +104,7 @@ fn parse_env() -> Result<HarnessEnv> {
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
 
-    // LANTERN_EGRESS_RULES is a JSON array of {pattern, http_methods, rate_bps}
+    // PAL_EGRESS_RULES is a JSON array of {pattern, http_methods, rate_bps}
     // declared in the AgentSpec, injected by the manager at spawn. Present →
     // egress is "configured" (the proxy must be enforced); absent/empty → no
     // egress declared (default-deny applies once the manager pushes rules via
@@ -143,7 +143,7 @@ fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("info,lantern_harness=debug")),
+                .unwrap_or_else(|_| EnvFilter::new("info,pal_harness=debug")),
         )
         .json()
         .with_target(false)
@@ -152,7 +152,7 @@ fn main() -> Result<()> {
     // As PID 1 in a microVM the harness starts with an essentially empty
     // environment — the kernel passes the spawn contract on the command line
     // instead. Translate it before anything reads configuration (including
-    // LANTERN_TRACE_PARENT below).
+    // PAL_TRACE_PARENT below).
     bootenv::bootstrap()?;
 
     // ---- async phase: the environment is now frozen ------------------------
@@ -164,7 +164,7 @@ fn main() -> Result<()> {
 }
 
 async fn run() -> Result<()> {
-    // Set the W3C propagator globally and parse LANTERN_TRACE_PARENT so every
+    // Set the W3C propagator globally and parse PAL_TRACE_PARENT so every
     // outgoing gRPC call to the manager carries the spawn trace's traceparent.
     let _spawn_cx = otel::init_propagator();
 
@@ -174,7 +174,7 @@ async fn run() -> Result<()> {
         manager = %env.manager_addr,
         workload = ?env.workload_cmd,
         secrets = env.declared_secrets.len(),
-        "starting lantern-harness (PID 1)"
+        "starting pal-harness (PID 1)"
     );
 
     // 1. Init: mount tmpfs, prep dirs, set rlimits.
@@ -195,7 +195,7 @@ async fn run() -> Result<()> {
     // 2b. CC attestation — best-effort; never blocks or aborts boot.
     cc_attest::run(&manager).await;
 
-    // 3. Secrets server — bind /run/lantern/secrets.sock.
+    // 3. Secrets server — bind /run/pal/secrets.sock.
     let secrets = Arc::new(SecretCache::new(
         manager.clone(),
         env.declared_secrets.clone(),
@@ -234,7 +234,7 @@ async fn run() -> Result<()> {
 
     // 4a. Boot-time enforcement preflight (P2-B7 fix #2). When egress rules are
     //     declared but the iptables REDIRECT layer is absent, this fails closed
-    //     (refuses to spawn the workload) if LANTERN_EGRESS_FAIL_CLOSED=1, else
+    //     (refuses to spawn the workload) if PAL_EGRESS_FAIL_CLOSED=1, else
     //     logs a prominent SECURITY warning + audit event. Runs BEFORE the
     //     workload is spawned so a bypassable allowlist never silently ships.
     //     Broker mode has no NIC to bypass through, so the REDIRECT check is
@@ -281,7 +281,7 @@ async fn run() -> Result<()> {
     let activity = ActivityTracker::new();
 
     // 4b. In-guest exec server — serves RuntimeHarness.Exec so the manager
-    //     can dial back for `lantern vm exec`. Failure is tolerated: the
+    //     can dial back for `pal vm exec`. Failure is tolerated: the
     //     workload always runs even if exec is unavailable.
     {
         let m = manager.clone();

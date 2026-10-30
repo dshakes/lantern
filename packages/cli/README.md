@@ -1,21 +1,21 @@
 # pal CLI
 
-The `pal` command-line tool for [PAL Runtime](https://github.com/dshakes/lantern) — the open-source runtime for production AI agents.
+The `pal` command-line tool for [PAL Runtime](https://github.com/dshakes/pal) — the open-source runtime for production AI agents.
 
-`lantern` is the CLI's pre-rename name (ADR 0032). It still works: Homebrew installs a `lantern` symlink, and `go install ./cmd/lantern` builds the same CLI under the old name. Config lives in `$PAL_HOME`, else `~/.pal`, else an existing legacy `~/.lantern` (used in place, never moved).
+`pal` is the CLI's pre-rename name (ADR 0032). It still works: Homebrew installs a `pal` symlink, and `go install ./cmd/pal` builds the same CLI under the old name. Config lives in `$PAL_HOME`, else `~/.pal`, else an existing legacy `~/.pal` (used in place, never moved).
 
 ```bash
-# macOS / Linux (Homebrew; also links `lantern`)
+# macOS / Linux (Homebrew; also links `pal`)
 brew install dshakes/tap/pal
 
 # Or from source (the binary's main package lives at cmd/pal)
-go install github.com/dshakes/lantern/packages/cli/cmd/pal@latest
+go install github.com/dshakes/pal/packages/cli/cmd/pal@latest
 ```
 
 ## Common commands
 
 ```bash
-pal login                        # authenticate against api.lantern.run (or --api-url)
+pal login                        # authenticate against api.pal.run (or --api-url)
 pal init my-agent                # scaffold a new agent project
 pal dev                          # boot Postgres + Redis + MinIO + control-plane locally
 
@@ -39,7 +39,7 @@ pal deploy [--dry-run] [--json]
 
 ## Flags
 
-Each `PAL_*` variable is also read under its legacy `LANTERN_*` name; `PAL_*` wins when both are set.
+Each `PAL_*` variable is also read under its legacy `PAL_*` name; `PAL_*` wins when both are set.
 
 | Flag | Env | Purpose |
 |---|---|---|
@@ -68,7 +68,7 @@ pal test --agent=triage --suite=golden --set-baseline
 
 ```bash
 pal dev                # docker-compose up: postgres + redis + minio + control-plane
-# visit http://localhost:3000 — admin@lantern.dev / lantern
+# visit http://localhost:3000 — admin@pal.dev / pal
 ```
 
 `pal dev` is a convenience wrapper over `make dev`. Stop with `Ctrl+C`; volumes persist across restarts.

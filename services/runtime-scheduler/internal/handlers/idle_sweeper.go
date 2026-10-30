@@ -25,7 +25,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
 )
 
 const (
@@ -69,7 +69,7 @@ func sweepIdleVMs(ctx context.Context, svc *SchedulerService, now time.Time) {
 		if vm.IdleTimeoutSecs <= 0 {
 			continue
 		}
-		if vm.State != lanternv1.VmState_VM_STATE_RUNNING {
+		if vm.State != palv1.VmState_VM_STATE_RUNNING {
 			continue
 		}
 		if vm.LastActivityAt.IsZero() {
@@ -102,7 +102,7 @@ func tryIdlePause(ctx context.Context, svc *SchedulerService, vmID, tenantID str
 		unlock()
 		return
 	}
-	if vm.State != lanternv1.VmState_VM_STATE_RUNNING {
+	if vm.State != palv1.VmState_VM_STATE_RUNNING {
 		unlock()
 		return
 	}
@@ -120,8 +120,8 @@ func tryIdlePause(ctx context.Context, svc *SchedulerService, vmID, tenantID str
 	// tiebreaker.
 	if !svc.Store.TransitionVMState(
 		vmID,
-		lanternv1.VmState_VM_STATE_RUNNING, "",
-		lanternv1.VmState_VM_STATE_DRAINING, ReasonIdlePausing,
+		palv1.VmState_VM_STATE_RUNNING, "",
+		palv1.VmState_VM_STATE_DRAINING, ReasonIdlePausing,
 		now,
 	) {
 		unlock()
@@ -136,9 +136,9 @@ func tryIdlePause(ctx context.Context, svc *SchedulerService, vmID, tenantID str
 		zap.Int32("idle_timeout_secs", vm.IdleTimeoutSecs),
 	)
 
-	svc.emit(tenantID, &lanternv1.StatusEvent{
+	svc.emit(tenantID, &palv1.StatusEvent{
 		VmId:   vmID,
-		State:  lanternv1.VmState_VM_STATE_DRAINING,
+		State:  palv1.VmState_VM_STATE_DRAINING,
 		At:     timestamppb.New(now),
 		Reason: ReasonIdlePausing,
 	})
@@ -155,7 +155,7 @@ func tryIdlePause(ctx context.Context, svc *SchedulerService, vmID, tenantID str
 		if !ok {
 			return
 		}
-		if vm.State != lanternv1.VmState_VM_STATE_DRAINING || vm.Reason != ReasonIdlePausing {
+		if vm.State != palv1.VmState_VM_STATE_DRAINING || vm.Reason != ReasonIdlePausing {
 			return
 		}
 
@@ -170,12 +170,12 @@ func tryIdlePause(ctx context.Context, svc *SchedulerService, vmID, tenantID str
 		}
 
 		// Snapshot first, then stop — same order as operator Pause().
-		snap, err := svc.Dialer.Snapshot(ctx, node.Address, &lanternv1.SnapshotRequest{VmId: vmID})
+		snap, err := svc.Dialer.Snapshot(ctx, node.Address, &palv1.SnapshotRequest{VmId: vmID})
 		if err != nil {
 			// Snapshot failed: restore RUNNING so the operator can retry.
 			if svc.Store.TransitionVMState(vmID,
-				lanternv1.VmState_VM_STATE_DRAINING, ReasonIdlePausing,
-				lanternv1.VmState_VM_STATE_RUNNING, "auto-suspend snapshot failed: "+err.Error(),
+				palv1.VmState_VM_STATE_DRAINING, ReasonIdlePausing,
+				palv1.VmState_VM_STATE_RUNNING, "auto-suspend snapshot failed: "+err.Error(),
 				time.Now().UTC(),
 			) {
 				svc.Logger.Error("idle-sweeper: snapshot failed; restored to RUNNING",
@@ -187,8 +187,8 @@ func tryIdlePause(ctx context.Context, svc *SchedulerService, vmID, tenantID str
 		if snapID == "" {
 			// Manager returned an empty snapshot — treat same as failure.
 			if svc.Store.TransitionVMState(vmID,
-				lanternv1.VmState_VM_STATE_DRAINING, ReasonIdlePausing,
-				lanternv1.VmState_VM_STATE_RUNNING, "auto-suspend: empty snapshot id",
+				palv1.VmState_VM_STATE_DRAINING, ReasonIdlePausing,
+				palv1.VmState_VM_STATE_RUNNING, "auto-suspend: empty snapshot id",
 				time.Now().UTC(),
 			) {
 				svc.Logger.Error("idle-sweeper: manager returned empty snapshot id; restored to RUNNING",
@@ -205,14 +205,14 @@ func tryIdlePause(ctx context.Context, svc *SchedulerService, vmID, tenantID str
 		// settle this VM to PAUSED with the right snapshot id.
 		svc.Store.SetVMSnapshot(vmID, snapID)
 
-		if _, err := svc.Dialer.Stop(ctx, node.Address, &lanternv1.StopRequest{
+		if _, err := svc.Dialer.Stop(ctx, node.Address, &palv1.StopRequest{
 			VmId:   vmID,
 			Reason: "auto-suspend (idle timeout)",
 		}); err != nil {
 			// Stop failed: restore RUNNING so the operator can retry.
 			if svc.Store.TransitionVMState(vmID,
-				lanternv1.VmState_VM_STATE_DRAINING, ReasonIdlePausing,
-				lanternv1.VmState_VM_STATE_RUNNING, "auto-suspend stop failed: "+err.Error(),
+				palv1.VmState_VM_STATE_DRAINING, ReasonIdlePausing,
+				palv1.VmState_VM_STATE_RUNNING, "auto-suspend stop failed: "+err.Error(),
 				time.Now().UTC(),
 			) {
 				svc.Logger.Error("idle-sweeper: stop failed; restored to RUNNING",
@@ -224,17 +224,17 @@ func tryIdlePause(ctx context.Context, svc *SchedulerService, vmID, tenantID str
 		// Reconcile may have already settled PAUSED (node heartbeat after
 		// Stop). TransitionVMState is the tiebreaker — only one of us releases.
 		if svc.Store.TransitionVMState(vmID,
-			lanternv1.VmState_VM_STATE_DRAINING, ReasonIdlePausing,
-			lanternv1.VmState_VM_STATE_PAUSED, "auto-suspended (idle timeout)",
+			palv1.VmState_VM_STATE_DRAINING, ReasonIdlePausing,
+			palv1.VmState_VM_STATE_PAUSED, "auto-suspended (idle timeout)",
 			time.Now().UTC(),
 		) {
 			svc.Store.IncrTenantVMs(tenantID, -1)
 			if svc.Metrics != nil {
 				svc.Metrics.ActiveVMs.Dec()
 			}
-			svc.emit(tenantID, &lanternv1.StatusEvent{
+			svc.emit(tenantID, &palv1.StatusEvent{
 				VmId:   vmID,
-				State:  lanternv1.VmState_VM_STATE_PAUSED,
+				State:  palv1.VmState_VM_STATE_PAUSED,
 				At:     timestamppb.Now(),
 				Reason: "auto-suspended (idle timeout)",
 			})

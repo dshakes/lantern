@@ -1,11 +1,11 @@
-module github.com/dshakes/lantern/packages/cli
+module github.com/dshakes/pal/packages/cli
 
 go 1.25.0
 
 toolchain go1.26.6
 
 require (
-	github.com/dshakes/lantern/gen/go v0.0.0
+	github.com/dshakes/pal/gen/go v0.0.0
 	github.com/spf13/cobra v1.8.1
 	golang.org/x/term v0.42.0
 	google.golang.org/grpc v1.82.1
@@ -22,5 +22,5 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478 // indirect
 )
 
-replace github.com/dshakes/lantern/gen/go => ../../gen/go
+replace github.com/dshakes/pal/gen/go => ../../gen/go
 

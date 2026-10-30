@@ -92,12 +92,12 @@ check_postgres() {
     fail "postgres :5432" "no listener" "Run: ${BLD}make dev-infra${RST}"
     return
   fi
-  if ! PGPASSWORD=lantern psql -h localhost -U lantern -d lantern -c 'SELECT 1' >/dev/null 2>&1; then
+  if ! PGPASSWORD=pal psql -h localhost -U pal -d pal -c 'SELECT 1' >/dev/null 2>&1; then
     fail "postgres auth" "listener up but query fails" "DB may be initializing — wait 10s and re-run"
     return
   fi
   local agents_count
-  agents_count=$(PGPASSWORD=lantern psql -h localhost -U lantern -d lantern -tAc "SELECT COUNT(*) FROM agents WHERE archived_at IS NULL" 2>/dev/null)
+  agents_count=$(PGPASSWORD=pal psql -h localhost -U pal -d pal -tAc "SELECT COUNT(*) FROM agents WHERE archived_at IS NULL" 2>/dev/null)
   pass "postgres :5432" "agents=${agents_count:-0}"
 }
 
@@ -145,14 +145,14 @@ check_api() {
   healthz_body=$(curl -sS http://localhost:8080/healthz -m 2 2>/dev/null)
   code=$(curl_status http://localhost:8080/healthz)
   if [[ "$code" != "200" ]]; then
-    fail "control-plane /healthz" "got ${code:-no-response}" "Tail \`/tmp/lantern-api.log\` for the error"
+    fail "control-plane /healthz" "got ${code:-no-response}" "Tail \`/tmp/pal-api.log\` for the error"
     return
   fi
   # Verify login works — proves DB connection AND JWT signing are healthy.
   local login_body
   login_body=$(curl -sS -X POST http://localhost:8080/auth/login \
     -H 'Content-Type: application/json' \
-    -d '{"email":"admin@lantern.dev","password":"lantern"}' -m 3 2>/dev/null)
+    -d '{"email":"admin@pal.dev","password":"pal"}' -m 3 2>/dev/null)
   if [[ "$login_body" == *'"token":'* ]]; then
     pass "control-plane :8080" "healthz=200, login=OK"
   else
@@ -194,7 +194,7 @@ check_bridge() {
   local code
   code=$(curl_status http://localhost:3100/health)
   if [[ "$code" != "200" ]]; then
-    fail "whatsapp-bridge /health" "got ${code:-no-response}" "Tail \`/tmp/lantern-whatsapp-bridge.log\`"
+    fail "whatsapp-bridge /health" "got ${code:-no-response}" "Tail \`/tmp/pal-whatsapp-bridge.log\`"
     return
   fi
   # Inspect session state for the dev tenant.
@@ -235,7 +235,7 @@ check_dashboard() {
   if [[ "$code" == "200" || "$code" == "307" || "$code" == "302" ]]; then
     pass "dashboard :3001" "Next.js responding (${code})"
   else
-    warn "dashboard :3001" "unexpected status ${code:-?}" "Tail \`/tmp/lantern-dashboard.log\`"
+    warn "dashboard :3001" "unexpected status ${code:-?}" "Tail \`/tmp/pal-dashboard.log\`"
   fi
 }
 

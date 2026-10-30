@@ -80,9 +80,9 @@ When the session has tools attached, the LLM call runs through a non-streaming t
 The TypeScript SDK exposes token streaming as an async iterator. It handles sequence reordering, unknown event filtering, and legacy server compatibility automatically.
 
 ```ts
-import { LanternClient } from "@lantern/sdk";
+import { PalClient } from "@pal/sdk";
 
-const client = new LanternClient({ apiKey: "..." });
+const client = new PalClient({ apiKey: "..." });
 
 for await (const event of client.sessions.streamMessage(sessionId, {
   content: "Summarise the last quarter in 3 bullets.",

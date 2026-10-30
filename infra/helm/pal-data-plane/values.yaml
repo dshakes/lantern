@@ -1,8 +1,8 @@
 # Env vars are emitted as PAL_* (ADR 0032). The binaries still accept the legacy
-# LANTERN_* names, so existing overrides keep working; PAL_* wins if both are set.
+# PAL_* names, so existing overrides keep working; PAL_* wins if both are set.
 #
 # Upgrading a release created before the PAL rename (ADR 0032): the chart name changed, so
-# resource names change with it (release "lantern" -> "lantern-<chart>"). To keep the old
+# resource names change with it (release "pal" -> "pal-<chart>"). To keep the old
 # names, and the Postgres/MinIO PVCs bound to them, pass --set fullnameOverride=<old fullname>.
 #
 # pal-data-plane values
@@ -17,7 +17,7 @@
 global:
   image:
     registry: ghcr.io
-    repository: dshakes/lantern
+    repository: dshakes/pal
     tag: "0.1.0"
     pullPolicy: IfNotPresent
   logLevel: info
@@ -36,7 +36,7 @@ global:
 controlPlane:
   # The control plane gRPC endpoint. For PAL Runtime SaaS, use the default.
   # For self-hosted, set to your control plane's address.
-  endpoint: "https://api.lantern.run"
+  endpoint: "https://api.pal.run"
   # Multi-region (ADR 0046): ordered control-plane endpoints, one per region,
   # primary first. Empty = use `endpoint` only (single-region, no health probe).
   # e.g. ["api.us-east-1.example.com:443", "api.us-west-2.example.com:443"]
@@ -99,7 +99,7 @@ runtimeManager:
     # request `confidential: true`; when empty, confidential workloads FAIL
     # CLOSED (refused, never downgraded). Opt-in — leave empty unless you run a
     # CC-capable node pool. See ADR 0023. Operators must ALSO label + taint the
-    # CC nodes `lantern.dev/confidential-compute=<tech>` (mirrors the NFD
+    # CC nodes `pal.dev/confidential-compute=<tech>` (mirrors the NFD
     # sev-snp/tdx feature labels) so confidential pods land only there.
     kataCc: ""      # e.g. "kata-qemu-snp" — REQUIRED for confidential agents
   # CC hardware technology advertised to the scheduler in the manager heartbeat
@@ -158,9 +158,9 @@ postgresql:
   # Set to false if using an external database (e.g., RDS, Cloud SQL).
   enabled: true
   auth:
-    username: lantern
+    username: pal
     password: ""  # set via secret
-    database: lantern
+    database: pal
   primary:
     persistence:
       size: 20Gi
@@ -172,8 +172,8 @@ postgresql:
   external:
     host: ""
     port: 5432
-    database: lantern
-    username: lantern
+    database: pal
+    username: pal
     # Password should be set via secret, not in values.
     existingSecret: ""
     existingSecretKey: "postgres-password"
@@ -194,16 +194,16 @@ minio:
   # Set to false if using cloud-native object storage (S3, GCS, Azure Blob).
   enabled: true
   auth:
-    rootUser: lantern
+    rootUser: pal
     rootPassword: ""  # set via secret
-  defaultBuckets: "lantern-bundles,lantern-snapshots"
+  defaultBuckets: "pal-bundles,pal-snapshots"
   persistence:
     size: 20Gi
 
   # External object storage settings (used when minio.enabled=false).
   external:
     endpoint: ""
-    bucket: "lantern-bundles"
+    bucket: "pal-bundles"
     accessKeyId: ""
     # Secret key should be set via secret, not in values.
     existingSecret: ""
@@ -213,8 +213,8 @@ minio:
 # Secrets — override via --set or external secrets operator
 # ---------------------------------------------------------------------------
 secrets:
-  postgresPassword: "lantern"
-  minioPassword: "lanternsecret"
+  postgresPassword: "pal"
+  minioPassword: "palsecret"
 
 # ---------------------------------------------------------------------------
 # RuntimeClasses (top-level) — gVisor/Kata isolation tiers (ADR 0009)
@@ -224,7 +224,7 @@ secrets:
 # `create: true` is honored alongside the legacy
 # runtimeManager.createRuntimeClasses flag. Only enable once the node runtime
 # handlers (gVisor/runsc, Kata) are installed AND the nodes are labelled
-# `lantern.dev/runtimeclass=gvisor|kata` (+ tainted) so untrusted/hostile pods
+# `pal.dev/runtimeclass=gvisor|kata` (+ tainted) so untrusted/hostile pods
 # land only on hardened nodes. See README.md. Default false.
 runtimeClasses:
   create: false
@@ -240,7 +240,7 @@ runtimeClasses:
 policies:
   enabled: false
   # Glob the generate/mutate rules match against. Tenant namespaces only.
-  namespaceSelector: "lantern-t-*"
+  namespaceSelector: "pal-t-*"
   # Apply the generated objects to namespaces that ALREADY exist when the policy
   # is installed (Kyverno generateExisting). Default false = future namespaces.
   generateExisting: false
@@ -277,7 +277,7 @@ imageVerification:
   keyless:
     # The GitHub Actions workflow OIDC identity that signs the images. Update
     # the org/repo to match your fork before enabling Enforce.
-    subject: "https://github.com/dshakes/lantern/.github/workflows/build-images.yml@refs/heads/master"
+    subject: "https://github.com/dshakes/pal/.github/workflows/build-images.yml@refs/heads/master"
     issuer: "https://token.actions.githubusercontent.com"
     rekorURL: "https://rekor.sigstore.dev"
   # Static cosign public key (PEM). Only used when mode: "key".
@@ -292,21 +292,21 @@ imageVerification:
 egress:
   cilium:
     enabled: false
-    # cluster (CiliumClusterwideNetworkPolicy, covers all lantern-t-* ns) |
+    # cluster (CiliumClusterwideNetworkPolicy, covers all pal-t-* ns) |
     # namespaced (CiliumNetworkPolicy in `namespace`).
     scope: "cluster"
-    namespace: "lantern-system"
+    namespace: "pal-system"
     # Namespace housing the runtime-manager/control-plane (allowed :50054).
-    systemNamespace: "lantern-system"
+    systemNamespace: "pal-system"
     # Pods this default-deny-egress policy applies to. The runtime-manager
     # stamps agent workload pods; match its label here.
     podSelector:
-      lantern.dev/agent: "true"
+      pal.dev/agent: "true"
     # Extra verbatim Cilium egress entries appended to the allow list.
     extraEgress: []
   proxy:
     enabled: false
-    namespace: "lantern-system"
+    namespace: "pal-system"
     # Well-known forward-proxy image (swap as needed). The credential-injection
     # logic itself lives in `config` (squid.conf) — see README.md.
     image: "ubuntu/squid:6.6-24.04_beta"
@@ -355,7 +355,7 @@ externalSecrets:
   # Example ExternalSecret mapping (adapt to your backend layout).
   example:
     targetSecretName: ""
-    postgresPasswordRef: "lantern/data-plane"
+    postgresPasswordRef: "pal/data-plane"
     postgresPasswordProperty: "postgres-password"
 
 # ---------------------------------------------------------------------------

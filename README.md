@@ -13,13 +13,13 @@
 <b>PAL Runtime</b> is the open-source layer it runs on, for the agents you build: they finish, stay contained, and stay yours.</p>
 
 <p>
-<a href="https://github.com/dshakes/lantern/actions/workflows/sdlc-e2e.yml"><img src="https://github.com/dshakes/lantern/actions/workflows/sdlc-e2e.yml/badge.svg" alt="e2e"></a>
-<a href="https://github.com/dshakes/lantern/actions/workflows/build-images.yml"><img src="https://github.com/dshakes/lantern/actions/workflows/build-images.yml/badge.svg" alt="images"></a>
-<a href="https://github.com/dshakes/lantern/actions/workflows/deploy-docs.yml"><img src="https://github.com/dshakes/lantern/actions/workflows/deploy-docs.yml/badge.svg" alt="site"></a>
+<a href="https://github.com/dshakes/pal/actions/workflows/sdlc-e2e.yml"><img src="https://github.com/dshakes/pal/actions/workflows/sdlc-e2e.yml/badge.svg" alt="e2e"></a>
+<a href="https://github.com/dshakes/pal/actions/workflows/build-images.yml"><img src="https://github.com/dshakes/pal/actions/workflows/build-images.yml/badge.svg" alt="images"></a>
+<a href="https://github.com/dshakes/pal/actions/workflows/deploy-docs.yml"><img src="https://github.com/dshakes/pal/actions/workflows/deploy-docs.yml/badge.svg" alt="site"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-0b0c0f" alt="Apache-2.0"></a>
 </p>
 
-<a href="https://dshakes.github.io/lantern/"><b>Website</b></a> &nbsp;·&nbsp; <a href="https://dshakes.github.io/lantern/docs/"><b>Docs</b></a> &nbsp;·&nbsp; <a href="#try-it-in-60-seconds"><b>Try it in 60 seconds</b></a>
+<a href="https://dshakes.github.io/pal/"><b>Website</b></a> &nbsp;·&nbsp; <a href="https://dshakes.github.io/pal/docs/"><b>Docs</b></a> &nbsp;·&nbsp; <a href="#try-it-in-60-seconds"><b>Try it in 60 seconds</b></a>
 
 <br><br>
 
@@ -76,39 +76,39 @@ The layer pal runs on, open source, for your own agents. Durable runs, microVM s
 Docker only, no API key. `make demo` starts the control plane, the console and a recorded-answer model server (it also needs `openssl`). Each visitor gets a private workspace, deleted after 30 minutes; nothing calls a model provider.
 
 ```bash
-git clone https://github.com/dshakes/lantern.git && cd lantern
+git clone https://github.com/dshakes/pal.git && cd pal
 make demo         # prints "demo: http://localhost:3001/kiosk"
 make demo-down    # stop and delete all demo data
 ```
 
 ## Run your own agent
 
-Needs Docker, Go 1.25+ for the CLI, and an OpenAI or Anthropic key. The CLI, packages and `LANTERN_*` env vars still carry the old name while the rename lands; the commands below are the real ones today.
+Needs Docker, Go 1.25+ for the CLI, and an OpenAI or Anthropic key.
 
 ```bash
 make dev                                         # Postgres, Redis, MinIO, control plane, console
-( cd packages/cli && go install ./cmd/lantern )  # the CLI
-lantern doctor                                   # health, auth, model provider, a live run
-lantern onboard                                  # describe an agent in one line, get a running agent
+( cd packages/cli && go install ./cmd/pal )  # the CLI
+pal doctor                                   # health, auth, model provider, a live run
+pal onboard                                  # describe an agent in one line, get a running agent
 ```
 
-Console: http://localhost:3001, sign in as `admin@lantern.dev` / `lantern` (local dev only). Sandboxes, the egress broker and real Firecracker on a Mac: [Runtime quickstart](https://dshakes.github.io/lantern/docs/runtime/quickstart/).
+Console: http://localhost:3001, sign in as `admin@pal.dev` / `pal` (local dev only). Sandboxes, the egress broker and real Firecracker on a Mac: [Runtime quickstart](https://dshakes.github.io/pal/docs/runtime/quickstart/).
 
 ## Use it from code
 
-The SDKs are not on a registry yet; install from a checkout (`npm install /path/to/lantern/packages/sdk-ts`, or `pip install /path/to/lantern/packages/sdk-python`).
+The SDKs are not on a registry yet; install from a checkout (`npm install /path/to/pal/packages/sdk-ts`, or `pip install /path/to/pal/packages/sdk-python`).
 
 ```ts
-import { LanternClient } from "@lantern/sdk";
+import { PalClient } from "@pal/sdk";
 
-const pal = new LanternClient({ baseUrl: "http://localhost:8080", apiKey: process.env.LANTERN_API_KEY });
+const pal = new PalClient({ baseUrl: "http://localhost:8080", apiKey: process.env.PAL_API_KEY });
 
 await pal.agents.create({ name: "triage", description: "Classifies support emails" });
 await pal.budgets.upsert("triage", { maxCostUsdPerDay: 25, hardFail: true });
 const run = await pal.runs.create({ agent: "triage", input: { email: "..." } }); // 402 if over the daily cap
 ```
 
-Pass `baseUrl` (or set `LANTERN_API_URL`): the client's default is not your self-hosted stack. Python and Go SDKs cover the same management surface.
+Pass `baseUrl` (or set `PAL_API_URL`): the client's default is not your self-hosted stack. Python and Go SDKs cover the same management surface.
 
 ## What's in the repo
 
@@ -122,7 +122,7 @@ Pass `baseUrl` (or set `LANTERN_API_URL`): the client's default is not your self
 
 ## Learn more
 
-- Website and docs: [dshakes.github.io/lantern](https://dshakes.github.io/lantern/) (source in [`site/`](site/))
+- Website and docs: [dshakes.github.io/pal](https://dshakes.github.io/pal/) (source in [`site/`](site/))
 - Architecture and decisions: [`docs/architecture/`](docs/architecture/), [`docs/adr/`](docs/adr/)
 - Brand, logo files and the diagram sources: [`docs/brand/`](docs/brand/)
 - Conventions and invariants: [`CLAUDE.md`](CLAUDE.md)
@@ -130,4 +130,4 @@ Pass `baseUrl` (or set `LANTERN_API_URL`): the client's default is not your self
 
 ---
 
-<sub>We started as Lantern: a flame you could carry because glass kept it contained. As the product became a companion, we kept the light and dropped the lamp. The flame became a dot, a single moment of attention. पल means "a moment." A pal is someone who shows up in it.</sub>
+<sub>We started as PAL: a flame you could carry because glass kept it contained. As the product became a companion, we kept the light and dropped the lamp. The flame became a dot, a single moment of attention. पल means "a moment." A pal is someone who shows up in it.</sub>

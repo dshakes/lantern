@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dshakes/lantern/packages/cli/internal"
+	"github.com/dshakes/pal/packages/cli/internal"
 	"github.com/spf13/cobra"
 )
 
@@ -36,7 +36,7 @@ save, fires a smoke run and streams its events. Interactive sessions, connector
 integrations, and cron scheduling are available today via the SDKs and
 dashboard — not yet as CLI subcommands.
 
-` + "`lantern`" + ` is the legacy name of this CLI and keeps working as an alias.`,
+` + "`pal`" + ` is the legacy name of this CLI and keeps working as an alias.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       fmt.Sprintf("%s (commit: %s, built: %s)", version, commit, date),

@@ -15,10 +15,10 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: untrusted-gvisor-exec
-  namespace: lantern-t-validate
+  namespace: pal-t-validate
   labels:
-    lantern.dev/run-id: run-validate-gvisor
-    lantern.dev/isolation: untrusted
+    pal.dev/run-id: run-validate-gvisor
+    pal.dev/isolation: untrusted
 spec:
   runtimeClassName: gvisor
   restartPolicy: Never
@@ -28,7 +28,7 @@ spec:
       requiredDuringSchedulingIgnoredDuringExecution:
         nodeSelectorTerms:
           - matchExpressions:
-              - key: lantern.dev/runtimeclass
+              - key: pal.dev/runtimeclass
                 operator: In
                 values: ["gvisor"]
   securityContext:

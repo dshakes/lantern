@@ -22,13 +22,13 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/control-plane/internal/db"
-	"github.com/dshakes/lantern/services/control-plane/internal/grounding"
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
-	"github.com/dshakes/lantern/services/control-plane/internal/workflow"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/control-plane/internal/db"
+	"github.com/dshakes/pal/services/control-plane/internal/grounding"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/secrets"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/workflow"
 )
 
 // resolveGmailToken looks up the Gmail OAuth access token for a tenant from
@@ -196,7 +196,7 @@ func (h *RESTHandler) ListAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.agentSvc.ListAgents(ctx, &lanternv1.ListAgentsRequest{
+	resp, err := h.agentSvc.ListAgents(ctx, &palv1.ListAgentsRequest{
 		PageSize: 100,
 	})
 	if err != nil {
@@ -260,7 +260,7 @@ func (h *RESTHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	agent, err := h.agentSvc.CreateAgent(ctx, &lanternv1.CreateAgentRequest{
+	agent, err := h.agentSvc.CreateAgent(ctx, &palv1.CreateAgentRequest{
 		Name:        body.Name,
 		Description: body.Description,
 		Labels:      body.Labels,
@@ -274,7 +274,7 @@ func (h *RESTHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	// Optional extension columns (not on the proto Agent message) are
 	// persisted with a follow-up UPDATE so the proto path stays untouched.
 	// db.WithTenantConn sets app.tenant_id (transaction-local) before running
-	// the UPDATE so that, under LANTERN_RLS_ENFORCE=1, the RLS policy evaluates
+	// the UPDATE so that, under PAL_RLS_ENFORCE=1, the RLS policy evaluates
 	// the GUC and allows the write.  WHERE tenant_id = $4 remains the primary
 	// correctness guard; RLS is defence-in-depth.
 	if body.AvatarURL != nil || body.StylePrompt != nil || body.SystemPrompt != nil || body.Model != nil {
@@ -330,7 +330,7 @@ func (h *RESTHandler) GetAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agent, err := h.agentSvc.GetAgent(ctx, &lanternv1.GetAgentRequest{
+	agent, err := h.agentSvc.GetAgent(ctx, &palv1.GetAgentRequest{
 		Name: name,
 	})
 	if err != nil {
@@ -344,7 +344,7 @@ func (h *RESTHandler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	// avatar_url, style_prompt) — pulled directly so the dashboard can
 	// round-trip them through the create/edit forms.
 	// db.WithTenantConn sets app.tenant_id before the SELECT so that, under
-	// LANTERN_RLS_ENFORCE=1, the RLS policy allows the read (GUC matches the
+	// PAL_RLS_ENFORCE=1, the RLS policy allows the read (GUC matches the
 	// tenant_id of the row). Without the GUC the policy matches nothing →
 	// returns empty even for the row's own owner.
 	tenantID, _ := middleware.TenantIDFromContext(ctx)
@@ -394,7 +394,7 @@ func (h *RESTHandler) DeleteAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = h.agentSvc.DeleteAgent(ctx, &lanternv1.DeleteAgentRequest{
+	_, err = h.agentSvc.DeleteAgent(ctx, &palv1.DeleteAgentRequest{
 		Name: name,
 	})
 	if err != nil {
@@ -503,7 +503,7 @@ func (h *RESTHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// db.WithTenantConn sets app.tenant_id before the UPDATE so that, under
-	// LANTERN_RLS_ENFORCE=1, the RLS policy allows the write. Without the GUC
+	// PAL_RLS_ENFORCE=1, the RLS policy allows the write. Without the GUC
 	// set, the policy matches nothing → RowsAffected()==0 → false HTTP 404 for
 	// the agent's own owner. WHERE tenant_id = $5 is the primary correctness
 	// guard; RLS is defence-in-depth.
@@ -567,7 +567,7 @@ func (h *RESTHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req := &lanternv1.ListRunsRequest{
+	req := &palv1.ListRunsRequest{
 		PageSize: 100,
 	}
 	if agentName := r.URL.Query().Get("agent"); agentName != "" {
@@ -601,7 +601,7 @@ func (h *RESTHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 			m := runToMap(run)
 			// Enrich: execution steps + agent name.
 			// db.WithTenantConn sets app.tenant_id so that, under
-			// LANTERN_RLS_ENFORCE=1, the RLS policy allows the read.
+			// PAL_RLS_ENFORCE=1, the RLS policy allows the read.
 			// Without the GUC the policy matches nothing → empty enrichment
 			// even for the tenant's own runs.
 			var rawSteps []byte
@@ -696,11 +696,11 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 	inputStruct, _ := structpb.NewStruct(body.Input)
 
 	// Ensure the agent exists — auto-create if not found.
-	_, getErr := h.agentSvc.GetAgent(ctx, &lanternv1.GetAgentRequest{Name: body.AgentName})
+	_, getErr := h.agentSvc.GetAgent(ctx, &palv1.GetAgentRequest{Name: body.AgentName})
 	if getErr != nil {
 		// Agent doesn't exist — create it with a default version.
 		h.logger().Info("auto-creating agent for run", zap.String("agent", body.AgentName))
-		_, createErr := h.agentSvc.CreateAgent(ctx, &lanternv1.CreateAgentRequest{
+		_, createErr := h.agentSvc.CreateAgent(ctx, &palv1.CreateAgentRequest{
 			Name:        body.AgentName,
 			Description: "Auto-created by run request",
 		})
@@ -710,7 +710,7 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	run, err := h.runSvc.CreateRun(ctx, &lanternv1.CreateRunRequest{
+	run, err := h.runSvc.CreateRun(ctx, &palv1.CreateRunRequest{
 		AgentName:   body.AgentName,
 		Input:       inputStruct,
 		TriggerKind: runTriggerKind(ctx),
@@ -722,7 +722,7 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 		errStr := err.Error()
 		if strings.Contains(errStr, "no promoted version") || strings.Contains(errStr, "not found") {
 			h.autoCreateVersion(ctx, body.AgentName)
-			run, err = h.runSvc.CreateRun(ctx, &lanternv1.CreateRunRequest{
+			run, err = h.runSvc.CreateRun(ctx, &palv1.CreateRunRequest{
 				AgentName:   body.AgentName,
 				Input:       inputStruct,
 				TriggerKind: runTriggerKind(ctx),
@@ -832,7 +832,7 @@ func (h *RESTHandler) GetRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	run, err := h.runSvc.GetRun(ctx, &lanternv1.GetRunRequest{
+	run, err := h.runSvc.GetRun(ctx, &palv1.GetRunRequest{
 		Id: id,
 	})
 	if err != nil {
@@ -844,7 +844,7 @@ func (h *RESTHandler) GetRun(w http.ResponseWriter, r *http.Request) {
 	result := runToMap(run)
 	// Enrich: execution steps + agent name.
 	// db.WithTenantConn sets app.tenant_id before the SELECT so that, under
-	// LANTERN_RLS_ENFORCE=1, the RLS policy allows the read. Without the GUC,
+	// PAL_RLS_ENFORCE=1, the RLS policy allows the read. Without the GUC,
 	// the policy matches nothing → enrichment silently empty even for the
 	// tenant's own run.
 	tenantID, _ := middleware.TenantIDFromContext(ctx)
@@ -891,7 +891,7 @@ func (h *RESTHandler) CancelRun(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewDecoder(r.Body).Decode(&body) //nolint:errcheck
 
-	run, err := h.runSvc.CancelRun(ctx, &lanternv1.CancelRunRequest{
+	run, err := h.runSvc.CancelRun(ctx, &palv1.CancelRunRequest{
 		Id:     id,
 		Reason: body.Reason,
 	})
@@ -960,7 +960,7 @@ func isPublicCORSPath(path string) bool {
 // reach them.
 //
 // All other routes reflect the request Origin only when it appears in the
-// allowlist built from LANTERN_CORS_ORIGINS (comma-separated; default
+// allowlist built from PAL_CORS_ORIGINS (comma-separated; default
 // http://localhost:3001). This prevents credential-bearing cross-origin
 // requests from arbitrary origins in production.
 func CORSMiddleware(next http.Handler) http.Handler {
@@ -1185,7 +1185,7 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 					zap.String("run_id", runID))
 				return
 			}
-			if err := h.sendEmailViaGmail(tenantID, deliveryEmail, fmt.Sprintf("Lantern: %s run completed", agentName), result); err != nil {
+			if err := h.sendEmailViaGmail(tenantID, deliveryEmail, fmt.Sprintf("PAL: %s run completed", agentName), result); err != nil {
 				h.logger().Warn("email delivery failed",
 					zap.String("run_id", runID),
 					zap.String("to", deliveryEmail),
@@ -1291,7 +1291,7 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 	}
 	defer releaseLease()
 
-	// Deferred lantern.run.total counter. Fires once per lease-held run at
+	// Deferred pal.run.total counter. Fires once per lease-held run at
 	// the actual function return so it sees the final outErr value.
 	// The workflow path writes status='failed' itself and returns outErr=nil,
 	// so a nil error is not proof of success: read the row back.
@@ -1459,13 +1459,13 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 	// false and tools attached when they shouldn't.
 	//
 	// Resolve in two steps, every run:
-	//   1. labels.lantern.template (set by templates.Apply OR back-fill)
+	//   1. labels.pal.template (set by templates.Apply OR back-fill)
 	//   2. agent-name == template-name (covers any agent named after a
 	//      registered template, even with no labels)
 	resolvedTemplateID = ""
 	{
 		var lbl struct {
-			TemplateID string `json:"lantern.template"`
+			TemplateID string `json:"pal.template"`
 		}
 		_ = json.Unmarshal(labelsJSON, &lbl)
 		resolvedTemplateID = lbl.TemplateID
@@ -1495,9 +1495,9 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 			// fallback needed) — and the setup gate can re-derive
 			// required_connectors/surfaces too.
 			labelsPatch, _ := json.Marshal(map[string]any{
-				"lantern.template":            tpl.ID,
-				"lantern.required_connectors": tpl.Connectors,
-				"lantern.required_surfaces":   tpl.Surfaces,
+				"pal.template":            tpl.ID,
+				"pal.required_connectors": tpl.Connectors,
+				"pal.required_surfaces":   tpl.Surfaces,
 			})
 			// rls-exempt: inline executor — agents back-fill self-scoped by
 			// explicit `tenant_id = $4`.
@@ -1952,8 +1952,8 @@ func deliverWhatsAppViaBridge(tenantID, jid, message string) error {
 
 // deliverWhatsAppSelf POSTs the message to the bridge's send-self
 // endpoint, which routes to the bridge owner's own WhatsApp self-chat.
-// Bridge URL + optional shared token come from env (LANTERN_BRIDGE_URL,
-// LANTERN_BRIDGE_TOKEN). Defaults to localhost:3100 for dev.
+// Bridge URL + optional shared token come from env (PAL_BRIDGE_URL,
+// PAL_BRIDGE_TOKEN). Defaults to localhost:3100 for dev.
 func (h *RESTHandler) deliverWhatsAppSelf(tenantID, message string) error {
 	return deliverWhatsAppSelfNote(tenantID, message)
 }
@@ -2245,7 +2245,7 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 		// journal_events so already-finished nodes are skipped — the walk
 		// resumes from the first incomplete step instead of restarting.
 		CompletedStep: h.journalCompletedStep,
-		// Confidence gate: when LANTERN_CONFIDENCE_GATE is set, evaluate
+		// Confidence gate: when PAL_CONFIDENCE_GATE is set, evaluate
 		// heuristic confidence for side-effecting nodes before executing them.
 		// Nil by default so the feature is completely opt-in per deployment.
 		ConfidenceGate: h.buildConfidenceGate(tenantID, agentName),
@@ -2524,28 +2524,28 @@ func (h *RESTHandler) ExecuteScheduledRun(tenantID, agentName string, input map[
 	inputStruct, _ := structpb.NewStruct(input)
 
 	// Ensure agent exists.
-	_, getErr := h.agentSvc.GetAgent(ctx, &lanternv1.GetAgentRequest{Name: agentName})
+	_, getErr := h.agentSvc.GetAgent(ctx, &palv1.GetAgentRequest{Name: agentName})
 	if getErr != nil {
 		h.logger().Info("scheduler: auto-creating agent", zap.String("agent", agentName))
-		_, _ = h.agentSvc.CreateAgent(ctx, &lanternv1.CreateAgentRequest{
+		_, _ = h.agentSvc.CreateAgent(ctx, &palv1.CreateAgentRequest{
 			Name:        agentName,
 			Description: "Auto-created by scheduler",
 		})
 	}
 
-	run, err := h.runSvc.CreateRun(ctx, &lanternv1.CreateRunRequest{
+	run, err := h.runSvc.CreateRun(ctx, &palv1.CreateRunRequest{
 		AgentName:   agentName,
 		Input:       inputStruct,
-		TriggerKind: lanternv1.TriggerKind_TRIGGER_KIND_SCHEDULE,
+		TriggerKind: palv1.TriggerKind_TRIGGER_KIND_SCHEDULE,
 	})
 	if err != nil {
 		errStr := err.Error()
 		if strings.Contains(errStr, "no promoted version") || strings.Contains(errStr, "not found") {
 			h.autoCreateVersion(ctx, agentName)
-			run, err = h.runSvc.CreateRun(ctx, &lanternv1.CreateRunRequest{
+			run, err = h.runSvc.CreateRun(ctx, &palv1.CreateRunRequest{
 				AgentName:   agentName,
 				Input:       inputStruct,
-				TriggerKind: lanternv1.TriggerKind_TRIGGER_KIND_SCHEDULE,
+				TriggerKind: palv1.TriggerKind_TRIGGER_KIND_SCHEDULE,
 			})
 		}
 		if err != nil {
@@ -2707,7 +2707,7 @@ func (h *RESTHandler) SaveWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// db.WithTenantConn sets app.tenant_id so that, under LANTERN_RLS_ENFORCE=1,
+	// db.WithTenantConn sets app.tenant_id so that, under PAL_RLS_ENFORCE=1,
 	// the RLS policy allows the UPDATE. Without the GUC the policy matches
 	// nothing → RowsAffected()==0 → false HTTP 404 for the agent's own owner.
 	var rowsAffected int64
@@ -2754,7 +2754,7 @@ func (h *RESTHandler) GetWorkflow(w http.ResponseWriter, r *http.Request) {
 
 	tenantID, _ := middleware.TenantIDFromContext(ctx)
 
-	// db.WithTenantConn sets app.tenant_id so that, under LANTERN_RLS_ENFORCE=1,
+	// db.WithTenantConn sets app.tenant_id so that, under PAL_RLS_ENFORCE=1,
 	// the RLS policy allows the SELECT. Without the GUC the policy matches
 	// nothing → pgx.ErrNoRows → false HTTP 404 for the agent's own owner.
 	var wfBytes []byte
@@ -2786,15 +2786,15 @@ func (h *RESTHandler) GetWorkflow(w http.ResponseWriter, r *http.Request) {
 
 // autoCreateVersion creates a default agent version and promotes it.
 // This is a convenience for the spike — in production, versions come from
-// `lantern deploy`.
+// `pal deploy`.
 func (h *RESTHandler) autoCreateVersion(ctx context.Context, agentName string) {
 	tenantID, _ := middleware.TenantIDFromContext(ctx)
 	if tenantID == "" {
 		return
 	}
 
-	// TenantPool routes to the RLS-enforced lantern_app role when
-	// LANTERN_RLS_ENFORCE=1; the set_config below scopes app.tenant_id either way.
+	// TenantPool routes to the RLS-enforced pal_app role when
+	// PAL_RLS_ENFORCE=1; the set_config below scopes app.tenant_id either way.
 	tx, err := h.srv.TenantPool().Begin(ctx)
 	if err != nil {
 		return
@@ -2935,7 +2935,7 @@ func (h *RESTHandler) emitRunAnomalies(ctx context.Context, runID, tenantID, age
 
 // ---------- proto to map converters ----------
 
-func agentToMap(a *lanternv1.Agent) map[string]any {
+func agentToMap(a *palv1.Agent) map[string]any {
 	m := map[string]any{
 		"id":        a.GetId(),
 		"tenantId":  a.GetTenantId(),
@@ -2961,17 +2961,17 @@ func agentToMap(a *lanternv1.Agent) map[string]any {
 }
 
 // buildConfidenceGate constructs the confidence gate config from env vars.
-// Returns nil when LANTERN_CONFIDENCE_GATE is not set (feature off by default).
+// Returns nil when PAL_CONFIDENCE_GATE is not set (feature off by default).
 // Pattern mirrors modelRouterEnabled() in llm_proxy_router.go.
 //
 // Env vars:
 //
-//	LANTERN_CONFIDENCE_GATE           "1"/"true"/"on" to enable (default: off)
-//	LANTERN_CONFIDENCE_GATE_THRESHOLD float in (0, 1]; default 0.75
-//	LANTERN_CONFIDENCE_ESTIMATOR      "self-consistency" | "verbalization"
+//	PAL_CONFIDENCE_GATE           "1"/"true"/"on" to enable (default: off)
+//	PAL_CONFIDENCE_GATE_THRESHOLD float in (0, 1]; default 0.75
+//	PAL_CONFIDENCE_ESTIMATOR      "self-consistency" | "verbalization"
 //	                                  (default: verbalization — backward-compatible)
-//	LANTERN_CONFIDENCE_SAMPLES        int [1,9] for self-consistency; default 5
-//	LANTERN_CONFIDENCE_CALIBRATE      "1"/"true"/"on" to calibrate the score with
+//	PAL_CONFIDENCE_SAMPLES        int [1,9] for self-consistency; default 5
+//	PAL_CONFIDENCE_CALIBRATE      "1"/"true"/"on" to calibrate the score with
 //	                                  this (agent, node_type)'s realized regret
 //	                                  rate (default: off — see ADR 0021, Phase 1)
 //
@@ -3021,7 +3021,7 @@ func (h *RESTHandler) buildConfidenceGate(tenantID, agentName string) *workflow.
 	return &workflow.ConfidenceGate{Estimator: est, Threshold: threshold}
 }
 
-func runToMap(r *lanternv1.Run) map[string]any {
+func runToMap(r *palv1.Run) map[string]any {
 	m := map[string]any{
 		"id":             r.GetId(),
 		"tenantId":       r.GetTenantId(),
@@ -3064,7 +3064,7 @@ func runToMap(r *lanternv1.Run) map[string]any {
 	return m
 }
 
-// runTotalStatus is the lantern.run.total status label. A nil error is not
+// runTotalStatus is the pal.run.total status label. A nil error is not
 // proof of success: the workflow path marks the row 'failed' and returns nil.
 func runTotalStatus(outErr error, dbStatus string) string {
 	if outErr != nil || dbStatus == "failed" {

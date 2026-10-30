@@ -56,7 +56,7 @@ runtime, and every guarantee the runtime adds, improves the other side.
 | **Trust and governance** | Budgets that return HTTP 402, eval gates that return HTTP 422 in CI, rehearsals of past failures, signed run receipts (Ed25519 when a signing seed is configured, HMAC-SHA256 otherwise), row-level security on every tenant table, AES-256-GCM credentials at rest. | In use. RLS and per-scope authZ enforcement are flag-gated per environment. |
 | **Personal agent** | WhatsApp and iMessage bridges that reply as the owner, learn their voice from their own sent messages, take Calendar / Notes / Mail actions on confirmation, and hold money promises and unverifiable claims for approval. | In daily use by the founder. |
 | **Channels** | WhatsApp, iMessage, Slack, Telegram, Discord, voice (Twilio, LiveKit), embeddable webchat. | In use. |
-| **Developer experience** | TypeScript, Python and Go SDKs, the `lantern` CLI (`doctor`, `onboard`, `test`, `vm`), a visual workflow editor whose graphs execute (tool nodes not yet wired), MCP registry, A2A agent cards, agent marketplace. | In use. |
+| **Developer experience** | TypeScript, Python and Go SDKs, the `pal` CLI (`doctor`, `onboard`, `test`, `vm`), a visual workflow editor whose graphs execute (tool nodes not yet wired), MCP registry, A2A agent cards, agent marketplace. | In use. |
 
 ## Who it's for
 
@@ -127,5 +127,5 @@ validation is next.
 We want **design partners** who need agents in their own cloud with real cost, eval
 and audit controls, and early users for the personal agent.
 
-*Run it: `git clone https://github.com/dshakes/lantern && cd lantern && make dev`.
+*Run it: `git clone https://github.com/dshakes/pal && cd pal && make dev`.
 See the [README](README.md) and [SECURITY.md](SECURITY.md).*

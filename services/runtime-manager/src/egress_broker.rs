@@ -1,6 +1,6 @@
 //! Host-side egress broker (ADR 0026).
 //!
-//! In `LANTERN_EGRESS_MODE=broker` a Firecracker guest has NO network device.
+//! In `PAL_EGRESS_MODE=broker` a Firecracker guest has NO network device.
 //! Its only way out is vsock: the in-guest harness bridges the workload's
 //! `HTTP(S)_PROXY` (127.0.0.1:3128) to guest-initiated vsock port
 //! [`EGRESS_VSOCK_PORT`], which Firecracker surfaces on the host as the Unix
@@ -47,7 +47,7 @@ pub const EGRESS_VSOCK_PORT: u32 = 3128;
 pub const MANAGER_VSOCK_PORT: u32 = 50054;
 /// Name the guest dials the manager by. Must match a DNS SAN on the manager's
 /// server certificate (same constant as the harness's `MANAGER_HOSTNAME`).
-pub const MANAGER_HOSTNAME: &str = "manager.lantern.internal";
+pub const MANAGER_HOSTNAME: &str = "manager.pal.internal";
 
 /// Cap on a request head (request line + headers) read from the guest. The
 /// guest is untrusted; an unbounded `read_line` would let it grow host memory.
@@ -107,7 +107,7 @@ impl EgressMode {
                 .as_deref()
                 .is_some_and(|v| !v.trim().is_empty() && !v.trim().eq_ignore_ascii_case("guest"))
         {
-            tracing::warn!(value = ?raw, "LANTERN_EGRESS_MODE unrecognised — using in-guest egress");
+            tracing::warn!(value = ?raw, "PAL_EGRESS_MODE unrecognised — using in-guest egress");
         }
         mode
     }
@@ -200,7 +200,7 @@ impl Policy {
         }
     }
 
-    /// Ports from `LANTERN_EGRESS_ALLOWED_PORTS` (comma list), default `[443]`
+    /// Ports from `PAL_EGRESS_ALLOWED_PORTS` (comma list), default `[443]`
     /// — same knob and default as the in-guest proxy.
     pub fn from_env(rules: Vec<EgressRule>) -> Self {
         let ports = match std::env::var("PAL_EGRESS_ALLOWED_PORTS") {
@@ -464,7 +464,7 @@ fn valid_header_name(name: &str) -> bool {
 
 async fn respond<W: AsyncWrite + Unpin>(w: &mut W, status: &str, reason: &str) {
     let msg = format!(
-        "HTTP/1.1 {status}\r\nX-Lantern-Reason: {reason}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        "HTTP/1.1 {status}\r\nX-Pal-Reason: {reason}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
     );
     let _ = w.write_all(msg.as_bytes()).await;
     let _ = w.flush().await;
@@ -529,7 +529,7 @@ impl MitmCa {
         let mut params = rcgen::CertificateParams::new(Vec::<String>::new())?;
         params.distinguished_name.push(
             rcgen::DnType::CommonName,
-            format!("lantern egress broker CA {vm_id}"),
+            format!("pal egress broker CA {vm_id}"),
         );
         params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Constrained(0));
         params.key_usages = vec![
@@ -642,7 +642,7 @@ pub struct Broker {
     conns: Arc<tokio::sync::Semaphore>,
     handshake_timeout: Duration,
     idle_timeout: Duration,
-    /// H1: `LANTERN_EGRESS_PLAIN_INJECT=1` (port 80 only even then).
+    /// H1: `PAL_EGRESS_PLAIN_INJECT=1` (port 80 only even then).
     plain_inject: bool,
     /// L5: token bucket for deny audits into the shared channel.
     deny_bucket: Mutex<(f64, Instant)>,
@@ -1100,12 +1100,12 @@ impl Broker {
     fn emit(&self, action: &str, attrs: HashMap<String, String>) {
         // Local record FIRST: a full channel or a dead forwarder must never
         // make a security decision vanish.
-        tracing::info!(target: "lantern_audit", vm_id = %self.vm_id, action, attrs = ?attrs, "egress broker audit");
+        tracing::info!(target: "pal_audit", vm_id = %self.vm_id, action, attrs = ?attrs, "egress broker audit");
         // L5: one VM spraying denied requests must not crowd every other VM's
         // audits out of the shared channel. Allows always go through.
         let deny = attrs.get("decision").is_some_and(|d| d == "deny");
         if deny && !self.take_deny_token() {
-            tracing::debug!(target: "lantern_audit", vm_id = %self.vm_id, action, "egress broker: deny audit rate-limited (kept in local log)");
+            tracing::debug!(target: "pal_audit", vm_id = %self.vm_id, action, "egress broker: deny audit rate-limited (kept in local log)");
             return;
         }
         let ev = pb::AuditEvent {
@@ -1115,7 +1115,7 @@ impl Broker {
             attrs,
         };
         if self.audit.try_send(ev).is_err() {
-            tracing::warn!(target: "lantern_audit", vm_id = %self.vm_id, action, "egress broker: audit channel full/closed — event kept in local log only");
+            tracing::warn!(target: "pal_audit", vm_id = %self.vm_id, action, "egress broker: audit channel full/closed — event kept in local log only");
         }
     }
 
@@ -1543,14 +1543,14 @@ where
 /// `EnvSecretResolver` fallback.
 pub fn check_broker_resolver(
     mode: EgressMode,
-    lantern_env: Option<&str>,
+    pal_env: Option<&str>,
     relay_configured: bool,
 ) -> Result<()> {
-    let prod = lantern_env.is_some_and(|e| matches!(e.trim(), "prod" | "production" | "staging"));
+    let prod = pal_env.is_some_and(|e| matches!(e.trim(), "prod" | "production" | "staging"));
     if mode == EgressMode::Broker && prod && !relay_configured {
         bail!(
-            "LANTERN_EGRESS_MODE=broker in production requires the control-plane secret relay \
-             (LANTERN_CONTROL_PLANE_URL + LANTERN_RUNTIME_SECRET_TOKEN); refusing to fall back \
+            "PAL_EGRESS_MODE=broker in production requires the control-plane secret relay \
+             (PAL_CONTROL_PLANE_URL + PAL_RUNTIME_SECRET_TOKEN); refusing to fall back \
              to the env resolver"
         );
     }
@@ -2061,7 +2061,7 @@ pub(crate) mod tests {
     }
 
     pub(crate) const SECRET: &str = "sk-live-TOPSECRET-0123456789";
-    pub(crate) const SECRET_URI: &str = "lantern.secret://tenant/t1/key/OPENAI";
+    pub(crate) const SECRET_URI: &str = "pal.secret://tenant/t1/key/OPENAI";
 
     pub(crate) fn rule(pattern: &str) -> EgressRule {
         EgressRule {
@@ -2324,7 +2324,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn unresolvable_secret_fails_closed_without_upstream_call() {
         let mut r = inject_rule("api.x.com");
-        r.inject[0].secret_uri = "lantern.secret://tenant/t1/key/MISSING".into();
+        r.inject[0].secret_uri = "pal.secret://tenant/t1/key/MISSING".into();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let (mut b, mut rx) = broker(

@@ -86,7 +86,7 @@ func TestVmLifecycleCommands(t *testing.T) {
 
 func TestServiceTokenCreds(t *testing.T) {
 	md, _ := serviceTokenCreds("s3cret").GetRequestMetadata(context.Background())
-	if md["x-pal-service-token"] != "s3cret" || md["x-lantern-service-token"] != "s3cret" { // legacy header for pre-rename managers
+	if md["x-pal-service-token"] != "s3cret" || md["x-pal-service-token"] != "s3cret" { // legacy header for pre-rename managers
 		t.Fatalf("metadata = %v", md)
 	}
 }

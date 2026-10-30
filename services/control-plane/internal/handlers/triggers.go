@@ -31,10 +31,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/secrets"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 const (
@@ -65,7 +65,7 @@ type TriggerHandler struct {
 }
 
 // NewTriggerHandler creates a TriggerHandler. Per-trigger delivery rate is
-// LANTERN_HOOK_RATE_PER_MIN (default 60) with burst LANTERN_HOOK_BURST (default 10).
+// PAL_HOOK_RATE_PER_MIN (default 60) with burst PAL_HOOK_BURST (default 10).
 func NewTriggerHandler(srv *server.Server, auth *AuthHandler, rest *RESTHandler) *TriggerHandler {
 	// ponytail: per-replica in-memory buckets; SetRedis on this limiter if one
 	// replica's allowance ever proves too loose.
@@ -117,7 +117,7 @@ type triggerJSON struct {
 	HookPath       string          `json:"hookPath"`
 	LastDeliveryAt string          `json:"lastDeliveryAt,omitempty"`
 	CreatedAt      string          `json:"createdAt"`
-	// Secret is returned only by create, and only when Lantern generated it
+	// Secret is returned only by create, and only when PAL generated it
 	// or the caller rotated it. Never by list/get.
 	Secret string `json:"secret,omitempty"`
 }
@@ -451,10 +451,10 @@ func verifyHookDelivery(provider, secret string, hdr http.Header, body []byte, n
 	d := hookDelivery{}
 	switch provider {
 	case "generic":
-		// X-Lantern-Signature: t=<unix>,v1=<hex>[,v1=<hex>] over "<t>.<body>".
+		// X-Pal-Signature: t=<unix>,v1=<hex>[,v1=<hex>] over "<t>.<body>".
 		var ts string
 		var sigs []string
-		for _, kv := range strings.Split(hdr.Get("X-Lantern-Signature"), ",") {
+		for _, kv := range strings.Split(hdr.Get("X-Pal-Signature"), ",") {
 			k, v, _ := strings.Cut(strings.TrimSpace(kv), "=")
 			switch k {
 			case "t":
@@ -475,8 +475,8 @@ func verifyHookDelivery(provider, secret string, hdr http.Header, body []byte, n
 			return d, errHookSignature
 		}
 		d.ReplayKey = hookDigest(signed)
-		d.ID = hdr.Get("X-Lantern-Delivery")
-		d.Event = hdr.Get("X-Lantern-Event")
+		d.ID = hdr.Get("X-Pal-Delivery")
+		d.Event = hdr.Get("X-Pal-Event")
 	case "github":
 		sig, ok := strings.CutPrefix(hdr.Get("X-Hub-Signature-256"), "sha256=")
 		if !ok || !hmacMatches(secret, body, sig) {
@@ -614,11 +614,11 @@ type runTriggerKindKey struct{}
 
 // runTriggerKind returns the trigger kind CreateRun should stamp: API unless a
 // caller (the hook receiver) set one.
-func runTriggerKind(ctx context.Context) lanternv1.TriggerKind {
-	if k, ok := ctx.Value(runTriggerKindKey{}).(lanternv1.TriggerKind); ok {
+func runTriggerKind(ctx context.Context) palv1.TriggerKind {
+	if k, ok := ctx.Value(runTriggerKindKey{}).(palv1.TriggerKind); ok {
 		return k
 	}
-	return lanternv1.TriggerKind_TRIGGER_KIND_API
+	return palv1.TriggerKind_TRIGGER_KIND_API
 }
 
 var hookNotFound = map[string]string{"error": "hook not found"}
@@ -778,8 +778,8 @@ func (h *TriggerHandler) startRun(ctx context.Context, tenantID, agentName strin
 	if err != nil {
 		return http.StatusInternalServerError, map[string]any{"error": "internal error"}
 	}
-	ctx = storeClaimsInCtx(ctx, &LanternClaims{TenantID: tenantID, Role: "service"})
-	ctx = context.WithValue(ctx, runTriggerKindKey{}, lanternv1.TriggerKind_TRIGGER_KIND_WEBHOOK)
+	ctx = storeClaimsInCtx(ctx, &PalClaims{TenantID: tenantID, Role: "service"})
+	ctx = context.WithValue(ctx, runTriggerKindKey{}, palv1.TriggerKind_TRIGGER_KIND_WEBHOOK)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/v1/runs", bytes.NewReader(b))
 	if err != nil {
 		return http.StatusInternalServerError, map[string]any{"error": "internal error"}

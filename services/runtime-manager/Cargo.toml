@@ -1,5 +1,5 @@
 [package]
-name = "lantern-runtime-manager"
+name = "pal-runtime-manager"
 version = "0.1.0"
 edition = "2024"
 

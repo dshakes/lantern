@@ -92,8 +92,8 @@ Four things an operator cares about: work is never lost (checkpointing), crashed
 | Checkpointing | Every step journaled to `journal_events` before it runs (both tiers). Firecracker VM snapshots persisted to S3 (ADR 0007) | [Durable execution](/docs/runtime/durable-execution/) |
 | Auto-restart | Recovery sweep steals expired run leases and re-drives from the last completed step. microVM runs re-scheduled with `PAL_RESUME=1`, at most 3 attempts. Scheduler is HA via leader election | `PAL_RECOVERY_INTERVAL` (default 30 s) |
 | Throttling | Budget gate blocks over-budget runs with 402. Per-tenant concurrent-VM hard cap (gRPC `ResourceExhausted`). Spawn-storm guard returns 429. Per-step timeout | `PAL_SPAWN_RATE_PER_MIN` (default 120), `PAL_SPAWN_BURST`, [Budgets](/docs/build/budgets/) |
-| Job monitoring | VM list / detail / audit trail / live SSE logs / per-VM metrics / cluster and quota views | `GET /v1/runtime/vms`, `/v1/runtime/metrics`, `/v1/runtime/cluster`, `/v1/runtime/audit`, `lantern vm list\|get\|logs\|stop\|exec`, dashboard `/runtime` |
-| Telemetry | Five `lantern.run.*` OTel metrics. Scheduler Prometheus scrape. Prometheus alert rules and Grafana dashboards in `infra/monitoring/`, runbooks in `docs/runbooks/` | scheduler `:8085/metrics`, [Observability](/docs/runtime/observability/) |
+| Job monitoring | VM list / detail / audit trail / live SSE logs / per-VM metrics / cluster and quota views | `GET /v1/runtime/vms`, `/v1/runtime/metrics`, `/v1/runtime/cluster`, `/v1/runtime/audit`, `pal vm list\|get\|logs\|stop\|exec`, dashboard `/runtime` |
+| Telemetry | Five `pal.run.*` OTel metrics. Scheduler Prometheus scrape. Prometheus alert rules and Grafana dashboards in `infra/monitoring/`, runbooks in `docs/runbooks/` | scheduler `:8085/metrics`, [Observability](/docs/runtime/observability/) |
 | Traceability | W3C trace context propagated control-plane, scheduler, manager and in-VM harness. One correlated identity chain (tenant, run, step, instance). Ed25519 receipts | [Receipts](/docs/runtime/receipts/), [Observability](/docs/runtime/observability/) |
 
 ## System architecture
@@ -104,7 +104,7 @@ For the technical view of how the control-plane, scheduler, runtime-manager and 
 
 - **Durable by default.** Every step is journaled. A crash-replay skips completed nodes and replays cached LLM outputs, so there are no re-spent tokens and no double side-effects.
 - **Isolation by manifest.** Isolation strength is declared in the agent version, not chosen by the caller. Fail-closed: untrusted workloads are refused without the hardened RuntimeClass, never silently downgraded.
-- **One observability contract.** One OTel trace per spawn, W3C `traceparent` end-to-end, five `lantern.run.*` metrics, and a shared span-attribute contract from HTTP entry to harness exit.
+- **One observability contract.** One OTel trace per spawn, W3C `traceparent` end-to-end, five `pal.run.*` metrics, and a shared span-attribute contract from HTTP entry to harness exit.
 
 ## In this section
 
@@ -114,7 +114,7 @@ For the technical view of how the control-plane, scheduler, runtime-manager and 
 - [Token streaming](/docs/runtime/streaming/): the `message_delta` / `message_completed` / `message_error` contract and the SDK async iterator.
 - [Sessions and memory](/docs/runtime/sessions-and-memory/): interactive multi-turn sessions on the shared tier, and LLM-distilled long-term memory.
 - [Sandbox lifecycle](/docs/runtime/sandbox-lifecycle/): pause / resume / fork a microVM and streaming exec, with TS, Python and CLI examples.
-- [Observability](/docs/runtime/observability/): OTel span attributes, the five `lantern.run.*` metrics, the service-health sweep.
+- [Observability](/docs/runtime/observability/): OTel span attributes, the five `pal.run.*` metrics, the service-health sweep.
 - [Identity and secrets](/docs/runtime/identity/): per-instance Ed25519 keys and short-TTL secret vending (microVM tier).
 - [Verifiable receipts](/docs/runtime/receipts/): signed, offline-verifiable proof of what ran.
 

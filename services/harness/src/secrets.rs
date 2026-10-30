@@ -1,6 +1,6 @@
 // Secret vending: on workload request the harness calls
 // runtime-manager's VendSecret RPC and exposes the value over a unix
-// socket at /run/lantern/secrets.sock. Cached responses are stored in
+// socket at /run/pal/secrets.sock. Cached responses are stored in
 // tmpfs and re-vended before expiry.
 //
 // Wire protocol on the unix socket (newline-delimited JSON):
@@ -28,8 +28,8 @@ const REFRESH_LEAD_MS: i64 = 30_000; // refresh 30s before expiry
 
 /// Attempts a boot-time secret prefetch gets before giving up.
 ///
-/// Not a hand-rolled retry by preference: the repo's canonical `lantern-retry`
-/// crate does not exist yet (same gap as `@lantern/retry` in TS), so this is a
+/// Not a hand-rolled retry by preference: the repo's canonical `pal-retry`
+/// crate does not exist yet (same gap as `@pal/retry` in TS), so this is a
 /// deliberately small local loop to be replaced when it lands.
 const PREFETCH_ATTEMPTS: u32 = 5;
 
@@ -52,7 +52,7 @@ const DEFAULT_TTL_SECS: i64 = 300;
 //
 // Threat model
 // ------------
-// The secrets socket at /run/lantern/secrets.sock vends short-TTL secret
+// The secrets socket at /run/pal/secrets.sock vends short-TTL secret
 // material to the workload. Before this change ANY in-VM process that could
 // open the socket received whatever it asked for. Inside a microVM the workload
 // runs as PID 1's uid with no privilege drop, so a single compromised library /
@@ -64,15 +64,15 @@ const DEFAULT_TTL_SECS: i64 = 300;
 // We use SO_PEERCRED on the accepted UnixStream to read the connecting peer's
 // (uid, gid, pid) — kernel-attested, unspoofable by the peer. The harness only
 // vends to the *expected workload uid*, injected by the manager at spawn as
-// `LANTERN_WORKLOAD_UID`. The harness's own uid (its own process) is always
+// `PAL_WORKLOAD_UID`. The harness's own uid (its own process) is always
 // allowed so internal probes / health checks work.
 //
 // Fail-open vs fail-closed
 // ------------------------
-// When `LANTERN_WORKLOAD_UID` is UNSET we are in dev (no manager-injected
+// When `PAL_WORKLOAD_UID` is UNSET we are in dev (no manager-injected
 // identity). We log a prominent SECURITY warning once and allow — the dev path
 // must keep working and there is no second identity to distinguish. In
-// production the manager MUST inject `LANTERN_WORKLOAD_UID` so this becomes
+// production the manager MUST inject `PAL_WORKLOAD_UID` so this becomes
 // fail-closed against any other uid. The bootstrap-token alternative was
 // rejected: the workload binary is opaque (we don't control its source) so we
 // can't reliably hand it a token to present, whereas SO_PEERCRED needs zero
@@ -207,7 +207,7 @@ impl SecretCache {
             map.insert(s.env_name.clone(), s);
         }
         let socket_path = std::env::var("PAL_SECRETS_SOCKET")
-            .unwrap_or_else(|_| "/run/lantern/secrets.sock".to_string());
+            .unwrap_or_else(|_| "/run/pal/secrets.sock".to_string());
         Self {
             inner: Arc::new(DashMap::new()),
             declared: Arc::new(map),
@@ -236,7 +236,7 @@ impl SecretCache {
         }
 
         // P2-B7 (1): announce the peer-auth posture once at startup.
-        // P2-B7 (2): prod startup guard — LANTERN_WORKLOAD_UID must be set in
+        // P2-B7 (2): prod startup guard — PAL_WORKLOAD_UID must be set in
         // production so peer-auth is actually enforced (mirrors the TLS guard
         // in tls.rs).  An unset uid in prod means ANY in-VM process can vend
         // secrets, which is a complete bypass of the secrets trust boundary.
@@ -252,8 +252,8 @@ impl SecretCache {
             None => {
                 if crate::tls::is_prod_env() {
                     eprintln!(
-                        "FATAL: LANTERN_WORKLOAD_UID must be set in production \
-                         (LANTERN_ENV={}) — secrets socket peer authentication is disabled. \
+                        "FATAL: PAL_WORKLOAD_UID must be set in production \
+                         (PAL_ENV={}) — secrets socket peer authentication is disabled. \
                          The manager MUST inject this env var at spawn time.",
                         std::env::var("PAL_ENV").unwrap_or_default()
                     );
@@ -262,8 +262,8 @@ impl SecretCache {
                 tracing::warn!(
                     path = ?self.socket_path,
                     "secrets: socket listening WITHOUT peer authentication — \
-                     LANTERN_WORKLOAD_UID unset (dev path). ANY in-VM process can pull secrets. \
-                     The manager MUST inject LANTERN_WORKLOAD_UID in production."
+                     PAL_WORKLOAD_UID unset (dev path). ANY in-VM process can pull secrets. \
+                     The manager MUST inject PAL_WORKLOAD_UID in production."
                 );
             }
         }

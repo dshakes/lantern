@@ -10,8 +10,8 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/telemetry"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/telemetry"
 )
 
 // The alert rules in infra/monitoring/prometheus/alerts.yml query these exact
@@ -34,8 +34,8 @@ func TestInitMetricsExposesAlertedSeries(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
 	body := rec.Body.String()
 	for _, want := range []string{
-		"lantern_run_budget_blocks_total",
-		`lantern_run_total{lantern_agent_name`,
+		"pal_run_budget_blocks_total",
+		`pal_run_total{pal_agent_name`,
 		`http_server_request_duration_seconds_count{`,
 		`http_response_status_code="500"`,
 		`pal_traffic="api"`,

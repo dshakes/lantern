@@ -185,7 +185,7 @@ export function buildQRLink(params: {
   botUsername?: string;
   phoneNumber?: string;
 }): string {
-  const base = typeof window !== "undefined" ? window.location.origin : "https://app.lantern.run";
+  const base = typeof window !== "undefined" ? window.location.origin : "https://app.pal.run";
 
   switch (params.type) {
     case "pair":
@@ -193,7 +193,7 @@ export function buildQRLink(params: {
     case "whatsapp":
       return `https://wa.me/${params.phoneNumber ?? ""}?text=${encodeURIComponent("Connect to PAL")}`;
     case "telegram":
-      return `https://t.me/${params.botUsername ?? "LanternBot"}?start=connect`;
+      return `https://t.me/${params.botUsername ?? "PalBot"}?start=connect`;
     default:
       return `${base}/pair?token=${generatePairingToken()}`;
   }

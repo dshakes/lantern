@@ -48,7 +48,7 @@ const DEFAULT_INTERVAL: Duration = Duration::from_secs(15);
 /// 30 seconds just because it finished faster than its own start-up window.
 const SPAWN_GRACE: Duration = Duration::from_secs(30);
 
-/// Read the sweep interval from `LANTERN_REAPER_INTERVAL_SECS`.
+/// Read the sweep interval from `PAL_REAPER_INTERVAL_SECS`.
 /// Values below 1s are ignored so a typo cannot spin the loop hot.
 fn interval_from_env() -> Duration {
     std::env::var("PAL_REAPER_INTERVAL_SECS")

@@ -57,7 +57,7 @@ This is the load-bearing invariant: untrusted and hostile code never runs in a b
 - A node may satisfy `hostile` only if it advertises `kata-qemu` / `kata-fc`.
 - A node that lacks the required hardened RuntimeClass fails closed: the run is refused. It is never downgraded to `runc`.
 
-The requirement is enforced in two places: the manager, which refuses the spawn when the RuntimeClass is not configured, and a pod `nodeSelector` (`lantern.dev/runtimeclass`) that only matches nodes labelled as having the handler.
+The requirement is enforced in two places: the manager, which refuses the spawn when the RuntimeClass is not configured, and a pod `nodeSelector` (`pal.dev/runtimeclass`) that only matches nodes labelled as having the handler.
 
 <Aside type="caution">
 If your cluster has not provisioned the `gvisor` / `kata` RuntimeClasses, `untrusted` and `hostile` workloads are refused. That is correct, but operationally visible. The data-plane installer provisions them and a preflight check surfaces the gap before traffic.
@@ -95,4 +95,4 @@ On the Kubernetes backend each workload Job is created with `automountServiceAcc
 make k8s-validate   # throwaway kind + Calico cluster: egress deny (incl. 169.254.169.254), seccomp, cap-drop
 ```
 
-The gVisor and Kata execution legs (proving a workload runs inside the sandboxed kernel) need a cluster with those RuntimeClasses installed and are skipped without one; GitHub-hosted runners cannot nest-virtualize. Optional cluster policies (Kyverno tenant baseline, cosign image verification, Cilium host egress) live in `infra/helm/lantern-data-plane/` and are off by default.
+The gVisor and Kata execution legs (proving a workload runs inside the sandboxed kernel) need a cluster with those RuntimeClasses installed and are skipped without one; GitHub-hosted runners cannot nest-virtualize. Optional cluster policies (Kyverno tenant baseline, cosign image verification, Cilium host egress) live in `infra/helm/pal-data-plane/` and are off by default.

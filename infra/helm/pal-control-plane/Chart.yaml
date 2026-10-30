@@ -14,9 +14,9 @@ keywords:
   - workflow
   - llm
   - control-plane
-home: https://lantern.run
+home: https://pal.run
 sources:
-  - https://github.com/dshakes/lantern
+  - https://github.com/dshakes/pal
 maintainers:
   - name: dshakes
 

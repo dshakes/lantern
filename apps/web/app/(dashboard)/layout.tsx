@@ -99,7 +99,7 @@ export default function DashboardLayout({
                     {user?.name || "User"}
                   </span>
                   <span className="max-w-[140px] truncate text-[12px] text-zinc-500">
-                    {user?.email || "user@lantern.dev"}
+                    {user?.email || "user@pal.dev"}
                   </span>
                 </span>
               </button>
@@ -107,7 +107,7 @@ export default function DashboardLayout({
                 <div className="modal-content absolute right-0 top-full mt-2 w-56 overflow-hidden rounded-xl border border-zinc-800 bg-surface-1 shadow-2xl z-50">
                   <div className="border-b border-zinc-800 px-4 py-3">
                     <p className="text-sm font-medium text-zinc-200 truncate">{user?.name || "User"}</p>
-                    <p className="text-xs text-zinc-500 truncate">{user?.email || "user@lantern.dev"}</p>
+                    <p className="text-xs text-zinc-500 truncate">{user?.email || "user@pal.dev"}</p>
                     {isDemoMode && (
                       <span className="mt-1 inline-block rounded-full bg-pal-500/10 px-2 py-0.5 text-[11px] text-pal-400">demo mode</span>
                     )}
@@ -121,7 +121,7 @@ export default function DashboardLayout({
                       Settings
                     </button>
                     <a
-                      href="https://github.com/dshakes/lantern"
+                      href="https://github.com/dshakes/pal"
                       target="_blank"
                       rel="noopener noreferrer"
                       onClick={() => setShowUserMenu(false)}

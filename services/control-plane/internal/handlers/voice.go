@@ -2,7 +2,7 @@ package handlers
 
 // W11d — Voice channel.
 //
-// Lantern agents can now also answer phone calls. The control-plane owns
+// PAL agents can now also answer phone calls. The control-plane owns
 // the channel config (phone number → agent mapping, provider credentials,
 // greeting) and per-call state; the heavy lifting (audio in/out, ASR,
 // TTS) is delegated to a pluggable VoiceProvider. Today we ship the
@@ -31,9 +31,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/secrets"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 type VoiceHandler struct {
@@ -130,11 +130,11 @@ func (p *twilioProvider) VerifyWebhook(config map[string]any, fullURL string, he
 func (p *twilioProvider) HandleInboundWebhook(_ context.Context, _ map[string]any, _ []byte, headers http.Header) ([]byte, string, InboundCall, error) {
 	// Twilio sends form-urlencoded params (CallSid, From, To, ...). The
 	// generic webhook handler verifies the X-Twilio-Signature and injects
-	// the relevant fields as X-Lantern-* headers before calling this.
+	// the relevant fields as X-Pal-* headers before calling this.
 	meta := InboundCall{
-		ProviderCallID: headers.Get("X-Lantern-Call-Sid"),
-		FromNumber:     headers.Get("X-Lantern-From"),
-		ToNumber:       headers.Get("X-Lantern-To"),
+		ProviderCallID: headers.Get("X-Pal-Call-Sid"),
+		FromNumber:     headers.Get("X-Pal-From"),
+		ToNumber:       headers.Get("X-Pal-To"),
 	}
 	// Return TwiML that says the greeting, then opens a media stream
 	// back to our /v1/voice/stream/{callId} endpoint. The media-stream
@@ -142,7 +142,7 @@ func (p *twilioProvider) HandleInboundWebhook(_ context.Context, _ map[string]an
 	// it, calls just play the greeting + hang up.
 	twiml := []byte(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="alice">Connecting you to the Lantern agent now.</Say>
+  <Say voice="alice">Connecting you to the PAL agent now.</Say>
   <Pause length="1"/>
   <Say voice="alice">Audio streaming is not yet configured. Please follow up with the operator.</Say>
 </Response>`)
@@ -318,7 +318,7 @@ func (h *VoiceHandler) DeleteNumber(w http.ResponseWriter, r *http.Request) {
 //
 // Auth: per-provider signature verification (X-Twilio-Signature etc.),
 // using the credentials from the looked-up number's provider_config.
-// Fails closed unless LANTERN_TWILIO_WEBHOOK_AUTH=off (dev only).
+// Fails closed unless PAL_TWILIO_WEBHOOK_AUTH=off (dev only).
 func (h *VoiceHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 	providerName := r.PathValue("provider")
 	provider, ok := h.providers[providerName]
@@ -339,13 +339,13 @@ func (h *VoiceHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	headers := r.Header.Clone()
 	if v := r.FormValue("CallSid"); v != "" {
-		headers.Set("X-Lantern-Call-Sid", v)
+		headers.Set("X-Pal-Call-Sid", v)
 	}
 	if v := r.FormValue("From"); v != "" {
-		headers.Set("X-Lantern-From", v)
+		headers.Set("X-Pal-From", v)
 	}
 	if v := r.FormValue("To"); v != "" {
-		headers.Set("X-Lantern-To", v)
+		headers.Set("X-Pal-To", v)
 	}
 
 	ctx := r.Context()
@@ -356,7 +356,7 @@ func (h *VoiceHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 	// dialed number directly (To); others (LiveKit SIP) don't carry it in
 	// the webhook, so we resolve by the single active number for that
 	// provider — the common one-project-per-deployment case.
-	if to := headers.Get("X-Lantern-To"); to != "" {
+	if to := headers.Get("X-Pal-To"); to != "" {
 		// rls-exempt: inbound webhook carries no JWT/tenant context — this is the
 		// lookup that RESOLVES which tenant owns the dialed number (keyed by
 		// phone_number across all tenants), so it must run on the privileged pool.

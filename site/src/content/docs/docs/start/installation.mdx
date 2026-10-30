@@ -31,21 +31,21 @@ The "stack" is everything PAL needs on your laptop: Postgres (agents and runs), 
 2. **Clone the repo**
 
    ```bash
-   git clone https://github.com/dshakes/lantern.git
-   cd lantern
+   git clone https://github.com/dshakes/pal.git
+   cd pal
    ```
 
 3. **Start the stack.** One command boots everything:
 
    ```bash
-   (cd packages/cli && go install ./cmd/lantern)   # installs the lantern CLI
-   lantern dev
+   (cd packages/cli && go install ./cmd/pal)   # installs the pal CLI
+   pal dev
    ```
 
    Or run services individually for faster iteration:
 
    ```bash
-   # Terminal 1: Postgres and Redis only (no MinIO; lantern dev --infra-only adds it)
+   # Terminal 1: Postgres and Redis only (no MinIO; pal dev --infra-only adds it)
    make dev-infra
 
    # Terminal 2: control-plane API on :8080
@@ -74,11 +74,11 @@ Seeded automatically on first boot. No setup required.
 
 | Service | Value |
 | --- | --- |
-| PostgreSQL | `postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable` |
+| PostgreSQL | `postgres://pal:pal@localhost:5432/pal?sslmode=disable` |
 | Redis | `redis://localhost:6379` |
-| MinIO | `http://localhost:9000`, console `:9001`, creds `lantern / lanternsecret` |
-| Dashboard | `admin@lantern.dev` / `lantern` at [localhost:3001](http://localhost:3001) |
-| JWT secret | `lantern-dev-jwt-secret-do-not-use-in-production` |
+| MinIO | `http://localhost:9000`, console `:9001`, creds `pal / palsecret` |
+| Dashboard | `admin@pal.dev` / `pal` at [localhost:3001](http://localhost:3001) |
+| JWT secret | `pal-dev-jwt-secret-do-not-use-in-production` |
 | Dev tenant ID | `00000000-0000-0000-0000-000000000001` (slug: `dev`) |
 | Dev user ID | `00000000-0000-0000-0000-000000000002` (role: `owner`) |
 
@@ -107,7 +107,7 @@ Seeded automatically on first boot. No setup required.
 | Target | What it does |
 | --- | --- |
 | `make dev` | Full docker-compose stack |
-| `make dev-infra` | Postgres + Redis only, no MinIO (`lantern dev --infra-only` adds it) |
+| `make dev-infra` | Postgres + Redis only, no MinIO (`pal dev --infra-only` adds it) |
 | `make dev-doctor` | Health-check every service |
 | `make run-api` | Control-plane on `:8080` |
 | `make dashboard-dev` | Next.js dashboard on `:3001` |

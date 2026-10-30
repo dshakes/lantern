@@ -419,7 +419,7 @@ export default function LoginPage() {
         {/* Dev hint -- only visible in development */}
         {process.env.NODE_ENV === "development" && (
           <p className="mt-6 text-center text-[10px] text-zinc-700">
-            Dev: admin@lantern.dev / lantern
+            Dev: admin@pal.dev / pal
           </p>
         )}
       </div>

@@ -21,11 +21,11 @@ import (
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 
-	"github.com/dshakes/lantern/services/notifier/internal/db"
-	"github.com/dshakes/lantern/services/notifier/internal/delivery"
-	"github.com/dshakes/lantern/services/notifier/internal/handlers"
-	"github.com/dshakes/lantern/services/notifier/internal/middleware"
-	"github.com/dshakes/lantern/services/notifier/internal/server"
+	"github.com/dshakes/pal/services/notifier/internal/db"
+	"github.com/dshakes/pal/services/notifier/internal/delivery"
+	"github.com/dshakes/pal/services/notifier/internal/handlers"
+	"github.com/dshakes/pal/services/notifier/internal/middleware"
+	"github.com/dshakes/pal/services/notifier/internal/server"
 )
 
 func main() {
@@ -101,7 +101,7 @@ func main() {
 	// Health check.
 	healthSvc := health.NewServer()
 	healthpb.RegisterHealthServer(grpcServer, healthSvc)
-	healthSvc.SetServingStatus("lantern.v1.NotifierService", healthpb.HealthCheckResponse_SERVING)
+	healthSvc.SetServingStatus("pal.v1.NotifierService", healthpb.HealthCheckResponse_SERVING)
 
 	reflection.Register(grpcServer)
 
@@ -161,7 +161,7 @@ func main() {
 		logger.Fatal("HTTP server failed", zap.Error(err))
 	}
 
-	healthSvc.SetServingStatus("lantern.v1.NotifierService", healthpb.HealthCheckResponse_NOT_SERVING)
+	healthSvc.SetServingStatus("pal.v1.NotifierService", healthpb.HealthCheckResponse_NOT_SERVING)
 
 	grpcServer.GracefulStop()
 	logger.Info("gRPC server stopped")
@@ -187,7 +187,7 @@ type config struct {
 
 func loadConfig() config {
 	return config{
-		DatabaseURL: envOrDefault("DATABASE_URL", "postgres://localhost:5432/lantern?sslmode=disable"),
+		DatabaseURL: envOrDefault("DATABASE_URL", "postgres://localhost:5432/pal?sslmode=disable"),
 		RedisURL:    envOrDefault("REDIS_URL", "redis://localhost:6379/0"),
 		ListenAddr:  envOrDefault("LISTEN_ADDR", ":50056"),
 		HTTPAddr:    envOrDefault("HTTP_ADDR", ":8086"),
@@ -221,7 +221,7 @@ func mustInitLogger(level string) *zap.Logger {
 }
 
 func unaryTracingInterceptor() grpc.UnaryServerInterceptor {
-	tracer := otel.Tracer("lantern.notifier")
+	tracer := otel.Tracer("pal.notifier")
 	return func(
 		ctx context.Context,
 		req any,
@@ -235,7 +235,7 @@ func unaryTracingInterceptor() grpc.UnaryServerInterceptor {
 }
 
 func streamTracingInterceptor() grpc.StreamServerInterceptor {
-	tracer := otel.Tracer("lantern.notifier")
+	tracer := otel.Tracer("pal.notifier")
 	return func(
 		srv any,
 		ss grpc.ServerStream,

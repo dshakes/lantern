@@ -1,18 +1,18 @@
-# lantern-harness
+# pal-harness
 
 The **RuntimeHarness** — a single static Rust binary that runs as PID 1 inside
 every PAL Runtime microVM. It is the only thing the host's runtime-manager talks to
 once a VM is booted; everything the workload knows about the rest of the platform
 comes through this process.
 
-See `packages/proto/lantern/v1/runtime.proto` for the wire contract
+See `packages/proto/pal/v1/runtime.proto` for the wire contract
 (specifically the `RuntimeHarness` service: `Heartbeat`, `VendSecret`, `Report`).
 
 ---
 
 ## Responsibilities
 
-1. **Init (PID 1)** — prep `/run/lantern`, mount `/tmp` as tmpfs, set rlimits,
+1. **Init (PID 1)** — prep `/run/pal`, mount `/tmp` as tmpfs, set rlimits,
    exec the workload binary as a child.
 2. **Supervisor** — restart the workload on crash up to `PAL_MAX_RESTARTS`
    times; exit cleanly when the workload exits with status 0.
@@ -20,7 +20,7 @@ See `packages/proto/lantern/v1/runtime.proto` for the wire contract
    reporting `(vm_id, ResourceUsage, worker_pid, restart_count)`. Reads
    `HeartbeatAck`s for live policy updates (egress overrides, drain, snapshot).
 4. **Secret vending** — calls `VendSecret` on the manager and exposes a unix
-   socket at `/run/lantern/secrets.sock` the workload reads from. Caches in
+   socket at `/run/pal/secrets.sock` the workload reads from. Caches in
    tmpfs and re-vends 30s before expiry.
 5. **Egress allowlist** — HTTP CONNECT proxy on `127.0.0.1:3128` enforcing
    `AgentSpec.egress_rules`. The host firewall must redirect all VM egress to
@@ -29,7 +29,7 @@ See `packages/proto/lantern/v1/runtime.proto` for the wire contract
 6. **Log forwarder** — tails workload stdout/stderr, parses JSON if possible,
    forwards as `LogLine` via the Report stream.
 7. **OTel pass-through** — reads length-prefixed OTLP/protobuf batches from
-   `/run/lantern/otlp.sock` and batches them on a 2s flush.
+   `/run/pal/otlp.sock` and batches them on a 2s flush.
 8. **Signal handlers**
    - `SIGTERM` → drain. Forward `SIGTERM` to the workload, wait
      `PAL_DRAIN_GRACE_SECS` (default 25), then `SIGKILL`.
@@ -58,19 +58,19 @@ The VM image and the manager must agree on the following:
 | `PAL_VM_ID` | yes | Globally unique VM id. Tags every heartbeat / report. |
 | `PAL_MANAGER_ADDR` | yes | `host:port` of the on-node runtime-manager (default `127.0.0.1:50054`). |
 | `PAL_WORKLOAD_CMD` | yes | Space-separated argv of the workload binary. |
-| `PAL_DECLARED_SECRETS` | no | JSON array `[{"env_name":"OPENAI_API_KEY","secret_uri":"lantern.secret://..."}, ...]`. Anything not on this list is rejected at vend time. |
+| `PAL_DECLARED_SECRETS` | no | JSON array `[{"env_name":"OPENAI_API_KEY","secret_uri":"pal.secret://..."}, ...]`. Anything not on this list is rejected at vend time. |
 | `PAL_MAX_RESTARTS` | no | Supervisor restart budget. Default `5`. |
 | `PAL_DRAIN_GRACE_SECS` | no | SIGTERM→SIGKILL window. Default `25`. |
 | `PAL_EGRESS_BIND` | no | Proxy bind addr. Default `127.0.0.1:3128`. |
-| `PAL_SECRETS_SOCKET` | no | Unix socket path. Default `/run/lantern/secrets.sock`. |
-| `PAL_OTLP_SOCKET` | no | Unix socket path. Default `/run/lantern/otlp.sock`. |
-| `PAL_RUN_DIR` | no | Runtime dir. Default `/run/lantern`. |
+| `PAL_SECRETS_SOCKET` | no | Unix socket path. Default `/run/pal/secrets.sock`. |
+| `PAL_OTLP_SOCKET` | no | Unix socket path. Default `/run/pal/otlp.sock`. |
+| `PAL_RUN_DIR` | no | Runtime dir. Default `/run/pal`. |
 | `PAL_RLIMIT_AS_BYTES` | no | Cap on virtual address space, set at boot. |
-| `RUST_LOG` | no | Tracing filter. Default `info,lantern_harness=debug`. |
+| `RUST_LOG` | no | Tracing filter. Default `info,pal_harness=debug`. |
 
 ### Mount points the VM image must provide
 
-- `/run/lantern` — owned by the harness uid, a tmpfs is fine (and recommended).
+- `/run/pal` — owned by the harness uid, a tmpfs is fine (and recommended).
   This is where the unix sockets live.
 - `/tmp` — tmpfs (mounted by the harness on Linux if not already present).
 
@@ -78,8 +78,8 @@ The VM image and the manager must agree on the following:
 
 | Path | Direction | Protocol |
 |---|---|---|
-| `/run/lantern/secrets.sock` | workload → harness | NDJSON: `{"env_name":"..."} → {"value":"...", "expires_at_unix_ms":N}` |
-| `/run/lantern/otlp.sock` | workload → harness | Length-prefixed (u32 big-endian) OTLP/protobuf batches |
+| `/run/pal/secrets.sock` | workload → harness | NDJSON: `{"env_name":"..."} → {"value":"...", "expires_at_unix_ms":N}` |
+| `/run/pal/otlp.sock` | workload → harness | Length-prefixed (u32 big-endian) OTLP/protobuf batches |
 
 The workload SDK ships small helpers for both — workloads written outside
 the SDK can speak the protocols directly.
@@ -102,24 +102,24 @@ the SDK can speak the protocols directly.
 In a PAL Runtime VM image (alpine/distroless rootfs):
 
 ```dockerfile
-FROM lantern/harness:latest AS harness
+FROM pal/harness:latest AS harness
 FROM your-workload-base
-COPY --from=harness /usr/local/bin/lantern-harness /usr/local/bin/lantern-harness
+COPY --from=harness /usr/local/bin/pal-harness /usr/local/bin/pal-harness
 USER 0
-ENTRYPOINT ["/usr/local/bin/lantern-harness"]
+ENTRYPOINT ["/usr/local/bin/pal-harness"]
 ```
 
 In a Firecracker rootfs the harness is the init binary (PID 1). Set
-`init=/usr/local/bin/lantern-harness` on the kernel cmdline.
+`init=/usr/local/bin/pal-harness` on the kernel cmdline.
 
 ---
 
 ## Build
 
 ```bash
-cargo build --release --bin lantern-harness
+cargo build --release --bin pal-harness
 # or via docker
-docker build -t lantern/harness:dev services/harness/
+docker build -t pal/harness:dev services/harness/
 ```
 
 The release profile (see `Cargo.toml`) enables LTO + symbol stripping; the

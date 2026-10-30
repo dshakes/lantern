@@ -27,11 +27,11 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
 )
 
 // modelRouterDefaultAddr is the in-cluster address the control-plane dials when
-// LANTERN_MODEL_ROUTER_ADDR is unset.
+// PAL_MODEL_ROUTER_ADDR is unset.
 const modelRouterDefaultAddr = "model-router:50053"
 
 // modelRouterTimeout caps a single router Complete call. On expiry tryModelRouter
@@ -42,7 +42,7 @@ const modelRouterTimeout = 30 * time.Second
 // modelRouterClientFactory builds a ModelServiceClient for the given address.
 // Production uses dialModelRouter (a real gRPC dial); tests inject a bufconn
 // dialer so the cutover + fallback can be verified without a network.
-type modelRouterClientFactory func(addr string) (lanternv1.ModelServiceClient, func() error, error)
+type modelRouterClientFactory func(addr string) (palv1.ModelServiceClient, func() error, error)
 
 // modelRouterDeps holds the per-handler router wiring. Split out so tests can
 // override the factory and force the flag on/off without touching process env
@@ -52,11 +52,11 @@ type modelRouterDeps struct {
 	enabled *bool
 	// factory builds the gRPC client. nil → dialModelRouter.
 	factory modelRouterClientFactory
-	// addr overrides LANTERN_MODEL_ROUTER_ADDR (test seam).
+	// addr overrides PAL_MODEL_ROUTER_ADDR (test seam).
 	addr string
 
 	mu     sync.Mutex
-	client lanternv1.ModelServiceClient
+	client palv1.ModelServiceClient
 	closer func() error
 	// dialCount counts how many times a client was constructed — tests assert
 	// this stays 0 when the flag is OFF (router never dialed).
@@ -64,7 +64,7 @@ type modelRouterDeps struct {
 }
 
 // modelRouterEnabled reports whether the model-router cutover is active.
-// Default OFF. ON only when LANTERN_USE_MODEL_ROUTER is a truthy value
+// Default OFF. ON only when PAL_USE_MODEL_ROUTER is a truthy value
 // ("1"/"true"/"on", case-insensitive). A test override takes precedence.
 func (h *LlmProxyHandler) modelRouterEnabled() bool {
 	if h.router.enabled != nil {
@@ -91,7 +91,7 @@ func (h *LlmProxyHandler) modelRouterAddr() string {
 
 // modelRouterClient lazily constructs (and memoizes) the ModelServiceClient.
 // Returns !ok on dial failure; the caller then uses the direct path.
-func (h *LlmProxyHandler) modelRouterClient() (lanternv1.ModelServiceClient, bool) {
+func (h *LlmProxyHandler) modelRouterClient() (palv1.ModelServiceClient, bool) {
 	h.router.mu.Lock()
 	defer h.router.mu.Unlock()
 	if h.router.client != nil {
@@ -118,12 +118,12 @@ func (h *LlmProxyHandler) modelRouterClient() (lanternv1.ModelServiceClient, boo
 // is acceptable in-cluster (TLS terminates at the edge). NOTE: the per-tenant
 // credentials this carries are application-layer secrets — for cross-cluster
 // deployments this hop must run over mTLS or a service mesh (see ADR).
-func dialModelRouter(addr string) (lanternv1.ModelServiceClient, func() error, error) {
+func dialModelRouter(addr string) (palv1.ModelServiceClient, func() error, error) {
 	opts := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 	}
-	// The router requires x-lantern-service-token (invariant #7); reuse the
+	// The router requires x-pal-service-token (invariant #7); reuse the
 	// scheduler creds helper. Empty token → nothing attached (dev only).
 	if tok := os.Getenv("PAL_GRPC_SERVICE_TOKEN"); tok != "" {
 		opts = append(opts, grpc.WithPerRPCCredentials(schedulerTokenCreds{token: tok}))
@@ -132,7 +132,7 @@ func dialModelRouter(addr string) (lanternv1.ModelServiceClient, func() error, e
 	if err != nil {
 		return nil, nil, err
 	}
-	return lanternv1.NewModelServiceClient(conn), conn.Close, nil
+	return palv1.NewModelServiceClient(conn), conn.Close, nil
 }
 
 // tryModelRouter attempts a single plain completion via the model-router for the
@@ -162,7 +162,7 @@ func (h *LlmProxyHandler) tryModelRouter(
 		return "", used, 0, 0, false
 	}
 
-	req := &lanternv1.CompleteRequest{
+	req := &palv1.CompleteRequest{
 		TenantId:   tenantID,
 		Capability: capabilityForModel(cand.Provider, cand.Model),
 		Messages:   protoMessagesFromAny(messages),
@@ -209,12 +209,12 @@ func (h *LlmProxyHandler) tryModelRouter(
 // protoMessagesFromAny converts the control-plane's []map[string]any message
 // shape into proto Messages for the router request. Only role + content are
 // carried (the offloaded path is plain, no tools / parts).
-func protoMessagesFromAny(messages []map[string]any) []*lanternv1.Message {
-	out := make([]*lanternv1.Message, 0, len(messages))
+func protoMessagesFromAny(messages []map[string]any) []*palv1.Message {
+	out := make([]*palv1.Message, 0, len(messages))
 	for _, m := range messages {
 		role, _ := m["role"].(string)
 		content, _ := m["content"].(string)
-		out = append(out, &lanternv1.Message{Role: role, Content: content})
+		out = append(out, &palv1.Message{Role: role, Content: content})
 	}
 	return out
 }
@@ -224,25 +224,25 @@ func protoMessagesFromAny(messages []map[string]any) []*lanternv1.Message {
 // Mirrors the catalog in resolveModel: opus → reasoning-frontier, sonnet →
 // reasoning-large, haiku → reasoning-small, gpt-4o → chat-large, mini →
 // chat-small. Unknown models fall back to AUTO (router picks).
-func capabilityForModel(provider, model string) lanternv1.Capability {
+func capabilityForModel(provider, model string) palv1.Capability {
 	m := strings.ToLower(model)
 	switch provider {
 	case "anthropic":
 		switch {
 		case strings.Contains(m, "opus"):
-			return lanternv1.Capability_CAPABILITY_REASONING_FRONTIER
+			return palv1.Capability_CAPABILITY_REASONING_FRONTIER
 		case strings.Contains(m, "haiku"):
-			return lanternv1.Capability_CAPABILITY_REASONING_SMALL
+			return palv1.Capability_CAPABILITY_REASONING_SMALL
 		case strings.Contains(m, "sonnet"):
-			return lanternv1.Capability_CAPABILITY_REASONING_LARGE
+			return palv1.Capability_CAPABILITY_REASONING_LARGE
 		}
 	case "openai":
 		switch {
 		case strings.Contains(m, "mini"):
-			return lanternv1.Capability_CAPABILITY_CHAT_SMALL
+			return palv1.Capability_CAPABILITY_CHAT_SMALL
 		case strings.Contains(m, "gpt-4o"), strings.Contains(m, "gpt-4"):
-			return lanternv1.Capability_CAPABILITY_CHAT_LARGE
+			return palv1.Capability_CAPABILITY_CHAT_LARGE
 		}
 	}
-	return lanternv1.Capability_CAPABILITY_AUTO
+	return palv1.Capability_CAPABILITY_AUTO
 }

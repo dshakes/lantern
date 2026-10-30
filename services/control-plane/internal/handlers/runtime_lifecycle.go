@@ -28,12 +28,12 @@ import (
 	grpccodes "google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
 )
 
 // maxForkCountDefault and maxForkCountCeiling mirror the scheduler's defaults.
-// LANTERN_MAX_FORK_COUNT (default 100, ceiling 1000).
+// PAL_MAX_FORK_COUNT (default 100, ceiling 1000).
 const (
 	maxForkCountDefault = 100
 	maxForkCountCeiling = 1000
@@ -111,7 +111,7 @@ func (s *stubSchedulerClient) Fork(_ context.Context, _, vmID string, identities
 // ---------- real gRPC scheduler ----------
 
 func (c *grpcSchedulerClient) Pause(ctx context.Context, tenantID, vmID string) (string, error) {
-	resp, err := c.client.Pause(withTenant(ctx, tenantID), &lanternv1.PauseRequest{VmId: vmID})
+	resp, err := c.client.Pause(withTenant(ctx, tenantID), &palv1.PauseRequest{VmId: vmID})
 	if err != nil {
 		return "", err
 	}
@@ -119,7 +119,7 @@ func (c *grpcSchedulerClient) Pause(ctx context.Context, tenantID, vmID string) 
 }
 
 func (c *grpcSchedulerClient) Resume(ctx context.Context, tenantID, vmID string) (string, error) {
-	resp, err := c.client.Resume(withTenant(ctx, tenantID), &lanternv1.ResumeRequest{VmId: vmID})
+	resp, err := c.client.Resume(withTenant(ctx, tenantID), &palv1.ResumeRequest{VmId: vmID})
 	if err != nil {
 		return "", err
 	}
@@ -127,9 +127,9 @@ func (c *grpcSchedulerClient) Resume(ctx context.Context, tenantID, vmID string)
 }
 
 func (c *grpcSchedulerClient) Fork(ctx context.Context, tenantID, vmID string, identities []ForkIdentity) (ForkResult, error) {
-	req := &lanternv1.ForkRequest{VmId: vmID, Count: int32(len(identities))}
+	req := &palv1.ForkRequest{VmId: vmID, Count: int32(len(identities))}
 	for _, id := range identities {
-		req.Identities = append(req.Identities, &lanternv1.ForkIdentity{AgentInstanceId: id.InstanceID, AgentInstanceToken: id.Token})
+		req.Identities = append(req.Identities, &palv1.ForkIdentity{AgentInstanceId: id.InstanceID, AgentInstanceToken: id.Token})
 	}
 	resp, err := c.client.Fork(withTenant(ctx, tenantID), req)
 	if err != nil {
@@ -149,7 +149,7 @@ func (c *grpcSchedulerClient) Fork(ctx context.Context, tenantID, vmID string, i
 // lifecycleTarget authenticates, enforces the runtime write scope, and
 // confirms the caller's tenant owns the VM. ok=false means a response was
 // already written.
-func (h *RuntimeHandler) lifecycleTarget(w http.ResponseWriter, r *http.Request) (claims *LanternClaims, ctx context.Context, vmID string, ok bool) {
+func (h *RuntimeHandler) lifecycleTarget(w http.ResponseWriter, r *http.Request) (claims *PalClaims, ctx context.Context, vmID string, ok bool) {
 	claims, err := h.auth.validateRequest(r)
 	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
@@ -205,7 +205,7 @@ func (h *RuntimeHandler) writeLifecycleErr(w http.ResponseWriter, op, vmID strin
 
 // quotaGate applies the runtime_quotas policy for adding n live VMs. Returns
 // false (402 written) when a hard-fail quota denies it.
-func (h *RuntimeHandler) quotaGate(ctx context.Context, w http.ResponseWriter, claims *LanternClaims, vmID, action string, n int) bool {
+func (h *RuntimeHandler) quotaGate(ctx context.Context, w http.ResponseWriter, claims *PalClaims, vmID, action string, n int) bool {
 	q := h.checkRuntimeQuotaN(ctx, claims.TenantID, n)
 	if q.Allowed {
 		return true
@@ -349,7 +349,7 @@ func (h *RuntimeHandler) ResumeVM(w http.ResponseWriter, r *http.Request) {
 }
 
 // ForkVM handles POST /v1/runtime/vms/{id}/fork with body {"count":N}
-// (default 1, 1..LANTERN_MAX_FORK_COUNT).
+// (default 1, 1..PAL_MAX_FORK_COUNT).
 func (h *RuntimeHandler) ForkVM(w http.ResponseWriter, r *http.Request) {
 	// Validate count before the DB lookup — auth is still required but the
 	// range check is pure and cheap.
@@ -428,7 +428,7 @@ func (h *RuntimeHandler) ForkVM(w http.ResponseWriter, r *http.Request) {
 				   idle_timeout_secs, created_at)
 				SELECT $1, tenant_id, agent_version_id, run_id, node, az, region, isolation_class,
 				       $2, NULLIF($3, ''),
-				       jsonb_set(spec, '{env,LANTERN_AGENT_INSTANCE_ID}', to_jsonb($7::text)),
+				       jsonb_set(spec, '{env,PAL_AGENT_INSTANCE_ID}', to_jsonb($7::text)),
 				       NULLIF($7, ''), confidential, vm_id, $4,
 				       idle_timeout_secs, now()
 				FROM runtime_vms WHERE vm_id = $5 AND tenant_id = $6

@@ -26,7 +26,7 @@ Right tool per layer. **Never unify for unification's sake.** Adding a new langu
 | Dashboard, landing page, docs site | **TypeScript / Next.js 15** | React Server Components and streaming mean the run waterfall can render tokens as they arrive rather than after. It is the same language as the primary SDK, so types flow straight through. |
 | Primary SDK | **TypeScript** | Where the agent ecosystem already lives. |
 | Secondary SDKs | **Python 3.11+**, **Go** | Python for AI/ML users, Go for infra users. |
-| CLI (`lantern`) | **Go / Cobra** | Static binary, trivial cross-compilation to every OS, and it reuses the same gRPC client the services use. |
+| CLI (`pal`) | **Go / Cobra** | Static binary, trivial cross-compilation to every OS, and it reuses the same gRPC client the services use. |
 | API contracts | **protobuf3** | One source of truth for types that cross a service boundary. Generates Go and TypeScript, so a field rename cannot silently drift between two services. |
 
 ## What these things are
@@ -56,7 +56,7 @@ Three, and adding a fourth requires an ADR. Between them they cover every curren
 
 ## End to end: one sandbox run
 
-What happens between `lantern run agent.yaml` and a result. Every hop is a process boundary. Workflow runs go through the workflow engine and, with `PAL_USE_MODEL_ROUTER=1`, the model router; see the notes under the diagram.
+What happens between `pal run agent.yaml` and a result. Every hop is a process boundary. Workflow runs go through the workflow engine and, with `PAL_USE_MODEL_ROUTER=1`, the model router; see the notes under the diagram.
 
 ```text
   you --> CLI / SDK / dashboard                          (Go, TypeScript)
@@ -98,7 +98,7 @@ The stack choices above only pay off because a handful of boundaries are never c
 - **Untrusted code gets a microVM.** Never a bare container. If the node cannot provide isolation for an untrusted or hostile workload, the manager refuses it instead of downgrading.
 - **Models are named by capability, not vendor.** Your code says `reasoning-large`; the router resolves it to a vendor model, so a swap needs no code change.
 - **Multi-tenant by default.** Every row carries a tenant, every call carries a tenant, and Postgres row-level security backs it below the application once `PAL_RLS_ENFORCE=1` is set.
-- **Secrets never appear in logs, traces, or run state.** Only a `lantern.secret/...` reference travels; it is resolved at the moment of use.
+- **Secrets never appear in logs, traces, or run state.** Only a `pal.secret/...` reference travels; it is resolved at the moment of use.
 
 ## What this costs
 

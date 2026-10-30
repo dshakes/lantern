@@ -89,7 +89,7 @@ fi
 
 echo
 echo "${BLD}3. Starting bridge${RST}"
-nohup make run-whatsapp-bridge > /tmp/lantern-whatsapp-bridge.log 2>&1 &
+nohup make run-whatsapp-bridge > /tmp/pal-whatsapp-bridge.log 2>&1 &
 disown
 for i in 1 2 3 4 5 6 7 8 9 10; do
   code=$(curl -sS -o /dev/null -w "%{http_code}" http://localhost:3100/health -m 2 2>/dev/null || echo "")
@@ -112,6 +112,6 @@ echo "Next steps:"
 echo "  1. Open the dashboard: ${BLD}http://localhost:3001/surfaces${RST}"
 echo "  2. Click ${BLD}Pair${RST} on the WhatsApp card"
 echo "  3. Scan the fresh QR with your phone"
-echo "  4. Watch for ${BLD}🟢 Lantern is connected${RST} in your self-chat"
+echo "  4. Watch for ${BLD}🟢 PAL is connected${RST} in your self-chat"
 echo "     — this confirms encryption is bootstrapped"
-echo "  5. Try ${BLD}/lantern ping${RST} — should reply with 🏓 instantly"
+echo "  5. Try ${BLD}/pal ping${RST} — should reply with 🏓 instantly"

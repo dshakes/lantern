@@ -407,7 +407,7 @@ pub struct StreamEnd {
 pub struct ControlPlaneClient {
     channel: Channel,
     /// Shared service token presented to the control-plane on every outbound
-    /// call as `x-lantern-service-token`. Empty when LANTERN_GRPC_SERVICE_TOKEN
+    /// call as `x-pal-service-token`. Empty when PAL_GRPC_SERVICE_TOKEN
     /// is unset — no header is attached, so dev (where the control-plane also
     /// has no token configured) keeps working. Additive and not fail-closed on
     /// the client side; the control-plane is the side that fails closed in prod.
@@ -432,7 +432,7 @@ impl ControlPlaneClient {
             use tonic::transport::{Certificate, ClientTlsConfig};
 
             let pem = fs::read(ca_path).map_err(|e| {
-                anyhow::anyhow!("cannot read LANTERN_CONTROL_PLANE_TLS_CA {ca_path:?}: {e}")
+                anyhow::anyhow!("cannot read PAL_CONTROL_PLANE_TLS_CA {ca_path:?}: {e}")
             })?;
             let cert = Certificate::from_pem(pem);
             let tls = ClientTlsConfig::new().ca_certificate(cert);
@@ -441,7 +441,7 @@ impl ControlPlaneClient {
         } else {
             tracing::info!(
                 addr,
-                "control-plane channel: plaintext (set LANTERN_CONTROL_PLANE_TLS_CA to enable TLS)"
+                "control-plane channel: plaintext (set PAL_CONTROL_PLANE_TLS_CA to enable TLS)"
             );
             endpoint.connect_lazy()
         };
@@ -449,7 +449,7 @@ impl ControlPlaneClient {
         let service_token = std::env::var("PAL_GRPC_SERVICE_TOKEN").unwrap_or_default();
         if service_token.is_empty() {
             tracing::warn!(
-                "control-plane channel: LANTERN_GRPC_SERVICE_TOKEN unset — no service token attached (acceptable in dev, required in production)"
+                "control-plane channel: PAL_GRPC_SERVICE_TOKEN unset — no service token attached (acceptable in dev, required in production)"
             );
         }
 
@@ -491,7 +491,7 @@ impl ControlPlaneClient {
         if !self.service_token.is_empty()
             && let Ok(val) = self.service_token.parse()
         {
-            metadata.insert("x-lantern-service-token", val);
+            metadata.insert("x-pal-service-token", val);
         }
         Ok(())
     }
@@ -674,7 +674,7 @@ impl AgentServiceClient {
             .await
             .map_err(|e| tonic::Status::unknown(format!("service not ready: {e}")))?;
         let codec = tonic::codec::ProstCodec::default();
-        let path = http::uri::PathAndQuery::from_static("/lantern.v1.AgentService/CreateAgent");
+        let path = http::uri::PathAndQuery::from_static("/pal.v1.AgentService/CreateAgent");
         self.inner.unary(request, path, codec).await
     }
 
@@ -687,7 +687,7 @@ impl AgentServiceClient {
             .await
             .map_err(|e| tonic::Status::unknown(format!("service not ready: {e}")))?;
         let codec = tonic::codec::ProstCodec::default();
-        let path = http::uri::PathAndQuery::from_static("/lantern.v1.AgentService/GetAgent");
+        let path = http::uri::PathAndQuery::from_static("/pal.v1.AgentService/GetAgent");
         self.inner.unary(request, path, codec).await
     }
 
@@ -700,7 +700,7 @@ impl AgentServiceClient {
             .await
             .map_err(|e| tonic::Status::unknown(format!("service not ready: {e}")))?;
         let codec = tonic::codec::ProstCodec::default();
-        let path = http::uri::PathAndQuery::from_static("/lantern.v1.AgentService/ListAgents");
+        let path = http::uri::PathAndQuery::from_static("/pal.v1.AgentService/ListAgents");
         self.inner.unary(request, path, codec).await
     }
 
@@ -713,7 +713,7 @@ impl AgentServiceClient {
             .await
             .map_err(|e| tonic::Status::unknown(format!("service not ready: {e}")))?;
         let codec = tonic::codec::ProstCodec::default();
-        let path = http::uri::PathAndQuery::from_static("/lantern.v1.AgentService/DeleteAgent");
+        let path = http::uri::PathAndQuery::from_static("/pal.v1.AgentService/DeleteAgent");
         self.inner.unary(request, path, codec).await
     }
 }
@@ -739,7 +739,7 @@ impl RunServiceClient {
             .await
             .map_err(|e| tonic::Status::unknown(format!("service not ready: {e}")))?;
         let codec = tonic::codec::ProstCodec::default();
-        let path = http::uri::PathAndQuery::from_static("/lantern.v1.RunService/CreateRun");
+        let path = http::uri::PathAndQuery::from_static("/pal.v1.RunService/CreateRun");
         self.inner.unary(request, path, codec).await
     }
 
@@ -752,7 +752,7 @@ impl RunServiceClient {
             .await
             .map_err(|e| tonic::Status::unknown(format!("service not ready: {e}")))?;
         let codec = tonic::codec::ProstCodec::default();
-        let path = http::uri::PathAndQuery::from_static("/lantern.v1.RunService/GetRun");
+        let path = http::uri::PathAndQuery::from_static("/pal.v1.RunService/GetRun");
         self.inner.unary(request, path, codec).await
     }
 
@@ -765,7 +765,7 @@ impl RunServiceClient {
             .await
             .map_err(|e| tonic::Status::unknown(format!("service not ready: {e}")))?;
         let codec = tonic::codec::ProstCodec::default();
-        let path = http::uri::PathAndQuery::from_static("/lantern.v1.RunService/ListRuns");
+        let path = http::uri::PathAndQuery::from_static("/pal.v1.RunService/ListRuns");
         self.inner.unary(request, path, codec).await
     }
 
@@ -778,7 +778,7 @@ impl RunServiceClient {
             .await
             .map_err(|e| tonic::Status::unknown(format!("service not ready: {e}")))?;
         let codec = tonic::codec::ProstCodec::default();
-        let path = http::uri::PathAndQuery::from_static("/lantern.v1.RunService/CancelRun");
+        let path = http::uri::PathAndQuery::from_static("/pal.v1.RunService/CancelRun");
         self.inner.unary(request, path, codec).await
     }
 
@@ -791,7 +791,7 @@ impl RunServiceClient {
             .await
             .map_err(|e| tonic::Status::unknown(format!("service not ready: {e}")))?;
         let codec = tonic::codec::ProstCodec::default();
-        let path = http::uri::PathAndQuery::from_static("/lantern.v1.RunService/StreamRunEvents");
+        let path = http::uri::PathAndQuery::from_static("/pal.v1.RunService/StreamRunEvents");
         self.inner.server_streaming(request, path, codec).await
     }
 
@@ -804,7 +804,7 @@ impl RunServiceClient {
             .await
             .map_err(|e| tonic::Status::unknown(format!("service not ready: {e}")))?;
         let codec = tonic::codec::ProstCodec::default();
-        let path = http::uri::PathAndQuery::from_static("/lantern.v1.RunService/SignalRun");
+        let path = http::uri::PathAndQuery::from_static("/pal.v1.RunService/SignalRun");
         self.inner.unary(request, path, codec).await
     }
 }

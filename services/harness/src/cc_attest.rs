@@ -7,7 +7,7 @@
 // guarantee.
 //
 // Design notes:
-//   * Gated on LANTERN_CONFIDENTIAL — a no-op when not running in a CC context.
+//   * Gated on PAL_CONFIDENTIAL — a no-op when not running in a CC context.
 //   * Best-effort throughout: any I/O failure skips the measurement (never
 //     fabricates a hash); the frame is always emitted regardless.
 //   * Raw measurement bytes are NEVER logged (invariant #10); only the sha256
@@ -28,7 +28,7 @@ use crate::proto::{AuditEvent, HarnessReport, now_unix_ms};
 
 /// True when the harness should emit a cc_attestation frame.
 ///
-/// Pure fn — takes the raw `LANTERN_CONFIDENTIAL` env value so the logic is
+/// Pure fn — takes the raw `PAL_CONFIDENTIAL` env value so the logic is
 /// unit-testable without `setenv` (mirrors `resolve_fail_closed` in egress.rs).
 pub fn should_attest(confidential_var: Option<&str>) -> bool {
     confidential_var
@@ -66,7 +66,7 @@ fn resolve_cc_tech() -> String {
 /// path yields non-empty content.
 ///
 /// Ordered candidates:
-///   1. `LANTERN_CC_MEASUREMENT_PATH` (if set and non-empty)
+///   1. `PAL_CC_MEASUREMENT_PATH` (if set and non-empty)
 ///   2. TSM configfs glob `/sys/kernel/config/tsm/report/*/outblob`
 ///   3. Raw device nodes `/dev/sev-guest`, `/dev/tdx_guest` as last resort
 ///

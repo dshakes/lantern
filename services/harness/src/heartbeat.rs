@@ -257,7 +257,7 @@ pub fn parse_vmrss(status: &str) -> Option<i64> {
 /// `/proc/self/cgroup`.
 ///
 /// The cgroup v2 unified hierarchy always uses `0::` as the hierarchy ID.
-/// Returns the path component (e.g. `/system.slice/lantern-harness.service`),
+/// Returns the path component (e.g. `/system.slice/pal-harness.service`),
 /// or `None` when no `0::` entry is present (cgroup v1 or no cgroup mount).
 ///
 /// Pure function — tested on all platforms.
@@ -462,13 +462,13 @@ mod tests {
 
     #[test]
     fn vmrss_parsed_correctly() {
-        let status = "Name:\tlantern-harness\nVmRSS:\t  4096 kB\nVmPeak:\t 8192 kB\n";
+        let status = "Name:\tpal-harness\nVmRSS:\t  4096 kB\nVmPeak:\t 8192 kB\n";
         assert_eq!(parse_vmrss(status), Some(4096));
     }
 
     #[test]
     fn vmrss_absent_returns_none() {
-        let status = "Name:\tlantern-harness\nVmPeak:\t 8192 kB\n";
+        let status = "Name:\tpal-harness\nVmPeak:\t 8192 kB\n";
         assert_eq!(parse_vmrss(status), None);
     }
 
@@ -483,10 +483,10 @@ mod tests {
     #[test]
     fn cgroup_v2_path_extracted() {
         let contents =
-            "12:blkio:/system.slice\n0::/system.slice/lantern-harness.service\n1:cpu:/\n";
+            "12:blkio:/system.slice\n0::/system.slice/pal-harness.service\n1:cpu:/\n";
         assert_eq!(
             parse_cgroup_v2_path(contents),
-            Some("/system.slice/lantern-harness.service".to_string())
+            Some("/system.slice/pal-harness.service".to_string())
         );
     }
 

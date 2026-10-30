@@ -14,7 +14,7 @@ package scoring
 import (
 	"strings"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
 )
 
 // Weights controls the relative importance of each sub-score. The defaults
@@ -76,7 +76,7 @@ type NodeSnapshot struct {
 // state needed for scoring. The scheduler builds this once per request.
 type WorkloadSnapshot struct {
 	ImageDigest        string
-	Class              lanternv1.IsolationClass
+	Class              palv1.IsolationClass
 	SizeKey            string // canonical "vcpu/memory" key, e.g. "500m/512Mi"
 	DataRegion         string // region where the agent's data lives
 	DataContinent      string
@@ -192,7 +192,7 @@ func healthScore(node NodeSnapshot) float64 {
 // warmPoolExactKey builds the composite key used in NodeSnapshot.WarmPoolExact.
 // Keep this stable — runtime-manager produces the same key when it
 // reports its inventory.
-func warmPoolExactKey(image string, class lanternv1.IsolationClass, size string) string {
+func warmPoolExactKey(image string, class palv1.IsolationClass, size string) string {
 	var sb strings.Builder
 	sb.WriteString(image)
 	sb.WriteByte('@')
@@ -203,6 +203,6 @@ func warmPoolExactKey(image string, class lanternv1.IsolationClass, size string)
 }
 
 // WarmPoolExactKey is the public alias used by callers building snapshots.
-func WarmPoolExactKey(image string, class lanternv1.IsolationClass, size string) string {
+func WarmPoolExactKey(image string, class palv1.IsolationClass, size string) string {
 	return warmPoolExactKey(image, class, size)
 }

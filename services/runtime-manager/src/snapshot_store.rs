@@ -5,7 +5,7 @@
 //! The `SnapshotStore` has two tiers:
 //!
 //! 1. **Local filesystem** (always active): rooted at `SNAPSHOT_DIR`
-//!    (default `/var/lib/lantern/snapshots`).  All reads/writes always go
+//!    (default `/var/lib/pal/snapshots`).  All reads/writes always go
 //!    through the local tier.
 //!
 //! 2. **S3/MinIO tier** (optional): enabled when `S3_ENDPOINT` + `S3_BUCKET`
@@ -227,7 +227,7 @@ impl SnapshotStore {
     /// for the optional S3 tier.  Missing S3 env vars → local-only.
     pub fn from_env() -> Self {
         let root = std::env::var("SNAPSHOT_DIR")
-            .unwrap_or_else(|_| "/var/lib/lantern/snapshots".to_string());
+            .unwrap_or_else(|_| "/var/lib/pal/snapshots".to_string());
 
         let s3_endpoint = std::env::var("S3_ENDPOINT").unwrap_or_default();
         let s3_bucket = std::env::var("S3_BUCKET").unwrap_or_default();
@@ -470,7 +470,7 @@ impl SnapshotStore {
             agent_version_id: agent_version_id.to_string(),
             vm_id: vm_id.to_string(),
             tenant_id: tenant_id.to_string(),
-            // ponytail: the mode is node-wide (`LANTERN_EGRESS_MODE`), so the
+            // ponytail: the mode is node-wide (`PAL_EGRESS_MODE`), so the
             // snapshotting node's mode IS the VM's. Thread it per-VM if the
             // mode ever becomes per-spec.
             egress_mode: crate::egress_broker::EgressMode::from_env()
@@ -1089,7 +1089,7 @@ mod tests {
     // S3/MinIO integration test
     //
     // Requires a live MinIO instance at http://localhost:9000 with credentials
-    // lantern/lanternsecret.  The test gates on reachability so it skips
+    // pal/palsecret.  The test gates on reachability so it skips
     // cleanly when MinIO is down (CI without infra).
     // -----------------------------------------------------------------------
 
@@ -1113,8 +1113,8 @@ mod tests {
         let client = AmazonS3Builder::new()
             .with_endpoint("http://localhost:9000")
             .with_bucket_name(bucket)
-            .with_access_key_id("lantern")
-            .with_secret_access_key("lanternsecret")
+            .with_access_key_id("pal")
+            .with_secret_access_key("palsecret")
             // MinIO requires path-style URLs and accepts "us-east-1" as its
             // default region in the SigV4 credential scope.
             .with_virtual_hosted_style_request(false)
@@ -1143,7 +1143,7 @@ mod tests {
         // anonymous endpoint (MinIO auto-creates buckets when credentials match).
         let _ = reqwest::Client::new()
             .put(&url)
-            .basic_auth("lantern", Some("lanternsecret"))
+            .basic_auth("pal", Some("palsecret"))
             .send()
             .await;
     }
@@ -1160,7 +1160,7 @@ mod tests {
             return;
         }
 
-        let bucket = "lantern-snapshots-test";
+        let bucket = "pal-snapshots-test";
         ensure_bucket(bucket).await;
 
         let s3 = minio_s3_client(bucket);

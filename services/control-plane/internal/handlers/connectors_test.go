@@ -7,13 +7,13 @@ package handlers
 // connector_installs (not readable as plaintext), and (b) decrypt back to the
 // original value on the read/execute path.
 //
-// TestMain (below) sets LANTERN_CREDENTIAL_KEY before any test in the package
+// TestMain (below) sets PAL_CREDENTIAL_KEY before any test in the package
 // runs, so secrets.loadKey() (a sync.Once) picks up a real AES-256 key and the
 // "stored form is encrypted" assertion is deterministic.
 //
 // Skipped automatically when DATABASE_URL is unset. Run with:
 //
-//	DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable \
+//	DATABASE_URL=postgres://pal:pal@localhost:5432/pal?sslmode=disable \
 //	  go test ./internal/handlers/ -run Connector -count=1 -v
 
 import (
@@ -28,8 +28,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/secrets"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // TestMain ensures credential encryption is active for the whole package run so
@@ -61,7 +61,7 @@ func seedConnectorTenant(t *testing.T, srv *server.Server, slug string) string {
 	var id string
 	if err := srv.Pool.QueryRow(context.Background(), `
 		INSERT INTO tenants (slug, name, tier, k8s_namespace)
-		VALUES ($1, $1, 'personal', 'lantern-t-' || $1)
+		VALUES ($1, $1, 'personal', 'pal-t-' || $1)
 		RETURNING id
 	`, slug).Scan(&id); err != nil {
 		t.Fatalf("seed tenant %q: %v", slug, err)
@@ -197,7 +197,7 @@ func TestConnector_EncryptedCredentialRoundTrip(t *testing.T) {
 		t.Fatalf("EncryptionEnabled: %v", err)
 	}
 	if !enabled {
-		t.Skip("credential encryption not active (LANTERN_CREDENTIAL_KEY mis-set) — skipping at-rest ciphertext assertion")
+		t.Skip("credential encryption not active (PAL_CREDENTIAL_KEY mis-set) — skipping at-rest ciphertext assertion")
 	}
 
 	h, _, srv := newConnectorHandlers(t)
@@ -219,7 +219,7 @@ func TestConnector_EncryptedCredentialRoundTrip(t *testing.T) {
 	if bytes.Contains(rawConfig, []byte(secretValue)) {
 		t.Fatalf("SECRET LEAK: plaintext token found in at-rest config column: %s", string(rawConfig))
 	}
-	if !bytes.Contains(rawConfig, []byte("__lantern_enc__")) {
+	if !bytes.Contains(rawConfig, []byte("__pal_enc__")) {
 		t.Errorf("at-rest config is not an encryption envelope: %s", string(rawConfig))
 	}
 

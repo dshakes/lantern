@@ -33,9 +33,9 @@ const BOT_TEXTS = [
   "(calendar failed: AppleScript error)",
   "couldn't reach the agent — try again in a sec.",
   // Status / digest / dashboard
-  "🟢 *Lantern iMessage*\n• bot: on\n• personal-docs: on",
-  "🟢 *Lantern WhatsApp*\n• bot: on",
-  "📊 *lantern morning report* — fri, may 29\n• quiet night — no urgent",
+  "🟢 *PAL iMessage*\n• bot: on\n• personal-docs: on",
+  "🟢 *PAL WhatsApp*\n• bot: on",
+  "📊 *pal morning report* — fri, may 29\n• quiet night — no urgent",
   "🚨 kill switch ENGAGED",
   "⏸ paused contacts (3):",
   "👀 monitoring this group — I'll flag urgent msgs",
@@ -126,23 +126,23 @@ test("bot-self: empty input does not match", () => {
 
 test("bot-self: case insensitivity", () => {
   assert.equal(isBotSelfMessage("📁 ONE SEC — LOOKING"), true);
-  assert.equal(isBotSelfMessage("📊 *Lantern Morning Report*"), true);
+  assert.equal(isBotSelfMessage("📊 *PAL Morning Report*"), true);
 });
 
-test("bot-self: every pal-branded string the bridges emit is registered, and the lantern-era ones still are (ADR 0032)", () => {
-  // One entry per string renamed Lantern→pal in the bridges. A miss here is
+test("bot-self: every pal-branded string the bridges emit is registered, and the pal-era ones still are (ADR 0032)", () => {
+  // One entry per string renamed PAL→pal in the bridges. A miss here is
   // the self-chat echo loop: the bot reads its own status line back as a query.
   const renamed: Array<[string, string]> = [
-    ["🟢 *pal iMessage*\n• bot: on", "🟢 *Lantern iMessage*\n• bot: on"],
-    ["🟢 *pal WhatsApp*\n• bot: on", "🟢 *Lantern WhatsApp*\n• bot: on"],
-    ["🟢 *pal is connected*\n\nReply `/pal status`", "🟢 *Lantern is connected*"],
-    ["📊 *pal morning report* — fri, may 29", "📊 *lantern morning report* — fri, may 29"],
-    ["🔴 *pal WhatsApp offline 12m*", "🔴 *Lantern WhatsApp offline 12m*"],
-    ["🔴 *pal alert: WhatsApp bridge error*", "🔴 *Lantern alert: WhatsApp bridge error*"],
-    ["⚠️ *pal alert: WhatsApp conflict*", "⚠️ *Lantern alert: WhatsApp conflict*"],
-    ["🚪 *pal alert: WhatsApp unlinked*", "🚪 *Lantern alert: WhatsApp unlinked*"],
-    ["🤖 *pal commands*\n\nCommand center", "🤖 *Lantern commands*"],
-    ["🤖 *pal* · 🟢 active\nuptime 3h", "🤖 *Lantern* · 🟢 active"],
+    ["🟢 *pal iMessage*\n• bot: on", "🟢 *PAL iMessage*\n• bot: on"],
+    ["🟢 *pal WhatsApp*\n• bot: on", "🟢 *PAL WhatsApp*\n• bot: on"],
+    ["🟢 *pal is connected*\n\nReply `/pal status`", "🟢 *PAL is connected*"],
+    ["📊 *pal morning report* — fri, may 29", "📊 *pal morning report* — fri, may 29"],
+    ["🔴 *pal WhatsApp offline 12m*", "🔴 *PAL WhatsApp offline 12m*"],
+    ["🔴 *pal alert: WhatsApp bridge error*", "🔴 *PAL alert: WhatsApp bridge error*"],
+    ["⚠️ *pal alert: WhatsApp conflict*", "⚠️ *PAL alert: WhatsApp conflict*"],
+    ["🚪 *pal alert: WhatsApp unlinked*", "🚪 *PAL alert: WhatsApp unlinked*"],
+    ["🤖 *pal commands*\n\nCommand center", "🤖 *PAL commands*"],
+    ["🤖 *pal* · 🟢 active\nuptime 3h", "🤖 *PAL* · 🟢 active"],
   ];
   for (const [now, legacy] of renamed) {
     assert.equal(isBotSelfMessage(now), true, `new form not registered: ${JSON.stringify(now)}`);

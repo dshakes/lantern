@@ -49,7 +49,7 @@ pub type HeartbeatCache = Arc<DashMap<String, (pb::ResourceUsage, Instant)>>;
 // in-guest harness serves `RuntimeHarness.Exec` on its tap address, and the
 // manager learns that address from the PEER of the harness's Heartbeat
 // stream. This map caches `vm_id → guest IP`; the exec dispatch dials
-// `http://<guest_ip>:<LANTERN_HARNESS_EXEC_PORT>` and forwards the stream.
+// `http://<guest_ip>:<PAL_HARNESS_EXEC_PORT>` and forwards the stream.
 // ---------------------------------------------------------------------------
 
 /// Shared harness dial-back map: `vm_id → guest IP` (from the Heartbeat peer).
@@ -102,7 +102,7 @@ impl HarnessReady {
 }
 
 /// How long exec waits for a guest's harness to (re)connect before giving up
-/// (`LANTERN_HARNESS_READY_TIMEOUT_MS`, default 5000). Covers resume/fork:
+/// (`PAL_HARNESS_READY_TIMEOUT_MS`, default 5000). Covers resume/fork:
 /// restore ~100 ms + re-identify (≤ 250 ms poll + drive reload) + mTLS
 /// reconnect — measured 2.2–2.8 s on nested-virt Lima, where 3 s was too tight.
 const DEFAULT_HARNESS_READY_TIMEOUT: Duration = Duration::from_millis(5000);
@@ -116,7 +116,7 @@ fn harness_ready_timeout() -> Duration {
 }
 
 /// Port the in-guest harness exec server listens on. Must match the
-/// harness's `LANTERN_HARNESS_EXEC_ADDR` (default `0.0.0.0:50056`).
+/// harness's `PAL_HARNESS_EXEC_ADDR` (default `0.0.0.0:50056`).
 const DEFAULT_HARNESS_EXEC_PORT: u16 = 50056;
 
 fn harness_exec_port() -> u16 {
@@ -173,7 +173,7 @@ fn choose_backend(
         let name = default_backend.name();
         return BackendChoice::Unavailable(format!(
             "confidential compute cannot be satisfied by the '{name}' backend on this node: \
-             confidential requires the Kata-CC RuntimeClass; set LANTERN_RUNTIMECLASS_KATA_CC \
+             confidential requires the Kata-CC RuntimeClass; set PAL_RUNTIMECLASS_KATA_CC \
              on a CC-capable (SEV-SNP/TDX) node."
         ));
     }
@@ -184,10 +184,10 @@ fn choose_backend(
         let name = default_backend.name();
         let hint = match isolation_class {
             proto::IsolationClass::Untrusted => "UNTRUSTED requires the gVisor RuntimeClass; \
-                 set LANTERN_RUNTIMECLASS_GVISOR on a node that has gVisor installed"
+                 set PAL_RUNTIMECLASS_GVISOR on a node that has gVisor installed"
                 .to_string(),
             proto::IsolationClass::Hostile => "HOSTILE requires the Kata RuntimeClass; \
-                 set LANTERN_RUNTIMECLASS_KATA on a node that has Kata Containers installed"
+                 set PAL_RUNTIMECLASS_KATA on a node that has Kata Containers installed"
                 .to_string(),
             _ => format!(
                 "isolation_class {:?} is not supported by the '{}' backend",
@@ -215,7 +215,7 @@ fn apply_confidential_isolation_floor(
 ) -> proto::IsolationClass {
     if confidential && isolation_class != proto::IsolationClass::Hostile {
         tracing::warn!(
-            target: "lantern_audit",
+            target: "pal_audit",
             run_id = %run_id,
             requested_isolation = ?isolation_class,
             effective_isolation = ?proto::IsolationClass::Hostile,
@@ -570,16 +570,16 @@ impl RuntimeManagerGrpc {
 // gRPC method implementations
 // ---------------------------------------------------------------------------
 
-/// `LANTERN_*` env keys a CALLER (control plane / scheduler) legitimately sets
+/// `PAL_*` env keys a CALLER (control plane / scheduler) legitimately sets
 /// on a workload: agent identity, trace parent, crash-resume marker. Every
-/// other `LANTERN_*` key is harness configuration (`LANTERN_ENV`, egress,
+/// other `PAL_*` key is harness configuration (`PAL_ENV`, egress,
 /// workload uid, …) and is manager-owned. Keep in sync with the harness's
-/// `bootenv::CALLER_LANTERN_KEYS`.
-pub const CALLER_LANTERN_KEYS: [&str; 4] = [
-    "LANTERN_AGENT_INSTANCE_ID",
-    "LANTERN_AGENT_INSTANCE_TOKEN",
-    "LANTERN_TRACE_PARENT",
-    "LANTERN_RESUME",
+/// `bootenv::CALLER_PAL_KEYS`.
+pub const CALLER_PAL_KEYS: [&str; 4] = [
+    "PAL_AGENT_INSTANCE_ID",
+    "PAL_AGENT_INSTANCE_TOKEN",
+    "PAL_TRACE_PARENT",
+    "PAL_RESUME",
 ];
 
 /// Whether a caller may set this env key. EVERY `PAL_*` key is dropped
@@ -589,15 +589,15 @@ pub const CALLER_LANTERN_KEYS: [&str; 4] = [
 /// prefers `PAL_`, authenticate VendSecret. Relax only when the writers flip
 /// (rename plan step 4) and the control plane stamps both names.
 fn caller_env_key_allowed(key: &str) -> bool {
-    !key.starts_with("PAL_") && (!key.starts_with("LANTERN_") || CALLER_LANTERN_KEYS.contains(&key))
+    !key.starts_with("PAL_") && (!key.starts_with("PAL_") || CALLER_PAL_KEYS.contains(&key))
 }
 
 /// Make a request's env safe to hand to the harness: drop caller-supplied
-/// `LANTERN_*` keys outside [`CALLER_LANTERN_KEYS`] and EVERY `PAL_*` key
+/// `PAL_*` keys outside [`CALLER_PAL_KEYS`] and EVERY `PAL_*` key
 /// (see [`caller_env_key_allowed`]; names logged, never values), THEN stamp
-/// the manager-owned values — its own `LANTERN_ENV` and
+/// the manager-owned values — its own `PAL_ENV` and
 /// the identity taken from the request's authenticated typed fields
-/// (`LANTERN_TENANT_ID`, `LANTERN_AGENT_VERSION_ID`). Sanitize-then-inject, so
+/// (`PAL_TENANT_ID`, `PAL_AGENT_VERSION_ID`). Sanitize-then-inject, so
 /// a caller can neither downgrade a prod guest / switch off its egress/uid
 /// guards nor forge its identity, and the legitimate identity is never
 /// stripped. Every backend gets its env through `schedule`/`restore`, so this
@@ -605,7 +605,7 @@ fn caller_env_key_allowed(key: &str) -> bool {
 /// uid, typed spawn.json fields) is added after it.
 fn own_workload_env(
     env: &mut std::collections::HashMap<String, String>,
-    manager_lantern_env: Option<&str>,
+    manager_pal_env: Option<&str>,
     tenant_id: &str,
     agent_version_id: &str,
 ) {
@@ -620,20 +620,20 @@ fn own_workload_env(
     if !dropped.is_empty() {
         dropped.sort();
         tracing::warn!(
-            target: "lantern_audit",
+            target: "pal_audit",
             keys = ?dropped,
-            "dropped caller-supplied LANTERN_*/PAL_* env keys: harness config is manager-owned"
+            "dropped caller-supplied PAL_*/PAL_* env keys: harness config is manager-owned"
         );
     }
-    if let Some(v) = manager_lantern_env.filter(|v| !v.is_empty()) {
-        env.insert("LANTERN_ENV".to_string(), v.to_string());
+    if let Some(v) = manager_pal_env.filter(|v| !v.is_empty()) {
+        env.insert("PAL_ENV".to_string(), v.to_string());
     }
     if !tenant_id.is_empty() {
-        env.insert("LANTERN_TENANT_ID".to_string(), tenant_id.to_string());
+        env.insert("PAL_TENANT_ID".to_string(), tenant_id.to_string());
     }
     if !agent_version_id.is_empty() {
         env.insert(
-            "LANTERN_AGENT_VERSION_ID".to_string(),
+            "PAL_AGENT_VERSION_ID".to_string(),
             agent_version_id.to_string(),
         );
     }
@@ -856,7 +856,7 @@ impl RuntimeManagerGrpc {
         tracing::info!(handle_id = %req.handle_id, backend = backend_name, "creating snapshot");
 
         // Invoke the backend. On Linux + Firecracker the files are written to
-        // /run/lantern/snapshots/<handle_id>/{snapshot,mem}; uri + size are
+        // /run/pal/snapshots/<handle_id>/{snapshot,mem}; uri + size are
         // derived from the store after persisting, but errors must propagate.
         let backend_info = self.backend.snapshot(&req).await.map_err(Self::to_status)?;
 
@@ -957,7 +957,7 @@ impl RuntimeManagerGrpc {
             .ok_or_else(not_found)?;
         if !snapshot_owned_by(&meta, &req.tenant_id) {
             tracing::warn!(
-                target: "lantern_audit",
+                target: "pal_audit",
                 snapshot_id = %id,
                 tenant_id = %req.tenant_id,
                 "restore DENIED: snapshot not owned by requesting tenant"
@@ -970,7 +970,7 @@ impl RuntimeManagerGrpc {
         if meta.egress_mode != backend.egress_mode() {
             return Err(Status::failed_precondition(format!(
                 "snapshot {id} was taken in egress mode {:?} but this node runs {:?}; \
-                 restore it on a node with the same LANTERN_EGRESS_MODE",
+                 restore it on a node with the same PAL_EGRESS_MODE",
                 meta.egress_mode,
                 backend.egress_mode()
             )));
@@ -1198,7 +1198,7 @@ fn json_to_prost_value(v: serde_json::Value) -> prost_types::Value {
 // ---------------------------------------------------------------------------
 //
 // Protocol (manager → harness):
-//   ExecRequest { command: "__lantern_tool_call__", argv: [<envelope_json>] }
+//   ExecRequest { command: "__pal_tool_call__", argv: [<envelope_json>] }
 //
 // Envelope JSON (argv[0]):
 //   { "tool": "<name>", "args": {…}, "idempotency_key": "…", "timeout_sec": N }
@@ -1314,7 +1314,7 @@ async fn run_tool_via_harness_inner(
     let _ = req_tx
         .send(pb::ExecRequest {
             vm_id: vm_id.to_string(),
-            command: "__lantern_tool_call__".to_string(),
+            command: "__pal_tool_call__".to_string(),
             argv: vec![envelope_str],
             ..Default::default()
         })
@@ -1419,7 +1419,7 @@ fn exec_tool_tenant_ok(owner: &str, requested: &str, prod: bool) -> bool {
 ///
 /// Firecracker reports them as `fc://<host path>` — chroot-expanded for a
 /// jailed VM, which is the only place they exist then. Reading the bare
-/// `/run/lantern/snapshots/<id>` path instead made every jailed pause fail.
+/// `/run/pal/snapshots/<id>` path instead made every jailed pause fail.
 /// Anything else keeps the conventional bare layout.
 fn snapshot_artifact_paths(
     snapshot_uri: &str,
@@ -1434,7 +1434,7 @@ fn snapshot_artifact_paths(
     {
         return (vmstate_path.into(), mem_path.into());
     }
-    let base = std::path::PathBuf::from(format!("/run/lantern/snapshots/{handle_id}"));
+    let base = std::path::PathBuf::from(format!("/run/pal/snapshots/{handle_id}"));
     (base.join("snapshot"), base.join("mem"))
 }
 
@@ -1489,8 +1489,8 @@ fn spawn_to_schedule(req: &pb::SpawnRequest) -> Result<proto::ScheduleRequest, S
     }
 
     // Build env from caller-supplied env + labels (for backwards-compat).
-    // Caller `LANTERN_*` keys (incl. a forged LANTERN_TENANT_ID /
-    // LANTERN_AGENT_VERSION_ID) are stripped and the authenticated identity is
+    // Caller `PAL_*` keys (incl. a forged PAL_TENANT_ID /
+    // PAL_AGENT_VERSION_ID) are stripped and the authenticated identity is
     // stamped from the typed fields by `own_workload_env` in `schedule`.
     let mut env: std::collections::HashMap<String, String> = spec.env.clone();
     for (k, v) in &spec.labels {
@@ -1610,7 +1610,7 @@ fn dlp_gate(
         )));
     }
     tracing::warn!(
-        target: "lantern_audit",
+        target: "pal_audit",
         run_id,
         backend = backend.name(),
         action = "dlp",
@@ -1629,7 +1629,7 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
         // Extract the incoming W3C traceparent so this spawn becomes a child
         // span of the scheduler's (Go) span — one distributed trace per spawn.
         let parent_cx = otel::extract_from_metadata(request.metadata());
-        let tracer = opentelemetry::global::tracer("lantern.runtime-manager");
+        let tracer = opentelemetry::global::tracer("pal.runtime-manager");
         let span = tracer.start_with_context("RuntimeManager.Spawn", &parent_cx);
         let spawn_cx = parent_cx.with_span(span);
 
@@ -1693,7 +1693,7 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
                 .is_some_and(|s| s.tenant_id == existing.tenant_id && s.run_id == existing.run_id);
             if !same_owner {
                 tracing::warn!(
-                    target: "lantern_audit",
+                    target: "pal_audit",
                     vm_id = %h.vm_id,
                     "spawn DENIED: vm_id already registered to a different owner"
                 );
@@ -1728,7 +1728,7 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
         internal.vm_id = wire_vm_id.unwrap_or_default().to_string();
 
         // Inject the W3C traceparent into the workload's env so the in-VM
-        // harness can continue the same distributed trace.  LANTERN_TRACE_PARENT
+        // harness can continue the same distributed trace.  PAL_TRACE_PARENT
         // is the out-of-band channel for process-env propagation; the harness
         // reads it and uses it as its root parent context.
         let trace_id = otel::trace_id_from_context(&spawn_cx);
@@ -1739,7 +1739,7 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
             if let Some(val) = tp_meta.get("traceparent").and_then(|v| v.to_str().ok()) {
                 internal
                     .env
-                    .insert("LANTERN_TRACE_PARENT".to_string(), val.to_string());
+                    .insert("PAL_TRACE_PARENT".to_string(), val.to_string());
             }
         }
 
@@ -2112,7 +2112,7 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
             found => {
                 if found.is_some() {
                     tracing::warn!(
-                        target: "lantern_audit",
+                        target: "pal_audit",
                         vm_id = %req.vm_id,
                         run_id = %req.run_id,
                         requested_tenant = %req.tenant_id,
@@ -2428,7 +2428,7 @@ pub struct RuntimeHarnessGrpc {
     heartbeat_cache: HeartbeatCache,
     /// Harness dial-back map shared with `RuntimeManagerGrpc`. The Heartbeat
     /// handler records the stream's peer IP per `vm_id`; the exec dispatch
-    /// dials it to forward `lantern vm exec` into Firecracker guests.
+    /// dials it to forward `pal vm exec` into Firecracker guests.
     harness_addrs: HarnessAddrs,
     /// Set on the first cert-pinned heartbeat; exec waits on it.
     harness_ready: HarnessReady,
@@ -2441,7 +2441,7 @@ pub struct RuntimeHarnessGrpc {
     /// control-plane.  `None` in unit tests that don't inject one.
     report_client: Option<reqwest::Client>,
     /// `(control_plane_url, token)` for report forwarding.  `None` in dev
-    /// when `LANTERN_CONTROL_PLANE_URL` / `LANTERN_RUNTIME_SECRET_TOKEN` are
+    /// when `PAL_CONTROL_PLANE_URL` / `PAL_RUNTIME_SECRET_TOKEN` are
     /// unset — messages are logged locally instead.
     report_forward_config: Option<(String, String)>,
     /// Per-VM idle-suspend activity signals forwarded to the scheduler's next
@@ -2469,7 +2469,7 @@ impl RuntimeHarnessGrpc {
             tracing::info!("report: forwarding HarnessReport messages to control-plane");
         } else {
             tracing::info!(
-                "report: LANTERN_CONTROL_PLANE_URL / LANTERN_RUNTIME_SECRET_TOKEN not set — \
+                "report: PAL_CONTROL_PLANE_URL / PAL_RUNTIME_SECRET_TOKEN not set — \
                  HarnessReport messages will be logged locally (dev mode)"
             );
         }
@@ -2671,7 +2671,7 @@ impl pb::runtime_harness_server::RuntimeHarness for RuntimeHarnessGrpc {
         // Extract the agent-instance Bearer token from gRPC metadata BEFORE
         // consuming the request with `into_inner()` (metadata is lost after
         // that call). The harness attaches this as
-        //   authorization: Bearer <LANTERN_AGENT_INSTANCE_TOKEN>
+        //   authorization: Bearer <PAL_AGENT_INSTANCE_TOKEN>
         // when the env var is present. We forward it to the relay so the
         // control-plane can perform a secondary identity check. Absent →
         // `None` (unchanged shared-token-only path). Never logged.
@@ -3179,7 +3179,7 @@ mod tests {
                     "refusal must name confidential: {msg}"
                 );
                 assert!(
-                    msg.contains("LANTERN_RUNTIMECLASS_KATA_CC"),
+                    msg.contains("PAL_RUNTIMECLASS_KATA_CC"),
                     "refusal must name the CC config var: {msg}"
                 );
             }
@@ -3264,7 +3264,7 @@ mod tests {
                     "error should name the required RuntimeClass: {msg}"
                 );
                 assert!(
-                    msg.contains("LANTERN_RUNTIMECLASS_KATA"),
+                    msg.contains("PAL_RUNTIMECLASS_KATA"),
                     "error should name the config env var: {msg}"
                 );
             }
@@ -3282,7 +3282,7 @@ mod tests {
                     "error should name the required RuntimeClass: {msg}"
                 );
                 assert!(
-                    msg.contains("LANTERN_RUNTIMECLASS_GVISOR"),
+                    msg.contains("PAL_RUNTIMECLASS_GVISOR"),
                     "error should name the config env var: {msg}"
                 );
             }
@@ -3454,7 +3454,7 @@ mod tests {
 
     #[tokio::test]
     async fn vend_secret_allowlisted_uri_resolves() {
-        let uri = "lantern.secret://tenant/t1/key/OPENAI";
+        let uri = "pal.secret://tenant/t1/key/OPENAI";
         let mut secrets = HashMap::new();
         secrets.insert(uri.to_string(), "sk-real-value".to_string());
 
@@ -3470,7 +3470,7 @@ mod tests {
 
     #[tokio::test]
     async fn vend_secret_ttl_capped_at_300s() {
-        let uri = "lantern.secret://tenant/t1/key/KEY";
+        let uri = "pal.secret://tenant/t1/key/KEY";
         let mut secrets = HashMap::new();
         secrets.insert(uri.to_string(), "v".to_string());
 
@@ -3502,8 +3502,8 @@ mod tests {
 
     #[tokio::test]
     async fn vend_secret_undeclared_uri_rejected() {
-        let declared = "lantern.secret://tenant/t1/key/ALLOWED";
-        let forbidden = "lantern.secret://tenant/t1/key/FORBIDDEN";
+        let declared = "pal.secret://tenant/t1/key/ALLOWED";
+        let forbidden = "pal.secret://tenant/t1/key/FORBIDDEN";
         let mut secrets = HashMap::new();
         secrets.insert(forbidden.to_string(), "should-not-see".to_string());
 
@@ -3527,12 +3527,12 @@ mod tests {
             "registered-vm",
             "t1",
             "run-1",
-            vec!["lantern.secret://tenant/t1/key/K"],
+            vec!["pal.secret://tenant/t1/key/K"],
             HashMap::new(),
         );
         let req = Request::new(pb::VendSecretRequest {
             vm_id: "UNKNOWN-VM".to_string(),
-            secret_uri: "lantern.secret://tenant/t1/key/K".to_string(),
+            secret_uri: "pal.secret://tenant/t1/key/K".to_string(),
             ttl: None,
         });
         let err = svc.vend_secret(req).await.unwrap_err();
@@ -3551,7 +3551,7 @@ mod tests {
         // (populated at spawn by the manager) has already validated belongs
         // to "real-tenant". This test confirms the manager never accepts
         // caller-asserted tenant_id.
-        let uri = "lantern.secret://tenant/real-tenant/key/K";
+        let uri = "pal.secret://tenant/real-tenant/key/K";
         let mut secrets = HashMap::new();
         secrets.insert(uri.to_string(), "correct-value".to_string());
 
@@ -3571,7 +3571,7 @@ mod tests {
         // URI is declared in the allowlist but the resolver doesn't have it —
         // simulates a misconfigured secret backend. Should return INTERNAL,
         // not leak that the value is absent.
-        let uri = "lantern.secret://tenant/t1/key/MISSING_IN_BACKEND";
+        let uri = "pal.secret://tenant/t1/key/MISSING_IN_BACKEND";
         let svc = harness_service(
             "vm-3",
             "t1",
@@ -3637,7 +3637,7 @@ mod tests {
     /// topology (reaching the socket) is not sufficient; a CA-signed cert is.
     #[tokio::test]
     async fn vend_secret_mtls_rejects_missing_client_cert() {
-        let uri = "lantern.secret://tenant/t-mtls/key/K";
+        let uri = "pal.secret://tenant/t-mtls/key/K";
         let mut secrets = HashMap::new();
         secrets.insert(uri.to_string(), "should-not-be-vended".to_string());
 
@@ -4295,21 +4295,21 @@ mod tests {
         );
     }
 
-    /// Caller env cannot choose harness config: LANTERN_ENV=dev on a prod
+    /// Caller env cannot choose harness config: PAL_ENV=dev on a prod
     /// manager comes out prod; egress/uid knobs are dropped; agent identity,
     /// trace and resume keys pass through.
     #[test]
-    fn caller_lantern_env_keys_are_replaced_by_manager_owned_values() {
+    fn caller_pal_env_keys_are_replaced_by_manager_owned_values() {
         let mut env: HashMap<String, String> = [
-            ("LANTERN_ENV", "dev"),
-            ("LANTERN_EGRESS_FAIL_CLOSED", "0"),
-            ("LANTERN_NO_PROXY", "*"),
-            ("LANTERN_EGRESS_RULES", "[]"),
-            ("LANTERN_WORKLOAD_UID", "0"),
-            ("LANTERN_AGENT_INSTANCE_ID", "inst-1"),
-            ("LANTERN_AGENT_INSTANCE_TOKEN", "tok"),
-            ("LANTERN_TRACE_PARENT", "00-abc-def-01"),
-            ("LANTERN_RESUME", "1"),
+            ("PAL_ENV", "dev"),
+            ("PAL_EGRESS_FAIL_CLOSED", "0"),
+            ("PAL_NO_PROXY", "*"),
+            ("PAL_EGRESS_RULES", "[]"),
+            ("PAL_WORKLOAD_UID", "0"),
+            ("PAL_AGENT_INSTANCE_ID", "inst-1"),
+            ("PAL_AGENT_INSTANCE_TOKEN", "tok"),
+            ("PAL_TRACE_PARENT", "00-abc-def-01"),
+            ("PAL_RESUME", "1"),
             ("FOO", "bar"),
         ]
         .into_iter()
@@ -4322,21 +4322,21 @@ mod tests {
             keys,
             [
                 "FOO",
-                "LANTERN_AGENT_INSTANCE_ID",
-                "LANTERN_AGENT_INSTANCE_TOKEN",
-                "LANTERN_ENV",
-                "LANTERN_RESUME",
-                "LANTERN_TRACE_PARENT"
+                "PAL_AGENT_INSTANCE_ID",
+                "PAL_AGENT_INSTANCE_TOKEN",
+                "PAL_ENV",
+                "PAL_RESUME",
+                "PAL_TRACE_PARENT"
             ]
         );
-        assert_eq!(env["LANTERN_ENV"], "prod");
+        assert_eq!(env["PAL_ENV"], "prod");
 
         // The Firecracker contract carries it as the typed field, not in env.
         let mut req = spawn_to_schedule(&make_spawn_request_with_handle("t", "r", "w")).unwrap();
         req.env = env.clone();
         let c = crate::backends::firecracker::SpawnContract::from_schedule(&req);
-        assert_eq!(c.lantern_env, "prod");
-        assert!(!c.env.contains_key("LANTERN_ENV"));
+        assert_eq!(c.pal_env, "prod");
+        assert!(!c.env.contains_key("PAL_ENV"));
 
         // ADR 0032: every caller PAL_ key is dropped — even the twin of a
         // legitimate caller key, which nothing upstream stamps or replaces.
@@ -4351,7 +4351,7 @@ mod tests {
             ("PAL_AGENT_INSTANCE_TOKEN", "caller-chosen"),
             ("PAL_TRACE_PARENT", "00-abc-def-01"),
             ("PAL_RESUME", "1"),
-            ("LANTERN_RESUME", "1"),
+            ("PAL_RESUME", "1"),
         ]
         .into_iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -4359,17 +4359,17 @@ mod tests {
         own_workload_env(&mut env, None, "t1", "");
         let mut keys: Vec<&str> = env.keys().map(String::as_str).collect();
         keys.sort();
-        assert_eq!(keys, ["LANTERN_RESUME", "LANTERN_TENANT_ID"]);
+        assert_eq!(keys, ["PAL_RESUME", "PAL_TENANT_ID"]);
 
-        // A dev manager (no LANTERN_ENV) never inherits the caller's value.
+        // A dev manager (no PAL_ENV) never inherits the caller's value.
         let mut env: HashMap<String, String> =
-            [("LANTERN_ENV".to_string(), "prod-ish".to_string())].into();
+            [("PAL_ENV".to_string(), "prod-ish".to_string())].into();
         own_workload_env(&mut env, None, "", "");
         assert!(env.is_empty());
     }
 
     /// End to end through Spawn → schedule: the backend never sees a caller
-    /// LANTERN_* config key.
+    /// PAL_* config key.
     #[tokio::test]
     async fn schedule_strips_caller_harness_config_before_the_backend() {
         use pb::runtime_manager_server::RuntimeManager as _;
@@ -4382,22 +4382,22 @@ mod tests {
         let mut req =
             make_spawn_request_with_handle("t", "r", "vm-0f1e2d3c-4b5a-4968-8776-6554433221aa");
         let spec = req.spec.as_mut().unwrap();
-        spec.env.insert("LANTERN_ENV".into(), "dev".into());
+        spec.env.insert("PAL_ENV".into(), "dev".into());
         spec.env
-            .insert("LANTERN_EGRESS_FAIL_CLOSED".into(), "0".into());
+            .insert("PAL_EGRESS_FAIL_CLOSED".into(), "0".into());
         spec.env
-            .insert("LANTERN_AGENT_INSTANCE_ID".into(), "inst".into());
+            .insert("PAL_AGENT_INSTANCE_ID".into(), "inst".into());
         svc.spawn(Request::new(req)).await.expect("spawn");
         let seen = stub.scheduled.lock().unwrap()[0].env.clone();
-        assert!(!seen.contains_key("LANTERN_EGRESS_FAIL_CLOSED"));
-        assert_ne!(seen.get("LANTERN_ENV").map(String::as_str), Some("dev"));
-        assert_eq!(seen["LANTERN_AGENT_INSTANCE_ID"], "inst");
+        assert!(!seen.contains_key("PAL_EGRESS_FAIL_CLOSED"));
+        assert_ne!(seen.get("PAL_ENV").map(String::as_str), Some("dev"));
+        assert_eq!(seen["PAL_AGENT_INSTANCE_ID"], "inst");
     }
 
     /// Regression: the sanitizer must not strip the identity the MANAGER
-    /// injects. A forged caller LANTERN_TENANT_ID ends as the authenticated
+    /// injects. A forged caller PAL_TENANT_ID ends as the authenticated
     /// tenant (not stripped, not the forged value) and the authenticated
-    /// LANTERN_AGENT_VERSION_ID survives to the backend.
+    /// PAL_AGENT_VERSION_ID survives to the backend.
     #[tokio::test]
     async fn spawn_keeps_authenticated_identity_through_the_sanitizer() {
         use pb::runtime_manager_server::RuntimeManager as _;
@@ -4414,13 +4414,13 @@ mod tests {
         );
         let spec = req.spec.as_mut().unwrap();
         spec.agent_version_id = "av-real".into();
-        spec.env.insert("LANTERN_TENANT_ID".into(), "evil".into());
+        spec.env.insert("PAL_TENANT_ID".into(), "evil".into());
         spec.env
-            .insert("LANTERN_AGENT_VERSION_ID".into(), "av-forged".into());
+            .insert("PAL_AGENT_VERSION_ID".into(), "av-forged".into());
         svc.spawn(Request::new(req)).await.expect("spawn");
         let seen = stub.scheduled.lock().unwrap()[0].env.clone();
-        assert_eq!(seen["LANTERN_TENANT_ID"], "t-auth");
-        assert_eq!(seen["LANTERN_AGENT_VERSION_ID"], "av-real");
+        assert_eq!(seen["PAL_TENANT_ID"], "t-auth");
+        assert_eq!(seen["PAL_AGENT_VERSION_ID"], "av-real");
     }
 
     /// A duplicate vm_id from a DIFFERENT tenant (or run) must not get the
@@ -4463,7 +4463,7 @@ mod tests {
     //
     // These tests verify the three properties of the fix:
     //   (A) empty spec.tenant_id is rejected fail-closed, regardless of env.
-    //   (B) caller env["LANTERN_TENANT_ID"] cannot shadow spec.tenant_id.
+    //   (B) caller env["PAL_TENANT_ID"] cannot shadow spec.tenant_id.
     //   (C) the workload env re-receives the authenticated value, not attacker.
     // -----------------------------------------------------------------------
 
@@ -4495,12 +4495,12 @@ mod tests {
     }
 
     /// (A) Empty spec.tenant_id is rejected with INVALID_ARGUMENT regardless
-    /// of what the caller put in env["LANTERN_TENANT_ID"]. An untenanted
+    /// of what the caller put in env["PAL_TENANT_ID"]. An untenanted
     /// workload must never be scheduled.
     #[test]
     fn spawn_to_schedule_rejects_empty_tenant_id() {
         let mut env = HashMap::new();
-        env.insert("LANTERN_TENANT_ID".to_string(), "victim-tenant".to_string());
+        env.insert("PAL_TENANT_ID".to_string(), "victim-tenant".to_string());
 
         let req = make_spawn_request("", env);
         let err = spawn_to_schedule(&req).expect_err("empty tenant_id must be rejected");
@@ -4516,13 +4516,13 @@ mod tests {
         );
     }
 
-    /// (B) Caller env["LANTERN_TENANT_ID"] = "attacker" with spec.tenant_id =
+    /// (B) Caller env["PAL_TENANT_ID"] = "attacker" with spec.tenant_id =
     /// "legit" → the resulting ScheduleRequest must carry tenant_id = "legit"
     /// (the authenticated value wins).
     #[test]
     fn spawn_to_schedule_caller_env_cannot_shadow_spec_tenant_id() {
         let mut env = HashMap::new();
-        env.insert("LANTERN_TENANT_ID".to_string(), "attacker".to_string());
+        env.insert("PAL_TENANT_ID".to_string(), "attacker".to_string());
 
         let req = make_spawn_request("legit", env);
         let sched = spawn_to_schedule(&req).expect("valid tenant_id should succeed");
@@ -4533,12 +4533,12 @@ mod tests {
         );
     }
 
-    /// (C) The workload env has LANTERN_TENANT_ID = authenticated value, NOT
+    /// (C) The workload env has PAL_TENANT_ID = authenticated value, NOT
     /// the attacker-supplied value (strip-then-reinject semantics).
     #[test]
     fn spawn_to_schedule_workload_env_receives_authenticated_tenant_id() {
         let mut env = HashMap::new();
-        env.insert("LANTERN_TENANT_ID".to_string(), "attacker".to_string());
+        env.insert("PAL_TENANT_ID".to_string(), "attacker".to_string());
         // Extra env var that must pass through untouched.
         env.insert("MY_VAR".to_string(), "hello".to_string());
 
@@ -4553,10 +4553,10 @@ mod tests {
         );
 
         assert_eq!(
-            sched.env.get("LANTERN_TENANT_ID").map(String::as_str),
+            sched.env.get("PAL_TENANT_ID").map(String::as_str),
             Some("legit"),
             "workload env must see the authenticated tenant_id, got: {:?}",
-            sched.env.get("LANTERN_TENANT_ID")
+            sched.env.get("PAL_TENANT_ID")
         );
         // The attacker's value must not appear anywhere in the env.
         let has_attacker_value = sched.env.values().any(|v| v == "attacker");
@@ -5515,11 +5515,11 @@ mod tests {
     }
 
     /// spawn_to_schedule carries agent_version_id + restore id, and a caller
-    /// cannot set LANTERN_AGENT_VERSION_ID through env.
+    /// cannot set PAL_AGENT_VERSION_ID through env.
     #[test]
     fn spawn_to_schedule_carries_version_and_restore_id() {
         let mut env = HashMap::new();
-        env.insert("LANTERN_AGENT_VERSION_ID".to_string(), "forged".to_string());
+        env.insert("PAL_AGENT_VERSION_ID".to_string(), "forged".to_string());
         let mut req = make_spawn_request("t", env);
         if let Some(spec) = req.spec.as_mut() {
             spec.agent_version_id = "av-real".to_string();
@@ -5529,18 +5529,18 @@ mod tests {
         assert_eq!(internal.agent_version_id, "av-real");
         assert_eq!(internal.restore_snapshot_id, "snap-1");
         own_workload_env(&mut internal.env, None, "t", &internal.agent_version_id);
-        assert_eq!(internal.env["LANTERN_AGENT_VERSION_ID"], "av-real");
+        assert_eq!(internal.env["PAL_AGENT_VERSION_ID"], "av-real");
 
         let mut req = make_spawn_request(
             "t",
-            HashMap::from([("LANTERN_AGENT_VERSION_ID".to_string(), "forged".to_string())]),
+            HashMap::from([("PAL_AGENT_VERSION_ID".to_string(), "forged".to_string())]),
         );
         if let Some(spec) = req.spec.as_mut() {
             spec.agent_version_id = String::new();
         }
         let mut internal = spawn_to_schedule(&req).unwrap();
         own_workload_env(&mut internal.env, None, "t", &internal.agent_version_id);
-        assert!(!internal.env.contains_key("LANTERN_AGENT_VERSION_ID"));
+        assert!(!internal.env.contains_key("PAL_AGENT_VERSION_ID"));
     }
 
     // -----------------------------------------------------------------------
@@ -5726,7 +5726,7 @@ mod tests {
             name: "firecracker",
             accepts_hostile: true,
             cc_capable: false,
-            vsock: Some("/run/lantern/vsock/vm-b.sock".into()),
+            vsock: Some("/run/pal/vsock/vm-b.sock".into()),
         });
         let svc = RuntimeManagerGrpc::new(backend, crate::pool::PoolConfig::default(), resolver);
         svc.registry.register(HandleInfo {
@@ -5751,7 +5751,7 @@ mod tests {
                 assert_eq!(
                     endpoint,
                     HarnessTarget::Vsock {
-                        uds: "/run/lantern/vsock/vm-b.sock".into(),
+                        uds: "/run/pal/vsock/vm-b.sock".into(),
                         port: harness_exec_port() as u32
                     }
                 );
@@ -6219,28 +6219,28 @@ mod tests {
     fn snapshot_artifacts_follow_the_backend_reported_host_path() {
         // Jailed: the files exist only under the chroot.
         let (v, m) = snapshot_artifact_paths(
-            "fc:///srv/jailer/firecracker/vm-1/root/run/lantern/snapshots/vm-1/snapshot",
+            "fc:///srv/jailer/firecracker/vm-1/root/run/pal/snapshots/vm-1/snapshot",
             "vm-1",
         );
         assert_eq!(
             v,
             std::path::Path::new(
-                "/srv/jailer/firecracker/vm-1/root/run/lantern/snapshots/vm-1/snapshot"
+                "/srv/jailer/firecracker/vm-1/root/run/pal/snapshots/vm-1/snapshot"
             )
         );
         assert_eq!(
             m,
             std::path::Path::new(
-                "/srv/jailer/firecracker/vm-1/root/run/lantern/snapshots/vm-1/mem"
+                "/srv/jailer/firecracker/vm-1/root/run/pal/snapshots/vm-1/mem"
             )
         );
         // Anything else: the conventional bare layout.
         let (v, m) = snapshot_artifact_paths("stub://", "h-2");
         assert_eq!(
             v,
-            std::path::Path::new("/run/lantern/snapshots/h-2/snapshot")
+            std::path::Path::new("/run/pal/snapshots/h-2/snapshot")
         );
-        assert_eq!(m, std::path::Path::new("/run/lantern/snapshots/h-2/mem"));
+        assert_eq!(m, std::path::Path::new("/run/pal/snapshots/h-2/mem"));
     }
 
     // --- activity cache eviction on stop (Fix 3: no dead-entry leak) ----------

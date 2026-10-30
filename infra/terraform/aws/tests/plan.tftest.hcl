@@ -61,7 +61,7 @@ run "new_cluster" {
     error_message = "IRSA trust must federate the OIDC provider ARN, not the issuer URL"
   }
   assert {
-    condition     = jsondecode(aws_iam_role.data_plane.assume_role_policy).Statement[0].Condition.StringEquals["oidc.eks.us-east-1.amazonaws.com/id/EXAMPLE:sub"] == "system:serviceaccount:lantern:pal-data-plane"
+    condition     = jsondecode(aws_iam_role.data_plane.assume_role_policy).Statement[0].Condition.StringEquals["oidc.eks.us-east-1.amazonaws.com/id/EXAMPLE:sub"] == "system:serviceaccount:pal:pal-data-plane"
     error_message = "IRSA subject must be the chart's service account"
   }
   assert {
@@ -94,7 +94,7 @@ run "image_tag_prefers_pal_version" {
   command = plan
   variables {
     pal_version     = "1.2.3"
-    lantern_version = "0.9.0"
+    pal_version = "0.9.0"
   }
   assert {
     condition     = contains([for s in helm_release.pal_data_plane.set : s.value if s.name == "global.image.tag"], "1.2.3")
@@ -102,13 +102,13 @@ run "image_tag_prefers_pal_version" {
   }
 }
 
-run "image_tag_falls_back_to_lantern_version" {
+run "image_tag_falls_back_to_pal_version" {
   command = plan
   variables {
-    lantern_version = "0.9.0"
+    pal_version = "0.9.0"
   }
   assert {
     condition     = contains([for s in helm_release.pal_data_plane.set : s.value if s.name == "global.image.tag"], "0.9.0")
-    error_message = "deprecated lantern_version must still set the image tag"
+    error_message = "deprecated pal_version must still set the image tag"
   }
 }

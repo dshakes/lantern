@@ -197,7 +197,7 @@ export class OwnerProfileStore {
       // Re-applied on every reload, so editing "## My world" takes effect.
       if (!OWNER_TZ_ENV_EXPLICIT && this.cache.timezone &&
           process.env.PAL_OWNER_TIMEZONE !== this.cache.timezone) {
-        process.env.LANTERN_OWNER_TIMEZONE = this.cache.timezone;
+        process.env.PAL_OWNER_TIMEZONE = this.cache.timezone;
         // Both names (ADR 0032): env-compat mirrored PAL_OWNER_TIMEZONE at boot.
         process.env.PAL_OWNER_TIMEZONE = this.cache.timezone;
         this.logger.info(

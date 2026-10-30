@@ -1,7 +1,7 @@
 # CLI Agent Loop
 
 **What:** three CLI commands that take you from a cold start to a working agent loop.
-**Why:** no dashboard clicking, no hand-written curl. **Try it:** `lantern dev && lantern onboard --yes`.
+**Why:** no dashboard clicking, no hand-written curl. **Try it:** `pal dev && pal onboard --yes`.
 
 ---
 
@@ -10,14 +10,14 @@
 The control-plane must be reachable on `:8080`. Start it with:
 
 ```bash
-lantern dev          # full stack (infra + API + dashboard + bridges)
+pal dev          # full stack (infra + API + dashboard + bridges)
 # or
 make run-api         # API only, infra already running
 ```
 
 ---
 
-## `lantern onboard`
+## `pal onboard`
 
 Zero-to-first-run in one command. Runs five deterministic steps — each real,
 each idempotent, each loud on failure.
@@ -33,9 +33,9 @@ each idempotent, each loud on failure.
 ### Usage
 
 ```bash
-lantern onboard                         # interactive
-lantern onboard --yes                   # non-interactive, all defaults
-lantern onboard --provider openai --api-key sk-...   # configure provider too (here --api-key is the PROVIDER key)
+pal onboard                         # interactive
+pal onboard --yes                   # non-interactive, all defaults
+pal onboard --provider openai --api-key sk-...   # configure provider too (here --api-key is the PROVIDER key)
 ```
 
 ### What step 4 does
@@ -53,12 +53,12 @@ is unreachable it falls back to 1-second polling automatically.
 
 ---
 
-## `lantern doctor`
+## `pal doctor`
 
 Full-stack diagnosis. Runs every check and exits 1 if any critical check fails.
 
 ```bash
-lantern doctor
+pal doctor
 ```
 
 Output is grouped into three sections:
@@ -66,7 +66,7 @@ Output is grouped into three sections:
 ```
 Core
   ✓  HTTP health (:8080/healthz)  ok  llmMode=api
-  ✓  authentication               stored credentials valid (admin@lantern.dev)
+  ✓  authentication               stored credentials valid (admin@pal.dev)
   ✓  LLM provider configured      openai
   ✓  end-to-end run               run abc123 succeeded
 
@@ -90,16 +90,16 @@ ports are optional for the core API path). `✗` = hard failure.
 
 ---
 
-## `lantern agent dev <name>`
+## `pal agent dev <name>`
 
 The build-harness inner loop. Watch a local directory, re-publish on change,
 stream events, repeat.
 
 ```bash
-lantern agent dev my-agent
-lantern agent dev my-agent --dir ./agents/my-agent
-lantern agent dev my-agent --input '{"prompt":"What can you help with?"}'
-lantern agent dev my-agent --eval          # also run eval suite after each publish
+pal agent dev my-agent
+pal agent dev my-agent --dir ./agents/my-agent
+pal agent dev my-agent --input '{"prompt":"What can you help with?"}'
+pal agent dev my-agent --eval          # also run eval suite after each publish
 ```
 
 ### How it works
@@ -155,6 +155,6 @@ Pass `--yes` to skip the confirmation prompt (useful in CI).
 | Variable | Default | Purpose |
 |---|---|---|
 | `PAL_API_URL` | `localhost:50051` | gRPC address (REST is derived as `:8080`) |
-| `PAL_API_KEY` | — | API key (falls back to `~/.lantern/credentials.json`) |
+| `PAL_API_KEY` | — | API key (falls back to `~/.pal/credentials.json`) |
 
-`--api-url` / `--api-key` are global flags (env: `PAL_API_URL`, `PAL_API_KEY`; the `lantern run` / `lantern vm` commands also honor `PAL_API_TOKEN`). Exception: on `onboard`, `--api-key` is the LLM provider key, not your PAL key.
+`--api-url` / `--api-key` are global flags (env: `PAL_API_URL`, `PAL_API_KEY`; the `pal run` / `pal vm` commands also honor `PAL_API_TOKEN`). Exception: on `onboard`, `--api-key` is the LLM provider key, not your PAL key.

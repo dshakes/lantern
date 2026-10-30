@@ -21,9 +21,9 @@ claim was actually checked.
 | Area | Status | How validated |
 |---|---|---|
 | Control-plane Go suite (agents, runs, sessions, budgets, RLS, crash-replay, scheduler, secrets, workflow) | ✅ | `go test ./...` green across all control-plane packages |
-| RLS policies on all 34 tenant tables (ADR 0011) | ✅ | `TestRLSEnforcement_AllTenantTables` catalog gate + `TestRLSEnforcement_Sessions` cross-tenant denial proof under `lantern_app` role |
+| RLS policies on all 34 tenant tables (ADR 0011) | ✅ | `TestRLSEnforcement_AllTenantTables` catalog gate + `TestRLSEnforcement_Sessions` cross-tenant denial proof under `pal_app` role |
 | RLS handler cutover (`WithTenant`/`TenantPool()`) | ✅ | 0 non-exempt tenant-scoped `srv.Pool` sites remain in `internal/handlers`; every remaining site carries an `rls-exempt:` reason. `RLS*` tests + `go test -race -run RLS` green; workflow-engine tenant work also scoped (`TestRLSCatalog_NoUnscopedTenantQueries`) |
-| RLS enforcement flip (`PAL_RLS_ENFORCE=1`) | 🟡 staged | Safe to flip per-env (set `PAL_APP_DB_PASSWORD`, `ALTER ROLE lantern_app`); not yet flipped in any environment. Check `lantern_app` GRANTs for the engine tables first. |
+| RLS enforcement flip (`PAL_RLS_ENFORCE=1`) | 🟡 staged | Safe to flip per-env (set `PAL_APP_DB_PASSWORD`, `ALTER ROLE pal_app`); not yet flipped in any environment. Check `pal_app` GRANTs for the engine tables first. |
 | Prod guards (Helm `PAL_ENV=production` default, `JWT_SECRET` wired, `values-prod.yaml`; Twilio-auth-off / claude-code fatal; Slack unsigned refused; API-key scope subset) | ✅ | Go guard tests; `helm template` renders with real subcharts for values / staging / prod |
 | Tenant-wide spend cap + workflow/`web_search` metering | ✅ | handler tests for `/v1/budgets/tenant`, `RecordUsageSpend` (no `runs_count` bump), per-request LLM idempotency keys |
 | gRPC service-token auth (control-plane `:50051`, workflow-engine `:50052`, scheduler `:50055`, model-router `:50053`, runtime-manager `:50054`) | ✅ | Go `grpcauth` tests + Rust interceptor tests; fail-closed in prod |
@@ -52,7 +52,7 @@ claim was actually checked.
 |---|---|---|
 | Unit / package tests | ✅ | `make test`, CI `qa` (`.github/workflows/sdlc-qa.yml`) |
 | Fixture e2e: webhook examples (`e2e/examples`, real control-plane + surface-gateway, fixture LLM + connectors) | 🟡 CI job `examples` added; local run green (15 tests, 0 skips) | `scripts/e2e-examples.sh`; `.github/workflows/sdlc-e2e.yml` |
-| Fixture e2e: `lantern deploy` CLI (`e2e/deploy`) | 🟡 CI job `deploy-cli` added; local run green | `.github/workflows/sdlc-e2e.yml` |
+| Fixture e2e: `pal deploy` CLI (`e2e/deploy`) | 🟡 CI job `deploy-cli` added; local run green | `.github/workflows/sdlc-e2e.yml` |
 | Browser: Playwright (`apps/web/e2e`, 8 specs, fixture LLM) | 🟡 CI job `browser` added; local run green (8 passed) | `.github/workflows/sdlc-e2e.yml` |
 | Real-LLM e2e (`e2e/quickstart`, `e2e/runtime`) | 🔴 local only | `make test-e2e-llm`; needs a provider key and spends money (capped, see `e2e/README.md`). Not in CI by owner decision |
 | KVM full-stack (Firecracker boot) | 🔴 not running | `microvm-integration.yml` needs a provisioned KVM runner |
@@ -90,10 +90,10 @@ The three new CI jobs are 🟡 until they have been observed green on GitHub; th
 
 | Area | Status | How validated |
 |---|---|---|
-| Docs site builds + deploys (GitHub Pages) | ✅ | static export 24/24, live at `dshakes.github.io/lantern/docs/` (landing at `/lantern/`) |
-| Internal links carry basePath | ✅ | built with `PAGES_BASE_PATH=/lantern`, generated HTML emits `/lantern/...`; verified on the live site |
+| Docs site builds + deploys (GitHub Pages) | ✅ | static export 24/24, live at `dshakes.github.io/pal/docs/` (landing at `/pal/`) |
+| Internal links carry basePath | ✅ | built with `PAGES_BASE_PATH=/pal`, generated HTML emits `/pal/...`; verified on the live site |
 | Landing build | ✅ | `next build` green, 7/7 static |
-| Deployed docs serve correctly (routing + content) | ✅ | `make validate-docs-live` — all 21 live routes return 200 with real content (>800B), installation page renders `lantern dev`/ports/credentials |
+| Deployed docs serve correctly (routing + content) | ✅ | `make validate-docs-live` — all 21 live routes return 200 with real content (>800B), installation page renders `pal dev`/ports/credentials |
 | **Pixel-level visual/aesthetic QA** | 🔴 | builds + content are proven, but **no browser on this host** — needs a 2-min `npm run dev` eyeball for layout/styling before public launch |
 
 ## CI gate health
@@ -113,13 +113,13 @@ The three new CI jobs are 🟡 until they have been observed green on GitHub; th
 2. ~~Codex audit lane hard-fails on billing.~~ ✅ **Closed** — the lane degrades gracefully now; a quota top-up restores the actual second opinion.
 3. ~~No concurrency/load testing on the run path.~~ ✅ **Basic load closed** — `make loadtest-runs` fired 120 concurrent run-creates (≈471 req/s) with **zero 5xx/connection errors**. A multi-node *soak/chaos* run still needs a real cluster (🔴).
 4. ~~Deployed docs unverified.~~ ✅ **Content closed** — `make validate-docs-live` proves all 21 routes serve 200 + real content. Pixel-level layout still needs a browser (🔴).
-5. **RLS enforcement flip** — handler cutover is complete and `PAL_RLS_ENFORCE=1` is safe to flip, but it is not yet enabled in any environment. Needs a per-env rollout with the `lantern_app` role password and GRANT check.
+5. **RLS enforcement flip** — handler cutover is complete and `PAL_RLS_ENFORCE=1` is safe to flip, but it is not yet enabled in any environment. Needs a per-env rollout with the `pal_app` role password and GRANT check.
 6. **Firecracker / KVM end-to-end** — 🔴 spawn contract, privilege drop, and pause/resume/fork are unit-tested but no microVM has been booted on a Linux/KVM host with this code, including guest network re-identify after restore.
 7. **Python SDK `AgentContext`** — management surface parity is done (97 tests); the runtime context (`step()`, `ctx.llm`) still raises `NotImplementedError`. Not on PyPI.
 8. **Real-cluster `helm install`** — 🔴 charts render for values / staging / prod, but have not been installed on a live cluster.
 9. **Pixel QA** — 🔴 Playwright now covers behaviour in a real browser (`apps/web/e2e`) but not visual layout; needs a browser eyeball (also covers the dashboard VM Pause/Resume/Fork UI).
 10. **Bridges runtime** — 🔴 needs the owner's live paired channels and validation in real logs.
-11. **SDK registry publishing** — Python (`lantern-sdk`) and TypeScript SDKs are not published to PyPI/npm and `release.yml` has no publish step.
+11. **SDK registry publishing** — Python (`pal-sdk`) and TypeScript SDKs are not published to PyPI/npm and `release.yml` has no publish step.
 12. **Real-account SaaS tiers** — connectors/providers are exercised against recorded fixtures in CI; live-account runs are manual (per-example READMEs). The real-LLM e2e tier is local-only.
 13. **Exhaustive per-feature coverage** — the breadth (17 connectors, voice, MCP marketplace, A2A, receipts, workflows) is largely test-backed but not individually re-exercised this cycle.
 

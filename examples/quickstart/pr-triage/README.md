@@ -29,7 +29,7 @@ First get a token (documented dev credentials):
 ```bash
 export TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"email":"admin@lantern.dev","password":"lantern"}' | jq -r .token)
+  -d '{"email":"admin@pal.dev","password":"pal"}' | jq -r .token)
 ```
 
 ### 1. Create the agent
@@ -61,7 +61,7 @@ curl -s -X POST http://localhost:8080/v1/runs \
 Then poll `GET /v1/runs/<run-id>` until `status` is `succeeded`; the structured
 review is in `output.result`.
 
-### lantern CLI equivalent
+### pal CLI equivalent
 
 The CLI creates the run over gRPC (it does not set `systemPrompt`, so create
 the agent with the curl above first):

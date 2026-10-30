@@ -26,7 +26,7 @@
 //! 3. **harness binary** — SHA-256 of file bytes at `FC_HARNESS_PATH`
 //!    (32 zero bytes when unset — harness baked into the rootfs)
 //! 4. **boot arguments** — SHA-256 of the kernel cmdline minus per-VM tokens,
-//!    secret refs and the legacy `lantern.env.*` copy ([`canonical_boot_args`])
+//!    secret refs and the legacy `pal.env.*` copy ([`canonical_boot_args`])
 //! 5. **spawn contract** — SHA-256 of `spawn.json` canonical JSON minus
 //!    secrets and per-VM identity ([`contract_bytes_sans_secrets`])
 //!
@@ -36,8 +36,8 @@
 //!
 //! # Gate
 //!
-//! `LANTERN_MEASUREMENT_GATE` = `off` | `warn` (default) | `enforce`, against
-//! `LANTERN_REFERENCE_MEASUREMENTS` (comma-separated 64-hex). Unknown gate
+//! `PAL_MEASUREMENT_GATE` = `off` | `warn` (default) | `enforce`, against
+//! `PAL_REFERENCE_MEASUREMENTS` (comma-separated 64-hex). Unknown gate
 //! values and malformed references refuse startup; so does `enforce` with no
 //! references in prod.
 
@@ -45,7 +45,7 @@ use sha2::{Digest, Sha256};
 
 use crate::backends::firecracker::SpawnContract;
 
-/// OID arc for the Lantern software-measurement X.509 extension.
+/// OID arc for the PAL software-measurement X.509 extension.
 ///
 /// `1.3.6.1.4.1.99999.3` — private arc under a placeholder PEN.
 /// PLACEHOLDER: 99999 is not ours. A registered IANA Private Enterprise
@@ -61,7 +61,7 @@ pub const MEASUREMENT_CERT_OID: &[u64] = &[1, 3, 6, 1, 4, 1, 99999, 3];
 // ---------------------------------------------------------------------------
 
 /// Behaviour when a computed measurement does not match any configured
-/// reference value. Controlled by `LANTERN_MEASUREMENT_GATE`.
+/// reference value. Controlled by `PAL_MEASUREMENT_GATE`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MeasurementGate {
     /// Compute and record the measurement; never compare (no gate).
@@ -73,7 +73,7 @@ pub enum MeasurementGate {
 }
 
 impl MeasurementGate {
-    /// Parse a `LANTERN_MEASUREMENT_GATE` value. Unset/blank = `Warn`; an
+    /// Parse a `PAL_MEASUREMENT_GATE` value. Unset/blank = `Warn`; an
     /// unrecognised value is an error (the manager refuses to start) — a typo
     /// of `enforce` must never silently downgrade to `warn`.
     pub fn parse(raw: Option<&str>) -> Result<Self, String> {
@@ -87,18 +87,18 @@ impl MeasurementGate {
             "" | "warn" => Ok(MeasurementGate::Warn),
             "off" | "0" | "false" | "disabled" => Ok(MeasurementGate::Off),
             other => Err(format!(
-                "invalid LANTERN_MEASUREMENT_GATE {other:?} (expected off, warn or enforce)"
+                "invalid PAL_MEASUREMENT_GATE {other:?} (expected off, warn or enforce)"
             )),
         }
     }
 
-    /// Read the gate mode from `LANTERN_MEASUREMENT_GATE`.
+    /// Read the gate mode from `PAL_MEASUREMENT_GATE`.
     pub fn from_env() -> Result<Self, String> {
         Self::parse(std::env::var("PAL_MEASUREMENT_GATE").ok().as_deref())
     }
 }
 
-/// Load the reference measurement set from `LANTERN_REFERENCE_MEASUREMENTS`
+/// Load the reference measurement set from `PAL_REFERENCE_MEASUREMENTS`
 /// (comma-separated hex strings, trimmed + lowercased). Every entry must be a
 /// 64-char hex SHA-256 — a malformed one is an error, not a silently
 /// unmatchable reference.
@@ -116,7 +116,7 @@ fn parse_references(raw: &str) -> Result<Vec<String>, String> {
                 Ok(s)
             } else {
                 Err(format!(
-                    "invalid LANTERN_REFERENCE_MEASUREMENTS entry (want 64 hex chars, got {} chars)",
+                    "invalid PAL_REFERENCE_MEASUREMENTS entry (want 64 hex chars, got {} chars)",
                     s.len()
                 ))
             }
@@ -124,7 +124,7 @@ fn parse_references(raw: &str) -> Result<Vec<String>, String> {
         .collect()
 }
 
-/// Startup guard: in prod (`LANTERN_ENV` prod/production/staging) an
+/// Startup guard: in prod (`PAL_ENV` prod/production/staging) an
 /// `enforce` gate with NO references would pass every VM — protection in
 /// name only. Refuse to start rather than run that way.
 pub fn check_startup(
@@ -133,8 +133,8 @@ pub fn check_startup(
     prod: bool,
 ) -> Result<(), String> {
     if prod && gate == MeasurementGate::Enforce && references.is_empty() {
-        return Err("LANTERN_MEASUREMENT_GATE=enforce in production with no \
-             LANTERN_REFERENCE_MEASUREMENTS: the gate would admit every VM; \
+        return Err("PAL_MEASUREMENT_GATE=enforce in production with no \
+             PAL_REFERENCE_MEASUREMENTS: the gate would admit every VM; \
              configure references (or use gate=warn)"
             .to_string());
     }
@@ -235,24 +235,24 @@ pub fn check(
     match gate {
         MeasurementGate::Warn => {
             tracing::warn!(
-                target: "lantern_audit",
+                target: "pal_audit",
                 vm_id,
                 "SECURITY: software measurement does not match any reference value \
-                 (gate=warn — proceeding; set LANTERN_MEASUREMENT_GATE=enforce to block)"
+                 (gate=warn — proceeding; set PAL_MEASUREMENT_GATE=enforce to block)"
             );
             Ok(())
         }
         MeasurementGate::Enforce => {
             tracing::error!(
-                target: "lantern_audit",
+                target: "pal_audit",
                 vm_id,
                 "SECURITY: refusing to start VM — software measurement does not match \
                  any reference value (gate=enforce)"
             );
             Err(anyhow::anyhow!(
                 "SECURITY: software measurement does not match any \
-                 configured reference value; set LANTERN_MEASUREMENT_GATE=warn \
-                 to allow with a warning, or update LANTERN_REFERENCE_MEASUREMENTS"
+                 configured reference value; set PAL_MEASUREMENT_GATE=warn \
+                 to allow with a warning, or update PAL_REFERENCE_MEASUREMENTS"
             ))
         }
         MeasurementGate::Off => Ok(()),
@@ -280,7 +280,7 @@ pub fn check_inherited(
     let Some(m) = inherited.filter(|m| !m.is_empty()) else {
         if gate == MeasurementGate::Enforce && !references.is_empty() {
             tracing::error!(
-                target: "lantern_audit",
+                target: "pal_audit",
                 vm_id,
                 "SECURITY: refusing to restore VM — snapshot carries no software \
                  measurement (gate=enforce)"
@@ -294,7 +294,7 @@ pub fn check_inherited(
     };
     check(m, references, gate, vm_id)?;
     tracing::info!(
-        target: "lantern_audit",
+        target: "pal_audit",
         vm_id,
         "software measurement inherited from snapshot source (restore/fork)"
     );
@@ -358,20 +358,20 @@ fn hash_bytes(data: &[u8]) -> [u8; 32] {
 /// Kernel cmdline reduced to its stable boot configuration. Removed:
 /// per-incarnation tokens (VM/run identity, per-VM cert paths, `ip=`),
 /// declared-secret refs (minus-secrets), the host-path-dependent manager CA
-/// path, and EVERY `lantern.env.*` token. Those are now only manager-owned
+/// path, and EVERY `pal.env.*` token. Those are now only manager-owned
 /// keys the harness needs before `spawn.json` (contract keys win over cmdline
 /// keys); the authoritative env is measured, sanitized, in the contract.
 fn canonical_boot_args(args: &str) -> String {
     const PER_VM: &[&str] = &[
         "ip=",
-        "lantern.vm_id=",
-        "lantern.run_id=",
-        "lantern.tls_cert=",
-        "lantern.tls_key=",
+        "pal.vm_id=",
+        "pal.run_id=",
+        "pal.tls_cert=",
+        "pal.tls_key=",
         // Host-path dependent (VM cert dir), not part of what was booted.
-        "lantern.manager_ca=",
-        "lantern.env.",
-        "lantern.secret.",
+        "pal.manager_ca=",
+        "pal.env.",
+        "pal.secret.",
     ];
     args.split_whitespace()
         .filter(|t| !PER_VM.iter().any(|p| t.starts_with(p)))
@@ -445,7 +445,7 @@ fn contract_bytes_sans_secrets(contract: &SpawnContract) -> anyhow::Result<Vec<u
     // Caller-set per-incarnation keys (agent instance id + its bearer token,
     // trace parent, crash-resume marker) differ for every VM — dropped.
     s.env
-        .retain(|k, _| !crate::service::CALLER_LANTERN_KEYS.contains(&k.as_str()));
+        .retain(|k, _| !crate::service::CALLER_PAL_KEYS.contains(&k.as_str()));
     for (k, v) in &mut s.env {
         if is_secret_env_name(k) {
             v.clear();
@@ -482,7 +482,7 @@ mod tests {
             declared_secrets: vec![],
             network: None,
             exec_token: String::new(),
-            lantern_env: String::new(),
+            pal_env: String::new(),
             egress_mode: String::new(),
             egress_ca_pem: String::new(),
             vsock_egress_port: 0,
@@ -629,7 +629,7 @@ mod tests {
         let mut contract = empty_contract();
         contract.declared_secrets = vec![ContractSecret {
             env_name: "MY_SECRET".into(),
-            secret_uri: "lantern.secret/vault/my-key".into(),
+            secret_uri: "pal.secret/vault/my-key".into(),
         }];
         contract.exec_token = "super-secret-token".into();
 
@@ -645,7 +645,7 @@ mod tests {
         );
 
         // Changing the secret must NOT change the hash (since it's stripped).
-        contract.declared_secrets[0].secret_uri = "lantern.secret/vault/other-key".into();
+        contract.declared_secrets[0].secret_uri = "pal.secret/vault/other-key".into();
         let bytes_different_secret = contract_bytes_sans_secrets(&contract).unwrap();
         // The non-secret fields are the same, so the JSON must be the same
         // (declared_secrets is cleared in both).
@@ -673,14 +673,14 @@ mod tests {
             contract_bytes_sans_secrets(&c1).unwrap(),
             contract_bytes_sans_secrets(&c2).unwrap()
         );
-        let a = "console=ttyS0 ip=172.16.0.2::172.16.0.1 lantern.vm_id=vm-a \
-                 lantern.run_id=r1 lantern.tls_cert=/c/vm-a/tls.crt lantern.tls_key=/c/vm-a/tls.key \
-                 lantern.manager_ca=/c/manager-ca.crt lantern.env.LANTERN_MANAGER_ADDR=172.16.0.1:50054 \
-                 lantern.secret.K=lantern.secret/x lantern.env.FOO=1";
-        let b = "console=ttyS0 ip=172.16.0.6::172.16.0.5 lantern.vm_id=vm-b \
-                 lantern.run_id=r2 lantern.tls_cert=/c/vm-b/tls.crt lantern.tls_key=/c/vm-b/tls.key \
-                 lantern.manager_ca=/c/manager-ca.crt lantern.env.LANTERN_MANAGER_ADDR=172.16.0.5:50054 \
-                 lantern.secret.K=lantern.secret/y lantern.env.FOO=1";
+        let a = "console=ttyS0 ip=172.16.0.2::172.16.0.1 pal.vm_id=vm-a \
+                 pal.run_id=r1 pal.tls_cert=/c/vm-a/tls.crt pal.tls_key=/c/vm-a/tls.key \
+                 pal.manager_ca=/c/manager-ca.crt pal.env.PAL_MANAGER_ADDR=172.16.0.1:50054 \
+                 pal.secret.K=pal.secret/x pal.env.FOO=1";
+        let b = "console=ttyS0 ip=172.16.0.6::172.16.0.5 pal.vm_id=vm-b \
+                 pal.run_id=r2 pal.tls_cert=/c/vm-b/tls.crt pal.tls_key=/c/vm-b/tls.key \
+                 pal.manager_ca=/c/manager-ca.crt pal.env.PAL_MANAGER_ADDR=172.16.0.5:50054 \
+                 pal.secret.K=pal.secret/y pal.env.FOO=1";
         assert_eq!(canonical_boot_args(a), canonical_boot_args(b));
         // A real boot-configuration change still changes it.
         assert_ne!(
@@ -689,15 +689,15 @@ mod tests {
         );
     }
 
-    /// B1(a): `lantern.env.*` tokens are emitted in HashMap order — the same
+    /// B1(a): `pal.env.*` tokens are emitted in HashMap order — the same
     /// env in a different order must canonicalise identically (they are
     /// dropped; the env is measured, ordered, in the contract).
     #[test]
     fn boot_args_env_order_does_not_matter() {
-        let a = "console=ttyS0 lantern.env.A=1 lantern.env.B=2 lantern.env.C=3";
-        let b = "console=ttyS0 lantern.env.C=3 lantern.env.A=1 lantern.env.B=2";
+        let a = "console=ttyS0 pal.env.A=1 pal.env.B=2 pal.env.C=3";
+        let b = "console=ttyS0 pal.env.C=3 pal.env.A=1 pal.env.B=2";
         assert_eq!(canonical_boot_args(a), canonical_boot_args(b));
-        assert!(!canonical_boot_args(a).contains("lantern.env."));
+        assert!(!canonical_boot_args(a).contains("pal.env."));
     }
 
     /// B1(b): per-VM caller identity (instance id + bearer token, trace
@@ -710,9 +710,9 @@ mod tests {
             c.vm_id = vm.into();
             c.exec_token = format!("exec-{tok}");
             for (k, v) in [
-                ("LANTERN_AGENT_INSTANCE_ID", inst),
-                ("LANTERN_AGENT_INSTANCE_TOKEN", tok),
-                ("LANTERN_TRACE_PARENT", inst),
+                ("PAL_AGENT_INSTANCE_ID", inst),
+                ("PAL_AGENT_INSTANCE_TOKEN", tok),
+                ("PAL_TRACE_PARENT", inst),
                 ("OPENAI_API_KEY", key),
                 ("DB_PASSWORD", key),
                 ("MODE", "fast"),
@@ -755,7 +755,7 @@ mod tests {
             "AWS_SECRET_ACCESS_KEY",
             "AUTH",
             "GOOGLE_APPLICATION_CREDENTIALS",
-            "LANTERN_AGENT_INSTANCE_TOKEN",
+            "PAL_AGENT_INSTANCE_TOKEN",
             "token",
         ] {
             assert!(is_secret_env_name(k), "{k} must be treated as a credential");

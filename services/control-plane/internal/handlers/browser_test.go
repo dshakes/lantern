@@ -3,7 +3,7 @@ package handlers
 // Tests for the browser-as-skill feature (increment 1 — contract layer only).
 //
 // Two layers:
-//   - Gate tests: no DB needed; verify 404 when LANTERN_BROWSER_SKILL is unset.
+//   - Gate tests: no DB needed; verify 404 when PAL_BROWSER_SKILL is unset.
 //   - DB-backed tests: skip when DATABASE_URL is unset, matching the rest of
 //     this package's pattern.
 //
@@ -24,8 +24,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // ---------------------------------------------------------------------------
@@ -60,9 +60,9 @@ func seedBrowserTenant(t *testing.T, pool *pgxpool.Pool) string {
 }
 
 // stubUnavailable is a browserExecFn that always returns TOOL_STATUS_UNAVAILABLE.
-func stubUnavailable(_ context.Context, _ string, _ map[string]any) (*lanternv1.ExecToolResponse, error) {
-	return &lanternv1.ExecToolResponse{
-		Status: lanternv1.ToolStatus_TOOL_STATUS_UNAVAILABLE,
+func stubUnavailable(_ context.Context, _ string, _ map[string]any) (*palv1.ExecToolResponse, error) {
+	return &palv1.ExecToolResponse{
+		Status: palv1.ToolStatus_TOOL_STATUS_UNAVAILABLE,
 		Error:  "browser runtime not yet wired",
 	}, nil
 }
@@ -228,7 +228,7 @@ func TestBrowser_Execute_NonOwnerForbidden(t *testing.T) {
 
 	h := newTestBrowserHandler(t, pool)
 	execCalled := false
-	h.execFn = func(_ context.Context, _ string, _ map[string]any) (*lanternv1.ExecToolResponse, error) {
+	h.execFn = func(_ context.Context, _ string, _ map[string]any) (*palv1.ExecToolResponse, error) {
 		execCalled = true
 		return stubUnavailable(nil, "", nil)
 	}
@@ -320,10 +320,10 @@ func TestBrowser_Execute_ConcurrentExactlyOnce(t *testing.T) {
 	// reverts to 'suggested'.
 	var execCalls int64
 	h := newTestBrowserHandler(t, pool)
-	h.execFn = func(_ context.Context, _ string, _ map[string]any) (*lanternv1.ExecToolResponse, error) {
+	h.execFn = func(_ context.Context, _ string, _ map[string]any) (*palv1.ExecToolResponse, error) {
 		atomic.AddInt64(&execCalls, 1)
-		return &lanternv1.ExecToolResponse{
-			Status: lanternv1.ToolStatus_TOOL_STATUS_UNAVAILABLE,
+		return &palv1.ExecToolResponse{
+			Status: palv1.ToolStatus_TOOL_STATUS_UNAVAILABLE,
 			Error:  "increment 2 not yet shipped",
 		}, nil
 	}

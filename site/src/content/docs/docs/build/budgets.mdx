@@ -112,7 +112,7 @@ POST /v1/runs  ->  HTTP 503
 
 - **503 is returned by run create only.** `/v1/completions` answers 402 with reason `budget check unavailable`; voice declines as for a budget block (Twilio `<Reject>`, other providers a plain-text 402, the LiveKit token route 402 `agent voice budget exhausted: budget check unavailable`); sessions reply `sorry — I can't check this agent's usage limit right now, try again shortly`; workflow steps fail with `budget limit exceeded: budget check unavailable`.
 - **Soft budgets:** if the budget row was read (and says `hardFail: false`) but the usage lookup then errors, the call proceeds. If the row itself cannot be read, the call is blocked whatever the policy.
-- Every failed-closed lookup increments `lantern.budget.check.errors` (see [metrics](#metrics)).
+- Every failed-closed lookup increments `pal.budget.check.errors` (see [metrics](#metrics)).
 
 ## Per-run cap inside a workflow
 
@@ -150,7 +150,7 @@ Response: 200 OK
 
 ```bash
 TOKEN=$(curl -s localhost:8080/auth/login -H 'Content-Type: application/json' \
-  -d '{"email":"admin@lantern.dev","password":"lantern"}' | jq -r .token)
+  -d '{"email":"admin@pal.dev","password":"pal"}' | jq -r .token)
 
 # Cap an agent at 1 run per day, hard-fail
 curl -s -X PUT localhost:8080/v1/agents/demo/budget \
@@ -224,5 +224,5 @@ Voice calls count against the same `agent_budgets` as runs. An inbound call over
 
 | Metric | Attributes | Meaning |
 | --- | --- | --- |
-| `lantern.run.budget.blocks` | `lantern.agent_name` | Runs refused by a hard-fail budget at `POST /v1/runs` (HTTP 402) |
-| `lantern.budget.check.errors` | `lantern.budget_check` (`tenant`, `agent`, `run`, `tool`), `lantern.agent_name` | Budget lookups that errored and failed closed |
+| `pal.run.budget.blocks` | `pal.agent_name` | Runs refused by a hard-fail budget at `POST /v1/runs` (HTTP 402) |
+| `pal.budget.check.errors` | `pal.budget_check` (`tenant`, `agent`, `run`, `tool`), `pal.agent_name` | Budget lookups that errored and failed closed |

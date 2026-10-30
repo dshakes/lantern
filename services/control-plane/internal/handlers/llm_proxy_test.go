@@ -27,7 +27,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // ---------------------------------------------------------------------------
@@ -693,7 +693,7 @@ func TestResolveCandidateChain_NoDuplicateMiniWhenAlreadyTop(t *testing.T) {
 
 // TestResolveCandidateChain_UserFacing_NeverClaudeCode verifies that
 // claude-code is excluded from every user-facing candidate chain, regardless
-// of LANTERN_USE_CLAUDE_CODE and whether tools are present. This is the
+// of PAL_USE_CLAUDE_CODE and whether tools are present. This is the
 // hard safety invariant that prevents the local CLI persona from bleeding
 // into production bridge-contact replies.
 func TestResolveCandidateChain_UserFacing_NeverClaudeCode(t *testing.T) {
@@ -728,7 +728,7 @@ func TestResolveCandidateChain_UserFacing_NeverClaudeCode(t *testing.T) {
 }
 
 // TestResolveCandidateChain_DevPath_ClaudeCodeAllowed verifies that when
-// userFacing=false and LANTERN_USE_CLAUDE_CODE=1, claude-code IS included
+// userFacing=false and PAL_USE_CLAUDE_CODE=1, claude-code IS included
 // as the top candidate (dev dashboard path).
 func TestResolveCandidateChain_DevPath_ClaudeCodeAllowed(t *testing.T) {
 	t.Setenv("PAL_USE_CLAUDE_CODE", "1")
@@ -739,7 +739,7 @@ func TestResolveCandidateChain_DevPath_ClaudeCodeAllowed(t *testing.T) {
 		t.Fatal("chain must not be empty")
 	}
 	if chain[0].Provider != "claude-code" {
-		t.Errorf("dev path with LANTERN_USE_CLAUDE_CODE=1 should have claude-code first; got %v", chain[0])
+		t.Errorf("dev path with PAL_USE_CLAUDE_CODE=1 should have claude-code first; got %v", chain[0])
 	}
 }
 
@@ -778,7 +778,7 @@ func TestIsFlagDisabled(t *testing.T) {
 
 func TestComplexityRoutingEnabled_OffValues(t *testing.T) {
 	for _, v := range []string{"0", "off", "false", "OFF", "False"} {
-		t.Run("LANTERN_COMPLEXITY_ROUTING="+v, func(t *testing.T) {
+		t.Run("PAL_COMPLEXITY_ROUTING="+v, func(t *testing.T) {
 			t.Setenv("PAL_COMPLEXITY_ROUTING", v)
 			if complexityRoutingEnabled() {
 				t.Errorf("complexityRoutingEnabled() should be false when env=%q", v)

@@ -1,9 +1,9 @@
-// OpenTelemetry integration for lantern-model-router.
+// OpenTelemetry integration for pal-model-router.
 //
 // # Design
 //
 // Only activated when `OTEL_EXPORTER_OTLP_ENDPOINT` (standard OTLP env var)
-// or `LANTERN_OTEL_ENABLED=1` is set.  When neither is present every function
+// or `PAL_OTEL_ENABLED=1` is set.  When neither is present every function
 // is a cheap no-op — the service behaves exactly as before with zero overhead.
 //
 // The exporter uses OTLP/gRPC (tonic) matching the runtime-manager convention.
@@ -46,7 +46,7 @@ pub fn init() -> Option<SdkShutdown> {
 
     if endpoint.is_none() && !enabled {
         tracing::debug!(
-            "otel: OTEL_EXPORTER_OTLP_ENDPOINT not set and LANTERN_OTEL_ENABLED != 1; \
+            "otel: OTEL_EXPORTER_OTLP_ENDPOINT not set and PAL_OTEL_ENABLED != 1; \
              running without OTLP exporter (W3C propagation headers still active)"
         );
         return None;
@@ -75,7 +75,7 @@ pub fn init() -> Option<SdkShutdown> {
         .with_sampler(Sampler::AlwaysOn)
         .with_id_generator(RandomIdGenerator::default())
         .with_resource(opentelemetry_sdk::Resource::new(vec![
-            opentelemetry::KeyValue::new("service.name", "lantern-model-router"),
+            opentelemetry::KeyValue::new("service.name", "pal-model-router"),
         ]))
         .build();
 

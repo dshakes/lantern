@@ -1,4 +1,4 @@
-# cargo-audit configuration for lantern-harness.
+# cargo-audit configuration for pal-harness.
 #
 # RUSTSEC-2025-0134: rustls-pemfile 2.2.0 — marked UNMAINTAINED.
 # rustls-pemfile is a DIRECT dep (used for TLS cert/key loading in the harness's

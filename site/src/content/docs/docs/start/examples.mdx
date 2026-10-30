@@ -23,7 +23,7 @@ python3 examples/support-desk/setup.py   # creates the agent, uploads the docs
 
 Try it: ask *How do I reset my password?* (a cited answer), then *I want a refund* (the widget shows "Connecting you to a human"). An operator replies with `POST /v1/sessions/{id}/operator-messages` and the reply appears in the widget.
 
-`setup.py` deploys over REST because it also uploads the documents and mints the widget key; `lantern deploy` from the example directory deploys the agent on its own.
+`setup.py` deploys over REST because it also uploads the documents and mints the widget key; `pal deploy` from the example directory deploys the agent on its own.
 
 ## PR triage to a Slack thread
 
@@ -60,12 +60,12 @@ curl -X POST $API/v1/runs/<run-id>/takeover/<takeover-id>/deny  -d '{"notes":"no
 
 ```bash
 cd examples/daily-digest
-lantern deploy                      # agent + system prompt + workflow from agent.yaml
+pal deploy                      # agent + system prompt + workflow from agent.yaml
 # install the slack and github connectors, edit owner/repo/channel in schedule.json, then:
 curl -X POST $API/v1/schedules -H "Authorization: Bearer $TOKEN" -d @schedule.json   # nextFireAt = next weekday 09:00 NY
 ```
 
-`lantern deploy` covers the agent; the schedule has no deploy field, so it is created over REST. Run it now with `POST /v1/runs`. The scheduler polls every 60 s.
+`pal deploy` covers the agent; the schedule has no deploy field, so it is created over REST. Run it now with `POST /v1/runs`. The scheduler polls every 60 s.
 
 ## Telegram assistant
 
@@ -73,7 +73,7 @@ curl -X POST $API/v1/schedules -H "Authorization: Bearer $TOKEN" -d @schedule.js
 
 ```bash
 cd examples/telegram-assistant
-lantern deploy
+pal deploy
 curl -X POST $API/v1/runs -H "Authorization: Bearer $TOKEN" -d '{"agentName":"telegram-assistant","input":{"text":"hi"}}'   # priming run
 # run the gateway (see the README), then setWebhook with secret_token, and message the bot
 ```
@@ -86,7 +86,7 @@ The priming run is needed because the gateway starts runs over gRPC, which refus
 
 ```bash
 cd examples/voice-receptionist
-lantern deploy
+pal deploy
 curl -X PUT  $API/v1/agents/voice-receptionist/budget -d '{"maxCostUsdPerDay":2,"hardFail":true}'
 curl -X POST $API/v1/voice/numbers -d @number.json    # your SID, auth token, number
 ```
@@ -100,7 +100,7 @@ Budgets and voice numbers are not part of the deploy manifest, so those stay RES
 ```bash
 BASE=http://localhost:8080
 VM=$(curl -s -XPOST $BASE/v1/runtime/schedule -H "Authorization: Bearer $T" \
-  -d '{"imageDigest":"lantern/examples/data-analyst@sha256:...05","isolation":"untrusted","network":"allowlist_domain"}' | jq -r .vmId)
+  -d '{"imageDigest":"pal/examples/data-analyst@sha256:...05","isolation":"untrusted","network":"allowlist_domain"}' | jq -r .vmId)
 curl -XPUT "$BASE/v1/runtime/vms/$VM/files/content?path=sales.csv" -H "Authorization: Bearer $T" --data-binary @sales.csv
 curl -XPOST $BASE/v1/runtime/vms/$VM/exec -H "Authorization: Bearer $T" \
   -d '{"command":"python","argv":["/opt/analyze.py","/workspace/sales.csv"]}'
@@ -110,7 +110,7 @@ Try it in CI form: `make test-e2e-analyst` runs `TestDataAnalystSandbox` against
 
 ## Eval-gated deploy
 
-**What:** a CI pipeline that cannot ship a worse agent. It runs an eval suite against the candidate, records it with `POST /v1/eval-runs`, and a `422` (regressed vs. the pinned baseline) stops the job before `lantern deploy --json`. A passing change is deployed, a receipt is issued with `POST /v1/runs/{id}/receipt`, and verified at `POST /v1/runs/receipts/verify`. Path: `examples/eval-gated-deploy/` (scripts plus a sample GitHub Actions workflow). See [Recording a run and CI gate](/docs/build/evaluations/#recording-a-run-and-the-ci-gate).
+**What:** a CI pipeline that cannot ship a worse agent. It runs an eval suite against the candidate, records it with `POST /v1/eval-runs`, and a `422` (regressed vs. the pinned baseline) stops the job before `pal deploy --json`. A passing change is deployed, a receipt is issued with `POST /v1/runs/{id}/receipt`, and verified at `POST /v1/runs/receipts/verify`. Path: `examples/eval-gated-deploy/` (scripts plus a sample GitHub Actions workflow). See [Recording a run and CI gate](/docs/build/evaluations/#recording-a-run-and-the-ci-gate).
 
 ```bash
 cd examples/eval-gated-deploy

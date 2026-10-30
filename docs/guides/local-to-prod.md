@@ -41,11 +41,11 @@ curl -s http://localhost:8080/healthz
 ```bash
 export TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"email":"admin@lantern.dev","password":"lantern"}' | jq -r .token)
+  -d '{"email":"admin@pal.dev","password":"pal"}' | jq -r .token)
 echo "${TOKEN:0:40}..."   # sanity-check the token
 ```
 
-Dev credentials: `admin@lantern.dev` / `lantern`, tenant `dev`.
+Dev credentials: `admin@pal.dev` / `pal`, tenant `dev`.
 
 ### Run example 01 — shared tier
 
@@ -145,7 +145,7 @@ curl -s -X POST http://localhost:8085/v1/nodes/heartbeat \
 
 ```bash
 # Build the OCI image
-docker build -t lantern/demos/hello:latest \
+docker build -t pal/demos/hello:latest \
   examples/headless-agents/01-hello/
 
 # Schedule via REST (agent.yaml snake_case fields work too)
@@ -153,7 +153,7 @@ VM=$(curl -s -X POST http://localhost:8080/v1/runtime/schedule \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{
-    "imageDigest": "lantern/demos/hello:latest",
+    "imageDigest": "pal/demos/hello:latest",
     "isolation": "trusted",
     "limits": {"vcpu": "100m", "memory": "64Mi", "timeout_secs": 30},
     "command": ["sh", "-c", "echo '"'"'{\"name\":\"Ada\"}'"'"' | python /app/workload.py"],
@@ -169,7 +169,7 @@ Verify the container ran:
 
 ```bash
 # After a second or two the container exits — check its output
-docker logs $(docker ps -a --filter "ancestor=lantern/demos/hello:latest" \
+docker logs $(docker ps -a --filter "ancestor=pal/demos/hello:latest" \
   --format "{{.ID}}" | head -1)
 # → {"level":"info","msg":"hello world","run_id":"run-hello-local",...}
 ```
@@ -187,17 +187,17 @@ The state shows `running` even after the container exits because the harness
 containers. In production the harness runs as PID 1 and propagates exit
 to the scheduler.
 
-### Use `lantern run` CLI (reads agent.yaml directly)
+### Use `pal run` CLI (reads agent.yaml directly)
 
 ```bash
-( cd packages/cli && go install ./cmd/lantern )
+( cd packages/cli && go install ./cmd/pal )
 export PAL_API_URL=http://localhost:8080
 export PAL_API_TOKEN=$TOKEN
 
-lantern run examples/headless-agents/01-hello/agent.yaml \
+pal run examples/headless-agents/01-hello/agent.yaml \
   --input '{"name":"Ada"}'
 # → scheduled vmId=vm-...
-# → follow with: lantern vm logs vm-... --follow
+# → follow with: pal vm logs vm-... --follow
 ```
 
 For more exercises (quota, audit, terminate, cluster view) see
@@ -207,7 +207,7 @@ For more exercises (quota, audit, terminate, cluster view) see
 
 ## B2. Local Firecracker microVMs (`dev` sandbox detection)
 
-`pal dev` (the `lantern dev` binary until the rename lands) decides which
+`pal dev` (the `pal dev` binary until the rename lands) decides which
 sandbox the control-plane gets and prints exactly one `sandbox:` line saying so
 (ADR 0045). `pal doctor` shows the same decision under **Sandbox runtime**.
 
@@ -247,7 +247,7 @@ host scheduler dials. Port `52054` (not `50054`) keeps it clear of a host
 Docker-backend manager and of `make lima-e2e`, which uses `:50054` inside the VM.
 
 Dev-only posture: plaintext gRPC and no service token (the manager's dev
-defaults; `LANTERN_ENV` is never set). The mTLS VendSecret path is exercised by
+defaults; `PAL_ENV` is never set). The mTLS VendSecret path is exercised by
 `make lima-e2e`, not by this loop.
 
 Schedule a workload into the microVM:
@@ -259,7 +259,7 @@ VM=$(curl -s -X POST http://localhost:8080/v1/runtime/schedule \
        "limits":{"vcpu":"500m","memory":"128Mi","timeout_secs":30},
        "command":["/bin/sh","-c","echo hello from a microVM; uname -r"]}')
 VM_ID=$(echo "$VM" | jq -r .vmId)
-lantern vm logs "$VM_ID" --follow
+pal vm logs "$VM_ID" --follow
 ```
 
 Verification status: the detection and wiring are unit-tested and were checked
@@ -284,15 +284,15 @@ environment. Only the API address and credential change:
 cd examples/headless-agents/01-hello
 
 # Local: the stack from `pal dev`
-LANTERN_API_URL=http://localhost:8080 LANTERN_API_KEY=$TOKEN \
-  lantern run agent.yaml --input '{"name":"Ada"}'
+PAL_API_URL=http://localhost:8080 PAL_API_KEY=$TOKEN \
+  pal run agent.yaml --input '{"name":"Ada"}'
 
 # Cloud: the same file against your control plane
-export LANTERN_API_URL=https://api.your-pal.example.com
-export LANTERN_API_KEY=pal_...            # dashboard → Settings → API keys
-lantern deploy --dry-run                  # shows create vs update, no mutation
-lantern deploy                            # upserts the agent + POST /v1/agents/{name}/deploy
-lantern run agent.yaml --input '{"name":"Ada"}'
+export PAL_API_URL=https://api.your-pal.example.com
+export PAL_API_KEY=pal_...            # dashboard → Settings → API keys
+pal deploy --dry-run                  # shows create vs update, no mutation
+pal deploy                            # upserts the agent + POST /v1/agents/{name}/deploy
+pal run agent.yaml --input '{"name":"Ada"}'
 ```
 
 `deploy` exit codes: 3 auth, 4 quota/budget (402), 5 not found, 6 server error.
@@ -307,8 +307,8 @@ The data plane the cloud schedules onto is provisioned from
 ### Architecture
 
 In production the three runtime services run as K8s Deployments in the
-`lantern-system` namespace. Agents execute in per-tenant namespaces
-(`lantern-t-<tenant_id>`) as K8s Jobs (trusted), Pods with gVisor
+`pal-system` namespace. Agents execute in per-tenant namespaces
+(`pal-t-<tenant_id>`) as K8s Jobs (trusted), Pods with gVisor
 RuntimeClass (standard/untrusted), or Pods with Kata RuntimeClass (hostile).
 
 ```
@@ -364,7 +364,7 @@ Before promoting to prod, run the cluster validation harness:
 
 ```bash
 # Validates gVisor + Kata execution, NetworkPolicy, PSA, RuntimeClass fail-closed
-lantern vm validate --kubeconfig /path/to/kubeconfig.yaml
+pal vm validate --kubeconfig /path/to/kubeconfig.yaml
 # or: make validate-cluster KUBECONFIG=/path/to/kubeconfig.yaml
 ```
 
@@ -388,7 +388,7 @@ interpretation, and the GKE setup script.
 | `PAL_RUNTIMECLASS_GVISOR` | — (Docker, no isolation) | Set to `gvisor` | **Required** |
 | `PAL_RUNTIMECLASS_KATA` | — | Set to `kata-qemu` | **Required** for HOSTILE |
 | `PAL_RLS_ENFORCE` | 0 (off) | 1 (on) | 1 (on) |
-| Cluster validation (`lantern vm validate`) | — | operator-validated | **Required** |
+| Cluster validation (`pal vm validate`) | — | operator-validated | **Required** |
 | Shared-tier run succeeds (`POST /v1/runs`) | Verified (this guide) | Smoke test | Re-run on every deploy |
 | MicroVM-tier run succeeds (`POST /v1/runtime/schedule`) | Verified (this guide, Docker) | Kata smoke test | Kata + gVisor smoke |
 
@@ -408,7 +408,7 @@ curl -s -X POST $API_URL/v1/runs \
 # → "succeeded" or "queued" (poll until terminal)
 
 # 2. MicroVM smoke (requires cluster with real RuntimeClasses)
-lantern vm validate --kubeconfig $KUBECONFIG
+pal vm validate --kubeconfig $KUBECONFIG
 # → all 9 legs PASS
 ```
 
@@ -420,7 +420,7 @@ lantern vm validate --kubeconfig $KUBECONFIG
 |---|---|---|
 | State stuck `running` | Container exits but DB shows `running` (no harness) | Harness runs as PID 1; exit propagated via Report stream |
 | No egress enforcement | Docker containers ignore harness egress rules | Firecracker/gVisor/Kata: egress enforced via iptables REDIRECT |
-| No secret vending | `/run/lantern/secrets/` not available without harness | Harness vends secrets from the manager over Unix socket |
+| No secret vending | `/run/pal/secrets/` not available without harness | Harness vends secrets from the manager over Unix socket |
 | Quota concurrent-VM cap | Fast containers exit before next request; cap looks ineffective | Cap works correctly; harness reports exit and frees slot immediately |
 | Firecracker/Kata/gVisor | Not native on macOS; Firecracker via Lima on M3+/macOS 15+ (section B2), otherwise Linux + KVM | Full isolation on Linux nodes |
 | Snapshot/restore (demo 03) | Not functional without Firecracker | Firecracker on Linux KVM nodes |

@@ -2,7 +2,7 @@
 # Fail if a LaunchAgent plist and the shared dev defaults disagree, or if a
 # service is missing wiring it cannot run without.
 #
-# The bug this catches: dev.lantern.runtime-manager.plist had no SCHEDULER_URL,
+# The bug this catches: dev.pal.runtime-manager.plist had no SCHEDULER_URL,
 # so under launchd the manager never self-registered — the scheduler marked the
 # node draining and every placement failed, while the manager process itself
 # stayed healthy and logged nothing alarming. Nothing in CI or at boot noticed,
@@ -35,7 +35,7 @@ PY
 echo "checking required LaunchAgent wiring…"
 while IFS='|' read -r svc var why; do
   [ -z "$svc" ] && continue
-  f="$AGENTS/dev.lantern.$svc.plist"
+  f="$AGENTS/dev.pal.$svc.plist"
   [ -f "$f" ] || { note "$svc" "SKIP (no plist)"; continue; }
   val="$(plist_env "$f" "$var")"
   if [ -z "$val" ]; then
@@ -47,7 +47,7 @@ while IFS='|' read -r svc var why; do
 done <<'REQUIRED'
 runtime-manager|SCHEDULER_URL|without it the node never self-registers and every placement fails
 runtime-manager|NODE_NAME|without it the node id is the hostname, which can register a duplicate node
-runtime-scheduler|LANTERN_DEFAULT_MANAGER_ADDR|without it the scheduler cannot dial the node it placed onto
+runtime-scheduler|PAL_DEFAULT_MANAGER_ADDR|without it the scheduler cannot dial the node it placed onto
 REQUIRED
 
 # --- 2. Where both define a value, they must agree ------------------------
@@ -57,7 +57,7 @@ echo "checking plist values against scripts/launchd/service-env.sh…"
 
 while IFS='|' read -r svc var expected; do
   [ -z "$svc" ] && continue
-  f="$AGENTS/dev.lantern.$svc.plist"
+  f="$AGENTS/dev.pal.$svc.plist"
   [ -f "$f" ] || continue
   val="$(plist_env "$f" "$var")"
   [ -z "$val" ] && continue   # absent is fine; the shared defaults fill it
@@ -71,7 +71,7 @@ done <<REQUIRED
 runtime-manager|SCHEDULER_URL|$SCHEDULER_URL
 runtime-manager|NODE_NAME|$NODE_NAME
 runtime-manager|NODE_ADVERTISE_ADDR|$NODE_ADVERTISE_ADDR
-runtime-scheduler|LANTERN_DEFAULT_MANAGER_ADDR|$LANTERN_DEFAULT_MANAGER_ADDR
+runtime-scheduler|PAL_DEFAULT_MANAGER_ADDR|$PAL_DEFAULT_MANAGER_ADDR
 REQUIRED
 
 if [ "$fail" -ne 0 ]; then

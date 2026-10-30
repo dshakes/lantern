@@ -53,13 +53,13 @@ impl AppError {
 
     fn error_type(&self) -> &'static str {
         match self {
-            AppError::Auth(_) => "https://lantern.run/errors/unauthorized",
-            AppError::Forbidden(_) => "https://lantern.run/errors/forbidden",
-            AppError::NotFound(_) => "https://lantern.run/errors/not-found",
-            AppError::BadRequest(_) => "https://lantern.run/errors/bad-request",
-            AppError::Internal(_) => "https://lantern.run/errors/internal",
-            AppError::Upstream(_) => "https://lantern.run/errors/upstream",
-            AppError::RateLimited { .. } => "https://lantern.run/errors/rate-limited",
+            AppError::Auth(_) => "https://pal.run/errors/unauthorized",
+            AppError::Forbidden(_) => "https://pal.run/errors/forbidden",
+            AppError::NotFound(_) => "https://pal.run/errors/not-found",
+            AppError::BadRequest(_) => "https://pal.run/errors/bad-request",
+            AppError::Internal(_) => "https://pal.run/errors/internal",
+            AppError::Upstream(_) => "https://pal.run/errors/upstream",
+            AppError::RateLimited { .. } => "https://pal.run/errors/rate-limited",
         }
     }
 
@@ -100,7 +100,7 @@ impl IntoResponse for AppError {
                 "application/problem+json",
             )],
             serde_json::to_string(&body).unwrap_or_else(|_| {
-                r#"{"type":"https://lantern.run/errors/internal","title":"Internal Server Error","status":500,"detail":"failed to serialize error"}"#.to_string()
+                r#"{"type":"https://pal.run/errors/internal","title":"Internal Server Error","status":500,"detail":"failed to serialize error"}"#.to_string()
             }),
         )
             .into_response();

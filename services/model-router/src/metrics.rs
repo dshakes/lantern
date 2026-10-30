@@ -1,6 +1,6 @@
 //! Prometheus SLI metrics + optional scrape listener (ADR 0041).
 //!
-//! `lantern_model_router_requests_total{method,outcome}` is the error-rate SLI:
+//! `pal_model_router_requests_total{method,outcome}` is the error-rate SLI:
 //! outcome `ok`, `error` (server-side: the router could not serve it), or
 //! `client` (caller's fault; excluded from the SLO). The duration histogram
 //! feeds the latency SLI. The listener is opt-in (`PAL_METRICS_ADDR`)
@@ -19,7 +19,7 @@ use tonic::Code;
 
 static REQUESTS: LazyLock<IntCounterVec> = LazyLock::new(|| {
     register_int_counter_vec!(
-        "lantern_model_router_requests_total",
+        "pal_model_router_requests_total",
         "ModelService RPCs by method and outcome (ok|error|client).",
         &["method", "outcome"]
     )
@@ -28,7 +28,7 @@ static REQUESTS: LazyLock<IntCounterVec> = LazyLock::new(|| {
 
 static DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
     register_histogram_vec!(
-        "lantern_model_router_request_duration_seconds",
+        "pal_model_router_request_duration_seconds",
         "ModelService RPC latency (to first response for streaming RPCs).",
         &["method"],
         vec![0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0]
@@ -132,13 +132,13 @@ mod tests {
         })
         .await;
         let out = String::from_utf8(render()).unwrap();
-        assert!(out.contains(r#"lantern_model_router_requests_total{method="t",outcome="ok"} 1"#));
+        assert!(out.contains(r#"pal_model_router_requests_total{method="t",outcome="ok"} 1"#));
         assert!(
-            out.contains(r#"lantern_model_router_requests_total{method="t",outcome="error"} 1"#)
+            out.contains(r#"pal_model_router_requests_total{method="t",outcome="error"} 1"#)
         );
         assert!(
-            out.contains(r#"lantern_model_router_requests_total{method="t",outcome="client"} 1"#)
+            out.contains(r#"pal_model_router_requests_total{method="t",outcome="client"} 1"#)
         );
-        assert!(out.contains("lantern_model_router_request_duration_seconds_bucket"));
+        assert!(out.contains("pal_model_router_request_duration_seconds_bucket"));
     }
 }

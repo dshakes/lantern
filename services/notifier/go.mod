@@ -1,4 +1,4 @@
-module github.com/dshakes/lantern/services/notifier
+module github.com/dshakes/pal/services/notifier
 
 go 1.25.0
 

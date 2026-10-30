@@ -49,13 +49,13 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/control-plane/internal/db"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/control-plane/internal/db"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // maxRunStreamsPerTenant is the maximum number of concurrent RunStream
-// connections allowed per tenant. Configurable via LANTERN_DP_MAX_STREAMS_PER_TENANT.
+// connections allowed per tenant. Configurable via PAL_DP_MAX_STREAMS_PER_TENANT.
 // Default is 10.
 const defaultMaxRunStreamsPerTenant = 10
 
@@ -72,7 +72,7 @@ func maxRunStreamsPerTenant() int {
 
 const (
 	dpSessionTyp    = "dataplane-session"
-	dpSessionIssuer = "lantern-cp"
+	dpSessionIssuer = "pal-cp"
 	dpSessionTTL    = time.Hour
 )
 
@@ -92,7 +92,7 @@ type planeConn struct {
 	planeID  string
 	// assignCh receives DpRunAssignment frames from the scheduler and
 	// forwards them down the RunStream server-to-client direction.
-	assignCh chan *lanternv1.DpRunAssignment
+	assignCh chan *palv1.DpRunAssignment
 }
 
 // PlaneRegistry tracks live RunStream connections keyed by (tenantID, planeID).
@@ -118,7 +118,7 @@ func registryKey(tenantID, planeID string) string {
 // tryRegister attempts to add a plane's send channel to the registry.
 // Returns (deregister, true) on success or (nil, false) if the per-tenant cap
 // would be exceeded (caller should return ResourceExhausted).
-func (r *PlaneRegistry) tryRegister(tenantID, planeID string, ch chan *lanternv1.DpRunAssignment, cap int) (func(), bool) {
+func (r *PlaneRegistry) tryRegister(tenantID, planeID string, ch chan *palv1.DpRunAssignment, cap int) (func(), bool) {
 	key := registryKey(tenantID, planeID)
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -139,7 +139,7 @@ func (r *PlaneRegistry) tryRegister(tenantID, planeID string, ch chan *lanternv1
 
 // register adds a plane's send channel to the registry without enforcing a cap.
 // Used by tests that need direct registry access.
-func (r *PlaneRegistry) register(tenantID, planeID string, ch chan *lanternv1.DpRunAssignment) func() {
+func (r *PlaneRegistry) register(tenantID, planeID string, ch chan *palv1.DpRunAssignment) func() {
 	key := registryKey(tenantID, planeID)
 	r.mu.Lock()
 	r.conns[key] = &planeConn{tenantID: tenantID, planeID: planeID, assignCh: ch}
@@ -158,7 +158,7 @@ func (r *PlaneRegistry) register(tenantID, planeID string, ch chan *lanternv1.Dp
 // Send pushes a run assignment to the plane identified by (tenantID, planeID).
 // Returns false if the plane is not currently connected or the channel is full.
 // Called by RouteRun on the dispatch path.
-func (r *PlaneRegistry) Send(tenantID, planeID string, a *lanternv1.DpRunAssignment) bool {
+func (r *PlaneRegistry) Send(tenantID, planeID string, a *palv1.DpRunAssignment) bool {
 	r.mu.Lock()
 	conn, ok := r.conns[registryKey(tenantID, planeID)]
 	r.mu.Unlock()
@@ -214,9 +214,9 @@ func (r *PlaneRegistry) TenantStreamCount(tenantID string) int {
 
 // ---------- DataPlaneService ----------
 
-// DataPlaneService implements lanternv1.DataPlaneServiceServer.
+// DataPlaneService implements palv1.DataPlaneServiceServer.
 type DataPlaneService struct {
-	lanternv1.UnimplementedDataPlaneServiceServer
+	palv1.UnimplementedDataPlaneServiceServer
 
 	srv       *server.Server
 	jwtSecret []byte
@@ -301,7 +301,7 @@ func (s *DataPlaneService) verifyAndMatchToken(tokenStr, requestPlaneID string) 
 
 // Register authenticates the bootstrap token, updates the data_planes row, and
 // returns a session token.
-func (s *DataPlaneService) Register(ctx context.Context, req *lanternv1.DpRegisterRequest) (*lanternv1.DpRegisterResponse, error) {
+func (s *DataPlaneService) Register(ctx context.Context, req *palv1.DpRegisterRequest) (*palv1.DpRegisterResponse, error) {
 	if req.GetTenantId() == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "tenant_id is required")
 	}
@@ -399,7 +399,7 @@ func (s *DataPlaneService) Register(ctx context.Context, req *lanternv1.DpRegist
 		zap.String("hostname", req.GetHostname()),
 	)
 
-	return &lanternv1.DpRegisterResponse{
+	return &palv1.DpRegisterResponse{
 		PlaneId:                  planeID,
 		SessionToken:             sessionToken,
 		HeartbeatIntervalSeconds: 30,
@@ -410,7 +410,7 @@ func (s *DataPlaneService) Register(ctx context.Context, req *lanternv1.DpRegist
 // ---------- Heartbeat ----------
 
 // Heartbeat validates the session token and updates last_heartbeat.
-func (s *DataPlaneService) Heartbeat(ctx context.Context, req *lanternv1.DpHeartbeatRequest) (*lanternv1.DpHeartbeatAck, error) {
+func (s *DataPlaneService) Heartbeat(ctx context.Context, req *palv1.DpHeartbeatRequest) (*palv1.DpHeartbeatAck, error) {
 	c, err := s.verifyAndMatchToken(req.GetSessionToken(), req.GetPlaneId())
 	if err != nil {
 		return nil, err
@@ -432,14 +432,14 @@ func (s *DataPlaneService) Heartbeat(ctx context.Context, req *lanternv1.DpHeart
 		)
 	}
 
-	return &lanternv1.DpHeartbeatAck{Ok: true}, nil
+	return &palv1.DpHeartbeatAck{Ok: true}, nil
 }
 
 // ---------- ReportMetrics ----------
 
 // ReportMetrics validates the session token and acknowledges the metrics report.
 // Metrics values are logged; dashboard persistence is a future extension.
-func (s *DataPlaneService) ReportMetrics(ctx context.Context, req *lanternv1.DpMetricsReport) (*lanternv1.DpMetricsAck, error) {
+func (s *DataPlaneService) ReportMetrics(ctx context.Context, req *palv1.DpMetricsReport) (*palv1.DpMetricsAck, error) {
 	c, err := s.verifyAndMatchToken(req.GetSessionToken(), req.GetPlaneId())
 	if err != nil {
 		return nil, err
@@ -468,13 +468,13 @@ func (s *DataPlaneService) ReportMetrics(ctx context.Context, req *lanternv1.DpM
 		zap.Int32("active_runs", req.GetActiveRuns()),
 	)
 
-	return &lanternv1.DpMetricsAck{Ok: true}, nil
+	return &palv1.DpMetricsAck{Ok: true}, nil
 }
 
 // ---------- RefreshToken ----------
 
 // RefreshToken issues a new session token from a still-valid one.
-func (s *DataPlaneService) RefreshToken(_ context.Context, req *lanternv1.DpRefreshTokenRequest) (*lanternv1.DpRefreshTokenResponse, error) {
+func (s *DataPlaneService) RefreshToken(_ context.Context, req *palv1.DpRefreshTokenRequest) (*palv1.DpRefreshTokenResponse, error) {
 	c, err := s.verifyAndMatchToken(req.GetSessionToken(), req.GetPlaneId())
 	if err != nil {
 		return nil, err
@@ -485,7 +485,7 @@ func (s *DataPlaneService) RefreshToken(_ context.Context, req *lanternv1.DpRefr
 		return nil, status.Errorf(codes.Internal, "failed to refresh token")
 	}
 
-	return &lanternv1.DpRefreshTokenResponse{
+	return &palv1.DpRefreshTokenResponse{
 		SessionToken:  newToken,
 		ExpiresAtUnix: time.Now().Add(dpSessionTTL).Unix(),
 	}, nil
@@ -512,7 +512,7 @@ const (
 // allowed per tenant; excess connections are rejected ResourceExhausted.
 //
 // M1: if maxMissedPings consecutive pings go unanswered the stream is closed.
-func (s *DataPlaneService) RunStream(stream lanternv1.DataPlaneService_RunStreamServer) error {
+func (s *DataPlaneService) RunStream(stream palv1.DataPlaneService_RunStreamServer) error {
 	ctx := stream.Context()
 
 	// --- Authenticate: first frame must be DpHello ---
@@ -539,7 +539,7 @@ func (s *DataPlaneService) RunStream(stream lanternv1.DataPlaneService_RunStream
 
 	// H2: enforce per-tenant RunStream connection cap.
 	cap := maxRunStreamsPerTenant()
-	assignCh := make(chan *lanternv1.DpRunAssignment, 8)
+	assignCh := make(chan *palv1.DpRunAssignment, 8)
 	deregister, ok := s.Registry.tryRegister(tenantID, planeID, assignCh, cap)
 	if !ok {
 		s.logger().Warn("run stream: per-tenant cap exceeded",
@@ -561,7 +561,7 @@ func (s *DataPlaneService) RunStream(stream lanternv1.DataPlaneService_RunStream
 
 	// recvCh carries frames from the blocking Recv goroutine.
 	type clientFrame struct {
-		msg *lanternv1.DpRunStreamClientMsg
+		msg *palv1.DpRunStreamClientMsg
 		err error
 	}
 	recvCh := make(chan clientFrame, 4)
@@ -597,8 +597,8 @@ func (s *DataPlaneService) RunStream(stream lanternv1.DataPlaneService_RunStream
 			s.handleClientFrame(ctx, tenantID, planeID, frame.msg)
 
 		case a := <-assignCh:
-			if err := stream.Send(&lanternv1.DpRunStreamServerMsg{
-				Msg: &lanternv1.DpRunStreamServerMsg_Assignment{Assignment: a},
+			if err := stream.Send(&palv1.DpRunStreamServerMsg{
+				Msg: &palv1.DpRunStreamServerMsg_Assignment{Assignment: a},
 			}); err != nil {
 				s.logger().Warn("run stream: send assignment failed",
 					zap.String("plane_id", planeID),
@@ -622,8 +622,8 @@ func (s *DataPlaneService) RunStream(stream lanternv1.DataPlaneService_RunStream
 				return status.Errorf(codes.DeadlineExceeded,
 					"idle timeout: %d consecutive pings unanswered", missedPings)
 			}
-			if err := stream.Send(&lanternv1.DpRunStreamServerMsg{
-				Msg: &lanternv1.DpRunStreamServerMsg_Ping{Ping: &lanternv1.DpPing{}},
+			if err := stream.Send(&palv1.DpRunStreamServerMsg{
+				Msg: &palv1.DpRunStreamServerMsg_Ping{Ping: &palv1.DpPing{}},
 			}); err != nil {
 				s.logger().Warn("run stream: ping failed",
 					zap.String("plane_id", planeID),
@@ -637,9 +637,9 @@ func (s *DataPlaneService) RunStream(stream lanternv1.DataPlaneService_RunStream
 
 // handleClientFrame dispatches an authenticated RunStream client message.
 // Tenant isolation is enforced: status/completion writes are scoped to tenantID.
-func (s *DataPlaneService) handleClientFrame(ctx context.Context, tenantID, planeID string, msg *lanternv1.DpRunStreamClientMsg) {
+func (s *DataPlaneService) handleClientFrame(ctx context.Context, tenantID, planeID string, msg *palv1.DpRunStreamClientMsg) {
 	switch v := msg.GetMsg().(type) {
-	case *lanternv1.DpRunStreamClientMsg_Accepted:
+	case *palv1.DpRunStreamClientMsg_Accepted:
 		// Agent confirmed receipt of the assignment; optionally update run status.
 		runID := v.Accepted.GetRunId()
 		s.logger().Debug("run accepted",
@@ -649,7 +649,7 @@ func (s *DataPlaneService) handleClientFrame(ctx context.Context, tenantID, plan
 		// Mark the run as running once accepted by the data plane.
 		s.updateRunStatus(ctx, tenantID, planeID, runID, "running", "")
 
-	case *lanternv1.DpRunStreamClientMsg_Status:
+	case *palv1.DpRunStreamClientMsg_Status:
 		upd := v.Status
 		runID := upd.GetRunId()
 		detail := upd.GetDetail()
@@ -661,7 +661,7 @@ func (s *DataPlaneService) handleClientFrame(ctx context.Context, tenantID, plan
 		)
 		s.updateRunStatus(ctx, tenantID, planeID, runID, runStatus, detail)
 
-	case *lanternv1.DpRunStreamClientMsg_Completed:
+	case *palv1.DpRunStreamClientMsg_Completed:
 		comp := v.Completed
 		runID := comp.GetRunId()
 		finalStatus := dpRunStatusToString(comp.GetStatus())
@@ -673,7 +673,7 @@ func (s *DataPlaneService) handleClientFrame(ctx context.Context, tenantID, plan
 		)
 		s.finalizeRun(ctx, tenantID, planeID, runID, finalStatus, comp)
 
-	case *lanternv1.DpRunStreamClientMsg_Pong:
+	case *palv1.DpRunStreamClientMsg_Pong:
 		// Nothing to do — pong confirms the stream is alive.
 
 	default:
@@ -732,7 +732,7 @@ func (s *DataPlaneService) RouteRun(ctx context.Context, runID, tenantID, agentV
 		return "", false
 	}
 
-	assignment := &lanternv1.DpRunAssignment{
+	assignment := &palv1.DpRunAssignment{
 		RunId:          runID,
 		AgentVersionId: agentVersionID,
 		TenantId:       tenantID,
@@ -807,7 +807,7 @@ func (s *DataPlaneService) updateRunStatus(ctx context.Context, tenantID, planeI
 
 // finalizeRun updates a run's status and cost fields on completion, scoped to
 // both tenantID and planeID. Terminal states are never overwritten.
-func (s *DataPlaneService) finalizeRun(ctx context.Context, tenantID, planeID, runID, finalStatus string, comp *lanternv1.DpRunCompleted) {
+func (s *DataPlaneService) finalizeRun(ctx context.Context, tenantID, planeID, runID, finalStatus string, comp *palv1.DpRunCompleted) {
 	if runID == "" {
 		return
 	}
@@ -855,19 +855,19 @@ func hashToken(token string) string {
 }
 
 // dpRunStatusToString maps proto DpRunStatus to the string used in the runs table.
-func dpRunStatusToString(s lanternv1.DpRunStatus) string {
+func dpRunStatusToString(s palv1.DpRunStatus) string {
 	switch s {
-	case lanternv1.DpRunStatus_DP_RUN_STATUS_ACCEPTED:
+	case palv1.DpRunStatus_DP_RUN_STATUS_ACCEPTED:
 		return "queued"
-	case lanternv1.DpRunStatus_DP_RUN_STATUS_RUNNING:
+	case palv1.DpRunStatus_DP_RUN_STATUS_RUNNING:
 		return "running"
-	case lanternv1.DpRunStatus_DP_RUN_STATUS_SUCCEEDED:
+	case palv1.DpRunStatus_DP_RUN_STATUS_SUCCEEDED:
 		return "completed"
-	case lanternv1.DpRunStatus_DP_RUN_STATUS_FAILED:
+	case palv1.DpRunStatus_DP_RUN_STATUS_FAILED:
 		return "failed"
-	case lanternv1.DpRunStatus_DP_RUN_STATUS_CANCELLED:
+	case palv1.DpRunStatus_DP_RUN_STATUS_CANCELLED:
 		return "cancelled"
-	case lanternv1.DpRunStatus_DP_RUN_STATUS_TIMED_OUT:
+	case palv1.DpRunStatus_DP_RUN_STATUS_TIMED_OUT:
 		return "failed"
 	default:
 		return "running"

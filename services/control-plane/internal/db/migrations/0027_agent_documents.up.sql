@@ -62,5 +62,5 @@ CREATE POLICY tenant_isolation ON agent_document_chunks
 	USING (tenant_id::text = current_setting('app.tenant_id', true))
 	WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON agent_documents TO lantern_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON agent_document_chunks TO lantern_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON agent_documents TO pal_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON agent_document_chunks TO pal_app;

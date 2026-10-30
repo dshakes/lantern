@@ -12,7 +12,7 @@ package handlers
 // grounded in specific source refs.  Any deadline without a source ref is
 // rejected at parse time; any with confidence < minImmigrationConfidence is skipped.
 //
-// Flag-gated: LANTERN_IMMIGRATION_SENTINEL (default OFF).
+// Flag-gated: PAL_IMMIGRATION_SENTINEL (default OFF).
 //   - Unset → scan is a no-op, endpoints return empty/disabled response.
 //   - Zero behavior change when flag is off.
 //
@@ -39,9 +39,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/db"
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/db"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // immigrationSentinelEnabled reports whether the sentinel is active.
@@ -167,7 +167,7 @@ func (h *ImmigrationSentinelHandler) Scan(w http.ResponseWriter, r *http.Request
 	if !immigrationSentinelEnabled() {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"enabled": false,
-			"message": "immigration sentinel disabled (set LANTERN_IMMIGRATION_SENTINEL=1 to enable)",
+			"message": "immigration sentinel disabled (set PAL_IMMIGRATION_SENTINEL=1 to enable)",
 			"found":   0,
 		})
 		return

@@ -44,7 +44,7 @@ where
                     tracing::warn!(error = %e, "egress forwarder: broker unreachable");
                     let _ = tokio::io::AsyncWriteExt::write_all(
                         &mut client,
-                        b"HTTP/1.1 502 Bad Gateway\r\nX-Lantern-Reason: egress-broker-unreachable\r\nContent-Length: 0\r\n\r\n",
+                        b"HTTP/1.1 502 Bad Gateway\r\nX-Pal-Reason: egress-broker-unreachable\r\nContent-Length: 0\r\n\r\n",
                     )
                     .await;
                 }

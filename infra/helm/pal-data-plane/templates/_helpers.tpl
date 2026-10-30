@@ -2,12 +2,12 @@
 Chart name, truncated to 63 chars (K8s label limit).
 */}}
 {{/*
-Chart name used in names and selector labels. Releases whose name contains "lantern" (created before the
+Chart name used in names and selector labels. Releases whose name contains "pal" (created before the
 PAL rename, ADR 0032) keep the old chart name so their object names, selectors and PVCs do not change.
 */}}
 {{- define "pal-dp.chartName" -}}
 {{- $n := default .Chart.Name .Values.nameOverride -}}
-{{- if contains "lantern" .Release.Name -}}{{- $n = regexReplaceAll "^pal" $n "lantern" -}}{{- end -}}
+{{- if contains "pal" .Release.Name -}}{{- $n = regexReplaceAll "^pal" $n "pal" -}}{{- end -}}
 {{- $n -}}
 {{- end }}
 
@@ -139,7 +139,7 @@ S3 bucket — internal or external.
 */}}
 {{- define "pal-dp.s3Bucket" -}}
 {{- if .Values.minio.enabled }}
-{{- "lantern-bundles" }}
+{{- "pal-bundles" }}
 {{- else }}
 {{- .Values.minio.external.bucket }}
 {{- end }}

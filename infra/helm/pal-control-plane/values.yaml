@@ -1,8 +1,8 @@
 # Env vars are emitted as PAL_* (ADR 0032). The binaries still accept the legacy
-# LANTERN_* names, so existing overrides keep working; PAL_* wins if both are set.
+# PAL_* names, so existing overrides keep working; PAL_* wins if both are set.
 #
 # Upgrading a release created before the PAL rename (ADR 0032): the chart name changed, so
-# resource names change with it (release "lantern" -> "lantern-<chart>"). To keep the old
+# resource names change with it (release "pal" -> "pal-<chart>"). To keep the old
 # names, and the Postgres/MinIO PVCs bound to them, pass --set fullnameOverride=<old fullname>.
 #
 # pal-control-plane values
@@ -14,7 +14,7 @@
 global:
   image:
     registry: ghcr.io
-    repository: dshakes/lantern
+    repository: dshakes/pal
     tag: "0.1.0"
     pullPolicy: IfNotPresent
   logLevel: info
@@ -167,9 +167,9 @@ scheduler:
 postgresql:
   enabled: true
   auth:
-    username: lantern
+    username: pal
     password: ""  # set via secret
-    database: lantern
+    database: pal
   primary:
     persistence:
       size: 10Gi
@@ -182,17 +182,17 @@ postgresql:
 # (RDS/Cloud SQL both support it). Backups/PITR are then the managed provider's job.
 externalDatabase:
   enabled: false
-  host: ""              # e.g. lantern-prod.xxxx.us-west-2.rds.amazonaws.com
+  host: ""              # e.g. pal-prod.xxxx.us-west-2.rds.amazonaws.com
   port: 5432
-  database: lantern
-  user: lantern
+  database: pal
+  user: pal
   sslmode: require
-  existingSecret: "lantern-db"
+  existingSecret: "pal-db"
   existingSecretPasswordKey: "postgres-password"
   # The non-superuser role PAL Runtime connects as when RLS enforcement is on
   # (PAL_RLS_ENFORCE=1). Provision it on the managed instance.
-  appUser: "lantern_app"
-  appExistingSecretPasswordKey: "lantern-app-password"
+  appUser: "pal_app"
+  appExistingSecretPasswordKey: "pal-app-password"
 
 # backup — opt-in logical backup CronJob for the IN-CLUSTER Postgres. pg_dump'd on a
 # schedule and uploaded to S3 (or the in-cluster MinIO). NOT a substitute for
@@ -202,7 +202,7 @@ backup:
   enabled: false
   schedule: "0 2 * * *"           # 02:00 daily (cluster TZ)
   image: "pgvector/pgvector:pg16" # has pg_dump + matching server version
-  s3Bucket: "lantern-backups"
+  s3Bucket: "pal-backups"
   s3Endpoint: ""                  # empty = AWS S3; set to the MinIO endpoint for in-cluster
   s3Region: "us-east-1"
   retentionDays: 14               # prune dumps older than this
@@ -219,9 +219,9 @@ redis:
 minio:
   enabled: true
   auth:
-    rootUser: lantern
+    rootUser: pal
     rootPassword: ""  # set via secret
-  defaultBuckets: "lantern-bundles,lantern-snapshots"
+  defaultBuckets: "pal-bundles,pal-snapshots"
   persistence:
     size: 10Gi
 
@@ -233,12 +233,12 @@ ingress:
   className: nginx
   annotations: {}
   hosts:
-    - host: api.lantern.run
+    - host: api.pal.run
       paths:
         - path: /
           pathType: Prefix
           service: gateway
-    - host: app.lantern.run
+    - host: app.pal.run
       paths:
         - path: /
           pathType: Prefix
@@ -252,8 +252,8 @@ secrets:
   jwtSecret: ""
   openaiApiKey: ""
   anthropicApiKey: ""
-  postgresPassword: "lantern"
-  minioPassword: "lanternsecret"
+  postgresPassword: "pal"
+  minioPassword: "palsecret"
 
 # ---------------------------------------------------------------------------
 # Data plane tunnel listener

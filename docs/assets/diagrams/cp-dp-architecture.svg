@@ -57,7 +57,7 @@
   <rect class="node" x="620" y="136" width="240" height="100" rx="10"/>
   <text class="t-h" x="636" y="162">3 Mint identity</text>
   <text class="t-b" x="636" y="182">Per-VM certificate at spawn</text>
-  <text class="t-b" x="636" y="200">Secrets are lantern.secret</text>
+  <text class="t-b" x="636" y="200">Secrets are pal.secret</text>
   <text class="t-b" x="636" y="218">refs, resolved at run time</text>
   <path class="edge" d="M860 186H898" marker-end="url(#cp-dp-architecture-a)"/>
   <rect class="node" x="900" y="136" width="240" height="100" rx="10"/>

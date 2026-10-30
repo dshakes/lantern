@@ -204,7 +204,7 @@ impl RuntimeBackend for KataBackend {
         };
 
         let container_name = format!(
-            "lantern-kata-{}-{}",
+            "pal-kata-{}-{}",
             req.run_id,
             &uuid::Uuid::new_v4().to_string()[..8]
         );
@@ -247,9 +247,9 @@ impl RuntimeBackend for KataBackend {
             cmd,
             host_config: Some(host_config),
             labels: Some(HashMap::from([
-                ("lantern.run_id".to_string(), req.run_id.clone()),
+                ("pal.run_id".to_string(), req.run_id.clone()),
                 (
-                    "lantern.isolation_class".to_string(),
+                    "pal.isolation_class".to_string(),
                     format!("{:?}", req.isolation_class),
                 ),
             ])),
@@ -357,10 +357,10 @@ impl RuntimeBackend for KataBackend {
 /// Build the environment variable list for a container (mirrors DockerBackend).
 fn build_env(req: &ScheduleRequest) -> Vec<String> {
     let mut env: Vec<String> = vec![
-        format!("LANTERN_RUN_ID={}", req.run_id),
-        format!("LANTERN_BUNDLE_URI={}", req.bundle_uri),
+        format!("PAL_RUN_ID={}", req.run_id),
+        format!("PAL_BUNDLE_URI={}", req.bundle_uri),
         format!(
-            "LANTERN_INPUT={}",
+            "PAL_INPUT={}",
             serde_json::to_string(&req.input).unwrap_or_default()
         ),
     ];
@@ -371,7 +371,7 @@ fn build_env(req: &ScheduleRequest) -> Vec<String> {
 
     for secret in &req.secrets {
         env.push(format!(
-            "{}=lantern.secret/{}",
+            "{}=pal.secret/{}",
             secret.env_var, secret.vault_ref
         ));
     }

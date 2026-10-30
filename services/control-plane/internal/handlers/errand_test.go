@@ -12,7 +12,7 @@ package handlers
 //   sole dial path: owner-only, compliance preamble first, atomic (no double-dial),
 //   idempotent, DNC-refused, non-owner 403.
 //
-// Layer 4 (no DB): TestErrand_GateOff_404 — all endpoints 404 when LANTERN_ERRAND unset.
+// Layer 4 (no DB): TestErrand_GateOff_404 — all endpoints 404 when PAL_ERRAND unset.
 //
 // Layer 5 (RLS harness): TestRLSErrands_* — cross-tenant isolation at the Postgres layer.
 
@@ -32,8 +32,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/db"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/db"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // ---------- stub dialers ----------
@@ -75,7 +75,7 @@ func (d *recordingDialer) last() recordedCall {
 // ---------- helpers ----------
 
 // newErrandHandlerWithDialer builds a handler backed by a real pool, with an
-// injected dialer (no LLM). The LANTERN_ERRAND env var must be set by the
+// injected dialer (no LLM). The PAL_ERRAND env var must be set by the
 // caller via t.Setenv("PAL_ERRAND", "1") for endpoints to respond (not 404).
 func newErrandHandlerWithDialer(t *testing.T, pool *pgxpool.Pool, dialer OutboundDialer) *ErrandHandler {
 	t.Helper()
@@ -134,7 +134,7 @@ func seedTwilioConnector(t *testing.T, pool *pgxpool.Pool, tenantID, authToken s
 }
 
 // doErrandTurn fires POST /v1/voice/errand/turn/{id} as a Twilio form POST.
-// Uses LANTERN_TWILIO_WEBHOOK_AUTH=off (set by caller via t.Setenv) to bypass
+// Uses PAL_TWILIO_WEBHOOK_AUTH=off (set by caller via t.Setenv) to bypass
 // signature verification in most tests.
 func doErrandTurn(t *testing.T, h *ErrandHandler, id string, form url.Values) *httptest.ResponseRecorder {
 	t.Helper()
@@ -294,14 +294,14 @@ func TestErrandTwiML_PreambleAlwaysFirst(t *testing.T) {
 
 // ---------- Layer 4 (no DB): gate-off test ----------
 
-// TestErrand_GateOff_404 confirms all endpoints return 404 when LANTERN_ERRAND
+// TestErrand_GateOff_404 confirms all endpoints return 404 when PAL_ERRAND
 // is unset — the feature is off by default.
 func TestErrand_GateOff_404(t *testing.T) {
 	// No DB needed: gate check fires before any DB access.
 	logger, _ := zap.NewDevelopment()
 	srv := &server.Server{Logger: logger}
 	h := NewErrandHandler(srv, NewAuthHandler(srv, testJWTSecret), nil)
-	// Do NOT set LANTERN_ERRAND.
+	// Do NOT set PAL_ERRAND.
 
 	tenant := uuid.NewString()
 	tok := bearerHeader(mintTestToken(t, tenant, "u", "owner"))
@@ -345,7 +345,7 @@ func TestErrand_GateOff_404(t *testing.T) {
 	for _, ep := range endpoints {
 		rr := ep.fn()
 		if rr.Code != http.StatusNotFound {
-			t.Errorf("%s: got %d, want 404 when LANTERN_ERRAND unset", ep.name, rr.Code)
+			t.Errorf("%s: got %d, want 404 when PAL_ERRAND unset", ep.name, rr.Code)
 		}
 	}
 }
@@ -674,7 +674,7 @@ func newEnforcedErrandHandler(t *testing.T, e *enforcedServer) *ErrandHandler {
 }
 
 // TestRLSErrands_SameTenantWorks proves propose + list work under genuine
-// RLS enforcement (AppPool as lantern_app).
+// RLS enforcement (AppPool as pal_app).
 func TestRLSErrands_SameTenantWorks(t *testing.T) {
 	t.Setenv("PAL_ERRAND", "1")
 	e := newEnforcedServer(t)
@@ -1040,7 +1040,7 @@ func TestErrandTurn_LLMError_GracefulEnd(t *testing.T) {
 // X-Twilio-Signature (when an authToken IS configured) returns 403.
 func TestErrandTurn_BadSignature_403(t *testing.T) {
 	t.Setenv("PAL_ERRAND", "1")
-	// Do NOT set LANTERN_TWILIO_WEBHOOK_AUTH=off — signature verification must run.
+	// Do NOT set PAL_TWILIO_WEBHOOK_AUTH=off — signature verification must run.
 	pool := openTestPool(t)
 	if err := db.Migrate(context.Background(), pool, false); err != nil {
 		t.Fatalf("Migrate: %v", err)

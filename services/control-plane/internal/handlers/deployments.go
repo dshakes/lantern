@@ -12,8 +12,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // generateRegToken produces a 32-byte cryptographically-random registration
@@ -456,7 +456,7 @@ func (h *DeploymentHandler) DeployAgent(w http.ResponseWriter, r *http.Request) 
 
 	// Create a deployment record with status "live" for the cloud deploy.
 	initialLogs, _ := json.Marshal([]string{
-		"Deploying " + name + " to Lantern Cloud...",
+		"Deploying " + name + " to PAL Cloud...",
 		"Ensuring agent version exists...",
 		"Agent marked as deployed",
 		"A2A invoke endpoint active",
@@ -516,7 +516,7 @@ func (h *DeploymentHandler) DeployAgent(w http.ResponseWriter, r *http.Request) 
 
 		return tx.QueryRow(ctx, `
 			INSERT INTO deployments (tenant_id, agent_name, version, environment, status, deployed_by, message, logs)
-			VALUES ($1, $2, 'latest', 'cloud', 'live', $3, 'Deployed to Lantern Cloud', $4::jsonb)
+			VALUES ($1, $2, 'latest', 'cloud', 'live', $3, 'Deployed to PAL Cloud', $4::jsonb)
 			RETURNING id, created_at
 		`, tenantID, name, tenantID, string(initialLogs)).Scan(&deployID, &createdAt)
 	})

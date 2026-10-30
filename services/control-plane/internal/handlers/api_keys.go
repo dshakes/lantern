@@ -13,8 +13,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // ApiKeyHandler provides REST endpoints for managing API keys.
@@ -53,7 +53,7 @@ var knownScopes = map[Scope]bool{
 // could not itself exercise (privilege escalation). JWT owner/admin sessions
 // count as admin; other JWT roles may not mint keys. An empty request means an
 // unrestricted legacy key, so it is only grantable by an unrestricted caller.
-func validateGrantableScopes(c *LanternClaims, requested []string) error {
+func validateGrantableScopes(c *PalClaims, requested []string) error {
 	for _, s := range requested {
 		if !knownScopes[Scope(s)] {
 			return fmt.Errorf("unknown scope: %q", s)

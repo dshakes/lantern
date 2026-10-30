@@ -106,7 +106,7 @@ export default function HomePage() {
               The control-plane isn&apos;t reachable. If you&apos;re running locally,
               start it with{" "}
               <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-zinc-300">
-                lantern dev
+                pal dev
               </code>
               .
             </p>

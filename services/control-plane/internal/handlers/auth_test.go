@@ -8,7 +8,7 @@ package handlers
 // Skipped automatically when DATABASE_URL is unset (same convention as the rest
 // of this package). Run with:
 //
-//	DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable \
+//	DATABASE_URL=postgres://pal:pal@localhost:5432/pal?sslmode=disable \
 //	  go test ./internal/handlers/ -run Auth -count=1 -v
 
 import (
@@ -23,7 +23,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // newAuthTestHandler builds an AuthHandler backed by a real pool, using the
@@ -298,12 +298,12 @@ func TestAuth_GetMe_InvalidToken(t *testing.T) {
 func mintExpiredToken(t *testing.T, tenantID, userID, role string) string {
 	t.Helper()
 	past := time.Now().Add(-2 * time.Hour)
-	claims := LanternClaims{
+	claims := PalClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID,
 			IssuedAt:  jwt.NewNumericDate(past.Add(-time.Hour)),
 			ExpiresAt: jwt.NewNumericDate(past),
-			Issuer:    "lantern-test",
+			Issuer:    "pal-test",
 		},
 		TenantID: tenantID,
 		Role:     role,
@@ -320,7 +320,7 @@ func mintExpiredToken(t *testing.T, tenantID, userID, role string) string {
 // signature is actually verified (a forged token under a different key fails).
 func mintTokenWithSecret(t *testing.T, tenantID, userID, role, secret string) string {
 	t.Helper()
-	claims := LanternClaims{
+	claims := PalClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID,
 			IssuedAt:  jwt.NewNumericDate(time.Now()),

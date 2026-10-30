@@ -2,7 +2,7 @@
 title: SDK reference
 description: The TypeScript, Python and Go SDKs for the PAL management API, with client setup and namespace listings.
 glance:
-  what: "Three SDKs for the management API: TypeScript (@lantern/sdk), Python (lantern-sdk, imported as lantern) and Go."
+  what: "Three SDKs for the management API: TypeScript (@pal/sdk), Python (pal-sdk, imported as pal) and Go."
   why: "They wrap the REST API in typed methods, so you call client.runs.create(...) instead of writing HTTP."
   how: "Install the SDK for your language, then follow Client setup and Creating and streaming a run."
 sidebar:
@@ -11,7 +11,7 @@ sidebar:
 
 import { Aside } from '@astrojs/starlight/components';
 
-Three SDKs: TypeScript (`@lantern/sdk`), Python (`lantern-sdk`, imported as `lantern`) and Go (`github.com/dshakes/lantern/packages/sdk-go`). They cover agents, runs, sessions, connectors, budgets, evals, experiments, marketplace, MCP, receipts, feedback, rehearsals and sandbox VMs. The TypeScript client has the most surface; the listings below show what each one exposes.
+Three SDKs: TypeScript (`@pal/sdk`), Python (`pal-sdk`, imported as `pal`) and Go (`github.com/dshakes/pal/packages/sdk-go`). They cover agents, runs, sessions, connectors, budgets, evals, experiments, marketplace, MCP, receipts, feedback, rehearsals and sandbox VMs. The TypeScript client has the most surface; the listings below show what each one exposes.
 
 The SDKs wrap the REST API in typed methods, so you call `client.runs.create(...)` instead of writing HTTP. Use them to trigger agents from your app, wire runs into your backend, or script bulk operations. For the raw endpoints see the [API reference](/docs/reference/api/).
 
@@ -20,35 +20,35 @@ The SDKs wrap the REST API in typed methods, so you call `client.runs.create(...
 ### Installation
 
 <Aside type="caution" title="Registry packages are not published yet">
-`@lantern/sdk` is not on npm, so `npm install @lantern/sdk` fails. Install from a checkout.
+`@pal/sdk` is not on npm, so `npm install @pal/sdk` fails. Install from a checkout.
 </Aside>
 
 ```bash
-# in your checkout of github.com/dshakes/lantern
+# in your checkout of github.com/dshakes/pal
 ( cd packages/sdk-ts && npm install && npm run build )
 # in your project: a file path, not the registry
-npm install /path/to/lantern/packages/sdk-ts
+npm install /path/to/pal/packages/sdk-ts
 ```
 
-After that, `import { LanternClient } from "@lantern/sdk"` resolves to the built `dist/`. Rebuild after pulling changes.
+After that, `import { PalClient } from "@pal/sdk"` resolves to the built `dist/`. Rebuild after pulling changes.
 
 ### Client setup
 
 ```ts
-import { LanternClient } from "@lantern/sdk";
+import { PalClient } from "@pal/sdk";
 
-const client = new LanternClient({
+const client = new PalClient({
   apiKey: process.env.PAL_API_KEY,   // hlx_live_...
   baseUrl: process.env.PAL_API_URL,  // e.g. http://localhost:8080
 });
 ```
 
-With no constructor options the SDK reads `PAL_API_KEY` and `PAL_API_URL`. If `PAL_API_URL` is unset, the base URL defaults to `https://api.lantern.run`, so set it for a self-hosted control plane. (`PAL_RUNTIME=true` is a different switch: the platform sets it inside a running agent to enable the production sidecar.)
+With no constructor options the SDK reads `PAL_API_KEY` and `PAL_API_URL`. If `PAL_API_URL` is unset, the base URL defaults to `https://api.pal.run`, so set it for a self-hosted control plane. (`PAL_RUNTIME=true` is a different switch: the platform sets it inside a running agent to enable the production sidecar.)
 
 ### Creating and streaming a run
 
 ```ts
-import type { Run } from "@lantern/sdk";
+import type { Run } from "@pal/sdk";
 
 // Create a run (create() returns an event stream instead when you pass stream: true)
 const run = (await client.runs.create({
@@ -116,12 +116,12 @@ client.runtime      // schedule, list, get, terminate, exec, execStream, pause, 
 ### Error handling
 
 ```ts
-import { LanternApiError, MessageStreamError } from "@lantern/sdk";
+import { PalApiError, MessageStreamError } from "@pal/sdk";
 
 try {
   await client.runs.create({ agent: "my-agent", input: {} });
 } catch (err) {
-  if (err instanceof LanternApiError) {
+  if (err instanceof PalApiError) {
     console.error(err.status, err.message);
   }
 }
@@ -138,14 +138,14 @@ try {
 }
 ```
 
-Retries are built in. The TypeScript client retries HTTP 429, 503 and network errors up to 3 attempts with full-jitter backoff (500 ms base, 4 s cap). It never retries other 4xx or 5xx. There is no separate `@lantern/retry` package.
+Retries are built in. The TypeScript client retries HTTP 429, 503 and network errors up to 3 attempts with full-jitter backoff (500 ms base, 4 s cap). It never retries other 4xx or 5xx. There is no separate `@pal/retry` package.
 
 Sandbox VMs live under `client.runtime` in TypeScript and Python; Go has `ScheduleVM`, `PauseVM`, `ResumeVM`, `ForkVM`, `ListFiles`, `ReadFile` and `WriteFile`. See [Sandbox lifecycle](/docs/runtime/sandbox-lifecycle/).
 
 ## Python SDK
 
 <Aside type="caution" title="Status">
-The Python management client is usable today. The in-agent runtime context (`ctx.llm`, `ctx.tools`, `ctx.mem` and the rest) raises `NotImplementedError`; write agent logic in TypeScript for now. Install from the repo: the `lantern-sdk` name on PyPI belongs to an unrelated project, so `pip install lantern-sdk` installs the wrong package.
+The Python management client is usable today. The in-agent runtime context (`ctx.llm`, `ctx.tools`, `ctx.mem` and the rest) raises `NotImplementedError`; write agent logic in TypeScript for now. Install from the repo: the `pal-sdk` name on PyPI belongs to an unrelated project, so `pip install pal-sdk` installs the wrong package.
 </Aside>
 
 ### Installation
@@ -153,23 +153,23 @@ The Python management client is usable today. The in-agent runtime context (`ctx
 ```bash
 # from the root of your checkout
 pip install ./packages/sdk-python
-# optional: LangChain deepagents sandbox backend (lantern.integrations.deepagents_sandbox)
+# optional: LangChain deepagents sandbox backend (pal.integrations.deepagents_sandbox)
 pip install "./packages/sdk-python[deepagents]"
 ```
 
 ### Client setup
 
 ```python
-from lantern import LanternClient
+from pal import PalClient
 
-client = LanternClient(
+client = PalClient(
     api_key="hlx_live_your_key",        # or PAL_API_KEY env var
     base_url="http://localhost:8080",   # or PAL_API_URL env var
 )
 # Request methods are coroutines: call from async code, or asyncio.run(main())
 ```
 
-`LanternClient` is built on `httpx.AsyncClient`: every request method is `async def`; `runs.events`, `sessions.stream_events` and `runtime.exec_stream` return async iterators (`async for`). Use `async with LanternClient(...) as client` or call `await client.close()`.
+`PalClient` is built on `httpx.AsyncClient`: every request method is `async def`; `runs.events`, `sessions.stream_events` and `runtime.exec_stream` return async iterators (`async for`). Use `async with PalClient(...) as client` or call `await client.close()`.
 
 ### Creating a run
 
@@ -209,7 +209,7 @@ for agent in resp.agents:
 Inside an agent bundle, `ctx` gives you durable steps, LLM calls, tools, memory and connectors. Each step is journaled, so a crashed run resumes instead of restarting:
 
 ```ts
-import { agent, step } from "@lantern/sdk";
+import { agent, step } from "@pal/sdk";
 
 export default agent<{ query: string }>({
   name: "my-agent",
@@ -251,5 +251,5 @@ await ctx.approval.request({
   reason: "Send this email to 500 users?",
   expiresAt: "2026-12-01T00:00:00Z",
 });
-// Reaching this line means it was granted. Denial or timeout throws LanternError.
+// Reaching this line means it was granted. Denial or timeout throws PalError.
 ```

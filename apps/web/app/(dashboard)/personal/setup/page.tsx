@@ -446,14 +446,14 @@ function IMessageSetupView({
           <Cmd cmd="/bot off" desc="pause auto-reply globally" />
           <Cmd cmd="/bot status" desc="current bridge + bot state" />
           <Cmd cmd="/bot resume-all" desc="clear all per-contact pauses" />
-          <Cmd cmd="/lantern ping" desc="liveness check (pong)" />
-          <Cmd cmd="/lantern status" desc="full session diagnostics" />
-          <Cmd cmd="/lantern chats list" desc="show monitored group chats" />
+          <Cmd cmd="/pal ping" desc="liveness check (pong)" />
+          <Cmd cmd="/pal status" desc="full session diagnostics" />
+          <Cmd cmd="/pal chats list" desc="show monitored group chats" />
         </ul>
         <p className="mt-4 text-xs text-zinc-500">
           Looking for prod-grade always-on? See{" "}
           <Link
-            href="https://github.com/dshakes/lantern/blob/master/scripts/launchd/README.md"
+            href="https://github.com/dshakes/pal/blob/master/scripts/launchd/README.md"
             target="_blank"
             className="text-violet-300 underline"
           >

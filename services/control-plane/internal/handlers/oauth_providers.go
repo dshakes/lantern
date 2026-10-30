@@ -8,7 +8,7 @@ import (
 )
 
 // OAuthProvider describes the OAuth endpoints and default scopes for a
-// third-party service that Lantern can connect to as a connector.
+// third-party service that PAL can connect to as a connector.
 type OAuthProvider struct {
 	AuthURL      string
 	TokenURL     string

@@ -14,8 +14,8 @@ const STYLE = `.lx{--bg:var(--lx-bg);--surface:var(--lx-surface);--surface2:var(
 svg = svg
   .replace(/\.lx\{--bg:[^}]*\}\s*@media \(prefers-color-scheme:dark\)\{\.lx\{[^}]*\}\}/, STYLE)
   .replace(/"IBM Plex Sans",/g, 'var(--p-font),').replace(/"IBM Plex Mono",/g, 'var(--p-mono),')
-  .replace(/\bLANTERN_/g, 'PAL_')
-  .replace(/(?<![-\w])Lantern(?![-\w])/g, 'PAL') // prose only; wire names like X-Lantern-* stay
+  .replace(/\bPAL_/g, 'PAL_')
+  .replace(/(?<![-\w])PAL(?![-\w])/g, 'PAL') // prose only; wire names like X-Pal-* stay
   .replace(/href="(\/[^"]*)"/g, (_, h) => `href="${docsHref(h)}"`);
 ---
 <figure class="arch-svg not-content">

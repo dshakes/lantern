@@ -11,9 +11,9 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/cluster"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/store"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/cluster"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/store"
 )
 
 // ---------------------------------------------------------------------------
@@ -133,15 +133,15 @@ func TestWriteThroughStore_VMPassthrough(t *testing.T) {
 	mem := cluster.NewInMemoryStore()
 	wt := store.NewWriteThroughStore(mem, nil, zap.NewNop())
 
-	handle := &lanternv1.VmHandle{
+	handle := &palv1.VmHandle{
 		VmId:      "vm-test-001",
 		Node:      "node-1",
 		CreatedAt: timestamppb.Now(),
 	}
 	vm := &cluster.VM{
 		Handle:      handle,
-		Spec:        &lanternv1.AgentSpec{ImageDigest: "sha256:abc", TenantId: "t-1"},
-		State:       lanternv1.VmState_VM_STATE_PENDING,
+		Spec:        &palv1.AgentSpec{ImageDigest: "sha256:abc", TenantId: "t-1"},
+		State:       palv1.VmState_VM_STATE_PENDING,
 		TenantID:    "t-1",
 		NodeName:    "node-1",
 		LastEventAt: time.Now().UTC(),
@@ -153,16 +153,16 @@ func TestWriteThroughStore_VMPassthrough(t *testing.T) {
 	if !ok {
 		t.Fatal("expected VM to be present after CreateVM")
 	}
-	if got.State != lanternv1.VmState_VM_STATE_PENDING {
+	if got.State != palv1.VmState_VM_STATE_PENDING {
 		t.Errorf("state: got %v, want PENDING", got.State)
 	}
 
-	ok = wt.UpdateVMState("vm-test-001", lanternv1.VmState_VM_STATE_RUNNING, "spawned", nil, time.Now().UTC())
+	ok = wt.UpdateVMState("vm-test-001", palv1.VmState_VM_STATE_RUNNING, "spawned", nil, time.Now().UTC())
 	if !ok {
 		t.Fatal("UpdateVMState returned false for known VM")
 	}
 	got, _ = wt.GetVM("vm-test-001")
-	if got.State != lanternv1.VmState_VM_STATE_RUNNING {
+	if got.State != palv1.VmState_VM_STATE_RUNNING {
 		t.Errorf("state after update: got %v, want RUNNING", got.State)
 	}
 
@@ -318,7 +318,7 @@ func TestDB_VMPersistAndLoad(t *testing.T) {
 
 	_, wt := newWriteThrough(t, pool)
 
-	handle := &lanternv1.VmHandle{
+	handle := &palv1.VmHandle{
 		VmId:             "vm-db-001",
 		Node:             "node-1",
 		AvailabilityZone: "us-east-1a",
@@ -326,8 +326,8 @@ func TestDB_VMPersistAndLoad(t *testing.T) {
 	}
 	vm := &cluster.VM{
 		Handle:      handle,
-		Spec:        &lanternv1.AgentSpec{ImageDigest: "sha256:xyz", TenantId: "t-db-1"},
-		State:       lanternv1.VmState_VM_STATE_RUNNING,
+		Spec:        &palv1.AgentSpec{ImageDigest: "sha256:xyz", TenantId: "t-db-1"},
+		State:       palv1.VmState_VM_STATE_RUNNING,
 		TenantID:    "t-db-1",
 		NodeName:    "node-1",
 		Reason:      "spawn ok",
@@ -351,7 +351,7 @@ func TestDB_VMPersistAndLoad(t *testing.T) {
 	if got.TenantID != "t-db-1" {
 		t.Errorf("tenant: got %q, want t-db-1", got.TenantID)
 	}
-	if got.State != lanternv1.VmState_VM_STATE_RUNNING {
+	if got.State != palv1.VmState_VM_STATE_RUNNING {
 		t.Errorf("state: got %v, want RUNNING", got.State)
 	}
 	// LoadFromDB calls IncrTenantVMs for each restored VM.
@@ -373,16 +373,16 @@ func TestDB_VMStateUpdatePersists(t *testing.T) {
 
 	_, wt := newWriteThrough(t, pool)
 
-	handle := &lanternv1.VmHandle{VmId: "vm-state-upd", Node: "n1", CreatedAt: timestamppb.Now()}
+	handle := &palv1.VmHandle{VmId: "vm-state-upd", Node: "n1", CreatedAt: timestamppb.Now()}
 	vm := &cluster.VM{
 		Handle:   handle,
-		Spec:     &lanternv1.AgentSpec{ImageDigest: "sha256:s1", TenantId: "t-2"},
-		State:    lanternv1.VmState_VM_STATE_PENDING,
+		Spec:     &palv1.AgentSpec{ImageDigest: "sha256:s1", TenantId: "t-2"},
+		State:    palv1.VmState_VM_STATE_PENDING,
 		TenantID: "t-2",
 		NodeName: "n1",
 	}
 	wt.CreateVM(vm)
-	wt.UpdateVMState("vm-state-upd", lanternv1.VmState_VM_STATE_RUNNING, "started", nil, time.Now().UTC())
+	wt.UpdateVMState("vm-state-upd", palv1.VmState_VM_STATE_RUNNING, "started", nil, time.Now().UTC())
 
 	mem2 := cluster.NewInMemoryStore()
 	wt2 := store.NewWriteThroughStore(mem2, pool, testLogger(t))
@@ -395,7 +395,7 @@ func TestDB_VMStateUpdatePersists(t *testing.T) {
 	if !ok {
 		t.Fatal("vm-state-upd not found after LoadFromDB")
 	}
-	if got.State != lanternv1.VmState_VM_STATE_RUNNING {
+	if got.State != palv1.VmState_VM_STATE_RUNNING {
 		t.Errorf("state: got %v, want RUNNING", got.State)
 	}
 }
@@ -413,7 +413,7 @@ func TestDB_SnapshotPersists(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	resp := &lanternv1.SnapshotResponse{
+	resp := &palv1.SnapshotResponse{
 		SnapshotId: "snap-db-001",
 		Sha256:     "deadbeef",
 		Bytes:      1024,
@@ -457,16 +457,16 @@ func TestDB_LoadVMs_FiltersTerminalStates(t *testing.T) {
 
 	// Create two VMs: one TERMINATED (zombie candidate) and one RUNNING.
 	terminated := &cluster.VM{
-		Handle:   &lanternv1.VmHandle{VmId: "vm-term", Node: "n1", CreatedAt: timestamppb.Now()},
-		Spec:     &lanternv1.AgentSpec{ImageDigest: "sha256:t", TenantId: "t-term"},
-		State:    lanternv1.VmState_VM_STATE_PENDING,
+		Handle:   &palv1.VmHandle{VmId: "vm-term", Node: "n1", CreatedAt: timestamppb.Now()},
+		Spec:     &palv1.AgentSpec{ImageDigest: "sha256:t", TenantId: "t-term"},
+		State:    palv1.VmState_VM_STATE_PENDING,
 		TenantID: "t-term",
 		NodeName: "n1",
 	}
 	running := &cluster.VM{
-		Handle:   &lanternv1.VmHandle{VmId: "vm-run", Node: "n1", CreatedAt: timestamppb.Now()},
-		Spec:     &lanternv1.AgentSpec{ImageDigest: "sha256:r", TenantId: "t-run"},
-		State:    lanternv1.VmState_VM_STATE_RUNNING,
+		Handle:   &palv1.VmHandle{VmId: "vm-run", Node: "n1", CreatedAt: timestamppb.Now()},
+		Spec:     &palv1.AgentSpec{ImageDigest: "sha256:r", TenantId: "t-run"},
+		State:    palv1.VmState_VM_STATE_RUNNING,
 		TenantID: "t-run",
 		NodeName: "n1",
 	}
@@ -475,7 +475,7 @@ func TestDB_LoadVMs_FiltersTerminalStates(t *testing.T) {
 
 	// Transition the first VM to TERMINATED in DB but do NOT call DeleteVM
 	// (simulating a crash mid-delete that left the row behind).
-	wt.UpdateVMState("vm-term", lanternv1.VmState_VM_STATE_TERMINATED, "done", nil, time.Now().UTC())
+	wt.UpdateVMState("vm-term", palv1.VmState_VM_STATE_TERMINATED, "done", nil, time.Now().UTC())
 
 	// Reload into a fresh store.
 	mem2 := cluster.NewInMemoryStore()
@@ -513,11 +513,11 @@ func TestDB_DeleteVMRemovesRow(t *testing.T) {
 
 	_, wt := newWriteThrough(t, pool)
 
-	handle := &lanternv1.VmHandle{VmId: "vm-del-001", Node: "n1", CreatedAt: timestamppb.Now()}
+	handle := &palv1.VmHandle{VmId: "vm-del-001", Node: "n1", CreatedAt: timestamppb.Now()}
 	vm := &cluster.VM{
 		Handle:   handle,
-		Spec:     &lanternv1.AgentSpec{ImageDigest: "sha256:del", TenantId: "t-del"},
-		State:    lanternv1.VmState_VM_STATE_RUNNING,
+		Spec:     &palv1.AgentSpec{ImageDigest: "sha256:del", TenantId: "t-del"},
+		State:    palv1.VmState_VM_STATE_RUNNING,
 		TenantID: "t-del",
 		NodeName: "n1",
 	}
@@ -552,17 +552,17 @@ func TestWriteThroughStore_PausedForkRoundTrip(t *testing.T) {
 	_, wt := newWriteThrough(t, pool)
 	wt.UpsertNode(cluster.Node{Name: "n1", Address: "n1:50054", LastHeartbeat: time.Now().UTC()})
 	wt.CreateVM(&cluster.VM{
-		Handle:   &lanternv1.VmHandle{VmId: "vm-paused", Node: "n1", CreatedAt: timestamppb.Now()},
-		Spec:     &lanternv1.AgentSpec{ImageDigest: "sha256:abc"},
-		State:    lanternv1.VmState_VM_STATE_RUNNING,
+		Handle:   &palv1.VmHandle{VmId: "vm-paused", Node: "n1", CreatedAt: timestamppb.Now()},
+		Spec:     &palv1.AgentSpec{ImageDigest: "sha256:abc"},
+		State:    palv1.VmState_VM_STATE_RUNNING,
 		TenantID: "t1", NodeName: "n1", LastEventAt: time.Now().UTC(),
 	})
 	wt.SetVMSnapshot("vm-paused", "snap-1")
-	wt.UpdateVMState("vm-paused", lanternv1.VmState_VM_STATE_PAUSED, "paused", nil, time.Now().UTC())
+	wt.UpdateVMState("vm-paused", palv1.VmState_VM_STATE_PAUSED, "paused", nil, time.Now().UTC())
 	wt.CreateVM(&cluster.VM{
-		Handle:   &lanternv1.VmHandle{VmId: "vm-child", Node: "n1", CreatedAt: timestamppb.Now()},
-		Spec:     &lanternv1.AgentSpec{ImageDigest: "sha256:abc"},
-		State:    lanternv1.VmState_VM_STATE_RUNNING,
+		Handle:   &palv1.VmHandle{VmId: "vm-child", Node: "n1", CreatedAt: timestamppb.Now()},
+		Spec:     &palv1.AgentSpec{ImageDigest: "sha256:abc"},
+		State:    palv1.VmState_VM_STATE_RUNNING,
 		TenantID: "t1", NodeName: "n1", LastEventAt: time.Now().UTC(),
 		SnapshotID: "snap-1", ParentVMID: "vm-paused",
 	})
@@ -572,7 +572,7 @@ func TestWriteThroughStore_PausedForkRoundTrip(t *testing.T) {
 		t.Fatalf("LoadFromDB: %v", err)
 	}
 	p, ok := mem2.GetVM("vm-paused")
-	if !ok || p.State != lanternv1.VmState_VM_STATE_PAUSED || p.SnapshotID != "snap-1" {
+	if !ok || p.State != palv1.VmState_VM_STATE_PAUSED || p.SnapshotID != "snap-1" {
 		t.Fatalf("paused vm reloaded as %+v (ok=%v)", p, ok)
 	}
 	c, ok := mem2.GetVM("vm-child")
@@ -600,9 +600,9 @@ func TestWriteThroughStore_MeasurementPersists(t *testing.T) {
 	_, wt := newWriteThrough(t, pool)
 	wt.UpsertNode(cluster.Node{Name: "n1", Address: "n1:50054", LastHeartbeat: time.Now().UTC()})
 	wt.CreateVM(&cluster.VM{
-		Handle:   &lanternv1.VmHandle{VmId: "vm-m", Node: "n1", CreatedAt: timestamppb.Now()},
-		Spec:     &lanternv1.AgentSpec{ImageDigest: "sha256:abc"},
-		State:    lanternv1.VmState_VM_STATE_RUNNING,
+		Handle:   &palv1.VmHandle{VmId: "vm-m", Node: "n1", CreatedAt: timestamppb.Now()},
+		Spec:     &palv1.AgentSpec{ImageDigest: "sha256:abc"},
+		State:    palv1.VmState_VM_STATE_RUNNING,
 		TenantID: "t1", NodeName: "n1", LastEventAt: time.Now().UTC(),
 	})
 	m := strings.Repeat("ef", 32)

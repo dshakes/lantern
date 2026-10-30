@@ -71,17 +71,17 @@ func (w *WebhookDeliverer) Deliver(ctx context.Context, n *Notification) (*Deliv
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "Lantern-Notifier/1.0")
+	req.Header.Set("User-Agent", "PAL-Notifier/1.0")
 
 	// HMAC-SHA256 signature for webhook verification.
 	// The signing secret would come from the subscription config in production.
 	// Here we use the tenant_id as a derived key.
 	signature := computeHMAC(body, n.TenantID)
-	req.Header.Set("X-Lantern-Signature", "sha256="+signature)
-	req.Header.Set("X-Lantern-Delivery-ID", n.ID)
+	req.Header.Set("X-Pal-Signature", "sha256="+signature)
+	req.Header.Set("X-Pal-Delivery-ID", n.ID)
 
 	if n.IdempotencyKey != "" {
-		req.Header.Set("X-Lantern-Idempotency-Key", n.IdempotencyKey)
+		req.Header.Set("X-Pal-Idempotency-Key", n.IdempotencyKey)
 	}
 
 	resp, err := w.client.Do(req)

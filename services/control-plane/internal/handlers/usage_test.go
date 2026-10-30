@@ -3,7 +3,7 @@ package handlers
 // DB-gated tests for GET /v1/usage and the ListRuns status filter.
 // Skipped when DATABASE_URL is unset (same convention as the rest of the package).
 //
-//	DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable \
+//	DATABASE_URL=postgres://pal:pal@localhost:5432/pal?sslmode=disable \
 //	  go test ./internal/handlers/ -run 'Usage|ListRuns' -count=1 -v
 
 import (
@@ -17,7 +17,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // newTestUsageHandler builds a UsageHandler backed by a real pool.

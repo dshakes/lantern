@@ -65,29 +65,29 @@ struct ContainerUsage {
 #[derive(Clone, Debug, Default)]
 pub struct RuntimeClassConfig {
     /// `runtimeClassName` for gVisor (UNTRUSTED, STANDARD, DEVCONTAINER).
-    /// Sourced from `LANTERN_RUNTIMECLASS_GVISOR`.
+    /// Sourced from `PAL_RUNTIMECLASS_GVISOR`.
     pub gvisor: Option<String>,
     /// `runtimeClassName` for Kata microVM (HOSTILE).
-    /// Sourced from `LANTERN_RUNTIMECLASS_KATA`.
+    /// Sourced from `PAL_RUNTIMECLASS_KATA`.
     pub kata: Option<String>,
-    /// `runtimeClassName` for Wasm pods. Sourced from `LANTERN_RUNTIMECLASS_WASM`.
+    /// `runtimeClassName` for Wasm pods. Sourced from `PAL_RUNTIMECLASS_WASM`.
     pub wasm: Option<String>,
     /// `runtimeClassName` for confidential compute (Kata-CC on SEV-SNP/TDX).
-    /// Sourced from `LANTERN_RUNTIMECLASS_KATA_CC`. `None` ⇒ the cluster has no
+    /// Sourced from `PAL_RUNTIMECLASS_KATA_CC`. `None` ⇒ the cluster has no
     /// CC RuntimeClass and confidential workloads are refused (fail-closed).
     pub kata_cc: Option<String>,
     /// When true, STANDARD/UNSPECIFIED/DEVCONTAINER workloads are allowed to
     /// run on bare runc even when gVisor is not configured.
-    /// Sourced from `LANTERN_ALLOW_RUNC_STANDARD`. Default **false** (fail-closed).
+    /// Sourced from `PAL_ALLOW_RUNC_STANDARD`. Default **false** (fail-closed).
     pub allow_runc_standard: bool,
-    /// Node label value required for UNTRUSTED pods (`lantern.dev/runtimeclass: <value>`).
+    /// Node label value required for UNTRUSTED pods (`pal.dev/runtimeclass: <value>`).
     /// Prevents an UNTRUSTED pod from scheduling onto a node that lacks gVisor even when
     /// the RuntimeClass object exists in the API but the node handler is absent.
-    /// Sourced from `LANTERN_NODE_LABEL_GVISOR`. Default: `"gvisor"`.
+    /// Sourced from `PAL_NODE_LABEL_GVISOR`. Default: `"gvisor"`.
     pub node_label_gvisor: Option<String>,
-    /// Node label value required for HOSTILE pods (`lantern.dev/runtimeclass: <value>`).
+    /// Node label value required for HOSTILE pods (`pal.dev/runtimeclass: <value>`).
     /// Same defense-in-depth as `node_label_gvisor` but for Kata.
-    /// Sourced from `LANTERN_NODE_LABEL_KATA`. Default: `"kata"`.
+    /// Sourced from `PAL_NODE_LABEL_KATA`. Default: `"kata"`.
     pub node_label_kata: Option<String>,
 }
 
@@ -129,7 +129,7 @@ impl K8sBackend {
 
     /// Derive the tenant namespace from the authenticated `req.tenant_id` field.
     ///
-    /// This MUST NOT fall back to `req.env["LANTERN_TENANT_ID"]` — the env map
+    /// This MUST NOT fall back to `req.env["PAL_TENANT_ID"]` — the env map
     /// is caller-supplied and could be used to smuggle a victim tenant's id.
     /// An empty `tenant_id` indicates a bug upstream (the spawn gate in
     /// `spawn_to_schedule` rejects empty values before reaching here), so we
@@ -148,11 +148,11 @@ impl K8sBackend {
         // at jobs.create. Reject anything outside [a-z0-9-] / >53 chars early
         // and clearly.
         //
-        // FIX 7(a): The `lantern-t-` prefix is 10 chars; K8s name limit is 63.
+        // FIX 7(a): The `pal-t-` prefix is 10 chars; K8s name limit is 63.
         //   Max allowed tenant_id length = 63 - 10 = 53.
         // FIX 7(b): DNS-1123 requires the first and last character to be
         //   alphanumeric (no leading/trailing dashes).
-        const PREFIX_LEN: usize = "lantern-t-".len(); // 10
+        const PREFIX_LEN: usize = "pal-t-".len(); // 10
         const MAX_TENANT_ID_LEN: usize = 63 - PREFIX_LEN; // 53
 
         let id = req.tenant_id.as_bytes();
@@ -171,7 +171,7 @@ impl K8sBackend {
                 req.tenant_id
             );
         }
-        Ok(format!("lantern-t-{}", req.tenant_id))
+        Ok(format!("pal-t-{}", req.tenant_id))
     }
 
     /// Parse timeout string (e.g., "300s", "5m") to seconds for the active deadline.
@@ -314,17 +314,17 @@ fn build_job(
 ) -> Result<Job> {
     let mut env_vars: Vec<EnvVar> = vec![
         EnvVar {
-            name: "LANTERN_RUN_ID".to_string(),
+            name: "PAL_RUN_ID".to_string(),
             value: Some(req.run_id.clone()),
             ..Default::default()
         },
         EnvVar {
-            name: "LANTERN_BUNDLE_URI".to_string(),
+            name: "PAL_BUNDLE_URI".to_string(),
             value: Some(req.bundle_uri.clone()),
             ..Default::default()
         },
         EnvVar {
-            name: "LANTERN_INPUT".to_string(),
+            name: "PAL_INPUT".to_string(),
             value: Some(serde_json::to_string(&req.input).unwrap_or_default()),
             ..Default::default()
         },
@@ -342,23 +342,23 @@ fn build_job(
     for secret in &req.secrets {
         env_vars.push(EnvVar {
             name: secret.env_var.clone(),
-            value: Some(format!("lantern.secret/{}", secret.vault_ref)),
+            value: Some(format!("pal.secret/{}", secret.vault_ref)),
             ..Default::default()
         });
     }
 
     // Confidential compute: tell the in-VM harness it is running confidentially so
-    // its best-effort launch-measurement attestation frame fires. LANTERN_RUNTIME_CLASS
+    // its best-effort launch-measurement attestation frame fires. PAL_RUNTIME_CLASS
     // is the Kata-CC class name; cc_tech is left to in-guest device detection.
     if req.confidential {
         env_vars.push(EnvVar {
-            name: "LANTERN_CONFIDENTIAL".to_string(),
+            name: "PAL_CONFIDENTIAL".to_string(),
             value: Some("1".to_string()),
             ..Default::default()
         });
         if let Some(cc) = &runtime_classes.kata_cc {
             env_vars.push(EnvVar {
-                name: "LANTERN_RUNTIME_CLASS".to_string(),
+                name: "PAL_RUNTIME_CLASS".to_string(),
                 value: Some(cc.clone()),
                 ..Default::default()
             });
@@ -426,7 +426,7 @@ fn build_job(
     if req.confidential && runtime_classes.kata_cc.is_none() {
         bail!(
             "confidential workload requires the Kata-CC RuntimeClass but \
-             LANTERN_RUNTIMECLASS_KATA_CC is not configured (or is empty); \
+             PAL_RUNTIMECLASS_KATA_CC is not configured (or is empty); \
              refusing to emit a non-confidential pod"
         );
     }
@@ -438,14 +438,14 @@ fn build_job(
         IsolationClass::Untrusted if runtime_class_name.is_none() => {
             bail!(
                 "UNTRUSTED workload requires the gVisor RuntimeClass but \
-                 LANTERN_RUNTIMECLASS_GVISOR is not configured (or is empty); \
+                 PAL_RUNTIMECLASS_GVISOR is not configured (or is empty); \
                  refusing to emit a bare runc pod"
             );
         }
         IsolationClass::Hostile if runtime_class_name.is_none() => {
             bail!(
                 "HOSTILE workload requires the Kata RuntimeClass but \
-                 LANTERN_RUNTIMECLASS_KATA is not configured (or is empty); \
+                 PAL_RUNTIMECLASS_KATA is not configured (or is empty); \
                  refusing to emit a bare runc pod"
             );
         }
@@ -453,8 +453,8 @@ fn build_job(
             if runtime_class_name.is_none() && !runtime_classes.allow_runc_standard =>
         {
             bail!(
-                "{:?} workload requires gVisor (LANTERN_RUNTIMECLASS_GVISOR) or the \
-                 LANTERN_ALLOW_RUNC_STANDARD=1 opt-in to run on bare runc; \
+                "{:?} workload requires gVisor (PAL_RUNTIMECLASS_GVISOR) or the \
+                 PAL_ALLOW_RUNC_STANDARD=1 opt-in to run on bare runc; \
                  refusing to emit an under-isolated pod",
                 req.isolation_class
             );
@@ -463,8 +463,8 @@ fn build_job(
             if runtime_class_name.is_none() && !runtime_classes.allow_runc_standard =>
         {
             bail!(
-                "WASM workload requires the Wasm RuntimeClass (LANTERN_RUNTIMECLASS_WASM) \
-                 or the LANTERN_ALLOW_RUNC_STANDARD=1 opt-in; \
+                "WASM workload requires the Wasm RuntimeClass (PAL_RUNTIMECLASS_WASM) \
+                 or the PAL_ALLOW_RUNC_STANDARD=1 opt-in; \
                  refusing to emit a bare runc pod"
             );
         }
@@ -475,8 +475,8 @@ fn build_job(
         // FIX 6: message correctly covers all classes that can reach runc.
         tracing::warn!(
             isolation_class = ?req.isolation_class,
-            "LANTERN_RUNTIMECLASS_GVISOR not configured; degrading to runc (bare shared-kernel). \
-             STANDARD/DEVCONTAINER workloads tolerate this (LANTERN_ALLOW_RUNC_STANDARD=1 set) \
+            "PAL_RUNTIMECLASS_GVISOR not configured; degrading to runc (bare shared-kernel). \
+             STANDARD/DEVCONTAINER workloads tolerate this (PAL_ALLOW_RUNC_STANDARD=1 set) \
              but gVisor is strongly recommended.",
         );
     }
@@ -504,7 +504,7 @@ fn build_job(
                 spec: Some(PodSpec {
                     containers: vec![container],
                     restart_policy: Some("Never".to_string()),
-                    service_account_name: Some("lantern-agent-runner".to_string()),
+                    service_account_name: Some("pal-agent-runner".to_string()),
                     automount_service_account_token: Some(false),
                     security_context: Some(pod_security_context()),
                     runtime_class_name,
@@ -526,7 +526,7 @@ fn build_job(
                     // installed.
                     //
                     // Tolerations: operators are expected to taint the gVisor
-                    // and Kata nodes (`lantern.dev/runtimeclass=<v>:NoSchedule`)
+                    // and Kata nodes (`pal.dev/runtimeclass=<v>:NoSchedule`)
                     // so that only jobs that explicitly want those runtimes land
                     // there.  We must emit a matching toleration, otherwise
                     // UNTRUSTED/HOSTILE Jobs stay Pending forever because the
@@ -610,7 +610,7 @@ pub(crate) fn k8s_satisfies_isolation(cfg: &RuntimeClassConfig, class: Isolation
 /// Pure confidential-compute capability check for the K8s backend.
 ///
 /// Fail-closed: confidential compute requires the Kata-CC RuntimeClass
-/// (`LANTERN_RUNTIMECLASS_KATA_CC`) to be configured AND present in the cluster
+/// (`PAL_RUNTIMECLASS_KATA_CC`) to be configured AND present in the cluster
 /// (the preflight clears it when absent). A regular Kata VM is NOT an acceptable
 /// substitute — it lacks the SEV-SNP/TDX memory-encryption boundary.
 pub(crate) fn k8s_satisfies_confidential(cfg: &RuntimeClassConfig) -> bool {
@@ -623,7 +623,7 @@ impl RuntimeBackend for K8sBackend {
         let start = Instant::now();
         let namespace = Self::namespace_for(req)?;
         let job_name = format!(
-            "lantern-run-{}-{}",
+            "pal-run-{}-{}",
             &req.run_id[..8.min(req.run_id.len())],
             &Uuid::new_v4().to_string()[..8]
         );
@@ -1040,7 +1040,7 @@ impl RuntimeBackend for K8sBackend {
 /// Label key whose value uniquely identifies a single run's pod. Used both on
 /// the Job's pod template and as the NetworkPolicy `podSelector` so the egress
 /// fence applies to exactly this run's pod and nothing else in the namespace.
-const RUN_ID_LABEL: &str = "lantern.dev/run-id";
+const RUN_ID_LABEL: &str = "pal.dev/run-id";
 
 /// Stable name for a Job's egress NetworkPolicy. Derived from the job name so
 /// `schedule` (create) and `cancel` (delete) agree without extra state.
@@ -1053,15 +1053,15 @@ fn job_labels(req: &ScheduleRequest) -> BTreeMap<String, String> {
     let mut labels = BTreeMap::new();
     labels.insert(
         "app.kubernetes.io/name".to_string(),
-        "lantern-agent-runner".to_string(),
+        "pal-agent-runner".to_string(),
     );
     labels.insert(
         "app.kubernetes.io/managed-by".to_string(),
-        "lantern-runtime-manager".to_string(),
+        "pal-runtime-manager".to_string(),
     );
     labels.insert(RUN_ID_LABEL.to_string(), req.run_id.clone());
     labels.insert(
-        "lantern.dev/isolation-class".to_string(),
+        "pal.dev/isolation-class".to_string(),
         format!("{:?}", req.isolation_class).to_lowercase(),
     );
     labels
@@ -1108,7 +1108,7 @@ fn pod_security_context() -> PodSecurityContext {
 
 /// Build a `requiredDuringSchedulingIgnoredDuringExecution` node affinity that
 /// restricts an UNTRUSTED or HOSTILE pod to nodes bearing the label
-/// `lantern.dev/runtimeclass=<value>`.
+/// `pal.dev/runtimeclass=<value>`.
 ///
 /// This is a second line of defence behind the RuntimeClass mechanism: it
 /// prevents the scheduler from placing the pod on a node that holds the
@@ -1125,11 +1125,11 @@ fn pod_security_context() -> PodSecurityContext {
 /// Cluster operators must label their hardened nodes with:
 ///
 /// ```text
-/// kubectl label node <node> lantern.dev/runtimeclass=gvisor
-/// kubectl label node <node> lantern.dev/runtimeclass=kata
+/// kubectl label node <node> pal.dev/runtimeclass=gvisor
+/// kubectl label node <node> pal.dev/runtimeclass=kata
 /// ```
 ///
-/// The label key is `lantern.dev/runtimeclass`; the value comes from
+/// The label key is `pal.dev/runtimeclass`; the value comes from
 /// [`RuntimeClassConfig::node_label_gvisor`] / [`RuntimeClassConfig::node_label_kata`]
 /// (defaults: `"gvisor"` / `"kata"`).
 /// Compute the node affinity and matching NoSchedule tolerations for a pod
@@ -1142,7 +1142,7 @@ fn pod_security_context() -> PodSecurityContext {
 /// # Why tolerations are required
 ///
 /// Operators taint gVisor/Kata nodes with
-/// `lantern.dev/runtimeclass=<value>:NoSchedule` so that only explicitly
+/// `pal.dev/runtimeclass=<value>:NoSchedule` so that only explicitly
 /// requested workloads land there.  Without a matching toleration the
 /// UNTRUSTED/HOSTILE Job would stay `Pending` forever — the affinity picks the
 /// right node but the taint blocks scheduling.
@@ -1151,13 +1151,13 @@ fn node_affinity_and_tolerations(
     confidential: bool,
     cfg: &RuntimeClassConfig,
 ) -> (Option<Affinity>, Vec<Toleration>) {
-    const NODE_LABEL_KEY: &str = "lantern.dev/runtimeclass";
+    const NODE_LABEL_KEY: &str = "pal.dev/runtimeclass";
     // Confidential-compute node label. Operators label CC-capable nodes
-    // `lantern.dev/confidential-compute=<tech>` (mirroring the NFD
+    // `pal.dev/confidential-compute=<tech>` (mirroring the NFD
     // `security.sev.snp`/`intel.tdx` feature labels) and taint them the same key
     // so only confidential workloads land there. We match on presence (Exists),
     // not a specific value, so a node advertising either SEV-SNP or TDX qualifies.
-    const CC_NODE_LABEL_KEY: &str = "lantern.dev/confidential-compute";
+    const CC_NODE_LABEL_KEY: &str = "pal.dev/confidential-compute";
 
     // Confidential compute dominates the class-based affinity: a CC node is a
     // specialised HOSTILE-tier node, so we require the CC label + tolerate its
@@ -1238,7 +1238,7 @@ fn node_affinity_and_tolerations(
     };
 
     // Emit a toleration that matches the expected node taint.
-    // Operators taint: `lantern.dev/runtimeclass=<label_value>:NoSchedule`.
+    // Operators taint: `pal.dev/runtimeclass=<label_value>:NoSchedule`.
     let toleration = Toleration {
         key: Some(NODE_LABEL_KEY.to_string()),
         operator: Some("Equal".to_string()),
@@ -1414,9 +1414,9 @@ fn parse_memory_quantity_to_bytes(mem: &str) -> i64 {
     }
 }
 
-/// Parse a container log line, looking for structured Lantern events.
+/// Parse a container log line, looking for structured PAL events.
 fn parse_event_line(line: &str) -> RuntimeEvent {
-    const EVENT_PREFIX: &str = "__LANTERN_EVENT__:";
+    const EVENT_PREFIX: &str = "__PAL_EVENT__:";
 
     if let Some(json_str) = line.strip_prefix(EVENT_PREFIX) {
         match serde_json::from_str::<RuntimeEvent>(json_str.trim()) {
@@ -1512,9 +1512,9 @@ mod tests {
         let req = req_with(NetworkPolicyClass::AllowlistDomain, vec![]);
         let job = build_job(
             &req,
-            "ghcr.io/lantern/runner:v1",
+            "ghcr.io/pal/runner:v1",
             "job-1",
-            "lantern-t-acme",
+            "pal-t-acme",
             &RuntimeClassConfig {
                 gvisor: Some("gvisor".to_string()),
                 kata: None,
@@ -1589,12 +1589,12 @@ mod tests {
     #[test]
     fn network_policy_is_default_deny_egress_with_dns() {
         let req = req_with(NetworkPolicyClass::AllowlistDomain, vec![]);
-        let np = build_network_policy(&req, "lantern-run-abc-001", "lantern-t-acme")
+        let np = build_network_policy(&req, "pal-run-abc-001", "pal-t-acme")
             .expect("allowlist class must emit a policy");
 
         let meta = &np.metadata;
-        assert_eq!(meta.name.as_deref(), Some("lantern-run-abc-001-egress"));
-        assert_eq!(meta.namespace.as_deref(), Some("lantern-t-acme"));
+        assert_eq!(meta.name.as_deref(), Some("pal-run-abc-001-egress"));
+        assert_eq!(meta.namespace.as_deref(), Some("pal-t-acme"));
 
         let spec = np.spec.expect("spec");
         // Both Ingress and Egress selected → default-deny all inbound.
@@ -1824,8 +1824,8 @@ mod tests {
 
         assert_eq!(
             affinity_label_key(&job).as_deref(),
-            Some("lantern.dev/runtimeclass"),
-            "node affinity key must be lantern.dev/runtimeclass"
+            Some("pal.dev/runtimeclass"),
+            "node affinity key must be pal.dev/runtimeclass"
         );
         assert_eq!(
             affinity_label_value(&job).as_deref(),
@@ -1851,8 +1851,8 @@ mod tests {
 
         assert_eq!(
             affinity_label_key(&job).as_deref(),
-            Some("lantern.dev/runtimeclass"),
-            "node affinity key must be lantern.dev/runtimeclass"
+            Some("pal.dev/runtimeclass"),
+            "node affinity key must be pal.dev/runtimeclass"
         );
         assert_eq!(
             affinity_label_value(&job).as_deref(),
@@ -1919,7 +1919,7 @@ mod tests {
         let t = first_toleration(&job).expect("UNTRUSTED pod must have a toleration");
         assert_eq!(
             t.key.as_deref(),
-            Some("lantern.dev/runtimeclass"),
+            Some("pal.dev/runtimeclass"),
             "toleration key must match the affinity label key"
         );
         assert_eq!(
@@ -2014,8 +2014,8 @@ mod tests {
     #[test]
     fn network_policy_name_is_stable_and_job_derived() {
         assert_eq!(
-            network_policy_name("lantern-run-abc-001"),
-            "lantern-run-abc-001-egress"
+            network_policy_name("pal-run-abc-001"),
+            "pal-run-abc-001-egress"
         );
     }
 
@@ -2098,12 +2098,12 @@ mod tests {
     /// handle_id parsing: the pure split_once logic that resolve_pod uses.
     #[test]
     fn handle_id_split_namespace_and_job() {
-        let handle_id = "lantern-t-dev/lantern-run-abcd1234-ef012345";
+        let handle_id = "pal-t-dev/pal-run-abcd1234-ef012345";
         let (ns, job) = handle_id
             .split_once('/')
             .expect("should split on first slash");
-        assert_eq!(ns, "lantern-t-dev");
-        assert_eq!(job, "lantern-run-abcd1234-ef012345");
+        assert_eq!(ns, "pal-t-dev");
+        assert_eq!(job, "pal-run-abcd1234-ef012345");
     }
 
     #[test]
@@ -2240,8 +2240,8 @@ mod tests {
         );
         let msg = err.to_string();
         assert!(
-            msg.contains("LANTERN_ALLOW_RUNC_STANDARD")
-                || msg.contains("LANTERN_RUNTIMECLASS_GVISOR"),
+            msg.contains("PAL_ALLOW_RUNC_STANDARD")
+                || msg.contains("PAL_RUNTIMECLASS_GVISOR"),
             "error must name the relevant config vars: {msg}"
         );
     }
@@ -2314,7 +2314,7 @@ mod tests {
             "error message must name the isolation class: {msg}"
         );
         assert!(
-            msg.contains("LANTERN_RUNTIMECLASS_GVISOR"),
+            msg.contains("PAL_RUNTIMECLASS_GVISOR"),
             "error message must name the config var: {msg}"
         );
     }
@@ -2339,7 +2339,7 @@ mod tests {
             "error message must name the isolation class: {msg}"
         );
         assert!(
-            msg.contains("LANTERN_RUNTIMECLASS_KATA"),
+            msg.contains("PAL_RUNTIMECLASS_KATA"),
             "error message must name the config var: {msg}"
         );
     }
@@ -2401,7 +2401,7 @@ mod tests {
             "error must name confidential: {msg}"
         );
         assert!(
-            msg.contains("LANTERN_RUNTIMECLASS_KATA_CC"),
+            msg.contains("PAL_RUNTIMECLASS_KATA_CC"),
             "error must name the config var: {msg}"
         );
     }
@@ -2443,7 +2443,7 @@ mod tests {
 
         assert_eq!(
             affinity_label_key(&job).as_deref(),
-            Some("lantern.dev/confidential-compute"),
+            Some("pal.dev/confidential-compute"),
             "confidential pods must require the CC node label"
         );
         // The pod runs under the Kata-CC RuntimeClass.
@@ -2455,7 +2455,7 @@ mod tests {
         assert_eq!(rc.as_deref(), Some("kata-qemu-snp"));
         // And tolerates the CC node taint.
         let tol = first_toleration(&job).expect("confidential pod must have a toleration");
-        assert_eq!(tol.key.as_deref(), Some("lantern.dev/confidential-compute"));
+        assert_eq!(tol.key.as_deref(), Some("pal.dev/confidential-compute"));
     }
 
     // -----------------------------------------------------------------------
@@ -2519,18 +2519,18 @@ mod tests {
     // -----------------------------------------------------------------------
 
     /// namespace_for derives the K8s namespace from req.tenant_id (authenticated
-    /// field), NOT from req.env["LANTERN_TENANT_ID"] (caller-supplied).
+    /// field), NOT from req.env["PAL_TENANT_ID"] (caller-supplied).
     #[test]
     fn namespace_for_uses_authenticated_tenant_id_field() {
         let mut req = make_req(IsolationClass::Trusted);
         req.tenant_id = "acme-corp".to_string();
         // Even if env carries a different value, tenant_id field wins.
         req.env
-            .insert("LANTERN_TENANT_ID".to_string(), "attacker".to_string());
+            .insert("PAL_TENANT_ID".to_string(), "attacker".to_string());
 
         let ns = K8sBackend::namespace_for(&req).expect("non-empty tenant_id should succeed");
-        assert_eq!(ns, "lantern-t-acme-corp");
-        assert_ne!(ns, "lantern-t-attacker", "env value must be ignored");
+        assert_eq!(ns, "pal-t-acme-corp");
+        assert_ne!(ns, "pal-t-attacker", "env value must be ignored");
     }
 
     /// namespace_for returns Err when tenant_id is empty — the upstream spawn
@@ -2541,7 +2541,7 @@ mod tests {
         req.tenant_id = String::new();
         // Even with an env value, empty tenant_id is refused.
         req.env.insert(
-            "LANTERN_TENANT_ID".to_string(),
+            "PAL_TENANT_ID".to_string(),
             "should-not-be-used".to_string(),
         );
 
@@ -2783,6 +2783,6 @@ mod tests {
         // Standard UUID is lowercase hex, so this passes [a-z0-9-].
         let ns = K8sBackend::namespace_for(&req)
             .expect("UUID-style lowercase tenant_id must be accepted");
-        assert_eq!(ns, "lantern-t-00000000-0000-0000-0000-000000000001");
+        assert_eq!(ns, "pal-t-00000000-0000-0000-0000-000000000001");
     }
 }

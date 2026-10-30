@@ -29,8 +29,8 @@ import (
 	"strings"
 	"time"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/packages/cli/internal"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/packages/cli/internal"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 	"google.golang.org/grpc"
@@ -232,7 +232,7 @@ See also: docs/runbooks/cluster-validation.md`,
 			c.Stderr = cmd.ErrOrStderr()
 			c.Dir = repoRoot
 
-			// Pass the caller's environment so KUBECONFIG, PAL_*/LANTERN_*, etc. are visible.
+			// Pass the caller's environment so KUBECONFIG, PAL_*/PAL_*, etc. are visible.
 			c.Env = os.Environ()
 
 			if err := c.Run(); err != nil {
@@ -557,8 +557,8 @@ func resolveManagerAddr(flagValue string) string {
 // execFirstFrame builds the stream-opening ExecRequest. rows/cols <= 0 are
 // omitted (the guest falls back to 24x80); termName is only sent for tty
 // execs.
-func execFirstFrame(vmID, command string, argv []string, tty bool, rows, cols int, termName string) *lanternv1.ExecRequest {
-	req := &lanternv1.ExecRequest{
+func execFirstFrame(vmID, command string, argv []string, tty bool, rows, cols int, termName string) *palv1.ExecRequest {
+	req := &palv1.ExecRequest{
 		VmId:    vmID,
 		Command: command,
 		Argv:    argv,
@@ -638,7 +638,7 @@ func runVmExec(cmd *cobra.Command, vmID, command string, argv []string, tty bool
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
 
-	stream, err := lanternv1.NewRuntimeManagerClient(conn).Exec(ctx)
+	stream, err := palv1.NewRuntimeManagerClient(conn).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("open exec stream: %w", err)
 	}
@@ -674,7 +674,7 @@ func runVmExec(cmd *cobra.Command, vmID, command string, argv []string, tty bool
 			for {
 				n, rerr := os.Stdin.Read(buf)
 				if n > 0 {
-					if serr := stream.Send(&lanternv1.ExecRequest{Stdin: buf[:n]}); serr != nil {
+					if serr := stream.Send(&palv1.ExecRequest{Stdin: buf[:n]}); serr != nil {
 						return
 					}
 				}
@@ -787,12 +787,12 @@ func newVmQuotaCommand() *cobra.Command {
 }
 
 // serviceTokenCreds sends the service token on every manager RPC, under the
-// PAL header and the legacy x-lantern-service-token one: managers that predate
+// PAL header and the legacy x-pal-service-token one: managers that predate
 // the rename (ADR 0032) only read the legacy header.
 type serviceTokenCreds string
 
 func (t serviceTokenCreds) GetRequestMetadata(context.Context, ...string) (map[string]string, error) {
-	return map[string]string{"x-pal-service-token": string(t), "x-lantern-service-token": string(t)}, nil
+	return map[string]string{"x-pal-service-token": string(t), "x-pal-service-token": string(t)}, nil
 }
 
 func (serviceTokenCreds) RequireTransportSecurity() bool { return false }

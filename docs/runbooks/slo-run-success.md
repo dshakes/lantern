@@ -12,18 +12,18 @@ burning at 14.4x (1h/5m) or 6x (6h/30m), i.e. 2% to 5% of the 28-day budget is g
 
 ## What the SLI measures
 
-`lantern_run_total{lantern_status}` from the inline executor (`rest.go` `RecordRunTotal`). Bad = `failed`.
+`pal_run_total{pal_status}` from the inline executor (`rest.go` `RecordRunTotal`). Bad = `failed`.
 Microvm-tier runs are not counted yet. This SLO includes agent-logic failures, so a burn can be one broken
 agent, not the platform: the first question is *concentrated or broad?*
 
 ## Triage
 
 1. Concentrated: group failures by agent in the dashboard/Explore:
-   `sum by (lantern_agent_name) (rate(lantern_run_total{lantern_status="failed"}[30m]))`. One agent = a bad
+   `sum by (pal_agent_name) (rate(pal_run_total{pal_status="failed"}[30m]))`. One agent = a bad
    agent version or its connector; hand to the owner, consider rollback of that agent version.
 2. Broad: follow [run-failure-spike.md](run-failure-spike.md) (provider key invalid, model-router down,
    budget 402s: [budget-402-surge.md](budget-402-surge.md)).
-3. Budget denials are not failures here but look similar to users: check `lantern_run_budget_blocks_total`.
+3. Budget denials are not failures here but look similar to users: check `pal_run_budget_blocks_total`.
 
 ## Remediation
 

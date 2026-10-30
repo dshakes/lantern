@@ -23,7 +23,7 @@
 # Assertions are made against the manager's structured (JSON) log stream:
 #   - "Firecracker backend: available"        -> backend gate   (step 1)
 #   - "Firecracker: microVM started"          -> hypervisor launched  (step 2a)
-#   - "starting lantern-harness (PID 1)"      -> GUEST came up        (step 2b)
+#   - "starting pal-harness (PID 1)"      -> GUEST came up        (step 2b)
 #   - "VendSecret: issued (value NOT logged)" -> mTLS vend       (steps 3 + 4)
 #
 # Step 2a is host-side and proves only that Firecracker accepted a config; a
@@ -54,7 +54,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PROTO_DIR="${REPO_ROOT}/packages/proto"
-PROTO_FILE="lantern/v1/runtime.proto"
+PROTO_FILE="pal/v1/runtime.proto"
 
 log()  { printf '\033[1;34m[integration]\033[0m %s\n' "$*" >&2; }
 pass() { printf '\033[1;32m[integration] PASS:\033[0m %s\n' "$*" >&2; }
@@ -92,7 +92,7 @@ MANAGER_ADDR="127.0.0.1:50054"
 # talks to it on 127.0.0.1 via MANAGER_ADDR above.
 MANAGER_LISTEN_ADDR="0.0.0.0:50054"
 MANAGER_LOG="${WORK}/manager.log"
-SECRET_URI="lantern.secret://dev/itest/key/OPENAI_API_KEY"
+SECRET_URI="pal.secret://dev/itest/key/OPENAI_API_KEY"
 SECRET_VALUE="itest-secret-value-do-not-log"
 # Every scheduled workload must carry a tenant (multi-tenancy invariant); the
 # manager rejects an untenanted spec outright.
@@ -137,7 +137,7 @@ cleanup() {
     grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" \
       -servername localhost -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
       -d "$(jq -n --arg id "${VM_ID}" '{vm_id:$id, reason:"integration-test cleanup"}')" \
-      "${MANAGER_ADDR}" lantern.v1.RuntimeManager/Stop >/dev/null 2>&1 || true
+      "${MANAGER_ADDR}" pal.v1.RuntimeManager/Stop >/dev/null 2>&1 || true
   fi
   # Forks too: a run that fails mid-fork-test otherwise leaks every fork VM
   # (they outlive the manager for the same setsid reason as above).
@@ -146,7 +146,7 @@ cleanup() {
       grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" \
         -servername localhost -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
         -d "$(jq -n --arg id "${fid}" '{vm_id:$id, reason:"integration-test cleanup"}')" \
-        "${MANAGER_ADDR}" lantern.v1.RuntimeManager/Stop >/dev/null 2>&1 || true
+        "${MANAGER_ADDR}" pal.v1.RuntimeManager/Stop >/dev/null 2>&1 || true
     done
   fi
   # The snapshot this run took (its mem file is the VM's full RAM) - never
@@ -155,7 +155,7 @@ cleanup() {
   # (see snapshot_store.rs) — the snapshot id directory is at depth 3 from
   # the store root, not depth 2.
   if [ -n "${SNAPSHOT_ID:-}" ]; then
-    sudo find /var/lib/lantern/snapshots -mindepth 3 -maxdepth 3 -type d -name "${SNAPSHOT_ID}" \
+    sudo find /var/lib/pal/snapshots -mindepth 3 -maxdepth 3 -type d -name "${SNAPSHOT_ID}" \
       -exec rm -r -- {} + 2>/dev/null || true
   fi
 
@@ -254,8 +254,8 @@ fi
 # 1. Mint a manager mTLS CA + server cert. The Firecracker backend issues a
 #    per-VM client cert (CN=vm_id) signed by this CA at spawn; the harness
 #    presents it on the VendSecret channel. We point the manager at the CA via
-#    the signing-CA env contract (tls.rs: LANTERN_VM_SIGNING_CA_CERT/KEY) and at
-#    the server cert via LANTERN_MANAGER_TLS_*.
+#    the signing-CA env contract (tls.rs: PAL_VM_SIGNING_CA_CERT/KEY) and at
+#    the server cert via PAL_MANAGER_TLS_*.
 # ---------------------------------------------------------------------------
 log "Minting manager mTLS CA + server + client certs"
 # Go's crypto/tls (grpcurl) is stricter than openssl: it requires a leaf cert to
@@ -275,7 +275,7 @@ openssl req -newkey rsa:2048 -nodes \
   || fail "server CSR generation failed"
 openssl x509 -req -in "${WORK}/server.csr" -CA "${WORK}/ca.crt" -CAkey "${WORK}/ca.key" \
   -CAcreateserial -days 1 -out "${WORK}/server.crt" \
-  -extfile <(printf 'subjectAltName=IP:127.0.0.1,DNS:localhost,DNS:manager.lantern.internal\nextendedKeyUsage=serverAuth\nbasicConstraints=CA:FALSE') >/dev/null 2>&1 \
+  -extfile <(printf 'subjectAltName=IP:127.0.0.1,DNS:localhost,DNS:manager.pal.internal\nextendedKeyUsage=serverAuth\nbasicConstraints=CA:FALSE') >/dev/null 2>&1 \
   || fail "server cert signing failed"
 
 # The manager enforces mTLS (client_ca_root) on EVERY service, including the
@@ -293,10 +293,10 @@ openssl x509 -req -in "${WORK}/client.csr" -CA "${WORK}/ca.crt" -CAkey "${WORK}/
 
 # ---------------------------------------------------------------------------
 # 2. Boot the runtime-manager with the Firecracker backend + mTLS.
-#    EnvSecretResolver reads LANTERN_SECRET_<encoded-uri>; encode the test URI
+#    EnvSecretResolver reads PAL_SECRET_<encoded-uri>; encode the test URI
 #    the same way the resolver expects (see secret_resolver.rs).
 # ---------------------------------------------------------------------------
-SECRET_ENV_KEY="LANTERN_SECRET_$(printf '%s' "${SECRET_URI}" | tr -c 'A-Za-z0-9' '_')"
+SECRET_ENV_KEY="PAL_SECRET_$(printf '%s' "${SECRET_URI}" | tr -c 'A-Za-z0-9' '_')"
 log "Secret resolver env key: ${SECRET_ENV_KEY}"
 
 MANAGER_BIN="${MANAGER_BIN:-}"
@@ -304,7 +304,7 @@ if [ -z "${MANAGER_BIN}" ]; then
   log "Building runtime-manager (release)"
   ( cd "${REPO_ROOT}/services/runtime-manager" && cargo build --release ) \
     || fail "runtime-manager build failed"
-  MANAGER_BIN="${REPO_ROOT}/services/runtime-manager/target/release/lantern-runtime-manager"
+  MANAGER_BIN="${REPO_ROOT}/services/runtime-manager/target/release/pal-runtime-manager"
 fi
 [ -x "${MANAGER_BIN}" ] || fail "manager binary not found at ${MANAGER_BIN}"
 
@@ -334,7 +334,7 @@ log "Starting runtime-manager (RUNTIME_BACKEND=firecracker) on ${MANAGER_ADDR}"
 setsid bash -c 'echo $$ >"$1"; shift; exec "$@"' _ "${MANAGER_PGID_FILE}" \
   env \
   RUNTIME_BACKEND=firecracker \
-  LANTERN_RUNTIME_BACKEND=firecracker \
+  PAL_RUNTIME_BACKEND=firecracker \
   LISTEN_ADDR="${MANAGER_LISTEN_ADDR}" \
   LOG_LEVEL=info \
   FC_KERNEL_PATH="${FC_KERNEL_PATH}" \
@@ -344,13 +344,13 @@ setsid bash -c 'echo $$ >"$1"; shift; exec "$@"' _ "${MANAGER_PGID_FILE}" \
   ${FIRECRACKER_JAILER_UID:+FIRECRACKER_JAILER_UID="${FIRECRACKER_JAILER_UID}"} \
   ${FIRECRACKER_JAILER_GID:+FIRECRACKER_JAILER_GID="${FIRECRACKER_JAILER_GID}"} \
   ${FIRECRACKER_CHROOT_BASE:+FIRECRACKER_CHROOT_BASE="${FIRECRACKER_CHROOT_BASE}"} \
-  LANTERN_MANAGER_TLS_CA="${WORK}/ca.crt" \
-  LANTERN_MANAGER_TLS_CERT="${WORK}/server.crt" \
-  LANTERN_MANAGER_TLS_KEY="${WORK}/server.key" \
-  LANTERN_VM_SIGNING_CA_CERT="${WORK}/ca.crt" \
-  LANTERN_VM_SIGNING_CA_KEY="${WORK}/ca.key" \
-  LANTERN_MEASUREMENT_GATE="${PAL_MEASUREMENT_GATE:-${LANTERN_MEASUREMENT_GATE:-warn}}" \
-  LANTERN_VM_CERT_DIR="${WORK}/vm-certs" \
+  PAL_MANAGER_TLS_CA="${WORK}/ca.crt" \
+  PAL_MANAGER_TLS_CERT="${WORK}/server.crt" \
+  PAL_MANAGER_TLS_KEY="${WORK}/server.key" \
+  PAL_VM_SIGNING_CA_CERT="${WORK}/ca.crt" \
+  PAL_VM_SIGNING_CA_KEY="${WORK}/ca.key" \
+  PAL_MEASUREMENT_GATE="${PAL_MEASUREMENT_GATE:-${PAL_MEASUREMENT_GATE:-warn}}" \
+  PAL_VM_CERT_DIR="${WORK}/vm-certs" \
   "${SECRET_ENV_KEY}=${SECRET_VALUE}" \
   "${MANAGER_BIN}" >"${MANAGER_LOG}" 2>&1 &
 # Recorded BEFORE the handshake so an early failure still has something to kill:
@@ -402,7 +402,7 @@ SPAWN_REQ=$(jq -n --arg uri "${SECRET_URI}" --arg tenant "${ITEST_TENANT_ID}" '{
     isolation: "ISOLATION_HOSTILE",
     limits: { vcpu: "1", memory: "128Mi", timeout: "30s" },
     run_id: "itest-run-001",
-    command: ["/usr/local/bin/lantern-harness"],
+    command: ["/usr/local/bin/pal-harness"],
     secrets: [ { env_name: "OPENAI_API_KEY", secret_uri: $uri } ]
   }
 }')
@@ -410,7 +410,7 @@ SPAWN_REQ=$(jq -n --arg uri "${SECRET_URI}" --arg tenant "${ITEST_TENANT_ID}" '{
 SPAWN_RESP=$(grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
   -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
   -d "${SPAWN_REQ}" \
-  "${MANAGER_ADDR}" lantern.v1.RuntimeManager/Spawn 2>>"${MANAGER_LOG}") \
+  "${MANAGER_ADDR}" pal.v1.RuntimeManager/Spawn 2>>"${MANAGER_LOG}") \
   || fail "Spawn RPC failed. Log:\n$(cat "${MANAGER_LOG}")"
 
 VM_ID=$(printf '%s' "${SPAWN_RESP}" | jq -r '.handle.vmId // .handle.id // empty')
@@ -433,7 +433,7 @@ grep -q "Firecracker: microVM started" "${MANAGER_LOG}" \
 # "microVM started" is host-side only — it means Firecracker launched a VM, not
 # that anything inside it survived. A guest that panics milliseconds later still
 # satisfies it. That is not hypothetical: when the harness could not read
-# LANTERN_VM_ID, PID 1 exited and the kernel panicked ("Attempted to kill
+# PAL_VM_ID, PID 1 exited and the kernel panicked ("Attempted to kill
 # init!") ~3s into every boot, and this test reported PASS for all of them.
 #
 # So require POSITIVE evidence from inside the guest, and fail loudly on a
@@ -447,7 +447,7 @@ grep -q "Firecracker: microVM started" "${MANAGER_LOG}" \
 # fails, which is correct: a test that cannot see inside the guest cannot
 # claim the guest booted.
 # ---------------------------------------------------------------------------
-GUEST_ALIVE_MARKER="starting lantern-harness (PID 1)"
+GUEST_ALIVE_MARKER="starting pal-harness (PID 1)"
 for _ in $(seq 1 100); do
   grep -q "Kernel panic" "${MANAGER_LOG}" && break
   grep -q "${GUEST_ALIVE_MARKER}" "${MANAGER_LOG}" && break
@@ -541,7 +541,7 @@ T0=$(ms)
 TOOL_RESP=$(grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
   -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
   -d "{\"vm_id\":\"${VM_ID}\",\"run_id\":\"itest-run-001\",\"step_id\":\"itest-step-1\",\"tool_name\":\"shell_exec\",\"args\":{\"command\":\"echo pal-tool-marker\"},\"idempotency_key\":\"itest-run-001:itest-step-1:1\"}" \
-  "${MANAGER_ADDR}" lantern.v1.RuntimeManager/ExecTool 2>>"${MANAGER_LOG}") || TOOL_RESP=""
+  "${MANAGER_ADDR}" pal.v1.RuntimeManager/ExecTool 2>>"${MANAGER_LOG}") || TOOL_RESP=""
 timing_record "shell_exec" "${T0}" "$(ms)"
 
 SHELL_EXEC_AVAILABLE=false
@@ -575,7 +575,7 @@ if [ "${SHELL_EXEC_AVAILABLE}" = "true" ]; then
            '{vm_id:$vm,run_id:"itest-run-001",step_id:"itest-step-wf",
              tool_name:"write_file",args:{path:$path,content:$content},
              idempotency_key:"itest-run-001:itest-step-wf:1"}')" \
-    "${MANAGER_ADDR}" lantern.v1.RuntimeManager/ExecTool 2>>"${MANAGER_LOG}") || WRITE_RESP=""
+    "${MANAGER_ADDR}" pal.v1.RuntimeManager/ExecTool 2>>"${MANAGER_LOG}") || WRITE_RESP=""
   timing_record "write_file" "${T0}" "$(ms)"
 
   if printf '%s' "${WRITE_RESP}" | grep -qi '"status":"OK"\|bytes_written\|"result"'; then
@@ -599,7 +599,7 @@ if [ "${SHELL_EXEC_AVAILABLE}" = "true" ]; then
            '{vm_id:$vm,run_id:"itest-run-001",step_id:"itest-step-sync",
              tool_name:"shell_exec",args:{command:"sync && echo synced-ok"},
              idempotency_key:"itest-run-001:itest-step-sync:1"}')" \
-    "${MANAGER_ADDR}" lantern.v1.RuntimeManager/ExecTool 2>>"${MANAGER_LOG}") || SYNC_RESP=""
+    "${MANAGER_ADDR}" pal.v1.RuntimeManager/ExecTool 2>>"${MANAGER_LOG}") || SYNC_RESP=""
   printf '%s' "${SYNC_RESP}" | grep -q "synced-ok" \
     || fail "guest sync failed. Response:\n${SYNC_RESP}"
   pass "guest writes flushed to disk before snapshot"
@@ -610,7 +610,7 @@ if [ "${SHELL_EXEC_AVAILABLE}" = "true" ]; then
   SNAP_RESP=$(grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
     -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
     -d "$(jq -n --arg id "${VM_ID}" '{vm_id:$id}')" \
-    "${MANAGER_ADDR}" lantern.v1.RuntimeManager/Snapshot 2>>"${MANAGER_LOG}") \
+    "${MANAGER_ADDR}" pal.v1.RuntimeManager/Snapshot 2>>"${MANAGER_LOG}") \
     || fail "Snapshot RPC failed. Log:\n$(tail -30 "${MANAGER_LOG}")"
   timing_record "snapshot" "${T0}" "$(ms)"
 
@@ -629,7 +629,7 @@ if [ "${SHELL_EXEC_AVAILABLE}" = "true" ]; then
   grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
     -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
     -d "$(jq -n --arg id "${VM_ID}" '{vm_id:$id, reason:"lifecycle-test stop before restore"}')" \
-    "${MANAGER_ADDR}" lantern.v1.RuntimeManager/Stop >>"${MANAGER_LOG}" 2>&1 \
+    "${MANAGER_ADDR}" pal.v1.RuntimeManager/Stop >>"${MANAGER_LOG}" 2>&1 \
     || log "Stop returned non-zero — may already be stopping"
   timing_record "stop" "${T0}" "$(ms)"
 
@@ -669,7 +669,7 @@ if [ "${SHELL_EXEC_AVAILABLE}" = "true" ]; then
         isolation: "ISOLATION_HOSTILE",
         limits: { vcpu: "1", memory: "128Mi", timeout: "30s" },
         run_id: "itest-run-002",
-        command: ["/usr/local/bin/lantern-harness"],
+        command: ["/usr/local/bin/pal-harness"],
         secrets: [ { env_name: "OPENAI_API_KEY", secret_uri: $uri } ],
         restore_snapshot_id: $snap
       },
@@ -679,7 +679,7 @@ if [ "${SHELL_EXEC_AVAILABLE}" = "true" ]; then
   RESTORE_RESP=$(grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
     -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
     -d "${RESTORE_REQ}" \
-    "${MANAGER_ADDR}" lantern.v1.RuntimeManager/Spawn 2>>"${MANAGER_LOG}") \
+    "${MANAGER_ADDR}" pal.v1.RuntimeManager/Spawn 2>>"${MANAGER_LOG}") \
     || fail "Restore Spawn RPC failed. Log:\n$(tail -30 "${MANAGER_LOG}")"
   timing_record "restore" "${T0}" "$(ms)"
 
@@ -691,7 +691,7 @@ if [ "${SHELL_EXEC_AVAILABLE}" = "true" ]; then
   # Wait for the restored harness to come alive.
   #
   # A restored VM resumes from memory state — the harness was already running,
-  # so the "starting lantern-harness (PID 1)" boot banner does NOT re-appear.
+  # so the "starting pal-harness (PID 1)" boot banner does NOT re-appear.
   # What DOES appear is a new heartbeat stream established line once the harness
   # reconnects the bidi stream to the manager (it detects the session ended and
   # reconnects).  Use that as the alive signal, falling back to the old boot
@@ -732,7 +732,7 @@ if [ "${SHELL_EXEC_AVAILABLE}" = "true" ]; then
   # ---- 4c-vi. read_file: verify state marker survived ----
   # ONE ExecTool, no retry loop: the manager holds an exec until the restored
   # harness has re-identified and heartbeated under the new cert (bounded by
-  # LANTERN_HARNESS_READY_TIMEOUT_MS, default 5 s). Gate: the first exec after
+  # PAL_HARNESS_READY_TIMEOUT_MS, default 5 s). Gate: the first exec after
   # restore hard-fails above FIRST_EXEC_MAX_MS (default 3500 ms) and warns above
   # FIRST_EXEC_WARN_MS (default 1500 ms). Nested-virt Lima lands 2.6–3.1 s: the
   # guest-side re-identify + mTLS reconnect run slowly right after restore there.
@@ -746,7 +746,7 @@ if [ "${SHELL_EXEC_AVAILABLE}" = "true" ]; then
            '{vm_id:$vm,run_id:"itest-run-002",step_id:"itest-step-rf",
              tool_name:"read_file",args:{path:$path},
              idempotency_key:"itest-run-002:itest-step-rf:1"}')" \
-    "${MANAGER_ADDR}" lantern.v1.RuntimeManager/ExecTool 2>>"${MANAGER_LOG}") || READ_RESP=""
+    "${MANAGER_ADDR}" pal.v1.RuntimeManager/ExecTool 2>>"${MANAGER_LOG}") || READ_RESP=""
   T1=$(ms)
   timing_record "read_file_after_restore" "${T0}" "${T1}"
   [ $(( T1 - T0 )) -le "${FIRST_EXEC_MAX_MS}" ] \
@@ -774,7 +774,7 @@ if [ "${SHELL_EXEC_AVAILABLE}" = "true" ]; then
            '{vm_id:$vm,run_id:"itest-run-002",step_id:"itest-step-direct",
              tool_name:"shell_exec",args:{command:$cmd},
              idempotency_key:"itest-run-002:itest-step-direct:1"}')" \
-    "${MANAGER_ADDR}" lantern.v1.RuntimeManager/ExecTool 2>>"${MANAGER_LOG}") || DIRECT_RESP=""
+    "${MANAGER_ADDR}" pal.v1.RuntimeManager/ExecTool 2>>"${MANAGER_LOG}") || DIRECT_RESP=""
   timing_record "direct_read_after_restore" "${T0}" "$(ms)"
   if printf '%s' "${DIRECT_RESP}" | grep -qF "${MARKER_CONTENT}"; then
     pass "marker read from the restored disk with the page cache bypassed — the snapshot captured the VM's disk"
@@ -788,7 +788,7 @@ if [ "${SHELL_EXEC_AVAILABLE}" = "true" ]; then
   # Stop the restored VM before the fork test.  The fork test spawns N new
   # vm_ids from the same snapshot.  In bare (unjailed) mode the manager refuses
   # to spawn a fork while the snapshot's source vm_id is still running because
-  # each bare restore binds to /run/lantern/vsock/<source-vm-id>.sock — two
+  # each bare restore binds to /run/pal/vsock/<source-vm-id>.sock — two
   # running VMs with the same id would collide.  Stopping first satisfies the
   # manager's FailedPrecondition guard without requiring the jailer.
   log "Stopping restored vm_id=${VM_ID} before fork test"
@@ -796,7 +796,7 @@ if [ "${SHELL_EXEC_AVAILABLE}" = "true" ]; then
   grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
     -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
     -d "$(jq -n --arg id "${VM_ID}" '{vm_id:$id, reason:"stop before fork test"}')" \
-    "${MANAGER_ADDR}" lantern.v1.RuntimeManager/Stop >>"${MANAGER_LOG}" 2>&1 \
+    "${MANAGER_ADDR}" pal.v1.RuntimeManager/Stop >>"${MANAGER_LOG}" 2>&1 \
     || log "Stop returned non-zero (VM may already be gone)"
   timing_record "stop_before_fork" "${T0}" "$(ms)"
   pass "restored VM stopped before fork test"
@@ -850,7 +850,7 @@ else
           isolation: "ISOLATION_HOSTILE",
           limits: { vcpu: "1", memory: "128Mi", timeout: "30s" },
           run_id: $run,
-          command: ["/usr/local/bin/lantern-harness"],
+          command: ["/usr/local/bin/pal-harness"],
           restore_snapshot_id: $snap
         },
         handle: { vm_id: $vmid }
@@ -859,7 +859,7 @@ else
     FORK_RESP=$(grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
       -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
       -d "${FORK_REQ}" \
-      "${MANAGER_ADDR}" lantern.v1.RuntimeManager/Spawn 2>>"${MANAGER_LOG}") \
+      "${MANAGER_ADDR}" pal.v1.RuntimeManager/Spawn 2>>"${MANAGER_LOG}") \
       || fail "Fork #${i} Spawn failed. Log:\n$(tail -30 "${MANAGER_LOG}")"
     timing_record "fork_spawn_${i}" "${T0}" "$(ms)"
 
@@ -912,7 +912,7 @@ else
                "{vm_id:\$vm,run_id:\"itest-fork-run-${n}\",step_id:\"wf-${n}\",
                  tool_name:\"write_file\",args:{path:\$path,content:\$content},
                  idempotency_key:\"itest-fork-run-${n}:wf-${n}:1\"}")" \
-        "${MANAGER_ADDR}" lantern.v1.RuntimeManager/ExecTool 2>>"${MANAGER_LOG}") || WF_RESP=""
+        "${MANAGER_ADDR}" pal.v1.RuntimeManager/ExecTool 2>>"${MANAGER_LOG}") || WF_RESP=""
       printf '%s' "${WF_RESP}" | grep -qi '"status":"OK"\|bytes_written\|"result"' && break
       log "write_file fork-${n} attempt ${attempt}: waiting 2s..."
       sleep 2
@@ -931,7 +931,7 @@ else
            '{vm_id:$vm,run_id:"itest-fork-run-2",step_id:"cow-check",
              tool_name:"read_file",args:{path:"/workspace/fork-1.txt"},
              idempotency_key:"itest-fork-run-2:cow-check:1"}')" \
-    "${MANAGER_ADDR}" lantern.v1.RuntimeManager/ExecTool 2>>"${MANAGER_LOG}") || COW_RESP=""
+    "${MANAGER_ADDR}" pal.v1.RuntimeManager/ExecTool 2>>"${MANAGER_LOG}") || COW_RESP=""
   if printf '%s' "${COW_RESP}" | grep -q "fork-1-marker"; then
     fail "COW ISOLATION FAILURE: fork-1.txt from fork-1 is visible in fork-2 — writes are bleeding across VM rootfs images"
   else
@@ -953,7 +953,7 @@ else
   [ -n "${FC_BINARY_PATH:-}" ] && FC_BIN_NAME=$(basename "${FC_BINARY_PATH}")
 
   # Find the snapshot mem file in the store by snapshot_id.
-  SNAP_MEM_PATH=$(sudo find /var/lib/lantern/snapshots -name "mem" -path "*/${FORK_SNAP_ID}/mem" 2>/dev/null | head -1)
+  SNAP_MEM_PATH=$(sudo find /var/lib/pal/snapshots -name "mem" -path "*/${FORK_SNAP_ID}/mem" 2>/dev/null | head -1)
   if [ -z "${SNAP_MEM_PATH}" ]; then
     fail "snapshot mem file not found in store for snapshot_id=${FORK_SNAP_ID} — hard-link check cannot proceed"
   fi
@@ -991,7 +991,7 @@ else
   #   "disk staged via FICLONE (CoW reflink, O(1) disk I/O)"  [disk_staging=ficlone]
   #   "disk staged via full byte copy ..."                     [disk_staging=full_copy]
   #
-  # If LANTERN_REQUIRE_REFLINK=1 is set and the snapshot dir is NOT on an
+  # If PAL_REQUIRE_REFLINK=1 is set and the snapshot dir is NOT on an
   # XFS/btrfs filesystem, forks would have already failed above — so reaching
   # this point implies staging succeeded (FICLONE or fallback).
   #
@@ -1000,8 +1000,8 @@ else
   # Shared extents (CoW) show the same physical block range as the source.
   FICLONE_LOG="${WORK}/manager.log"
   if [ ! -f "${FICLONE_LOG}" ]; then
-    # Manager log written to a separate path when LANTERN_MANAGER_LOG is set.
-    FICLONE_LOG="${PAL_MANAGER_LOG:-${LANTERN_MANAGER_LOG:-${MANAGER_LOG}}}"
+    # Manager log written to a separate path when PAL_MANAGER_LOG is set.
+    FICLONE_LOG="${PAL_MANAGER_LOG:-${PAL_MANAGER_LOG:-${MANAGER_LOG}}}"
   fi
 
   # grep -c exits 1 on 0 matches (prints "0") and exits 2 when the file is
@@ -1027,13 +1027,13 @@ else
     # This is correct default behaviour — log it as a WARN for operator awareness.
     log "WARN: disk staging used full byte copy (${FULLCOPY_COUNT} fork(s)) instead of FICLONE."
     log "WARN: For CoW fork scale, mount the snapshot dir on XFS (mkfs.xfs -m reflink=1) or btrfs"
-    log "WARN: and set LANTERN_REQUIRE_REFLINK=1 in the manager env to enforce FICLONE."
+    log "WARN: and set PAL_REQUIRE_REFLINK=1 in the manager env to enforce FICLONE."
     pass "disk staging completed via full-copy fallback (${FULLCOPY_COUNT} full-copy, ${FICLONE_COUNT} FICLONE events found)"
   else
     # No staging log events at all — WP4-reflink binary may not be active.
     log "WARN: ${#FORK_IDS[@]} fork(s) completed but found no disk staging log events in ${FICLONE_LOG}."
     log "WARN: Expected 'disk staged via FICLONE' or 'disk staged via full byte copy' for each fork."
-    log "WARN: Check: (1) LANTERN_SNAPSHOT_DIR and FIRECRACKER_CHROOT_BASE point to the right paths;"
+    log "WARN: Check: (1) PAL_SNAPSHOT_DIR and FIRECRACKER_CHROOT_BASE point to the right paths;"
     log "WARN: (2) manager binary includes WP4-reflink changes; (3) FICLONE_LOG=${FICLONE_LOG} is the right file."
     # Not a hard fail: forks passed functionally; this is an observability gap.
     log "WARN: Treating as non-blocking — forks succeeded. Investigate missing log events."
@@ -1045,7 +1045,7 @@ else
     grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
       -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
       -d "$(jq -n --arg id "${fid}" '{vm_id:$id, reason:"fork-lifecycle-test teardown"}')" \
-      "${MANAGER_ADDR}" lantern.v1.RuntimeManager/Stop >>"${MANAGER_LOG}" 2>&1 || true
+      "${MANAGER_ADDR}" pal.v1.RuntimeManager/Stop >>"${MANAGER_LOG}" 2>&1 || true
   done
 
   # Verify no fork processes leaked.
@@ -1071,7 +1071,7 @@ log "Tearing down vm_id=${VM_ID} (Stop)"
 grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
   -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
   -d "$(jq -n --arg id "${VM_ID}" '{vm_id:$id, reason:"integration-test teardown"}')" \
-  "${MANAGER_ADDR}" lantern.v1.RuntimeManager/Stop >>"${MANAGER_LOG}" 2>&1 \
+  "${MANAGER_ADDR}" pal.v1.RuntimeManager/Stop >>"${MANAGER_LOG}" 2>&1 \
   || log "Stop RPC returned non-zero (VM may already be gone) — continuing"
 
 # ---------------------------------------------------------------------------

@@ -22,10 +22,10 @@ func TestBriefChannel(t *testing.T) {
 		t.Errorf("env only → want email, got %q", got)
 	}
 	// Runtime override file wins over env (and is trimmed + lowercased).
-	if err := os.MkdirAll(filepath.Join(tmp, ".lantern"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(tmp, ".pal"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(tmp, ".lantern", "brief-channel"), []byte(" SMS\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(tmp, ".pal", "brief-channel"), []byte(" SMS\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if got := h.briefChannel(); got != "sms" {

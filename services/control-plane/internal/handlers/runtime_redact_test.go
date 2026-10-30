@@ -16,8 +16,8 @@ func specWithToken() map[string]any {
 	return map[string]any{
 		"image_digest": "demo:latest",
 		"env": map[string]any{
-			"LANTERN_AGENT_INSTANCE_ID":    "ai-123",
-			"LANTERN_AGENT_INSTANCE_TOKEN": fakeToken,
+			"PAL_AGENT_INSTANCE_ID":    "ai-123",
+			"PAL_AGENT_INSTANCE_TOKEN": fakeToken,
 			"MY_APP_SETTING":               "keep-me",
 		},
 	}
@@ -30,13 +30,13 @@ func TestRedactSpecSecrets_RemovesInstanceToken(t *testing.T) {
 	if !ok {
 		t.Fatal("env missing from redacted spec")
 	}
-	if env["LANTERN_AGENT_INSTANCE_TOKEN"] != redactedValue {
-		t.Fatalf("token must be redacted, got %v", env["LANTERN_AGENT_INSTANCE_TOKEN"])
+	if env["PAL_AGENT_INSTANCE_TOKEN"] != redactedValue {
+		t.Fatalf("token must be redacted, got %v", env["PAL_AGENT_INSTANCE_TOKEN"])
 	}
 	// The instance ID is an identifier, not a credential — it stays, and so
 	// does unrelated caller config.
-	if env["LANTERN_AGENT_INSTANCE_ID"] != "ai-123" {
-		t.Fatalf("instance id must survive, got %v", env["LANTERN_AGENT_INSTANCE_ID"])
+	if env["PAL_AGENT_INSTANCE_ID"] != "ai-123" {
+		t.Fatalf("instance id must survive, got %v", env["PAL_AGENT_INSTANCE_ID"])
 	}
 	if env["MY_APP_SETTING"] != "keep-me" {
 		t.Fatalf("caller env must survive, got %v", env["MY_APP_SETTING"])
@@ -53,7 +53,7 @@ func TestRedactSpecSecrets_DoesNotMutateInput(t *testing.T) {
 	_ = redactSpecSecrets(in)
 
 	env := in["env"].(map[string]any)
-	if env["LANTERN_AGENT_INSTANCE_TOKEN"] != fakeToken {
+	if env["PAL_AGENT_INSTANCE_TOKEN"] != fakeToken {
 		t.Fatal("input map was mutated; the spawn would ship a redacted token")
 	}
 }
@@ -109,19 +109,19 @@ func TestRedactSpecSecrets_RedactsPALTokenName(t *testing.T) {
 }
 
 // ADR 0032: a caller-supplied identity under either name never survives the
-// stamp; only the LANTERN_ names are written until the writers flip.
+// stamp; only the PAL_ names are written until the writers flip.
 func TestStampAgentIdentity_ReplacesBothNames(t *testing.T) {
 	env := map[string]any{
-		"LANTERN_AGENT_INSTANCE_ID":    "forged",
-		"LANTERN_AGENT_INSTANCE_TOKEN": "forged",
+		"PAL_AGENT_INSTANCE_ID":    "forged",
+		"PAL_AGENT_INSTANCE_TOKEN": "forged",
 		"PAL_AGENT_INSTANCE_ID":        "forged",
 		"PAL_AGENT_INSTANCE_TOKEN":     "forged",
 		"MY_APP_SETTING":               "keep-me",
 	}
 	stampAgentIdentity(env, "ai-real", "tok-real")
 	want := map[string]any{
-		"LANTERN_AGENT_INSTANCE_ID":    "ai-real",
-		"LANTERN_AGENT_INSTANCE_TOKEN": "tok-real",
+		"PAL_AGENT_INSTANCE_ID":    "ai-real",
+		"PAL_AGENT_INSTANCE_TOKEN": "tok-real",
 		"MY_APP_SETTING":               "keep-me",
 	}
 	if len(env) != len(want) {

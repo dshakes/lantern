@@ -11,7 +11,7 @@
 #   5. Session API creates + accepts messages
 #   6. nl-commands parser handles all expected inputs
 #   7. End-to-end: POST session message with noTools, verify reply comes back
-#   8. Email mirror connector works (sends test mail to LANTERN_OWNER_EMAIL)
+#   8. Email mirror connector works (sends test mail to PAL_OWNER_EMAIL)
 #
 # Usage:
 #   ./scripts/regression.sh                  # run all tests, exit non-zero on failure
@@ -20,12 +20,12 @@
 
 set -u
 
-API_URL="${PAL_API_URL:-${LANTERN_API_URL:-http://localhost:8080}}"
-WA_URL="${PAL_BRIDGE_URL:-${LANTERN_BRIDGE_URL:-http://localhost:3100}}"
-IM_URL="${PAL_IMESSAGE_BRIDGE_URL:-${LANTERN_IMESSAGE_BRIDGE_URL:-http://localhost:3200}}"
-TENANT="${PAL_DEFAULT_TENANT_ID:-${LANTERN_DEFAULT_TENANT_ID:-00000000-0000-0000-0000-000000000001}}"
-EMAIL="${PAL_BRIDGE_EMAIL:-${LANTERN_BRIDGE_EMAIL:-admin@lantern.dev}}"
-PASSWORD="${PAL_BRIDGE_PASSWORD:-${LANTERN_BRIDGE_PASSWORD:-lantern}}"
+API_URL="${PAL_API_URL:-${PAL_API_URL:-http://localhost:8080}}"
+WA_URL="${PAL_BRIDGE_URL:-${PAL_BRIDGE_URL:-http://localhost:3100}}"
+IM_URL="${PAL_IMESSAGE_BRIDGE_URL:-${PAL_IMESSAGE_BRIDGE_URL:-http://localhost:3200}}"
+TENANT="${PAL_DEFAULT_TENANT_ID:-${PAL_DEFAULT_TENANT_ID:-00000000-0000-0000-0000-000000000001}}"
+EMAIL="${PAL_BRIDGE_EMAIL:-${PAL_BRIDGE_EMAIL:-admin@pal.dev}}"
+PASSWORD="${PAL_BRIDGE_PASSWORD:-${PAL_BRIDGE_PASSWORD:-pal}}"
 
 QUIET=0
 SKIP_EMAIL=0
@@ -146,14 +146,14 @@ fi
 # ---- 8. email mirror ---------------------------------------------------
 log "[8/8] email mirror (skip with --skip-email)"
 if [[ $SKIP_EMAIL -eq 0 && -n "$TOKEN" ]]; then
-  OWNER_EMAIL="${PAL_OWNER_EMAIL:-${LANTERN_OWNER_EMAIL:-}}"
+  OWNER_EMAIL="${PAL_OWNER_EMAIL:-${PAL_OWNER_EMAIL:-}}"
   if [[ -z "$OWNER_EMAIL" ]]; then
-    log "  (skipped — LANTERN_OWNER_EMAIL not set)"
+    log "  (skipped — PAL_OWNER_EMAIL not set)"
   else
     code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
       "$API_URL/v1/connectors/gmail/execute?action=send_message" \
       -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-      -d "{\"to\":\"$OWNER_EMAIL\",\"subject\":\"PAL Runtime regression $(date +%H%M)\",\"body\":\"Test from scripts/regression.sh\",\"label\":\"lantern\",\"skipInbox\":true}" --max-time 10)
+      -d "{\"to\":\"$OWNER_EMAIL\",\"subject\":\"PAL Runtime regression $(date +%H%M)\",\"body\":\"Test from scripts/regression.sh\",\"label\":\"pal\",\"skipInbox\":true}" --max-time 10)
     [[ "$code" == "200" ]] && pass "email sent" || fail "email" "HTTP $code"
   fi
 else

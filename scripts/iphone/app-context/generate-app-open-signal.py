@@ -12,7 +12,7 @@ from env or the API plist; baked into the signed output (never committed).
 Usage:
     python3 generate-app-open-signal.py YouTube
     python3 generate-app-open-signal.py "Instagram" "TikTok" "Spotify"
-Output: ~/Desktop/Lantern-AppOpen-<App>.shortcut for each app.
+Output: ~/Desktop/PAL-AppOpen-<App>.shortcut for each app.
 """
 
 import os
@@ -25,22 +25,22 @@ import uuid
 from pathlib import Path
 
 URL = os.environ.get(
-    "LANTERN_SIGNAL_URL",
+    "PAL_SIGNAL_URL",
     "https://macbook-pro-2.tail0be192.ts.net/v1/signals",
 )
 
 
 def resolve_token() -> str:
-    tok = (os.environ.get("PAL_SIGNAL_TOKEN") or os.environ.get("LANTERN_SIGNAL_TOKEN", "")).strip()
+    tok = (os.environ.get("PAL_SIGNAL_TOKEN") or os.environ.get("PAL_SIGNAL_TOKEN", "")).strip()
     if tok:
         return tok
-    plist = Path.home() / "Library/LaunchAgents/dev.lantern.api.plist"
+    plist = Path.home() / "Library/LaunchAgents/dev.pal.api.plist"
     if plist.exists():
         out = subprocess.run(
             [
                 "/usr/libexec/PlistBuddy",
                 "-c",
-                "Print :EnvironmentVariables:LANTERN_SIGNAL_TOKEN",
+                "Print :EnvironmentVariables:PAL_SIGNAL_TOKEN",
                 str(plist),
             ],
             capture_output=True,
@@ -48,7 +48,7 @@ def resolve_token() -> str:
         )
         if out.returncode == 0 and out.stdout.strip():
             return out.stdout.strip()
-    sys.exit("ERROR: no LANTERN_SIGNAL_TOKEN (env or plist).")
+    sys.exit("ERROR: no PAL_SIGNAL_TOKEN (env or plist).")
 
 
 def text_token(s: str) -> dict:
@@ -75,7 +75,7 @@ def build_plist(app: str, token: str) -> dict:
                     "WFDictionaryFieldValueItems": [
                         {
                             "WFItemType": 0,
-                            "WFKey": text_token("x-lantern-signal-token"),
+                            "WFKey": text_token("x-pal-signal-token"),
                             "WFValue": text_token(token),
                         },
                     ]
@@ -108,11 +108,11 @@ def build_plist(app: str, token: str) -> dict:
 def main() -> None:
     apps = sys.argv[1:] or ["YouTube"]
     token = resolve_token()
-    out_dir = Path(os.environ.get("PAL_SHORTCUT_OUT") or os.environ.get("LANTERN_SHORTCUT_OUT", str(Path.home() / "Desktop")))
+    out_dir = Path(os.environ.get("PAL_SHORTCUT_OUT") or os.environ.get("PAL_SHORTCUT_OUT", str(Path.home() / "Desktop")))
     out_dir.mkdir(parents=True, exist_ok=True)
     for app in apps:
         safe = re.sub(r"[^A-Za-z0-9]+", "-", app).strip("-") or "App"
-        out = out_dir / f"Lantern-AppOpen-{safe}.shortcut"
+        out = out_dir / f"PAL-AppOpen-{safe}.shortcut"
         with tempfile.NamedTemporaryFile(suffix=".shortcut", delete=False) as tf:
             plistlib.dump(build_plist(app, token), tf)
             unsigned = tf.name
@@ -132,9 +132,9 @@ def main() -> None:
             )
         finally:
             os.unlink(unsigned)
-        print(f"  ✓ Lantern-AppOpen-{safe}  (POST app_open:{app}) → {out}")
+        print(f"  ✓ PAL-AppOpen-{safe}  (POST app_open:{app}) → {out}")
     print(
-        "Trigger: Automation → 'When <App> is opened' → Run the matching Lantern-AppOpen-<App>."
+        "Trigger: Automation → 'When <App> is opened' → Run the matching PAL-AppOpen-<App>."
     )
 
 

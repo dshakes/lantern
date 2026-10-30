@@ -2334,7 +2334,7 @@ export class WhatsAppSession {
             "",
             `The bridge hit an error and may not be receiving messages.`,
             reason ? `\n_${reason}_\n` : "",
-            "*Try:* dashboard → Channels → WhatsApp → click Pair to reconnect. If it persists, check the bridge log at `/tmp/lantern-whatsapp-bridge.log`.",
+            "*Try:* dashboard → Channels → WhatsApp → click Pair to reconnect. If it persists, check the bridge log at `/tmp/pal-whatsapp-bridge.log`.",
           ].filter(Boolean).join("\n");
         default:
           return null;
@@ -2466,7 +2466,7 @@ export class WhatsAppSession {
           keys: makeCacheableSignalKeyStore(state.keys, baileysLogger),
         },
         logger: baileysLogger,
-        browser: ["Lantern", "Desktop", "1.0.0"],
+        browser: ["PAL", "Desktop", "1.0.0"],
         // Baileys' default (60s) spuriously trips fetchProps/history sync on
         // slow networks; undefined disables the per-query timeout.
         defaultQueryTimeoutMs: undefined,
@@ -5245,13 +5245,13 @@ export class WhatsAppSession {
       return;
     }
 
-    // ---- /pal command suite (legacy /lantern accepted) --------------------
+    // ---- /pal command suite (legacy /pal accepted) --------------------
     //
     // Mobile-first status surface. Lets the user verify bridge health from
     // their phone without opening the dashboard. Works in any chat, but
     // status/help/ping replies always go to self-chat so they don't leak
     // into a friend's thread.
-    const slash = trimmed.replace(/^\/lantern(?=\s|$)/, "/pal");
+    const slash = trimmed.replace(/^\/pal(?=\s|$)/, "/pal");
     if (slash === "/pal" || slash === "/pal help") {
       await this.sendReaction(jid, key, "📖");
       await this.confirmToSelf(
@@ -7463,7 +7463,7 @@ export class WhatsAppSession {
   // connector creates the label on first use. Together with
   // `skipInbox: true` below, status mail lands directly under the
   // label without touching INBOX.
-  private static readonly EMAIL_LABEL = "lantern";
+  private static readonly EMAIL_LABEL = "pal";
 
   // Sanitize a string for use in a mail Subject: header. Strips emoji,
   // markdown asterisks/underscores, control chars and anything outside
@@ -7537,7 +7537,7 @@ export class WhatsAppSession {
         // itself never fails — but it surfaces them in the response as
         // `labelWarning`. Log that here so users notice when the OAuth
         // token lacks gmail.modify (the scope needed to remove INBOX
-        // and apply the lantern label). Fix is to reconnect Gmail at
+        // and apply the pal label). Fix is to reconnect Gmail at
         // /connectors so the new scope gets included.
         try {
           const json = (await res.clone().json()) as Record<string, any>;
@@ -8217,7 +8217,7 @@ export class WhatsAppSession {
   // prompt-injection, and relay-promise events. Fires:
   //   1. WhatsApp self-chat (sendSelf) — primary, highest reliability
   //   2. iMessage self-chat via the iMessage bridge's loopback (if up)
-  //   3. Email via Gmail connector (lantern-self label, IN inbox so
+  //   3. Email via Gmail connector (pal-self label, IN inbox so
   //      it grabs attention — NOT skip-inbox like normal status mail)
   //   4. macOS notification via osascript (best-effort, surfaces on
   //      the Mac dock even when the owner is heads-down in another app)
@@ -8320,7 +8320,7 @@ export class WhatsAppSession {
             to: ownerEmail,
             subject,
             body,
-            label: "lantern",
+            label: "pal",
             skipInbox: false,
           }),
         });

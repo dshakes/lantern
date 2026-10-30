@@ -3,7 +3,7 @@ package handlers
 // ENFORCEMENT-ON proof for the whatsapp/feedback/receipts/takeover handler
 // group after the P1.1b cutover to s.srv.WithTenant.
 //
-// Runs against the lantern_app-backed harness (newEnforcedServer). Proves:
+// Runs against the pal_app-backed harness (newEnforcedServer). Proves:
 //
 //	(a) a SAME-TENANT caller still writes + reads its OWN takeover requests and
 //	    WhatsApp VIP contacts (rows returned, NOT zero — the regression check), and

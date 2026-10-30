@@ -26,10 +26,10 @@ out/
 gen/ts/
 
 # Personal data — never commit a real owner profile. Use the template at
-# docs/personal/owner-profile.example.md and copy it to ~/.lantern/.
+# docs/personal/owner-profile.example.md and copy it to ~/.pal/.
 owner-profile.md
 **/owner-profile.md
-.lantern/
+.pal/
 .pal/
 
 # Env / secrets

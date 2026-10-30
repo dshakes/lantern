@@ -348,7 +348,7 @@ export function Sidebar() {
                   {user?.name ?? "User"}
                 </span>
                 <span className="truncate text-[12px] text-zinc-500">
-                  {user?.email ?? "user@lantern.dev"}
+                  {user?.email ?? "user@pal.dev"}
                 </span>
               </div>
               <ChevronsUpDown className="h-3.5 w-3.5 text-zinc-600" />
@@ -359,7 +359,7 @@ export function Sidebar() {
         {showMenu && (
           <div className="modal-content absolute bottom-full left-3 right-3 mb-1 overflow-hidden rounded-lg border border-zinc-800 bg-surface-2 shadow-xl">
             <div className="px-3 py-2.5">
-              <p className="text-[12px] font-medium text-zinc-200">{user?.email ?? "user@lantern.dev"}</p>
+              <p className="text-[12px] font-medium text-zinc-200">{user?.email ?? "user@pal.dev"}</p>
               <p className="text-[12px] text-zinc-500">{user?.role ?? "owner"}</p>
             </div>
             <div className="border-t border-zinc-800">

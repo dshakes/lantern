@@ -1,7 +1,7 @@
 variable "cluster_name" {
   description = "Name of the EKS cluster to create or use."
   type        = string
-  default     = "lantern-data-plane"
+  default     = "pal-data-plane"
 }
 
 variable "region" {
@@ -65,12 +65,12 @@ variable "existing_subnet_ids" {
 }
 
 variable "pal_control_plane_endpoint" {
-  description = "Endpoint of the PAL Runtime control plane (default https://api.lantern.run)."
+  description = "Endpoint of the PAL Runtime control plane (default https://api.pal.run)."
   type        = string
   default     = null
 }
 
-variable "lantern_control_plane_endpoint" {
+variable "pal_control_plane_endpoint" {
   description = "Deprecated alias of pal_control_plane_endpoint; still honored when the PAL name is unset."
   type        = string
   default     = null
@@ -93,15 +93,15 @@ variable "pal_version" {
   default     = null
 }
 
-variable "lantern_version" {
+variable "pal_version" {
   description = "Deprecated alias of pal_version; still honored when the PAL name is unset."
   type        = string
   default     = null
 }
 
 locals {
-  control_plane_endpoint = coalesce(var.pal_control_plane_endpoint, var.lantern_control_plane_endpoint, "https://api.lantern.run")
-  chart_version          = coalesce(var.pal_version, var.lantern_version, "0.1.0")
+  control_plane_endpoint = coalesce(var.pal_control_plane_endpoint, var.pal_control_plane_endpoint, "https://api.pal.run")
+  chart_version          = coalesce(var.pal_version, var.pal_version, "0.1.0")
 }
 
 variable "firecracker_enabled" {

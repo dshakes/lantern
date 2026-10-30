@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 940" class="lx" role="img" aria-labelledby="trust-boundaries-title trust-boundaries-desc">
   <title id="trust-boundaries-title">Every boundary demands its own credential</title>
-  <desc id="trust-boundaries-desc">Lantern's trust boundaries, left to right. The caller sends a JWT or a scoped API key to the gateway on :8443 or the control plane on :8080. The gateway reaches the control plane's gRPC port :50051 with the shared x-lantern-service-token; the control plane enforces API-key scopes and Postgres row-level security keyed by app.tenant_id, and mints each VM's agent identity. The control plane reaches the workflow engine (:50052), the model router (:50053, which also receives the tenant's provider key per call), and the runtime-scheduler (:50055) with the same service token; every one of those gRPC ports accepts a tenant_id only from a caller presenting it. On the data plane host, the control plane, workflow engine and scheduler reach the runtime-manager (:50054) with an mTLS client cert plus the service token, and the manager refuses per-VM certificates (OU=lantern-vm) on every RuntimeManager method. The manager calls back to the control plane with X-Lantern-Runtime-Token to resolve secrets and forward reports. Inside the microVM, the harness runs as PID 1, reads spawn.json from a read-only image, and talks to the manager with its per-VM certificate plus the agent instance token. The workload runs as an unprivileged LANTERN_WORKLOAD_UID and reaches the secrets socket, which checks its uid with SO_PEERCRED. In opt-in broker mode (LANTERN_EGRESS_MODE=broker, Firecracker only), outbound requests from the workload leave over vsock through a host egress broker that adds the credential on the host, so no credential crosses into the VM and the VM has no network device. In the default mode the allowlist is enforced in-guest.</desc>
+  <desc id="trust-boundaries-desc">PAL's trust boundaries, left to right. The caller sends a JWT or a scoped API key to the gateway on :8443 or the control plane on :8080. The gateway reaches the control plane's gRPC port :50051 with the shared x-pal-service-token; the control plane enforces API-key scopes and Postgres row-level security keyed by app.tenant_id, and mints each VM's agent identity. The control plane reaches the workflow engine (:50052), the model router (:50053, which also receives the tenant's provider key per call), and the runtime-scheduler (:50055) with the same service token; every one of those gRPC ports accepts a tenant_id only from a caller presenting it. On the data plane host, the control plane, workflow engine and scheduler reach the runtime-manager (:50054) with an mTLS client cert plus the service token, and the manager refuses per-VM certificates (OU=pal-vm) on every RuntimeManager method. The manager calls back to the control plane with X-Pal-Runtime-Token to resolve secrets and forward reports. Inside the microVM, the harness runs as PID 1, reads spawn.json from a read-only image, and talks to the manager with its per-VM certificate plus the agent instance token. The workload runs as an unprivileged PAL_WORKLOAD_UID and reaches the secrets socket, which checks its uid with SO_PEERCRED. In opt-in broker mode (PAL_EGRESS_MODE=broker, Firecracker only), outbound requests from the workload leave over vsock through a host egress broker that adds the credential on the host, so no credential crosses into the VM and the VM has no network device. In the default mode the allowlist is enforced in-guest.</desc>
   <style class="lx-style">
     .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
     @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
@@ -80,9 +80,9 @@
   <rect class="node-host" x="634" y="262" width="252" height="108" rx="10"/>
   <text class="t-h mono" x="650" y="288">runtime-manager</text>
   <text class="t-b" x="650" y="308"><tspan class="mono">:50054</tspan>, mTLS + service token</text>
-  <text class="t-b" x="650" y="326">refuses <tspan class="mono">OU=lantern-vm</tspan> certs</text>
+  <text class="t-b" x="650" y="326">refuses <tspan class="mono">OU=pal-vm</tspan> certs</text>
   <text class="t-b" x="650" y="344">on RuntimeManager methods</text>
-  <!-- opt-in broker mode (LANTERN_EGRESS_MODE=broker, Firecracker only) -->
+  <!-- opt-in broker mode (PAL_EGRESS_MODE=broker, Firecracker only) -->
   <rect class="node-host" x="634" y="490" width="252" height="72" rx="10"/>
   <text class="t-h" x="650" y="518">Host egress broker</text>
   <text class="t-b" x="650" y="538">adds credential on egress (opt-in)</text>
@@ -93,7 +93,7 @@
   <rect class="node-glass" x="956" y="180" width="188" height="120" rx="10"/>
   <text class="t-h" x="972" y="206">Harness, PID 1</text>
   <text class="t-b" x="972" y="226">per-VM cert</text>
-  <text class="t-b mono" x="972" y="244">OU=lantern-vm</text>
+  <text class="t-b mono" x="972" y="244">OU=pal-vm</text>
   <text class="t-b" x="972" y="262">reads <tspan class="mono">spawn.json</tspan> from</text>
   <text class="t-b" x="972" y="280">a read-only image</text>
   <rect class="node-glass" x="956" y="330" width="188" height="72" rx="10"/>
@@ -130,13 +130,13 @@
   <text class="t-s" x="40" y="726">Caller to gateway or control plane</text>
   <text class="t-b" x="300" y="726">JWT, or an API key carrying scopes</text>
   <text class="t-s" x="40" y="746">Gateway to control plane</text>
-  <text class="t-b mono" x="300" y="746">x-lantern-service-token</text>
+  <text class="t-b mono" x="300" y="746">x-pal-service-token</text>
   <text class="t-s" x="40" y="766">Control plane to engine, router, scheduler</text>
   <text class="t-b" x="300" y="766">service token; the router also gets the tenant provider key</text>
   <text class="t-s" x="40" y="786">Control plane, engine, scheduler to manager</text>
   <text class="t-b" x="300" y="786">mTLS client cert + service token</text>
   <text class="t-s" x="40" y="806">runtime-manager to control plane</text>
-  <text class="t-b" x="300" y="806"><tspan class="mono">X-Lantern-Runtime-Token</tspan> (secret resolve, reports)</text>
+  <text class="t-b" x="300" y="806"><tspan class="mono">X-Pal-Runtime-Token</tspan> (secret resolve, reports)</text>
   <text class="t-s" x="40" y="826">Harness to runtime-manager</text>
   <text class="t-b" x="300" y="826">per-VM cert + agent instance token</text>
   <text class="t-s" x="40" y="846">Workload to harness</text>

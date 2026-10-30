@@ -18,7 +18,7 @@ Every PAL Runtime microVM runs an in-guest init process — the **harness**. It 
 
 There are two ways to deliver this binary into the guest:
 
-1. **Bake it into the base image** alongside the kernel and rootfs. Every agent image `FROM lantern/runtime-base:vX.Y` already contains `/sbin/lantern-harness`.
+1. **Bake it into the base image** alongside the kernel and rootfs. Every agent image `FROM pal/runtime-base:vX.Y` already contains `/sbin/pal-harness`.
 2. **Inject it at boot** via virtio-fs / 9p / a kernel cmdline-mounted initramfs that the manager prepares per-VM.
 
 Inject-at-boot is appealing for fast iteration: the manager can upgrade the harness without rebuilding every base image. But it bloats the trusted boot surface and complicates snapshotting.
@@ -27,8 +27,8 @@ Inject-at-boot is appealing for fast iteration: the manager can upgrade the harn
 
 The harness is **baked into the VM base image**. Specifically:
 
-- PAL Runtime publishes a small number of base images (`lantern/runtime-base:python-3.11`, `:node-20`, `:go-1.23`, `:minimal`).
-- Each base image ships with `/sbin/lantern-harness` (a statically-linked musl binary), a `/etc/lantern/harness.toml` defaults file, and a `init=/sbin/lantern-harness` kernel cmdline.
+- PAL Runtime publishes a small number of base images (`pal/runtime-base:python-3.11`, `:node-20`, `:go-1.23`, `:minimal`).
+- Each base image ships with `/sbin/pal-harness` (a statically-linked musl binary), a `/etc/pal/harness.toml` defaults file, and a `init=/sbin/pal-harness` kernel cmdline.
 - Agent images `FROM` a base image. The agent's bundle adds the worker binary and dependencies. The harness is unchanged.
 - The harness version is pinned per base-image version. A harness upgrade is a base-image rev.
 
@@ -39,7 +39,7 @@ Snapshots are taken *after* the harness has booted and is waiting on its first h
 ### Positive
 
 1. **Snapshots are self-contained.** A snapshot mmap'd onto a new node has the harness already mapped into memory. No per-node injection step on restore — restore time stays at ≤ 30ms warm / ≤ 200ms cold.
-2. **Smaller trusted boot surface.** No virtio-fs share, no manager-prepared initramfs. The boot path is `kernel → init=/sbin/lantern-harness`, nothing else.
+2. **Smaller trusted boot surface.** No virtio-fs share, no manager-prepared initramfs. The boot path is `kernel → init=/sbin/pal-harness`, nothing else.
 3. **Auditability.** The harness binary is signed when the base image is built and the digest is in the image manifest. We can prove which harness ran a given workload from `agent_versions.bundle_digest`.
 4. **Simpler manager.** No per-VM filesystem prep step on spawn. The Firecracker driver is just "boot this image with these resources."
 5. **Egress allowlist works at boot.** The in-VM CONNECT proxy + iptables REDIRECT rule are applied/verified by the harness *before* the worker exec (fail-closed in prod when the REDIRECT is absent), so there is no window where the worker can talk to the internet unfiltered.
@@ -72,5 +72,5 @@ Manager builds a custom initramfs per VM containing the harness, kernel cmdline 
 ## References
 
 - [`docs/architecture/04b-microvm-productionization.md`](../architecture/04b-microvm-productionization.md) — where the harness fits
-- [`packages/proto/lantern/v1/runtime.proto`](../../packages/proto/lantern/v1/runtime.proto) — `RuntimeHarness` service
+- [`packages/proto/pal/v1/runtime.proto`](../../packages/proto/pal/v1/runtime.proto) — `RuntimeHarness` service
 - [Firecracker snapshotting](https://github.com/firecracker-microvm/firecracker/blob/main/docs/snapshotting/snapshot-support.md) — why portable snapshots matter

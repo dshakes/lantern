@@ -12,7 +12,7 @@
 #
 #   Fresh (RLS_VALIDATE_FRESH=1): creates a throwaway Postgres database,
 #   runs the idempotent Migrate() into it, validates there, then drops it.
-#   Use this mode before flipping LANTERN_RLS_ENFORCE=1 on a new environment
+#   Use this mode before flipping PAL_RLS_ENFORCE=1 on a new environment
 #   to rule out dirty-state false-positives.
 #
 # Usage
@@ -22,7 +22,7 @@
 #
 # Environment
 # -----------
-#   DATABASE_URL   Postgres DSN (default: postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable)
+#   DATABASE_URL   Postgres DSN (default: postgres://pal:pal@localhost:5432/pal?sslmode=disable)
 #   RLS_VALIDATE_FRESH   Set to 1 to create+migrate+drop a throwaway DB.
 #
 # Exit codes
@@ -36,7 +36,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CP_DIR="${REPO_ROOT}/services/control-plane"
 
-DEV_DSN="postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable"
+DEV_DSN="postgres://pal:pal@localhost:5432/pal?sslmode=disable"
 DATABASE_URL="${DATABASE_URL:-${DEV_DSN}}"
 
 RLS_VALIDATE_FRESH="${RLS_VALIDATE_FRESH:-0}"
@@ -92,8 +92,8 @@ if [[ "${RLS_VALIDATE_FRESH}" == "1" ]]; then
 
   # Build an admin DSN (postgres database) by swapping the DB name.
   # Works with the dev DSN; for custom DSNs the user must ensure createdb rights.
-  ADMIN_DSN="${DATABASE_URL/%lantern?sslmode=disable/postgres?sslmode=disable}"
-  ADMIN_DSN="${ADMIN_DSN/%lantern/postgres}"
+  ADMIN_DSN="${DATABASE_URL/%pal?sslmode=disable/postgres?sslmode=disable}"
+  ADMIN_DSN="${ADMIN_DSN/%pal/postgres}"
 
   psql "${DATABASE_URL}" -c "CREATE DATABASE ${FRESH_DB_NAME};" &>/dev/null || {
     echo -e "${RED}ERROR${RESET}: could not create ${FRESH_DB_NAME} — does the DB user have CREATEDB?"
@@ -102,7 +102,7 @@ if [[ "${RLS_VALIDATE_FRESH}" == "1" ]]; then
   pass "Created throwaway database: ${FRESH_DB_NAME}"
 
   # Build the fresh DSN by substituting the database name.
-  FRESH_DATABASE_URL="${DATABASE_URL/\/lantern?/\/${FRESH_DB_NAME}?}"
+  FRESH_DATABASE_URL="${DATABASE_URL/\/pal?/\/${FRESH_DB_NAME}?}"
 
   # Cleanup on exit — always, even on error.
   cleanup_fresh() {
@@ -123,13 +123,13 @@ if [[ "${RLS_VALIDATE_FRESH}" == "1" ]]; then
   echo
 fi
 
-# ─── Check lantern_app role ──────────────────────────────────────────────────
-info "Checking lantern_app role..."
-ROLE_EXISTS=$(psql "${DATABASE_URL}" -tAc "SELECT COUNT(1) FROM pg_roles WHERE rolname='lantern_app'" 2>/dev/null || echo "0")
+# ─── Check pal_app role ──────────────────────────────────────────────────
+info "Checking pal_app role..."
+ROLE_EXISTS=$(psql "${DATABASE_URL}" -tAc "SELECT COUNT(1) FROM pg_roles WHERE rolname='pal_app'" 2>/dev/null || echo "0")
 if [[ "${ROLE_EXISTS}" == "1" ]]; then
-  pass "lantern_app role exists"
+  pass "pal_app role exists"
 else
-  warn "lantern_app role not found — the test harness will create it via Migrate()"
+  warn "pal_app role not found — the test harness will create it via Migrate()"
 fi
 echo
 
@@ -151,7 +151,7 @@ run_suite() {
   (
     cd "${CP_DIR}"
     DATABASE_URL="${DATABASE_URL}" \
-    LANTERN_RLS_ENFORCE=1 \
+    PAL_RLS_ENFORCE=1 \
       go test -race -p 1 -v -run "${filter}" "${pkg}" ${extra_args} 2>&1
   ) | tee "${logfile}"
   local exit_code=${PIPESTATUS[0]}
@@ -191,23 +191,23 @@ if [[ "${FAILED}" -eq 0 ]]; then
   echo
   echo "  What was validated:"
   echo "    • Postgres catalog: ENABLE + FORCE RLS on all ~40 tenant tables"
-  echo "    • lantern_app role present and RLS-subject (no BYPASSRLS)"
+  echo "    • pal_app role present and RLS-subject (no BYPASSRLS)"
   echo "    • Cross-tenant reads return 0 rows under the app role"
   echo "    • Same-tenant reads still return the expected rows (no regression)"
   echo "    • Handler cutover paths (WithTenant / WithTenantConn) correct"
   echo
   echo "  What is NOT validated here (requires the target cluster):"
-  echo "    • LANTERN_APP_DB_PASSWORD set and accepted by the target Postgres"
-  echo "    • AppPool actually connects as lantern_app in the live API process"
+  echo "    • PAL_APP_DB_PASSWORD set and accepted by the target Postgres"
+  echo "    • AppPool actually connects as pal_app in the live API process"
   echo "    • Live traffic / RLS miss-rate under production load"
   echo
-  echo "  When ready: set LANTERN_APP_DB_PASSWORD, then LANTERN_RLS_ENFORCE=1"
+  echo "  When ready: set PAL_APP_DB_PASSWORD, then PAL_RLS_ENFORCE=1"
   echo "  See docs/runbooks/rls-flip.md for the full operator steps."
   exit 0
 else
   echo -e "${RED}FAIL${RESET}  One or more RLS validation suites failed."
   echo
-  echo "  Fix the failures above before flipping LANTERN_RLS_ENFORCE=1."
+  echo "  Fix the failures above before flipping PAL_RLS_ENFORCE=1."
   echo "  See docs/runbooks/rls-flip.md for troubleshooting."
   exit 1
 fi

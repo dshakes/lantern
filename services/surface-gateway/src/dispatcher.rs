@@ -16,13 +16,13 @@ pub struct Dispatcher {
     adapters: HashMap<SurfaceId, Arc<dyn SurfaceAdapter>>,
     sessions: SessionStore,
     /// gRPC client for the control-plane RunService.  Points to :50051
-    /// (gRPC port) with x-lantern-service-token auth (invariant #7).
+    /// (gRPC port) with x-pal-service-token auth (invariant #7).
     control_plane: ControlPlaneClient,
-    /// Name of the Lantern agent that handles inbound surface messages.
-    /// Set LANTERN_AGENT_NAME; run creation returns an error when unset.
+    /// Name of the PAL agent that handles inbound surface messages.
+    /// Set PAL_AGENT_NAME; run creation returns an error when unset.
     agent_name: Option<String>,
     /// Resolves each inbound event's platform-native id (chat_id, team_id,
-    /// phone_number_id, …) to the real Lantern tenant UUID.  Without this
+    /// phone_number_id, …) to the real PAL tenant UUID.  Without this
     /// step runs would be dispatched under the platform's own identifiers,
     /// breaking multi-tenant isolation.
     tenant_resolver: TenantResolver,
@@ -56,9 +56,9 @@ impl Dispatcher {
         // Adapters set `event.tenant_id` to the platform-native identifier present in
         // the webhook payload (Telegram chat_id, Slack team_id, WhatsApp
         // phone_number_id, Twilio destination number, Discord guild_id).  Those are
-        // NOT Lantern tenant UUIDs.  Before forwarding to the control-plane we must
-        // replace the platform id with the real Lantern tenant UUID, or reject the
-        // event if the gateway is mis-configured (LANTERN_TENANT_ID not set).
+        // NOT PAL tenant UUIDs.  Before forwarding to the control-plane we must
+        // replace the platform id with the real PAL tenant UUID, or reject the
+        // event if the gateway is mis-configured (PAL_TENANT_ID not set).
         //
         // The raw platform id is preserved in the trace span for debugging but must
         // never reach the control-plane as a tenant discriminator.
@@ -229,7 +229,7 @@ impl Dispatcher {
     ) -> Result<String, AppError> {
         let agent_name = self.agent_name.as_deref().ok_or_else(|| {
             AppError::Internal(
-                "LANTERN_AGENT_NAME is not set — cannot create run without an agent name"
+                "PAL_AGENT_NAME is not set — cannot create run without an agent name"
                     .to_string(),
             )
         })?;

@@ -271,7 +271,7 @@ struct AnthropicDeltaUsage {
 // Mapping
 // ---------------------------------------------------------------------------
 
-/// Converts Lantern messages to Anthropic format, extracting the system message separately.
+/// Converts PAL messages to Anthropic format, extracting the system message separately.
 fn to_anthropic_messages(messages: &[Message]) -> (Option<String>, Vec<AnthropicMessage>) {
     let mut system: Option<String> = None;
     let mut out = Vec::new();

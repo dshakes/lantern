@@ -4,33 +4,33 @@
 //!
 //! Platform adapters populate `SurfaceEvent::tenant_id` with whatever identifier the
 //! *platform* provides — e.g. Telegram's numeric `chat_id`, Slack's `team_id`, or
-//! WhatsApp's `phone_number_id`.  Those are opaque platform strings, not Lantern
+//! WhatsApp's `phone_number_id`.  Those are opaque platform strings, not PAL
 //! tenant UUIDs.  Passing them downstream to the control-plane as `tenant_id` breaks
 //! multi-tenant isolation: runs would be dispatched under phantom tenants that do not
 //! exist in the database.
 //!
 //! ## Solution
 //!
-//! Each surface-gateway deployment serves exactly one Lantern tenant.  The real tenant
-//! UUID is supplied at deploy time via `LANTERN_TENANT_ID`.  `TenantResolver` holds
+//! Each surface-gateway deployment serves exactly one PAL tenant.  The real tenant
+//! UUID is supplied at deploy time via `PAL_TENANT_ID`.  `TenantResolver` holds
 //! that configured value and rewrites every event's `tenant_id` to the correct UUID
 //! before the event is forwarded to the control plane.
 //!
-//! If `LANTERN_TENANT_ID` is not set the resolver returns an error so the webhook is
+//! If `PAL_TENANT_ID` is not set the resolver returns an error so the webhook is
 //! rejected with an appropriate 4xx/5xx rather than inventing a fake tenant.
 
 use crate::error::AppError;
 use crate::types::SurfaceId;
 
-/// Resolves the Lantern tenant UUID for an inbound surface event.
+/// Resolves the PAL tenant UUID for an inbound surface event.
 ///
 /// In the current deployment model every surface-gateway instance is
-/// configured for a single tenant — the UUID comes from `LANTERN_TENANT_ID`.
+/// configured for a single tenant — the UUID comes from `PAL_TENANT_ID`.
 #[derive(Clone, Debug)]
 pub struct TenantResolver {
-    /// The Lantern tenant UUID this gateway is configured to serve.
+    /// The PAL tenant UUID this gateway is configured to serve.
     ///
-    /// `None` means the gateway was started without `LANTERN_TENANT_ID`, which is
+    /// `None` means the gateway was started without `PAL_TENANT_ID`, which is
     /// only acceptable in unit-test or local-dev scenarios where tenant routing is
     /// irrelevant.
     tenant_id: Option<String>,
@@ -39,18 +39,18 @@ pub struct TenantResolver {
 impl TenantResolver {
     /// Create a resolver from the configured tenant UUID.
     ///
-    /// `tenant_id` should come from `Config::lantern_tenant_id`.
+    /// `tenant_id` should come from `Config::pal_tenant_id`.
     pub fn new(tenant_id: Option<String>) -> Self {
         Self { tenant_id }
     }
 
-    /// Return the Lantern tenant UUID to use for an event from the given surface.
+    /// Return the PAL tenant UUID to use for an event from the given surface.
     ///
     /// `platform_id` is the raw platform-native identifier extracted by the adapter
     /// (chat_id, team_id, phone_number_id, …).  It is accepted only for logging
     /// purposes — it is **not** used to select the tenant.
     ///
-    /// Returns `Err(AppError::AdapterNotConfigured)` when `LANTERN_TENANT_ID` has
+    /// Returns `Err(AppError::AdapterNotConfigured)` when `PAL_TENANT_ID` has
     /// not been set, causing the webhook to be rejected rather than mis-tenanted.
     pub fn resolve(&self, platform_id: &str, surface: SurfaceId) -> Result<String, AppError> {
         match &self.tenant_id {
@@ -59,7 +59,7 @@ impl TenantResolver {
                     surface = %surface,
                     platform_id = %platform_id,
                     tenant_id = %id,
-                    "resolved platform id to lantern tenant"
+                    "resolved platform id to pal tenant"
                 );
                 Ok(id.clone())
             }
@@ -67,12 +67,12 @@ impl TenantResolver {
                 tracing::error!(
                     surface = %surface,
                     platform_id = %platform_id,
-                    "LANTERN_TENANT_ID not configured — rejecting inbound webhook to prevent \
+                    "PAL_TENANT_ID not configured — rejecting inbound webhook to prevent \
                      mis-tenanted dispatch"
                 );
                 Err(AppError::AdapterNotConfigured(
-                    "LANTERN_TENANT_ID is required but not set; \
-                     cannot resolve platform id to a Lantern tenant"
+                    "PAL_TENANT_ID is required but not set; \
+                     cannot resolve platform id to a PAL tenant"
                         .to_string(),
                 ))
             }
@@ -144,7 +144,7 @@ mod tests {
         assert!(result.is_err());
         assert!(
             matches!(result.unwrap_err(), AppError::AdapterNotConfigured(_)),
-            "missing LANTERN_TENANT_ID must produce AdapterNotConfigured, not a phantom tenant"
+            "missing PAL_TENANT_ID must produce AdapterNotConfigured, not a phantom tenant"
         );
     }
 

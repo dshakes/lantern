@@ -13,20 +13,20 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/workflow-engine/internal/journal"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/workflow-engine/internal/journal"
 )
 
 // ErrModelRouterUnavailable is returned by an llm_call step when the engine was
 // started without a configured model-router address (no ModelServiceClient).
 // The step fails honestly rather than returning a fabricated completion.
-var ErrModelRouterUnavailable = errors.New("model router not configured (set LANTERN_MODEL_ROUTER_ADDR)")
+var ErrModelRouterUnavailable = errors.New("model router not configured (set PAL_MODEL_ROUTER_ADDR)")
 
 // ErrRuntimeManagerUnavailable is returned by a tool_call step when the engine
 // was started without a configured runtime-manager address (no
 // RuntimeManagerClient). The step fails honestly rather than fabricating a
 // tool result.
-var ErrRuntimeManagerUnavailable = errors.New("runtime manager not configured (set LANTERN_RUNTIME_MANAGER_ADDR)")
+var ErrRuntimeManagerUnavailable = errors.New("runtime manager not configured (set PAL_RUNTIME_MANAGER_ADDR)")
 
 // ErrChildRunUnavailable is returned by a child_run step: dispatching a child
 // agent run via the control plane is not implemented yet. The step fails
@@ -63,8 +63,8 @@ type StepExecutor struct {
 	pool          *pgxpool.Pool
 	streamer      *EventStreamer
 	logger        *zap.Logger
-	modelClient   lanternv1.ModelServiceClient
-	runtimeClient lanternv1.RuntimeManagerClient
+	modelClient   palv1.ModelServiceClient
+	runtimeClient palv1.RuntimeManagerClient
 	// childRunner starts a child run and waits for it. Set by the Engine after
 	// construction (a func value, so the executor does not import the Engine).
 	// nil => child_run steps fail with ErrChildRunUnavailable rather than
@@ -78,7 +78,7 @@ type StepExecutor struct {
 // then return a typed ErrModelRouterUnavailable instead of executing.
 // runtimeClient may be nil; tool_call steps then return a typed
 // ErrRuntimeManagerUnavailable instead of executing.
-func NewStepExecutor(pool *pgxpool.Pool, streamer *EventStreamer, logger *zap.Logger, modelClient lanternv1.ModelServiceClient, runtimeClient lanternv1.RuntimeManagerClient) *StepExecutor {
+func NewStepExecutor(pool *pgxpool.Pool, streamer *EventStreamer, logger *zap.Logger, modelClient palv1.ModelServiceClient, runtimeClient palv1.RuntimeManagerClient) *StepExecutor {
 	return &StepExecutor{
 		pool:          pool,
 		streamer:      streamer,
@@ -297,18 +297,18 @@ func (se *StepExecutor) executeLLMCall(ctx context.Context, state *RunState, ste
 		return nil, fmt.Errorf("invalid llm_call payload: %w", err)
 	}
 
-	messages := make([]*lanternv1.Message, 0, len(req.Messages)+1)
+	messages := make([]*palv1.Message, 0, len(req.Messages)+1)
 	for _, m := range req.Messages {
-		messages = append(messages, &lanternv1.Message{Role: m.Role, Content: m.Content})
+		messages = append(messages, &palv1.Message{Role: m.Role, Content: m.Content})
 	}
 	if req.Prompt != "" {
-		messages = append(messages, &lanternv1.Message{Role: "user", Content: req.Prompt})
+		messages = append(messages, &palv1.Message{Role: "user", Content: req.Prompt})
 	}
 	if len(messages) == 0 {
 		return nil, fmt.Errorf("invalid llm_call payload: no prompt or messages provided")
 	}
 
-	completeReq := &lanternv1.CompleteRequest{
+	completeReq := &palv1.CompleteRequest{
 		RunId:          state.RunID,
 		StepId:         stepID,
 		TenantId:       state.TenantID,
@@ -396,7 +396,7 @@ func (se *StepExecutor) executeToolCall(ctx context.Context, state *RunState, st
 		}
 	}
 
-	execReq := &lanternv1.ExecToolRequest{
+	execReq := &palv1.ExecToolRequest{
 		VmId:           req.VMID,
 		RunId:          state.RunID,
 		StepId:         stepID,
@@ -420,15 +420,15 @@ func (se *StepExecutor) executeToolCall(ctx context.Context, state *RunState, st
 	}
 
 	switch resp.GetStatus() {
-	case lanternv1.ToolStatus_TOOL_STATUS_OK:
+	case palv1.ToolStatus_TOOL_STATUS_OK:
 		result := map[string]any{
 			"tool_name": req.ToolName,
 			"result":    resp.GetResult().AsMap(),
 		}
 		return json.Marshal(result)
-	case lanternv1.ToolStatus_TOOL_STATUS_ERROR:
+	case palv1.ToolStatus_TOOL_STATUS_ERROR:
 		return nil, fmt.Errorf("tool %q failed: %s", req.ToolName, resp.GetError())
-	case lanternv1.ToolStatus_TOOL_STATUS_UNAVAILABLE:
+	case palv1.ToolStatus_TOOL_STATUS_UNAVAILABLE:
 		return nil, fmt.Errorf("tool %q unavailable: %s: %w", req.ToolName, resp.GetError(), ErrRuntimeManagerUnavailable)
 	default:
 		return nil, fmt.Errorf("tool %q: unexpected runtime status %v", req.ToolName, resp.GetStatus())
@@ -438,48 +438,48 @@ func (se *StepExecutor) executeToolCall(ctx context.Context, state *RunState, st
 // capabilityFromString maps a capability selector string (as used by the SDK,
 // e.g. "auto", "reasoning-large", "chat-small") to the proto enum. Unknown or
 // empty values fall back to CAPABILITY_AUTO so the model router still routes.
-func capabilityFromString(s string) lanternv1.Capability {
+func capabilityFromString(s string) palv1.Capability {
 	switch normalizeSelector(s) {
 	case "reasoning-frontier":
-		return lanternv1.Capability_CAPABILITY_REASONING_FRONTIER
+		return palv1.Capability_CAPABILITY_REASONING_FRONTIER
 	case "reasoning-large":
-		return lanternv1.Capability_CAPABILITY_REASONING_LARGE
+		return palv1.Capability_CAPABILITY_REASONING_LARGE
 	case "reasoning-small":
-		return lanternv1.Capability_CAPABILITY_REASONING_SMALL
+		return palv1.Capability_CAPABILITY_REASONING_SMALL
 	case "chat-large":
-		return lanternv1.Capability_CAPABILITY_CHAT_LARGE
+		return palv1.Capability_CAPABILITY_CHAT_LARGE
 	case "chat-small":
-		return lanternv1.Capability_CAPABILITY_CHAT_SMALL
+		return palv1.Capability_CAPABILITY_CHAT_SMALL
 	case "chat-edge":
-		return lanternv1.Capability_CAPABILITY_CHAT_EDGE
+		return palv1.Capability_CAPABILITY_CHAT_EDGE
 	case "vision-large":
-		return lanternv1.Capability_CAPABILITY_VISION_LARGE
+		return palv1.Capability_CAPABILITY_VISION_LARGE
 	case "vision-small":
-		return lanternv1.Capability_CAPABILITY_VISION_SMALL
+		return palv1.Capability_CAPABILITY_VISION_SMALL
 	case "code-large":
-		return lanternv1.Capability_CAPABILITY_CODE_LARGE
+		return palv1.Capability_CAPABILITY_CODE_LARGE
 	case "code-small":
-		return lanternv1.Capability_CAPABILITY_CODE_SMALL
+		return palv1.Capability_CAPABILITY_CODE_SMALL
 	case "", "auto":
-		return lanternv1.Capability_CAPABILITY_AUTO
+		return palv1.Capability_CAPABILITY_AUTO
 	default:
-		return lanternv1.Capability_CAPABILITY_AUTO
+		return palv1.Capability_CAPABILITY_AUTO
 	}
 }
 
 // optimizeFromString maps an optimize-target selector to the proto enum.
-func optimizeFromString(s string) lanternv1.OptimizeTarget {
+func optimizeFromString(s string) palv1.OptimizeTarget {
 	switch normalizeSelector(s) {
 	case "cheap":
-		return lanternv1.OptimizeTarget_OPTIMIZE_CHEAP
+		return palv1.OptimizeTarget_OPTIMIZE_CHEAP
 	case "fast":
-		return lanternv1.OptimizeTarget_OPTIMIZE_FAST
+		return palv1.OptimizeTarget_OPTIMIZE_FAST
 	case "best":
-		return lanternv1.OptimizeTarget_OPTIMIZE_BEST
+		return palv1.OptimizeTarget_OPTIMIZE_BEST
 	case "balanced":
-		return lanternv1.OptimizeTarget_OPTIMIZE_BALANCED
+		return palv1.OptimizeTarget_OPTIMIZE_BALANCED
 	default:
-		return lanternv1.OptimizeTarget_OPTIMIZE_UNSPECIFIED
+		return palv1.OptimizeTarget_OPTIMIZE_UNSPECIFIED
 	}
 }
 

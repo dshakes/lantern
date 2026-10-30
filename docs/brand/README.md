@@ -163,7 +163,7 @@ Human, crisp, confident. Say what it does, then stop.
 | "your pal", "two agents on PAL Runtime" | PALs, Pals, palz |
 
 Never coin "PAL Pay" or other PAL-plus-noun product names without a trademark
-check. The CLI, packages and env vars still say `lantern` until the rename
+check. The CLI, packages and env vars still say `pal` until the rename
 lands; write them as they are in code.
 
 Taglines: **Your pal for every moment.** · **PAL Runtime: agents that finish,
@@ -171,6 +171,6 @@ stay contained, and stay yours.**
 
 ## Origin
 
-We started as Lantern: a flame you could carry because glass kept it contained.
+We started as PAL: a flame you could carry because glass kept it contained.
 As the product became a companion, we kept the light and dropped the lamp. The
 flame became a dot, a single moment of attention.

@@ -61,25 +61,25 @@ class GrpcLlmClient(LlmClientBase):
         try:
             # In production this calls the generated proto stub.
             # For now we use a generic unary call pattern that will be
-            # wired to the generated lantern.modelrouter.v1 service.
+            # wired to the generated pal.modelrouter.v1 service.
             from google.protobuf import json_format, struct_pb2  # type: ignore[import-untyped]
 
             request_struct = struct_pb2.Struct()
             json_format.ParseDict(request, request_struct)
 
             # The actual gRPC call — stub will be generated from protos
-            # lantern.modelrouter.v1.ModelRouter/Complete
+            # pal.modelrouter.v1.ModelRouter/Complete
             stub = channel.unary_unary(
-                "/lantern.modelrouter.v1.ModelRouter/Complete",
+                "/pal.modelrouter.v1.ModelRouter/Complete",
                 request_serializer=request_struct.SerializeToString,
                 response_deserializer=struct_pb2.Struct.FromString,
             )
 
             metadata = [
                 ("x-pal-tenant-id", self._tenant_id),
-                ("x-lantern-tenant-id", self._tenant_id),
+                ("x-pal-tenant-id", self._tenant_id),
                 ("x-pal-run-id", self._run_id),
-                ("x-lantern-run-id", self._run_id),
+                ("x-pal-run-id", self._run_id),
             ]
 
             response = await stub(request_struct, metadata=metadata)
@@ -115,16 +115,16 @@ class GrpcLlmClient(LlmClientBase):
             json_format.ParseDict(request, request_struct)
 
             stub = channel.unary_stream(
-                "/lantern.modelrouter.v1.ModelRouter/StreamComplete",
+                "/pal.modelrouter.v1.ModelRouter/StreamComplete",
                 request_serializer=request_struct.SerializeToString,
                 response_deserializer=struct_pb2.Struct.FromString,
             )
 
             metadata = [
                 ("x-pal-tenant-id", self._tenant_id),
-                ("x-lantern-tenant-id", self._tenant_id),
+                ("x-pal-tenant-id", self._tenant_id),
                 ("x-pal-run-id", self._run_id),
-                ("x-lantern-run-id", self._run_id),
+                ("x-pal-run-id", self._run_id),
             ]
 
             async for chunk in stub(request_struct, metadata=metadata):
@@ -158,16 +158,16 @@ class GrpcLlmClient(LlmClientBase):
             json_format.ParseDict(request, request_struct)
 
             stub = channel.unary_unary(
-                "/lantern.modelrouter.v1.ModelRouter/Embed",
+                "/pal.modelrouter.v1.ModelRouter/Embed",
                 request_serializer=request_struct.SerializeToString,
                 response_deserializer=struct_pb2.Struct.FromString,
             )
 
             metadata = [
                 ("x-pal-tenant-id", self._tenant_id),
-                ("x-lantern-tenant-id", self._tenant_id),
+                ("x-pal-tenant-id", self._tenant_id),
                 ("x-pal-run-id", self._run_id),
-                ("x-lantern-run-id", self._run_id),
+                ("x-pal-run-id", self._run_id),
             ]
 
             response = await stub(request_struct, metadata=metadata)

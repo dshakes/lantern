@@ -34,7 +34,7 @@ provider "helm" {
 
 resource "kubernetes_namespace" "pal" {
   metadata {
-    name = "lantern"
+    name = "pal"
 
     labels = {
       "app.kubernetes.io/part-of"    = "pal-data-plane"
@@ -50,7 +50,7 @@ resource "kubernetes_namespace" "pal" {
 # ---------------------------------------------------------------------------
 
 resource "helm_release" "pal_data_plane" {
-  name      = "lantern-dp"
+  name      = "pal-dp"
   namespace = kubernetes_namespace.pal.metadata[0].name
   chart     = "${path.module}/../../helm/pal-data-plane"
   # Local chart: Bitnami postgresql/redis deps (Chart.lock) are not vendored,
@@ -119,14 +119,14 @@ resource "helm_release" "pal_data_plane" {
   ]
 }
 
-# ADR 0032: addresses renamed lantern -> pal. `moved` keeps existing state in place
+# ADR 0032: addresses renamed pal -> pal. `moved` keeps existing state in place
 # (no destroy/recreate). Remove once every deployment has applied this version.
 moved {
-  from = kubernetes_namespace.lantern
+  from = kubernetes_namespace.pal
   to   = kubernetes_namespace.pal
 }
 
 moved {
-  from = helm_release.lantern_data_plane
+  from = helm_release.pal_data_plane
   to   = helm_release.pal_data_plane
 }
