@@ -270,7 +270,7 @@ host_bench() {
   mkdir -p "${out}"
   for f in samples.csv summary.json summary.md; do
     # shellcheck disable=SC2016  # $HOME is the VM user's, expanded in the VM
-    limactl shell "${VM}" -- bash -c 'cat "${HOME}/.cache/lantern-lima/bench/$0"' "${f}" >"${out}/${f}"
+    limactl shell "${VM}" -- bash -c 'cat "${HOME}/.cache/pal-lima/bench/$0"' "${f}" >"${out}/${f}"
   done
   log "results copied to ${out}"
 }
