@@ -6,8 +6,11 @@ sidebar:
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import { TokenStreaming } from '../../../../components/diagrams';
 
 Session replies arrive as three named server-sent events on `GET /v1/sessions/{id}/events`: **`message_delta`**, **`message_completed`** and **`message_error`**. Provider tokens flow through the control plane and Redis pub/sub to connected clients with no buffering in between, so words appear as the model writes them. You render deltas as they land and treat `message_completed` as the final text.
+
+<TokenStreaming client:visible />
 
 <Aside title="Sessions only">
 This contract covers interactive sessions. Headless microVM runs stream `step_started`, `step_completed` and `step_failed` events, not token deltas. Tool-free turns stream every token; tool-using turns arrive as one `message_completed`.

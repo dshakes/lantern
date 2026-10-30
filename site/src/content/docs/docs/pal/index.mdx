@@ -3,11 +3,12 @@ title: How pal works
 description: "pal answers your iMessage and WhatsApp threads as you, from your Mac. Ordinary replies go out on their own; anything that commits you is held for your yes."
 ---
 
-import Diagram from '../../../../components/Diagram.astro';
+import CapabilityGrid from '../../../../components/CapabilityGrid.astro';
+
 
 pal is a **personal agent** for your own iMessage and WhatsApp. Two small programs on your Mac, the **channel bridges**, read new messages and ask a PAL control plane for a reply through the **same sessions API your own agents use**. Every reply a contact would receive passes a **check stack** first. Most messages need a quick, ordinary answer, and those go out after a human-paced delay. A reply that **commits you** to money or an action, or states something pal can't verify, is **held** and shown to you instead.
 
-<Diagram name="pal-how-it-works" alt="A message arrives in iMessage or WhatsApp on your Mac. The channel bridge runs owner-only checks and asks the PAL control plane for a draft; the model router picks the model. Back on the Mac the draft passes the check stack and is sent after a human-paced delay, or held and shown to you in your self-chat." />
+<CapabilityGrid product="pal" />
 
 ## Who does what
 
@@ -26,17 +27,6 @@ You talk to pal in your **self-chat** (a message to yourself, or a dedicated bot
 3. **The control plane drafts.** Each contact has its own session. Side calls (gate judges, voice refinement, ranking) use a **purpose-keyed session** such as `<contact>::refine`, so they can't leak into the contact's live thread. The bridge asks for `model: "auto"` and the model router picks the concrete model.
 4. **The check stack runs.** It catches stock phrases and replies that don't sound like you, holds money, promises and unverifiable claims, and rewrites "I sent it" into "I'll send it" unless the bridge really did. [Holds and trust](/docs/pal/human-in-the-loop/) covers each check.
 5. **It is sent, or held.** Sent replies wait a delay drawn from your real reply times to that contact and are logged, encrypted, on the Mac. Held replies are paged to your self-chat.
-
-## What it does for you
-
-| | |
-| --- | --- |
-| [Replies in your voice](/docs/pal/voice/) | Scored against your own sent messages; refined when unsure |
-| [Holds what commits you](/docs/pal/human-in-the-loop/) | Money, promises, dates and outcomes wait for your yes |
-| [Daily use](/docs/pal/daily/) | A brief of what needs you, drafts you can send with one word, recaps, skills you teach it |
-| [Knowledge and handoff](/docs/pal/knowledge/) | Answers from your own documents; Calendar, Notes and Mail actions on your confirmation |
-| [One memory](/docs/pal/knowledge/) | A person on iMessage and WhatsApp is one person, with one timeline |
-| [Privacy and control](/docs/pal/privacy/) | Owner-only, path-restricted, encrypted at rest, a killswitch |
 
 ## Limits
 

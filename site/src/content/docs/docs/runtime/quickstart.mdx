@@ -5,7 +5,11 @@ sidebar:
   order: 2
 ---
 
+import { MicroVmRunSequence } from '../../../../components/diagrams';
+
 A **headless agent** has no conversation. You package code as an image, describe it in a short **`agent.yaml`**, and PAL Runtime picks a machine, builds the sandbox, runs it, streams its logs and cleans up. This guide runs the smallest of the four demos in `examples/headless-agents/` and takes about 15 minutes. It is for anyone who wants a background worker that runs under an **isolation class** instead of on the host.
+
+<MicroVmRunSequence client:visible />
 
 ## Prerequisites
 

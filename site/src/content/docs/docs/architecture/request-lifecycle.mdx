@@ -5,11 +5,12 @@ sidebar:
   order: 2
 ---
 
-import Diagram from '../../../../components/Diagram.astro';
+import { RunSequence, ToolCallSequence } from '../../../../components/diagrams';
+
 
 A run enters at `POST /v1/runs`, passes a **budget gate** before anything is created, executes either inline in the control plane or on a connected **data plane**, and writes every step to the `journal_events` table. Knowing which hop owns which check tells you where a 402, a 422 or a retry came from. The idea behind them is in [Durable execution](/docs/runtime/durable-execution/), and the component map is in [Runtime internals](/docs/runtime/architecture/).
 
-<Diagram name="run-lifecycle" alt="POST /v1/runs passes a budget check that answers 402 when over the cap, then executes, journals each step, and streams the events over SSE." />
+<RunSequence client:visible />
 
 ## Where each outcome comes from
 
@@ -55,6 +56,8 @@ When a data plane is connected for the tenant, the control plane does not execut
 ## A tool call into a microVM
 
 The workflow engine never runs tools. It asks the runtime manager, which hands a JSON envelope to the harness in the guest.
+
+<ToolCallSequence client:visible />
 
 1. The engine calls `ExecTool` with `tool_name`, `args`, `run_id`, `step_id`, `vm_id`, a timeout, the idempotency key and `tenant_id`.
 2. The manager's authz interceptor requires the service token and refuses any per-VM certificate.

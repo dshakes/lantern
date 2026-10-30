@@ -6,8 +6,11 @@ sidebar:
 ---
 
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+import { InvocationModes } from '../../../../components/diagrams';
 
 There are five ways to start the same **run**: wait for the answer, stream it, fire and poll, put it on a cron, or let a signed webhook start it. They differ only in **how the caller waits**. The run itself, its journal, budget checks and receipts are identical. Pick the mode from the table, then copy the request from its tab.
+
+<InvocationModes client:visible />
 
 | You want | Use | Caller waits for |
 | --- | --- | --- |
@@ -16,7 +19,7 @@ There are five ways to start the same **run**: wait for the answer, stream it, f
 | To hand off long work and check later | **Async** | a run id, immediately |
 | The agent on a timetable | **Cron** | nothing; the scheduler starts it |
 | GitHub, Sentry, PagerDuty or any HMAC sender to start it | **Webhook** | `202` with the run id |
-| Many inputs in one call, with a completion callback | **Batch** | not available yet |
+| Many inputs in one call, with a completion callback | **Batch** | a batch id; per-run results, and a callback when all finish |
 
 <Tabs>
 <TabItem label="Sync">
@@ -54,6 +57,7 @@ For a chat turn, sessions stream token by token instead; see [Streaming](/docs/r
 <TabItem label="TypeScript" icon="seti:typescript">
 ```ts
 import { PalClient, type Run } from "@pal-runtime/sdk";
+
 const client = new PalClient({ apiKey: process.env.PAL_API_KEY, baseUrl: "http://localhost:8080" });
 const run = (await client.runs.create({ agent: "my-agent", input: {} })) as Run;
 // ...later
@@ -112,9 +116,25 @@ More: [Triggers](/docs/build/triggers/).
 </TabItem>
 <TabItem label="Batch">
 
-<Aside type="note" title="Not available yet">
-Submitting many inputs in one request, with a callback when they finish, is not on `master`. Until it lands, fan out with async runs, or use `step.map` inside one agent for parallel work that is journaled together.
-</Aside>
+Submit many inputs to one agent in one request. Each item becomes its own run, with its own journal, budget check and retries; the batch tracks them and can call you back when the last one finishes.
+
+```bash
+curl -s -X POST http://localhost:8080/v1/batches \
+  -H "Authorization: Bearer $PAL_API_KEY" -H "Content-Type: application/json" \
+  -H "Idempotency-Key: nightly-2026-10-30" \
+  -d '{"agentName":"summarizer","concurrency":10,
+       "callbackUrl":"https://example.com/hooks/batch",
+       "items":[{"input":{"url":"https://a.example"}},{"input":{"url":"https://b.example"}}]}'
+```
+
+| Call | What it does |
+| --- | --- |
+| `POST /v1/batches` | Start the batch. `concurrency` defaults to 20; at most `PAL_BATCH_MAX_ITEMS` items (default 1000). Re-sending the same `Idempotency-Key` returns the same batch |
+| `GET /v1/batches/{id}` | Counts by status (pending, running, succeeded, failed, cancelled) and total cost |
+| `GET /v1/batches/{id}/results` | Each run's output, 100 per page |
+| `POST /v1/batches/{id}/cancel` | Cancel every child that has not finished |
+
+A single run takes the same `callbackUrl` on `POST /v1/runs`. The callback is a POST of `{runId, status, output, error, costUsd, tokensIn, tokensOut}`, signed `X-Lantern-Signature: v1=<HMAC-SHA256 of the body>` with a per-tenant key. It is tried up to 4 times (5xx and network errors only) and delivered **at most once**: if the control plane crashes between attempts the callback is lost, so poll the run or batch to reconcile. The SDKs do not wrap batches yet; call the REST API.
 
 </TabItem>
 </Tabs>

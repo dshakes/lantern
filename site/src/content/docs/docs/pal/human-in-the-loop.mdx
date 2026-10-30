@@ -4,11 +4,11 @@ description: "pal sends ordinary replies on its own and holds anything that comm
 ---
 
 import { Aside } from '@astrojs/starlight/components';
-import Diagram from '../../../../components/Diagram.astro';
+import { HoldsGates } from '../../../../components/diagrams';
 
 Every reply pal would send to a contact passes eight steps first. Most are about sounding like you. Two are **holds**: the **commitment gate** and the **grounding gate**. A held reply is **not sent**. It comes to your own chat as a draft, and what you type back becomes the reply. A prompt rule is advice; a hold is enforced in code, and it applies whatever your trust settings say.
 
-<Diagram name="pal-reply-gates" alt="The eight steps a contact reply passes: draft, bot-tell guard, confidence tier, critique-refine, commitment gate, grounding gate, claim verifier and paced send. The commitment and grounding gates divert the reply to the owner as a held draft instead of sending it." />
+<HoldsGates client:visible />
 
 ## What gets held
 

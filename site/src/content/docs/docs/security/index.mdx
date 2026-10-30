@@ -5,12 +5,12 @@ sidebar:
   order: 1
 ---
 
-import Diagram from '../../../../components/Diagram.astro';
 import { Aside } from '@astrojs/starlight/components';
+import { TrustBoundaries } from '../../../../components/diagrams';
 
 PAL Runtime runs agents for many **tenants** on shared infrastructure, and some of that code is untrusted. The security model is four **trust boundaries**: edge authentication, tenant isolation in the database, a service token on every internal gRPC port, and the **sandbox** around the workload. Each boundary has its own credential, and each one refuses to start or refuses the request when its credential is missing in production. This page lists what is enforced today, and which protections are only designs.
 
-<Diagram name="trust-zones" alt="Four trust boundaries from caller to workload: edge authentication, tenant isolation with row-level security, a service token on internal gRPC ports, and the microVM sandbox. Each boundary refuses the request when its check fails." />
+<TrustBoundaries client:visible />
 
 ## What is protected, from whom
 

@@ -6,8 +6,11 @@ sidebar:
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import { CronSchedules } from '../../../../components/diagrams';
 
 A **schedule** starts an agent on a five-field **cron expression**, in an **IANA timezone**, with its own input template. One agent can have many schedules, and a scheduled run looks like any other run in the run list and journal. An agent that is over its hard-fail [budget](/docs/build/budgets/) does not fire, so an unattended schedule cannot run past its cap.
+
+<CronSchedules client:visible />
 
 ## Cron expressions
 

@@ -5,6 +5,8 @@ sidebar:
   order: 4
 ---
 
+import { TenancyRls, EgressSequence } from '../../../../components/diagrams';
+
 Agent code is untrusted and tenants share infrastructure, so every hop between the internet and a microVM demands its own credential and **fails closed in production**. The overview and the picture of the zones are in [Security model](/docs/security/); the sandbox walls are in [Isolation](/docs/runtime/isolation/) and the egress rules in [Egress](/docs/security/egress/).
 
 ## Boundaries in order
@@ -27,6 +29,8 @@ The internal gRPC service token is the shared secret for the trust boundary: onl
 
 Every row carries a `tenant_id`, every gRPC call carries one in metadata, and there are no cross-tenant joins. Three layers back this up.
 
+<TenancyRls client:visible />
+
 1. **Handlers scope by the verified tenant.** The tenant comes from the auth context, never from a request body or path. Tenant-scoped queries run through `Server.WithTenant`, which sets the `app.tenant_id` setting so row-level security admits the read or write.
 2. **Postgres row-level security.** Every tenant table has a `tenant_isolation` policy with both `USING` and `WITH CHECK`. It is enforced when the connection uses the restricted `lantern_app` role. In production it is on whenever `PAL_APP_DB_PASSWORD` is set; without that password the control plane refuses to start unless you set `PAL_RLS_ENFORCE=0`. A catalog test fails the build when a tenant table has neither a policy nor an explicit exemption.
 3. **Not-found, not forbidden.** A run, VM, snapshot, card or invoke that belongs to another tenant answers `NOT_FOUND` (404), indistinguishable from one that does not exist. The workflow engine's `CancelRun`, `ResumeRun` and `SignalRun` filter by the verified `tenant_id` the same way.
@@ -47,6 +51,8 @@ Inside the guest, the harness is PID 1 and the last boundary:
 ## Egress, credential injection and DLP
 
 Egress runs in one of two modes, chosen on the manager.
+
+<EgressSequence client:visible />
 
 | Mode | Where the allowlist is enforced | What the guest has |
 | --- | --- | --- |

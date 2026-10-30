@@ -6,8 +6,11 @@ sidebar:
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import { SignedReceipts } from '../../../../components/diagrams';
 
 A **receipt** is a signed record of one run: which agent ran, what it cost, and a **SHA-256 hash of the run's journal**. Because the signature covers that hash, editing the event log after the fact makes the receipt fail verification. You issue a receipt for a run you own, and anyone can check it with the deployment's published public key. Use receipts when an auditor or a customer needs evidence that does not depend on trusting your dashboard.
+
+<SignedReceipts client:visible />
 
 ## Issue a receipt
 

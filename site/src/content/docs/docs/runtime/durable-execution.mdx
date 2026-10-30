@@ -5,12 +5,12 @@ sidebar:
   order: 3
 ---
 
-import Diagram from '../../../../components/Diagram.astro';
 import { Aside, Steps } from '@astrojs/starlight/components';
+import { CheckpointSequence } from '../../../../components/diagrams';
 
 A crash mid-run does not lose work, re-spend tokens, or fire a side effect twice. Every step is appended to the **journal** (`journal_events`) as it happens. After a restart, a **recovery sweep** re-drives the run, reuses the saved result of every step that already finished, and runs only what is left. External deliveries are de-duplicated by **idempotency key**.
 
-<Diagram name="crash-resume" alt="Steps are journaled as they complete. A crash leaves the last step started but not completed. The recovery sweep finds the run with an expired lease, replays the journal, skips completed steps, and resumes at the first incomplete one using the same idempotency key." />
+<CheckpointSequence client:visible />
 
 ## The journal
 

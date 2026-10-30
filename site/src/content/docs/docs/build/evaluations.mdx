@@ -5,7 +5,11 @@ sidebar:
   order: 7
 ---
 
+import { BudgetEvalGate } from '../../../../components/diagrams';
+
 An **eval suite** is a set of inputs with expected results for one agent. You run it like a test suite, pin today's score as the **baseline**, and the API answers **HTTP 422** when a later run scores lower. Everything here is on the REST API the dashboard uses; the exhaustive list is in the [REST API](/docs/reference/api/).
+
+<BudgetEvalGate client:visible />
 
 ## Suites
 

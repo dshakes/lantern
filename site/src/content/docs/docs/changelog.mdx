@@ -15,6 +15,10 @@ The product is now **PAL** ([ADR 0032](repo:/blob/master/docs/adr/0032-rename-la
 
 ## New since 0.2.0
 
+- **[Batches and run callbacks](/docs/runtime/invocation/).** `POST /v1/batches` fans one request out into child runs with a concurrency cap and an `Idempotency-Key`; runs and batches take a signed `callbackUrl`, delivered at most once.
+- **Self-consistency is the default confidence estimator** when the [confidence gate](/docs/build/approvals/#confidence-gate) is on; `PAL_CONFIDENCE_ESTIMATOR=verbalization` opts out.
+- **Billing (off by default).** Stripe plans, checkout, portal and dunning behind `PAL_STRIPE_SECRET_KEY`; a failed payment falls back to free limits after a grace period and never deletes data.
+- **Paired devices.** `/v1/bridges` enrolls a device with a one-time code and issues a device token scoped to signals; `/v1/signals` is tenant-scoped when called with a credential.
 - **[Demo mode](/docs/start/demo/).** `make demo` or `pal demo`. Docker only, no API key. Each visitor gets a private workspace with recorded answers, deleted after 30 minutes.
 - **[Knowledge base and handoff](/docs/pal/knowledge/).** Upload docs for cited answers, and hand a chat to a human with a Slack ping.
 - **[Webhook triggers](/docs/build/triggers/).** A signed public URL per agent. GitHub, Sentry, PagerDuty or any HMAC sender starts a run; duplicates are deduplicated.

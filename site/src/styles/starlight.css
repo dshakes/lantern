@@ -124,3 +124,17 @@ nav.sidebar a[aria-current='page'], nav.sidebar a[aria-current='page']:hover { b
 .sl-markdown-content details[open] { padding-bottom: 12px; }
 .sl-markdown-content details > :not(summary) { margin-top: 0; }
 @media (min-width: 72rem) { :root { --sl-content-width: 48rem; } }
+
+/* ---- docs landing (splash): halos-style story beats ---- */
+.hero h1 .grad, .sl-markdown-content .grad { background: var(--p-brand-grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+[data-has-hero] .hero { padding-block: clamp(2.5rem, 7vw, 5rem) clamp(1.5rem, 4vw, 3rem); }
+[data-has-hero] .hero h1 { font-family: var(--p-display); letter-spacing: -0.045em; font-weight: 680; line-height: 1.05; }
+[data-has-hero] .hero .tagline { max-width: 40rem; font-size: clamp(1.05rem, 1.6vw, 1.25rem); color: var(--sl-color-gray-2); }
+.sl-markdown-content .kicker { margin: 4.5rem 0 0; font-size: 0.75rem; font-weight: 650; letter-spacing: 0.1em; text-transform: uppercase; color: var(--sl-color-accent); }
+.sl-markdown-content .kicker + h2 { margin-top: 0.4rem; font-size: clamp(1.6rem, 3.2vw, 2.25rem); letter-spacing: -0.035em; }
+[data-has-hero] .sl-markdown-content .kicker:first-child { margin-top: 1rem; }
+/* hero buttons: brand fill with white text (>= 4.9:1, tokens.css), not the light accent */
+.hero .sl-link-button.primary { background: var(--p-pal-btn); border-color: transparent; color: #fff; }
+.hero .sl-link-button.primary:hover { filter: brightness(1.08); }
+/* problem cards: one row of three on wide screens */
+@media (min-width: 72rem) { [data-has-hero] .sl-markdown-content .card-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }

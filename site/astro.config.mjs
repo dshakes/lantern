@@ -1,6 +1,7 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import starlightLinksValidator from 'starlight-links-validator';
+import react from '@astrojs/react';
 import { GH as gh, SITE_ORIGIN, SITE_URL, BASE_PATH, repoLinks } from './repo.config.mjs';
 
 const og = `${SITE_URL}og.png`;
@@ -53,6 +54,7 @@ export default defineConfig({
   redirects,
   vite: { plugins: [repoLinks] },
   integrations: [
+    react(),
     starlight({
       title: 'PAL',
       // Fails the build on any broken internal link or anchor in the docs.
@@ -101,6 +103,7 @@ export default defineConfig({
         '@fontsource-variable/inter-tight/wght.css',
         '@fontsource-variable/jetbrains-mono/wght.css',
         './src/styles/tokens.css',
+        './src/styles/diagrams.css',
             './src/styles/starlight.css',
       ],
       components: { SiteTitle: './src/components/SiteTitle.astro' },

@@ -6,8 +6,11 @@ sidebar:
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import { IdentitySecrets } from '../../../../components/diagrams';
 
 Agents need API keys, and keys are what an attacker wants. A spec holds only a **reference** to a secret. The value is resolved at the last moment, handed to a process that proves it is the workload, and kept in memory for a short **TTL**. Each spawn also gets a signed **instance identity**, so a request to the secret relay can be tied to one VM, one tenant and one run. If even a short-lived value inside the VM is too much, use [broker mode](/docs/security/egress/), where the credential never enters it.
+
+<IdentitySecrets client:visible />
 
 ## Who proves what
 

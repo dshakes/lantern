@@ -5,12 +5,12 @@ sidebar:
   order: 1
 ---
 
-import Diagram from '../../../../components/Diagram.astro';
 import { Aside } from '@astrojs/starlight/components';
+import { DeployTopology } from '../../../../components/diagrams';
 
 PAL Runtime splits into a **control plane** that decides what should run (dashboard, scheduling, budgets) and a **data plane** where agent code executes with your API keys and your data. You run the control plane yourself and put a data plane in each cloud account or VPC that should hold the workloads, installed with **Helm** or a generated **Terraform** cluster. There is no managed cloud endpoint yet, so today you deploy both planes. For the internals of the split, see [Deployment topology](/docs/architecture/deployment-topology/).
 
-<Diagram name="your-cloud" alt="A control plane running anywhere, and a data plane inside your VPC. The data plane dials out to the control plane; the VPC opens no inbound ports." />
+<DeployTopology client:visible />
 
 The control plane never runs user code. Specs, identity and trace context go down; heartbeats, step events and audit come back, over server-authenticated TLS with a bootstrap token and session JWT (no client certificates). Prompts and data stay in your VPC.
 

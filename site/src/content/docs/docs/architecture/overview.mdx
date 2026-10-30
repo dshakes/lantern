@@ -5,11 +5,12 @@ sidebar:
   order: 1
 ---
 
-import Diagram from '../../../../components/Diagram.astro';
+import { ArchitectureExplorer } from '../../../../components/diagrams';
+
 
 PAL Runtime is split into a **control plane** that decides and **runtime services** that do the work. The control plane authenticates the caller, checks budgets, stores state and talks to the model providers. The workflow engine drives runs step by step, and the scheduler, runtime-manager and harness place and run untrusted code in microVMs. You write an agent and call one API; the split below decides where each part of the run happens.
 
-<Diagram name="runtime-how-it-works" alt="Clients call the gateway, which authenticates and forwards to the control plane. The control plane works with the workflow engine and the model router. For microVM runs it asks the scheduler, which places the workload through the runtime-manager into a microVM." />
+<ArchitectureExplorer client:visible />
 
 ## Who does what
 

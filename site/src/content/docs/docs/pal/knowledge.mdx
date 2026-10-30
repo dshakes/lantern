@@ -3,7 +3,8 @@ title: Knowledge and handoff
 description: "pal answers from your own documents, acts on your Mac when you say yes, and keeps one memory of a person across iMessage and WhatsApp."
 ---
 
-import Diagram from '../../../../components/Diagram.astro';
+import { CrossChannelMemory } from '../../../../components/diagrams';
+
 
 pal knows three things beyond the message in front of it. It can answer from **your own documents** on your Mac, it can **act on your Mac** (Calendar, Notes, Mail) when you confirm, and it keeps **one memory** of each person across iMessage and WhatsApp. Documents are read in place and never uploaded. Handing something to you rather than answering is the default whenever pal is unsure: [Holds and trust](/docs/pal/human-in-the-loop/) covers that.
 
@@ -23,7 +24,7 @@ Reply `yes`, `sure` or `do it` within 10 minutes and pal runs the action itself,
 
 A person who writes to you on iMessage and on WhatsApp is one person to pal. Facts, episodes and topics learned on one channel are available on the other.
 
-<Diagram name="pal-memory" alt="iMessage and WhatsApp messages are resolved into one canonical person in the person graph. From there they feed a timeline, unified context for replies, and cross-thread recall. The local episode, topic and sent-log stores on the Mac are encrypted." />
+<CrossChannelMemory client:visible />
 
 | Layer | What it holds | Where |
 | --- | --- | --- |

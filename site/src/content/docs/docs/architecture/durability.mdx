@@ -5,6 +5,8 @@ sidebar:
   order: 5
 ---
 
+import Diagram from '../../../../components/Diagram.astro';
+
 A restart in the middle of a run must neither lose the run nor repeat an email or a paid model call. PAL does this with three mechanisms that share one store: the **journal** records every step before and after it runs, a **lease** with a recovery sweep reclaims runs whose worker died, and an **idempotency key** on every external side effect makes a repeated call harmless. The idea and the picture are in [Durable execution](/docs/runtime/durable-execution/).
 
 ## Mechanisms
@@ -35,6 +37,8 @@ For each step the executor writes `step_started` before it acts and `step_comple
 6. `checkCachedLLMStep` and `CompletedStep` return stored outputs for every step that already completed.
 7. The first incomplete step runs. If the crash came before its `step_completed`, the provider call is made again under the same key derivation, so the provider can dedup it.
 8. The run finishes from where it stopped. It does not restart.
+
+<Diagram name="crash-resume" />
 
 When the run is an in-VM agent, the re-drive injects `LANTERN_RESUME=1` into its environment so the agent knows it is being resumed (`recovery.go`). The picture of this flow is on [Durable execution](/docs/runtime/durable-execution/).
 

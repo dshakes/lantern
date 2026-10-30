@@ -6,8 +6,11 @@ sidebar:
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import { IsolationClasses } from '../../../../components/diagrams';
 
 An **isolation class** answers one question: how strong should the walls around this agent be? Your own signed code gets normal walls, code that pulls internet packages or runs LLM-written code gets a syscall-intercepting sandbox, and hostile input gets a full VM with its own kernel. You set the class in the agent spec. If the node cannot provide the wall you asked for, the run is **refused**, not quietly run somewhere weaker. On Kubernetes the class maps to a `runtimeClassName` on the pod (ADR 0009).
+
+<IsolationClasses client:visible />
 
 ## Pick a class
 

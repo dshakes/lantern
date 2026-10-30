@@ -6,8 +6,11 @@ sidebar:
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import { SystemContext } from '../../../../components/diagrams';
 
 PAL Runtime is the **production runtime for AI agents** that pal itself runs on. You describe an agent (a prompt, a model capability, optional connectors or a workflow graph) and the runtime executes it, streams the result, and keeps a **journal** of every step. It is for developers who run their own agents and for the platform teams who operate them. Crash recovery, spend limits and sandboxing are the runtime's job, not code you write per agent.
+
+<SystemContext client:visible />
 
 Every run executes in one of two **isolation tiers**, set by `manifest.isolation` on the agent version. Code you wrote goes in the **shared** tier. Untrusted code (user uploads, arbitrary shell commands, packages from the internet) goes in the **microVM** tier. The caller supplies only the input and cannot change the tier. How the pieces fit together is on [How PAL Runtime works](/docs/architecture/overview/).
 

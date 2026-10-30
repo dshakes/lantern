@@ -33,11 +33,11 @@ Off by default; `PAL_CONFIDENCE_GATE=1` turns it on. Before a side-effecting nod
 
 | Estimator (`PAL_CONFIDENCE_ESTIMATOR`) | How it scores | Weakness |
 | --- | --- | --- |
-| `verbalization` (default) | Reads self-reported confidence from earlier step text; 0.9 when there is none | Silence scores 0.9 and auto-executes |
-| `self-consistency` | Asks the model `PAL_CONFIDENCE_SAMPLES` times (default 5, clamped 1 to 9) for an independent YES/NO and returns the fraction that say execute | Each sample is one model call |
+| `self-consistency` (default) | Asks the model `PAL_CONFIDENCE_SAMPLES` times (default 5; a value outside 1 to 9 falls back to 5) for an independent YES/NO and returns the fraction that say execute. With no model wired it falls back to the heuristic below | Each sample is one model call |
+| `verbalization` (opt-out; also `heuristic`) | Reads self-reported confidence from earlier step text; 0.9 when there is none | Silence scores 0.9 and auto-executes |
 
 `PAL_CONFIDENCE_CALIBRATE=1` lowers a score by the realized regret rate for that agent and node type: the share of auto-executed steps later thumbs-downed (score 2 or lower) or ending in a failed run. With fewer than 3 samples or any error, the base score is unchanged. Every gated step journals `confidence_evaluated` with `{score, threshold, decision, node_type, estimator}`.
 
 <Aside title="Rollout order">
-Enable the gate on non-production agents first, read the `confidence_evaluated` events in the run waterfall, switch to `self-consistency` and tune the threshold and samples, then enable it in production.
+Enable the gate on non-production agents first, read the `confidence_evaluated` events in the run waterfall, tune the threshold and samples, then enable it in production.
 </Aside>

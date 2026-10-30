@@ -6,8 +6,11 @@ sidebar:
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import { AgentNetwork } from '../../../../components/diagrams';
 
 The **Marketplace** is a public registry where you publish an agent, fork one someone else published, or invoke it without forking. **A2A** (Agent-to-Agent) is an open protocol for agents to find and call each other, and an **agent card** is the public description an agent publishes. A **fork** is your private copy of a published agent: the original author sees none of your data or runs. Other platforms can call your public agents through A2A without ever sharing your tenant.
+
+<AgentNetwork client:visible />
 
 ## Two registries
 

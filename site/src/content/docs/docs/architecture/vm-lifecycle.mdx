@@ -5,11 +5,12 @@ sidebar:
   order: 3
 ---
 
-import Diagram from '../../../../components/Diagram.astro';
+import { VmLifecycle } from '../../../../components/diagrams';
+
 
 Every sandbox microVM is in one of seven states, and the **runtime scheduler** drives every transition under a per-VM lock; only the leader replica mutates. Pause, idle suspend and fork change what you pay for and what survives, and the guarantees differ per transition. The API, SDK calls and costs are in [Sandbox lifecycle](/docs/runtime/sandbox-lifecycle/).
 
-<Diagram name="vm-lifecycle" alt="A sandbox moves from scheduled and placed to spawning and running, can pause and resume or fork into new copies, and ends terminated." />
+<VmLifecycle client:visible />
 
 ## States
 

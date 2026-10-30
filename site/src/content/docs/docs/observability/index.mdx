@@ -6,8 +6,11 @@ sidebar:
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import { TracePropagation } from '../../../../components/diagrams';
 
 Every run produces one **OpenTelemetry trace**: a timeline of each step with its timing, model, tokens and cost, tagged with tenant, run and step ids. It works with any OTel backend (Grafana, Datadog, Jaeger) and is a no-op when switched off. Spans, metrics, journal rows and receipts share the same identifiers, so you answer "what is this agent doing now" and "what did it do last Tuesday" with one run id.
+
+<TracePropagation client:visible />
 
 ## Turn it on
 

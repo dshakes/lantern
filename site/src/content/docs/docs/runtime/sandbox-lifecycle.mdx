@@ -6,8 +6,11 @@ sidebar:
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { SandboxLifecycleSequence } from '../../../../components/diagrams';
 
 A sandbox microVM does not have to stay running. **Pause** snapshots its memory and disk and frees its concurrency slot. **Resume** loads the snapshot back into the same `vm_id`. **Fork** loads it into several new VMs at once, so you can try N approaches from one warmed-up state. A VM also **suspends itself when idle** and wakes on the next request. The state machine behind this is in [microVM lifecycle](/docs/architecture/vm-lifecycle/).
+
+<SandboxLifecycleSequence client:visible />
 
 | You want | Call | Quota slot |
 | --- | --- | --- |

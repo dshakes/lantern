@@ -6,8 +6,11 @@ sidebar:
 ---
 
 import { Aside, Steps } from '@astrojs/starlight/components';
+import { OnboardingFlow } from '../../../../components/diagrams';
 
 You describe an **agent** in one sentence. The **onboarding agent** designs it, test-calls your **model key**, creates it and streams its **first run**. Every step advances only after a real 2xx or a terminal status, so you end with output from your own agent, not a mock. An *agent* is an AI worker with a name and instructions; a *run* is one execution, input in and output out.
+
+<OnboardingFlow client:visible />
 
 To look around with no key, use [Try it: the demo](/docs/start/demo/).
 

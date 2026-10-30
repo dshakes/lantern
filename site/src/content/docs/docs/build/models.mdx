@@ -6,8 +6,11 @@ sidebar:
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import { ModelRouting } from '../../../../components/diagrams';
 
 Agents ask for a **capability** such as `reasoning-large`, not a vendor model. The control plane maps it to a concrete **Anthropic** or **OpenAI** model from the providers you have keyed. You swap a model, or ride out a provider outage, with no agent code change, and a cheap agent never fails over into an expensive model.
+
+<ModelRouting client:visible />
 
 ## Providers and keys
 

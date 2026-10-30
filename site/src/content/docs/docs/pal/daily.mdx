@@ -3,11 +3,15 @@ title: Daily use
 description: "The Brief, nudges, the world model, skills and the recap: what pal does for you in your own chat."
 ---
 
+import { BriefAttention, ProactiveNudges, WorldModel, SkillForge, Recap } from '../../../../components/diagrams';
+
 pal's daily work happens in your own chat. It turns a pile of threads into one short message you can act on, usually with one word or one tap. Type **`today`** to get the **Brief**, a ranked list of what needs you. Everything else on this page is either automatic (**nudges**, the **world model**) or one short command (**skills**, the **recap**). All of it respects the kill switch, mute and quiet hours; see [Privacy and control](/docs/pal/privacy/).
 
 ## The Brief
 
 Type `?`, `today` or `whats up`. You get one numbered list: drafts waiting for approval, promises still open, and contacts you haven't answered. A model reorders and annotates the list (a close contact waiting three days can outrank a routine draft). It cannot add or remove items, and if the call fails the fixed order stands.
+
+<BriefAttention client:visible />
 
 Act on an item by number or by reaction:
 
@@ -25,6 +29,8 @@ Undoing an automatic action is never triggered by a reaction; it needs a typed w
 
 pal messages you first when something is about to matter. Each nudge fires at most once per day and never in quiet hours.
 
+<ProactiveNudges client:visible />
+
 | Kind | When |
 | --- | --- |
 | Before a meeting | A calendar event starts within 15 minutes |
@@ -38,11 +44,15 @@ pal messages you first when something is about to matter. Each nudge fires at mo
 
 Every 6 hours pal rereads the last 7 days of mail subjects, the next 30 days of your calendar, your own notes to yourself and what contacts have told you, and updates what it knows about your life now. Your own notes win: "opening moved to the 18th" overrides an email.
 
+<WorldModel client:visible />
+
 Every derived fact must quote a mail subject or event title word for word and carry an expiry date, or it is dropped. Each change is sent to you as `🧭 updated what I know …`, so a wrong one is one reply from a fix. `PAL_WORLD_MODEL_HOURS` changes the cadence; `PAL_WORLD_MODEL=0` turns it off.
 
 ## Skills
 
 Teach a recurring task in one message:
+
+<SkillForge client:visible />
 
 ```text
 new skill: every weekday at 8am, check the weather and tell me if I need an umbrella
@@ -55,6 +65,8 @@ A skill is a prompt, not code. It can search the web and message you, and nothin
 ## What did I miss
 
 `what did I miss`, `catch me up` or `what happened while I was out`, optionally with `last 3 hours`, `today` or `overnight` (default: 6 hours). pal gathers the contacts waiting on you and what it did on your behalf, and writes a short recap with the important things first. If the model call fails you still get a ranked list.
+
+<Recap client:visible />
 
 ## Also running in the background
 

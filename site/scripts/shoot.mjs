@@ -13,7 +13,7 @@ const themes = opt('themes', 'dark,light').split(',');
 const browser = await chromium.launch();
 let bad = 0;
 for (const theme of themes) for (const w of widths) {
-  const ctx = await browser.newContext({ viewport: { width: w, height: w < 600 ? 844 : 900 }, colorScheme: theme, deviceScaleFactor: 1 });
+  const ctx = await browser.newContext({ viewport: { width: w, height: w < 600 ? 844 : 900 }, colorScheme: theme, deviceScaleFactor: 1, reducedMotion: full ? 'reduce' : 'no-preference' });
   await ctx.addInitScript((t) => { try { localStorage.setItem('starlight-theme', t); } catch {} }, theme);
   for (const url of urls) {
     const page = await ctx.newPage();

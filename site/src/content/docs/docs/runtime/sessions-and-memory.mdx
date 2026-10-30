@@ -6,8 +6,11 @@ sidebar:
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import { SessionsMemory } from '../../../../components/diagrams';
 
 A **session** is a multi-turn conversation with an agent. The full history is passed to the model on every turn, so the agent remembers what you said two messages ago. **Memory** is what survives a conversation: an optional pass distills transcripts into durable facts such as "prefers morning meetings" and re-injects them into future sessions. You keep what matters without storing or replaying every word.
+
+<SessionsMemory client:visible />
 
 ## Sessions
 

@@ -6,8 +6,11 @@ sidebar:
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import { ConnectorActions } from '../../../../components/diagrams';
 
 A **connector** is a fixed set of actions (search Gmail, comment on a PR, post to Slack) that call the vendor's real API. You connect a service once, usually through an OAuth consent screen, and its credentials are stored encrypted per tenant. Every agent in the workspace can then call it, either as an LLM tool or directly over REST. There are **18 built-in connectors**, counted from the executor's dispatch table ([`connector_executor.go`](repo:/blob/master/services/control-plane/internal/handlers/connector_executor.go)).
+
+<ConnectorActions client:visible />
 
 ## Available connectors
 

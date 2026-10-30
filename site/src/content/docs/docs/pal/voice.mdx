@@ -3,7 +3,11 @@ title: Teach it your voice
 description: "How pal learns your voice, checks each draft against what you have actually sent, and learns from every thumbs-down."
 ---
 
+import { VoicePipeline } from '../../../../components/diagrams';
+
 pal drafts replies in your voice, then measures the draft against **your own sent messages** before it goes out. Three checks are about voice: a **bot-tell guard**, a **voice floor** and a **critique-refine** pass. They are code, not prompt advice, so a draft that reads like a bot is rewritten or dropped rather than sent. You teach pal in three ways: during `pal setup`, by tapping thumbs-down on a bad reply, and by telling it facts in your own chat.
+
+<VoicePipeline client:visible />
 
 ## The checks that protect your voice
 

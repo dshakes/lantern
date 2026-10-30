@@ -6,8 +6,11 @@ sidebar:
 ---
 
 import { Aside, Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+import { WebhookTriggers } from '../../../../components/diagrams';
 
 A **trigger** binds the public URL `POST /v1/hooks/{id}` to one agent. Every delivery from GitHub, Sentry, PagerDuty or your own sender that carries a valid **HMAC-SHA256 signature** starts a run. The signature is the only credential, so senders never hold a PAL token, and a delivery sent twice starts one run. This guide is for anyone wiring an external system to an agent.
+
+<WebhookTriggers client:visible />
 
 ## How a delivery is handled
 
@@ -57,6 +60,7 @@ curl -X DELETE http://localhost:8080/v1/triggers/$ID -H "Authorization: Bearer $
 
 ```ts
 import { PalClient } from "@pal-runtime/sdk";
+
 const client = new PalClient({ apiKey: process.env.PAL_API_KEY, baseUrl: "http://localhost:8080" });
 
 const t = await client.triggers.create("my-agent", { provider: "github" });

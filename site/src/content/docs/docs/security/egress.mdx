@@ -7,6 +7,7 @@ sidebar:
 
 import Diagram from '../../../../components/Diagram.astro';
 import { Aside } from '@astrojs/starlight/components';
+import { BrokerDemo } from '../../../../components/diagrams';
 
 A sandboxed workload reaches the network only through an **allowlist proxy**. There are two modes. **Guest mode** is the default: the proxy runs inside the VM and iptables forces traffic through it. **Broker mode** is opt-in (`PAL_EGRESS_MODE=broker`, Firecracker only): the VM has no network device, every request crosses a vsock to a broker in the runtime manager, and the broker adds the credential on the host. If your workload calls an API with a key, broker mode is the one where a compromised workload never holds that key.
 
@@ -32,6 +33,8 @@ In guest mode the proxy is advisory unless the REDIRECT rule exists. The harness
 3. The broker matches the destination against the sandbox's allowlist.
 4. If the rule has an `inject` entry (`header`, `secret_uri`, optional `value_prefix`), the broker resolves the secret on the host and replaces any placeholder header the workload sent.
 5. The request goes upstream. A denied request is refused and written to the audit stream.
+
+<BrokerDemo client:visible />
 
 ## Allowlist
 
