@@ -338,7 +338,7 @@ func billingDisabled(w http.ResponseWriter) {
 
 // canManageBilling: owner/admin sessions, or a service key holding
 // settings:write. Members and viewers cannot change the subscription.
-func canManageBilling(c *LanternClaims) bool {
+func canManageBilling(c *PalClaims) bool {
 	switch c.Role {
 	case "owner", "admin":
 		return true
@@ -348,7 +348,7 @@ func canManageBilling(c *LanternClaims) bool {
 	return false
 }
 
-func (h *BillingHandler) authorizeManage(w http.ResponseWriter, r *http.Request) (*LanternClaims, bool) {
+func (h *BillingHandler) authorizeManage(w http.ResponseWriter, r *http.Request) (*PalClaims, bool) {
 	claims, err := h.auth.validateRequest(r)
 	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
@@ -454,7 +454,7 @@ func acctTerminal(status string) bool {
 // ensureCustomer returns the tenant's Stripe customer, creating it once. The
 // create carries a per-tenant idempotency key and the store keeps the first
 // id written, so concurrent checkouts converge on one customer.
-func (h *BillingHandler) ensureCustomer(ctx context.Context, tenantID string, claims *LanternClaims, acct billingAccountRow) (string, error) {
+func (h *BillingHandler) ensureCustomer(ctx context.Context, tenantID string, claims *PalClaims, acct billingAccountRow) (string, error) {
 	if acct.CustomerID != "" {
 		return acct.CustomerID, nil
 	}

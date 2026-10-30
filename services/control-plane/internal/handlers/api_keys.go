@@ -46,14 +46,16 @@ var knownScopes = map[Scope]bool{
 	ScopeRead: true, ScopeWrite: true, ScopeAdmin: true,
 	ScopeAgentsRead: true, ScopeAgentsWrite: true,
 	ScopeRunsRead: true, ScopeRunsWrite: true, ScopeRunsExecute: true,
-	ScopeConnectorsWrite: true, ScopeBudgetsWrite: true, ScopeSettingsWrite: true,
+	ScopeConnectorsRead: true, ScopeConnectorsWrite: true,
+	ScopeBudgetsRead: true, ScopeBudgetsWrite: true,
+	ScopeSettingsRead: true, ScopeSettingsWrite: true,
 }
 
 // validateGrantableScopes rejects unknown scopes and any request the caller
 // could not itself exercise (privilege escalation). JWT owner/admin sessions
 // count as admin; other JWT roles may not mint keys. An empty request means an
 // unrestricted legacy key, so it is only grantable by an unrestricted caller.
-func validateGrantableScopes(c *LanternClaims, requested []string) error {
+func validateGrantableScopes(c *PalClaims, requested []string) error {
 	for _, s := range requested {
 		if !knownScopes[Scope(s)] {
 			return fmt.Errorf("unknown scope: %q", s)

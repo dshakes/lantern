@@ -1,0 +1,93 @@
+{{- /*
+Internal gRPC mTLS (ADR 0043). Two independent CAs, both minted by cert-manager:
+
+  service CA  — one identity per service (serverAuth + clientAuth, SPIFFE URI SAN
+                spiffe://<trustDomain>/svc/<name>). Mounted as PAL_GRPC_TLS_*.
+  manager CA  — the runtime-manager's server cert, its callers' client cert, and
+                the signing key for per-VM guest certs. Kept apart from the
+                service CA so a VM cert can never chain to a service identity.
+
+With mtls.certManager.enabled=false the chart only mounts Secrets with the same
+names (bring your own PKI); nothing below is rendered.
+*/ -}}
+{{- if and .Values.mtls.enabled .Values.mtls.certManager.enabled }}
+{{- $fn := include "pal.fullname" . }}
+{{- $ns := .Release.Namespace }}
+{{- $cm := .Values.mtls.certManager }}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ $fn }}-mtls-selfsigned
+  labels:
+    {{- include "pal.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}
+{{- range $ca := list "service" "manager" }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $fn }}-{{ $ca }}-ca
+  labels:
+    {{- include "pal.labels" $ | nindent 4 }}
+spec:
+  isCA: true
+  commonName: {{ $fn }}-{{ $ca }}-ca
+  secretName: {{ $fn }}-{{ $ca }}-ca
+  duration: {{ $cm.caDuration }}
+  renewBefore: {{ $cm.caRenewBefore }}
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: {{ $fn }}-mtls-selfsigned
+    kind: Issuer
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ $fn }}-{{ $ca }}-ca
+  labels:
+    {{- include "pal.labels" $ | nindent 4 }}
+spec:
+  ca:
+    secretName: {{ $fn }}-{{ $ca }}-ca
+{{- end }}
+{{- /* name → issuing CA. The manager-client identity is what control-plane,
+       workflow-engine and runtime-scheduler present to the runtime-manager. */}}
+{{- $leaves := dict
+  "control-plane" "service" "workflow-engine" "service" "model-router" "service"
+  "runtime-scheduler" "service" "gateway" "service" "surface-gateway" "service"
+  "runtime-manager" "manager" "manager-client" "manager" }}
+{{- range $name, $ca := $leaves }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $fn }}-{{ $name }}-mtls
+  labels:
+    {{- include "pal.labels" $ | nindent 4 }}
+spec:
+  secretName: {{ $fn }}-{{ $name }}-mtls
+  duration: {{ $cm.duration }}
+  renewBefore: {{ $cm.renewBefore }}
+  commonName: {{ $name }}
+  dnsNames:
+    - {{ $fn }}-{{ $name }}
+    - {{ $fn }}-{{ $name }}.{{ $ns }}.svc
+    - {{ $fn }}-{{ $name }}.{{ $ns }}.svc.cluster.local
+  uris:
+    - spiffe://{{ $.Values.mtls.trustDomain }}/svc/{{ $name }}
+  usages:
+    - server auth
+    - client auth
+    - digital signature
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  issuerRef:
+    name: {{ $fn }}-{{ $ca }}-ca
+    kind: Issuer
+{{- end }}
+{{- end }}

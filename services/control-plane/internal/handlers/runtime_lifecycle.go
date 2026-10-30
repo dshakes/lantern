@@ -33,7 +33,7 @@ import (
 )
 
 // maxForkCountDefault and maxForkCountCeiling mirror the scheduler's defaults.
-// LANTERN_MAX_FORK_COUNT (default 100, ceiling 1000).
+// PAL_MAX_FORK_COUNT (default 100, ceiling 1000).
 const (
 	maxForkCountDefault = 100
 	maxForkCountCeiling = 1000
@@ -149,7 +149,7 @@ func (c *grpcSchedulerClient) Fork(ctx context.Context, tenantID, vmID string, i
 // lifecycleTarget authenticates, enforces the runtime write scope, and
 // confirms the caller's tenant owns the VM. ok=false means a response was
 // already written.
-func (h *RuntimeHandler) lifecycleTarget(w http.ResponseWriter, r *http.Request) (claims *LanternClaims, ctx context.Context, vmID string, ok bool) {
+func (h *RuntimeHandler) lifecycleTarget(w http.ResponseWriter, r *http.Request) (claims *PalClaims, ctx context.Context, vmID string, ok bool) {
 	claims, err := h.auth.validateRequest(r)
 	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
@@ -205,7 +205,7 @@ func (h *RuntimeHandler) writeLifecycleErr(w http.ResponseWriter, op, vmID strin
 
 // quotaGate applies the runtime_quotas policy for adding n live VMs. Returns
 // false (402 written) when a hard-fail quota denies it.
-func (h *RuntimeHandler) quotaGate(ctx context.Context, w http.ResponseWriter, claims *LanternClaims, vmID, action string, n int) bool {
+func (h *RuntimeHandler) quotaGate(ctx context.Context, w http.ResponseWriter, claims *PalClaims, vmID, action string, n int) bool {
 	q := h.checkRuntimeQuotaN(ctx, claims.TenantID, n)
 	if q.Allowed {
 		return true
@@ -349,7 +349,7 @@ func (h *RuntimeHandler) ResumeVM(w http.ResponseWriter, r *http.Request) {
 }
 
 // ForkVM handles POST /v1/runtime/vms/{id}/fork with body {"count":N}
-// (default 1, 1..LANTERN_MAX_FORK_COUNT).
+// (default 1, 1..PAL_MAX_FORK_COUNT).
 func (h *RuntimeHandler) ForkVM(w http.ResponseWriter, r *http.Request) {
 	// Validate count before the DB lookup — auth is still required but the
 	// range check is pure and cheap.

@@ -605,7 +605,7 @@ func TestCrossApp_ExecuteAction_ConcurrentExactlyOnce(t *testing.T) {
 }
 
 // TestCrossApp_DisabledByDefault verifies propose returns 404 when
-// LANTERN_CROSS_APP is unset.
+// PAL_CROSS_APP is unset.
 func TestCrossApp_DisabledByDefault(t *testing.T) {
 	pool := openTestPool(t)
 	tenantID := seedCrossAppTenant(t, pool)

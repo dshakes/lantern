@@ -240,18 +240,25 @@ pub fn verify_client_cert_vm_id(vm_id: &str, cert_der: &[u8]) -> Result<(), Stri
 }
 
 /// Organizational-unit marker stamped on every per-VM client cert.
-pub const VM_CERT_OU: &str = "lantern-vm";
+pub const VM_CERT_OU: &str = "pal-vm";
+
+/// The pre-PAL marker (ADR 0032). VMs booted (or snapshotted) before the
+/// rename still hold certs carrying it, so it must keep marking a guest:
+/// dropping it would let those guests pass as trusted services.
+pub const LEGACY_VM_CERT_OU: &str = "lantern-vm";
 
 /// True when `cert_der` is a per-VM (guest) client cert, i.e. carries the
-/// [`VM_CERT_OU`] marker. Unparseable DER is treated as a VM cert
-/// (fail-closed: an identity we cannot read is never a trusted service).
+/// [`VM_CERT_OU`] or [`LEGACY_VM_CERT_OU`] marker. Unparseable DER is treated
+/// as a VM cert (fail-closed: an identity we cannot read is never a trusted
+/// service).
 pub fn is_vm_client_cert(cert_der: &[u8]) -> bool {
     let Ok((_, cert)) = x509_parser::parse_x509_certificate(cert_der) else {
         return true;
     };
-    cert.subject()
-        .iter_organizational_unit()
-        .any(|ou| ou.as_str().is_ok_and(|v| v == VM_CERT_OU))
+    cert.subject().iter_organizational_unit().any(|ou| {
+        ou.as_str()
+            .is_ok_and(|v| v == VM_CERT_OU || v == LEGACY_VM_CERT_OU)
+    })
 }
 
 /// Extract the vm_id embedded as the CN or first DNS SAN from a DER-encoded
@@ -787,6 +794,36 @@ mod tests {
         assert!(!is_vm_client_cert(service.cert.der()));
 
         assert!(is_vm_client_cert(b"not a cert"));
+    }
+
+    /// ADR 0032: new VM certs carry the PAL marker, and a cert carrying the
+    /// legacy marker (a VM booted before the rename) is still a guest.
+    #[test]
+    fn vm_cert_marker_pal_and_legacy_both_mark_a_guest() {
+        let (ca_cert, ca_key) = make_ca("manager-ca-ou2");
+        let issued = generate_vm_client_cert("vm-ou2", &ca_cert, &ca_key, None).unwrap();
+        let der = pem_to_der(issued.cert_pem.as_bytes());
+        let (_, leaf) = x509_parser::parse_x509_certificate(&der).unwrap();
+        let ous: Vec<_> = leaf
+            .subject()
+            .iter_organizational_unit()
+            .filter_map(|ou| ou.as_str().ok().map(str::to_owned))
+            .collect();
+        assert_eq!(
+            ous,
+            vec![VM_CERT_OU.to_string()],
+            "new certs carry pal-vm only"
+        );
+
+        for ou in [VM_CERT_OU, LEGACY_VM_CERT_OU] {
+            let mut params = rcgen::CertificateParams::new(vec!["vm-old".to_string()]).unwrap();
+            params
+                .distinguished_name
+                .push(rcgen::DnType::OrganizationalUnitName, ou);
+            let key = rcgen::KeyPair::generate().unwrap();
+            let cert = params.self_signed(&key).unwrap();
+            assert!(is_vm_client_cert(cert.der()), "OU={ou} must mark a guest");
+        }
     }
 
     /// Issuance with bad CA PEM fails cleanly (no panic).

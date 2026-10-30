@@ -2,7 +2,7 @@ package handlers
 
 // runtime_secrets.go — POST /v1/runtime/secrets/resolve
 //
-// This endpoint allows the runtime-manager to resolve lantern.secret/... refs
+// This endpoint allows the runtime-manager to resolve pal.secret/... refs
 // into plaintext credential values on behalf of a specific VM and its tenant.
 // See docs/adr/0008-runtime-secret-relay.md for the full design rationale.
 //
@@ -33,11 +33,11 @@ package handlers
 // # Authentication
 //
 // Service-to-service auth uses a pre-shared token in the
-// X-Lantern-Runtime-Token request header. The token bytes are SHA-256-hashed
+// X-Pal-Runtime-Token request header. The token bytes are SHA-256-hashed
 // before comparison so that crypto/subtle.ConstantTimeCompare operates on
 // fixed-size inputs (eliminates length-based timing side-channel).
 //
-// FAIL-CLOSED: if LANTERN_RUNTIME_SECRET_TOKEN is unset, the endpoint returns
+// FAIL-CLOSED: if PAL_RUNTIME_SECRET_TOKEN is unset, the endpoint returns
 // 403 {"error":"relay disabled"} for every call regardless of the token
 // supplied. The feature is off by default; a deployment with no token
 // configured cannot be used as a credential oracle.
@@ -93,10 +93,18 @@ const (
 	envRuntimeSecretToken = "PAL_RUNTIME_SECRET_TOKEN"
 
 	// runtimeTokenHeader is the HTTP header name carrying the service token.
-	runtimeTokenHeader = "X-Lantern-Runtime-Token"
+	runtimeTokenHeader = "X-Pal-Runtime-Token"
 
-	// secretRefPrefix is the required prefix for every ref.
-	secretRefPrefix = "lantern.secret/"
+	// legacyRuntimeTokenHeader is the pre-PAL name (ADR 0032), accepted so a
+	// runtime-manager that predates the rename still authenticates.
+	legacyRuntimeTokenHeader = "X-Lantern-Runtime-Token"
+
+	// secretRefPrefix is the PAL prefix for a secret ref.
+	secretRefPrefix = "pal.secret/"
+
+	// legacySecretRefPrefix is the pre-PAL prefix (ADR 0032). Refs are user
+	// data at rest, so both forms are accepted forever.
+	legacySecretRefPrefix = "lantern.secret/"
 
 	// secretBodyLimit caps the request body at 64 KiB to prevent DoS via
 	// unbounded body reads.
@@ -171,8 +179,8 @@ func tokenHash(s string) [32]byte {
 	return sha256.Sum256([]byte(s))
 }
 
-// authenticateRuntimeToken validates the X-Lantern-Runtime-Token header
-// against LANTERN_RUNTIME_SECRET_TOKEN. Both values are SHA-256-hashed before
+// authenticateRuntimeToken validates the X-Pal-Runtime-Token header (or the
+// legacy X-Lantern-Runtime-Token) against PAL_RUNTIME_SECRET_TOKEN. Both values are SHA-256-hashed before
 // crypto/subtle.ConstantTimeCompare so the comparison is constant-time over
 // fixed-size inputs regardless of token length.
 //
@@ -184,7 +192,12 @@ func authenticateRuntimeToken(r *http.Request) (bool, error) {
 	if want == "" {
 		return false, errRelayDisabled
 	}
+	// PAL name first, legacy only when the PAL header is absent: exactly one
+	// value is compared, so two names never give a caller a second guess.
 	got := r.Header.Get(runtimeTokenHeader)
+	if got == "" {
+		got = r.Header.Get(legacyRuntimeTokenHeader)
+	}
 	wantH := tokenHash(want)
 	gotH := tokenHash(got)
 	if subtle.ConstantTimeCompare(wantH[:], gotH[:]) != 1 {
@@ -210,7 +223,7 @@ func (e *authError) Error() string { return e.msg }
 // falls within one of these CIDRs will X-Forwarded-For be trusted. Default
 // empty = never trust XFF (safe default for direct-connect deployments).
 //
-// Example: LANTERN_TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+// Example: PAL_TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
 const envTrustedProxies = "PAL_TRUSTED_PROXIES"
 
 // parseTrustedProxies parses a comma-separated CIDR string and returns the
@@ -271,7 +284,7 @@ func isTrustedProxy(hostPort string, proxies []*net.IPNet) bool {
 // changing that header on every attempt, defeating the limiter entirely.
 //
 // We honor X-Forwarded-For ONLY when the immediate TCP peer is within a
-// configured trusted-proxy CIDR (LANTERN_TRUSTED_PROXIES, default empty).
+// configured trusted-proxy CIDR (PAL_TRUSTED_PROXIES, default empty).
 // In that case the first (leftmost) XFF element is the original client IP
 // that the trusted proxy inserted and which the attacker cannot forge past
 // the proxy. When no trusted proxies are configured (the default), we always
@@ -320,7 +333,19 @@ func (h *RuntimeSecretsHandler) recordAuthFailure(ip string) bool {
 
 // ---------- Ref parser ----------
 
-// parsedRef holds the decomposed form of a lantern.secret/... string.
+// canonicalSecretRef maps a pal.secret/ ref to its lantern.secret/ twin so two
+// spellings of one secret compare equal. Any check that compares refs (e.g.
+// "an injected ref must not also be vended") must compare canonical forms, or
+// the second spelling would slip past it.
+func canonicalSecretRef(ref string) string {
+	if tail, ok := strings.CutPrefix(ref, secretRefPrefix); ok {
+		return legacySecretRefPrefix + tail
+	}
+	return ref
+}
+
+// parsedRef holds the decomposed form of a pal.secret/... (or legacy
+// pal.secret/...) string.
 type parsedRef struct {
 	raw   string
 	scope string // "llm" | "connector" | ""
@@ -337,10 +362,10 @@ type parsedRef struct {
 // Returns a parsedRef with scope="" when the ref is malformed or unknown.
 func parseRef(ref string) parsedRef {
 	p := parsedRef{raw: ref}
-	if !strings.HasPrefix(ref, secretRefPrefix) {
+	tail, ok := strings.CutPrefix(canonicalSecretRef(ref), legacySecretRefPrefix) // e.g. "llm/anthropic"
+	if !ok {
 		return p
 	}
-	tail := strings.TrimPrefix(ref, secretRefPrefix) // e.g. "llm/anthropic"
 	parts := strings.SplitN(tail, "/", 3)
 	if len(parts) < 2 {
 		return p
@@ -721,8 +746,8 @@ func (h *RuntimeSecretsHandler) auditSecretResolve(ctx context.Context, tenantID
 
 // ResolveSecrets handles POST /v1/runtime/secrets/resolve.
 //
-// Authentication: X-Lantern-Runtime-Token pre-shared token (service-to-service).
-// LANTERN_RUNTIME_SECRET_TOKEN must be set; if unset this endpoint returns 403
+// Authentication: X-Pal-Runtime-Token pre-shared token (service-to-service).
+// PAL_RUNTIME_SECRET_TOKEN must be set; if unset this endpoint returns 403
 // ("relay disabled") for every call — fail-closed by design.
 //
 // Body is limited to 64 KiB; refs array is capped at 64 entries.
@@ -740,7 +765,7 @@ func (h *RuntimeSecretsHandler) ResolveSecrets(w http.ResponseWriter, r *http.Re
 	ok, authErr := authenticateRuntimeToken(r)
 	if !ok {
 		if authErr == errRelayDisabled {
-			h.logger().Warn("secret relay: disabled (LANTERN_RUNTIME_SECRET_TOKEN not set)")
+			h.logger().Warn("secret relay: disabled (PAL_RUNTIME_SECRET_TOKEN not set)")
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "relay disabled"})
 			return
 		}

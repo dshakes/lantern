@@ -59,9 +59,9 @@ func (d *DiscordDeliverer) Deliver(ctx context.Context, n *Notification) (*Deliv
 			{
 				Title:       n.Subject,
 				Description: n.Body,
-				Color:       0x6366F1, // Lantern brand indigo.
+				Color:       0x6366F1, // PAL brand indigo.
 				Footer: &discordEmbedFooter{
-					Text: fmt.Sprintf("Lantern | Run: %s", n.RunID),
+					Text: fmt.Sprintf("PAL | Run: %s", n.RunID),
 				},
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 			},

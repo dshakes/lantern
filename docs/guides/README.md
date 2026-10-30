@@ -13,12 +13,12 @@ This directory contains practical guides for the runtime. Each guide gives what,
 
 | Guide | What it covers |
 |---|---|
-| [Headless agent quickstart](https://dshakes.github.io/lantern/docs/runtime/quickstart/) | Write `agent.yaml`, run it, watch logs, terminate. End-to-end in ~15 min. |
-| [Isolation classes](https://dshakes.github.io/lantern/docs/runtime/isolation/) | Pick the right isolation class for your workload. Decision tree + fail-closed gate explanation. |
-| [Durable execution](https://dshakes.github.io/lantern/docs/runtime/durable-execution/) | How crash-replay works: exactly-once completion, no re-spent tokens, recovery watchdog. |
-| [Observability](https://dshakes.github.io/lantern/docs/runtime/observability/) | One trace per spawn, GenAI semconv, loop/retry anomaly events, `GET /v1/runtime/metrics`. |
-| [Identity and secrets](https://dshakes.github.io/lantern/docs/runtime/identity/) | Per-instance Ed25519 identity, short-TTL secret vending over mTLS, the `lantern.secret/` ref form. |
-| [Verifiable receipts](https://dshakes.github.io/lantern/docs/runtime/receipts/) | Ed25519-signed receipts, offline verification, tamper-evidence. |
+| [Headless agent quickstart](https://dshakes.github.io/pal/docs/runtime/quickstart/) | Write `agent.yaml`, run it, watch logs, terminate. End-to-end in ~15 min. |
+| [Isolation classes](https://dshakes.github.io/pal/docs/runtime/isolation/) | Pick the right isolation class for your workload. Decision tree + fail-closed gate explanation. |
+| [Durable execution](https://dshakes.github.io/pal/docs/runtime/durable-execution/) | How crash-replay works: exactly-once completion, no re-spent tokens, recovery watchdog. |
+| [Observability](https://dshakes.github.io/pal/docs/runtime/observability/) | One trace per spawn, GenAI semconv, loop/retry anomaly events, `GET /v1/runtime/metrics`. |
+| [Identity and secrets](https://dshakes.github.io/pal/docs/runtime/identity/) | Per-instance Ed25519 identity, short-TTL secret vending over mTLS, the `lantern.secret/` ref form. |
+| [Verifiable receipts](https://dshakes.github.io/pal/docs/runtime/receipts/) | Ed25519-signed receipts, offline verification, tamper-evidence. |
 | [CLI agent loop](cli-agent-loop.md) | `lantern onboard`, `lantern doctor`, `lantern agent dev`. |
 | [Self-service journey](self-service-e2e.md) | Develop, test, deploy, run, observe, improve - end to end. |
 | [Local to production](local-to-prod.md) | Laptop, Docker microVM tier, K8s data plane; promotion checklist. |

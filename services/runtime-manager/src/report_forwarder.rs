@@ -11,7 +11,7 @@
 //!
 //! ```text
 //! POST {LANTERN_CONTROL_PLANE_URL}/v1/runtime/report
-//! X-Lantern-Runtime-Token: {LANTERN_RUNTIME_SECRET_TOKEN}
+//! X-Pal-Runtime-Token: {PAL_RUNTIME_SECRET_TOKEN}   (also sent as X-Lantern-Runtime-Token)
 //! Content-Type: application/json
 //! ```
 //!
@@ -229,6 +229,9 @@ pub async fn forward_report(
 
     let result = client
         .post(&url)
+        // PAL name plus the pre-PAL name for a control plane that has not
+        // upgraded yet (ADR 0032).
+        .header("X-Pal-Runtime-Token", token)
         .header("X-Lantern-Runtime-Token", token)
         .header("Content-Type", "application/json")
         .json(payload)

@@ -270,8 +270,8 @@ func executeConnectorAction(
 	//
 	// A stored status_reason is a SNAPSHOT of why it broke. Serving it verbatim
 	// goes stale the moment the operator acts: after setting
-	// LANTERN_CREDENTIAL_KEY the install kept saying "set
-	// LANTERN_CREDENTIAL_KEY", which is worse than useless. Re-deriving costs a
+	// PAL_CREDENTIAL_KEY the install kept saying "set
+	// PAL_CREDENTIAL_KEY", which is worse than useless. Re-deriving costs a
 	// local AES attempt measured in microseconds — the expense worth avoiding
 	// was the run and the LLM tokens downstream, not this.
 	//
@@ -1224,7 +1224,7 @@ func executeTwilio(config map[string]any, action string, params map[string]any) 
 		if twiml == "" {
 			msg := stringParam(params, "message")
 			if msg == "" {
-				msg = "This is Lantern. An urgent alert was triggered. Please check your phone."
+				msg = "This is PAL. An urgent alert was triggered. Please check your phone."
 			}
 			twiml = fmt.Sprintf(
 				`<Response><Say voice="Polly.Joanna" loop="2">%s</Say><Pause length="1"/><Say voice="Polly.Joanna">Hanging up now.</Say></Response>`,

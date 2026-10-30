@@ -2,7 +2,7 @@
 //!
 //! On `X-API-Key`, the gateway POSTs the raw key to the control-plane's
 //! `/internal/auth/introspect-key` endpoint (authenticated with the shared
-//! `LANTERN_GRPC_SERVICE_TOKEN`) and, on 200, builds service `Claims` from the
+//! `PAL_GRPC_SERVICE_TOKEN`) and, on 200, builds service `Claims` from the
 //! returned tenant + scopes. Successful lookups are cached in-memory for 60s
 //! keyed by the SHA-256 of the key, so the hot path avoids a round trip.
 //!
@@ -24,7 +24,10 @@ use crate::auth::Claims;
 use crate::error::AppError;
 
 const CACHE_TTL: Duration = Duration::from_secs(60);
-const SERVICE_TOKEN_HEADER: &str = "x-lantern-service-token";
+const SERVICE_TOKEN_HEADER: &str = "x-pal-service-token";
+/// Pre-PAL name, sent too so a control plane that has not upgraded still
+/// authenticates the call (ADR 0032).
+const LEGACY_SERVICE_TOKEN_HEADER: &str = "x-lantern-service-token";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Deserialize)]
@@ -109,7 +112,7 @@ pub struct ApiKeyIntrospector {
 
 impl ApiKeyIntrospector {
     /// Construct from env. Returns `None` (API-key auth disabled, fail-closed)
-    /// when either `LANTERN_CONTROL_PLANE_URL` or `LANTERN_GRPC_SERVICE_TOKEN`
+    /// when either `PAL_CONTROL_PLANE_URL` or `PAL_GRPC_SERVICE_TOKEN`
     /// is unset/empty.
     pub fn from_env() -> Option<Self> {
         let base = pal_env::var("PAL_CONTROL_PLANE_URL")
@@ -145,6 +148,7 @@ impl ApiKeyIntrospector {
             .http
             .post(&self.url)
             .header(SERVICE_TOKEN_HEADER, &self.service_token)
+            .header(LEGACY_SERVICE_TOKEN_HEADER, &self.service_token)
             .json(&serde_json::json!({ "key": raw_key }))
             .send()
             .await

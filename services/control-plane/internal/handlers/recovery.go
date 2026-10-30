@@ -291,7 +291,7 @@ func (h *RESTHandler) redriveRun(ctx context.Context, run orphanedRun) error {
 }
 
 // recoveryInterval returns the configured sweep interval from the
-// LANTERN_RECOVERY_INTERVAL env var (default 30s).
+// PAL_RECOVERY_INTERVAL env var (default 30s).
 func recoveryInterval() time.Duration {
 	if v := os.Getenv("PAL_RECOVERY_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {
@@ -323,8 +323,8 @@ func (h *RESTHandler) resumeMicroVMRun(ctx context.Context, run orphanedRun) err
 	ctx, span := tracer.Start(ctx, "runtime.recovery.microvm_resume")
 	defer span.End()
 	span.SetAttributes(
-		attribute.String("lantern.run_id", run.runID),
-		attribute.String("lantern.tenant_id", run.tenantID),
+		attribute.String("pal.run_id", run.runID), attribute.String("lantern.run_id", run.runID),
+		attribute.String("pal.tenant_id", run.tenantID), attribute.String("lantern.tenant_id", run.tenantID),
 	)
 
 	log := h.logger().Named("recovery.microvm")
@@ -353,7 +353,7 @@ func (h *RESTHandler) resumeMicroVMRun(ctx context.Context, run orphanedRun) err
 		SELECT COUNT(*) FROM runtime_vms WHERE run_id = $1::uuid
 	`, run.runID).Scan(&totalVMs)
 
-	span.SetAttributes(attribute.Int("lantern.microvm_attempts", totalVMs))
+	span.SetAttributes(attribute.Int("pal.microvm_attempts", totalVMs), attribute.Int("lantern.microvm_attempts", totalVMs))
 
 	// 3. Cap: if maxMicroVMResumeAttempts VMs have already been tried, fail the run.
 	if totalVMs >= maxMicroVMResumeAttempts {

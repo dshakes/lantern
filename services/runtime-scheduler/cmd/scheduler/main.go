@@ -150,7 +150,7 @@ func main() {
 	var managerDialer dialer.ManagerDialer
 	if os.Getenv("PAL_DIALER") == "stub" || os.Getenv("PAL_DEFAULT_MANAGER_ADDR") == "" {
 		managerDialer = dialer.NewLogOnlyDialer(logger)
-		logger.Info("using stub manager dialer (no LANTERN_DEFAULT_MANAGER_ADDR set)")
+		logger.Info("using stub manager dialer (no PAL_DEFAULT_MANAGER_ADDR set)")
 	} else {
 		// The manager requires the service token and, in prod, mTLS.
 		mgrCreds, err := dialer.ManagerTransportCreds(dialer.IsProd())
@@ -200,16 +200,16 @@ func main() {
 
 	// --- Service-token auth startup guard ---
 	// In prod, the gRPC server must refuse calls without the shared token
-	// (LANTERN_GRPC_SERVICE_TOKEN). Without this guard the :50055 gRPC port is
+	// (PAL_GRPC_SERVICE_TOKEN). Without this guard the :50055 gRPC port is
 	// reachable by any in-cluster caller who can supply an arbitrary tenant_id,
-	// enabling cross-tenant microVM compute takeover. In dev (LANTERN_ENV unset)
+	// enabling cross-tenant microVM compute takeover. In dev (PAL_ENV unset)
 	// we warn and allow unauthenticated calls so `make dev` keeps working.
 	if cfg.ServiceToken == "" {
 		if dialer.IsProd() {
-			logger.Fatal("LANTERN_GRPC_SERVICE_TOKEN is required in production — " +
+			logger.Fatal("PAL_GRPC_SERVICE_TOKEN is required in production — " +
 				"without it any in-cluster caller can spoof tenant_id on the gRPC port")
 		}
-		logger.Warn("LANTERN_GRPC_SERVICE_TOKEN unset — gRPC service-token check disabled (dev mode)")
+		logger.Warn("PAL_GRPC_SERVICE_TOKEN unset — gRPC service-token check disabled (dev mode)")
 	}
 
 	// --- Node-heartbeat token startup guard ---
@@ -224,7 +224,12 @@ func main() {
 		logger.Warn("SCHEDULER_NODE_TOKEN unset — node heartbeat token check disabled (dev mode)")
 	}
 
-	grpcServer := grpc.NewServer(
+	// --- mTLS on :50055 (ADR 0043) — required on top of the service token ---
+	tlsCreds, err := dialer.ServerTransportCreds(dialer.IsProd())
+	if err != nil {
+		logger.Fatal("runtime-scheduler gRPC TLS", zap.Error(err))
+	}
+	grpcOpts := []grpc.ServerOption{
 		// otelgrpc.NewServerHandler extracts the incoming W3C traceparent header
 		// and starts a server span, continuing the distributed trace from the
 		// control-plane. Safe when tracing is disabled: creates no-op spans.
@@ -239,7 +244,17 @@ func main() {
 			middleware.StreamServiceAuthInterceptor(logger, cfg.ServiceToken),
 			middleware.StreamTenantInterceptor(logger),
 		),
-	)
+	}
+	switch {
+	case tlsCreds != nil:
+		grpcOpts = append(grpcOpts, grpc.Creds(tlsCreds))
+		logger.Info("runtime-scheduler gRPC server: mTLS enabled (client certificates required)")
+	case dialer.IsProd():
+		logger.Warn("SECURITY: PAL_GRPC_INSECURE=1 — runtime-scheduler gRPC (:50055) serves PLAINTEXT in production; remove it once PAL_GRPC_TLS_CA/_CERT/_KEY are mounted")
+	default:
+		logger.Warn("runtime-scheduler gRPC server: TLS unset — serving plaintext (acceptable in dev; production requires PAL_GRPC_TLS_CA/_CERT/_KEY)")
+	}
+	grpcServer := grpc.NewServer(grpcOpts...)
 	lanternv1.RegisterRuntimeSchedulerServer(grpcServer, schedSvc)
 
 	healthSvc := health.NewServer()
@@ -340,7 +355,7 @@ type config struct {
 	JWTSecret string
 	NodeToken string
 	// ServiceToken is the shared secret that callers must present as
-	// x-lantern-service-token in gRPC metadata. When empty the check is
+	// x-pal-service-token in gRPC metadata. When empty the check is
 	// disabled (dev mode); the startup guard aborts in prod.
 	ServiceToken    string
 	LogLevel        string

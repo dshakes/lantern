@@ -7,7 +7,7 @@ package handlers
 // connector_installs (not readable as plaintext), and (b) decrypt back to the
 // original value on the read/execute path.
 //
-// TestMain (below) sets LANTERN_CREDENTIAL_KEY before any test in the package
+// TestMain (below) sets PAL_CREDENTIAL_KEY before any test in the package
 // runs, so secrets.loadKey() (a sync.Once) picks up a real AES-256 key and the
 // "stored form is encrypted" assertion is deterministic.
 //
@@ -197,7 +197,7 @@ func TestConnector_EncryptedCredentialRoundTrip(t *testing.T) {
 		t.Fatalf("EncryptionEnabled: %v", err)
 	}
 	if !enabled {
-		t.Skip("credential encryption not active (LANTERN_CREDENTIAL_KEY mis-set) — skipping at-rest ciphertext assertion")
+		t.Skip("credential encryption not active (PAL_CREDENTIAL_KEY mis-set) — skipping at-rest ciphertext assertion")
 	}
 
 	h, _, srv := newConnectorHandlers(t)
