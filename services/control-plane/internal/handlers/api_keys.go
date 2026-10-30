@@ -46,7 +46,9 @@ var knownScopes = map[Scope]bool{
 	ScopeRead: true, ScopeWrite: true, ScopeAdmin: true,
 	ScopeAgentsRead: true, ScopeAgentsWrite: true,
 	ScopeRunsRead: true, ScopeRunsWrite: true, ScopeRunsExecute: true,
-	ScopeConnectorsWrite: true, ScopeBudgetsWrite: true, ScopeSettingsWrite: true,
+	ScopeConnectorsRead: true, ScopeConnectorsWrite: true,
+	ScopeBudgetsRead: true, ScopeBudgetsWrite: true,
+	ScopeSettingsRead: true, ScopeSettingsWrite: true,
 }
 
 // validateGrantableScopes rejects unknown scopes and any request the caller
