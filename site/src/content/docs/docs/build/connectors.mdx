@@ -2,18 +2,23 @@
 title: Connectors
 description: The 18 built-in connectors, their actions, credentials, recorded test mode and per-agent assignment.
 glance:
-  what: "Connectors give an agent hands: PAL Runtime ships 18, each with fixed actions such as searching Gmail or posting to Slack."
-  why: "Connect a service once and credentials are stored for the agent to use, instead of wiring each API by hand."
-  how: "Pick a connector from Available connectors, then install it with the bash examples further down."
+  what: "Eighteen built-in connectors, each with fixed actions (search Gmail, comment on a PR, post to Slack) that call the vendor's real API."
+  why: "Connect a service once and its credentials are stored encrypted per tenant, then assigned to only the agents you choose."
+  how: "Open Integrations (/connectors), click Connect, then call POST /v1/connectors/{id}/execute?action=<action>."
 sidebar:
   order: 2
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import { ConnectorActions } from '../../../../components/diagrams';
 
-A connector gives an agent hands: search a Gmail inbox, open a GitHub issue, post to Slack. PAL Runtime ships 18, each with a fixed set of actions. Connect a service once (usually an OAuth consent screen) and credentials are stored per tenant. Per-tool limits can be stored on a [budget](/docs/build/budgets/) and are enforced on workflow tool and connector nodes only.
+<ConnectorActions client:visible />
+
+Connect a service once (usually an OAuth consent screen) and credentials are stored per tenant, available to every agent in the workspace. Per-tool limits on a [budget](/docs/build/budgets/) are enforced on workflow tool and connector nodes only.
 
 ## Available connectors (18)
+
+Counted from the executor's dispatch table ([`connector_executor.go`](repo:/blob/master/services/control-plane/internal/handlers/connector_executor.go#L349-L383)).
 
 ### Communication
 
@@ -52,16 +57,12 @@ A connector gives an agent hands: search a Gmail inbox, open a GitHub issue, pos
 - **Stripe** (`stripe`): list charges and customers; secret key or OAuth
 
 <Aside>
-**Web search** is a built-in agent tool, not a connector: nothing to install. Sessions enable it with the `webSearch` flag.
-</Aside>
-
-<Aside>
-**Adding a connector** is a code change today: a new case in `connector_executor.go` in the control plane. There is no plug-in interface yet.
+**Web search** is a built-in tool, not a connector (sessions enable it with the `webSearch` flag). **Adding a connector** is a code change today: a new case in `connector_executor.go`. There is no plug-in interface yet.
 </Aside>
 
 ## Newer actions
 
-Four actions and one connector (PagerDuty, five actions) were added after the original set. All run through `POST /v1/connectors/{id}/execute?action=<action>` with a JSON body of params (the connector must be installed and connected first). A successful call returns `{"connector", "action", "data"}`; a failed vendor call returns 502 with `{"error", "connector", "action"}`; an uninstalled connector returns 404.
+These actions run through `POST /v1/connectors/{id}/execute?action=<action>` with a JSON body of params (the connector must be installed and connected first). A successful call returns `{"connector", "action", "data"}`; a failed vendor call returns 502 with `{"error", "connector", "action"}`; an uninstalled connector returns 404.
 
 Required params are marked **(required)**.
 
@@ -166,13 +167,7 @@ A bearer token must never be sent to an arbitrary host, so overrides are blocked
 
 ### OAuth-based connectors
 
-Gmail, Google Calendar, Drive, Sheets, Slack, GitHub and Notion support OAuth. The flow:
-
-1. Open **Integrations** (`/connectors`) in the dashboard.
-2. Click the connector you want to enable.
-3. Click **Connect**. You are redirected to the service's OAuth consent screen.
-4. Authorize access and you are redirected back.
-5. The connector is now available and can be attached to any agent.
+Most connectors support OAuth (Gmail, Google Calendar, Drive, Sheets, Slack, GitHub, Discord, Notion, Linear, Jira, HubSpot, Stripe, Salesforce) when the deployment has OAuth client credentials configured. In **Integrations** (`/connectors`), click the provider button (for example **Sign in with Google** or **Add to Slack**), authorize on the consent screen, and you land back with the connector installed.
 
 <Aside type="tip">
 Revoke access any time by uninstalling the connector (`DELETE /v1/connectors/{id}`).
@@ -180,27 +175,15 @@ Revoke access any time by uninstalling the connector (`DELETE /v1/connectors/{id
 
 ### API key-based connectors
 
-Linear, Sentry, Vercel, Stripe, Twilio, Telegram and others take a key or token instead of OAuth. For these:
-
-1. Open **Integrations**.
-2. Click the connector and select **Manual credentials**.
-3. Enter your API key or credentials.
-4. Click **Save**. Credentials are encrypted at rest (AES-256-GCM) when `PAL_CREDENTIAL_KEY` is set; without it they are stored as plaintext, so set it outside dev.
+Telegram, Twilio, Sentry, PagerDuty and Vercel take a key or token. In **Integrations**, choose the manual option (for example **Enter bot token**) and fill in the credentials; they are tested before the connector shows as connected. Credentials are encrypted at rest (AES-256-GCM) when `PAL_CREDENTIAL_KEY` is set; without it they are plaintext, so set it outside dev.
 
 <Aside type="caution">
 Credentials never appear in logs, traces or run state. Connector actions run in the control plane, which resolves the credential at call time.
 </Aside>
 
-## Per-agent connector assignment
+## Which agents can use a connector
 
-Connect an account once, then choose which agents may use it. You connect your Gmail account once in Settings; for each agent, you choose which connectors it can access. An agent can only use connectors explicitly assigned to it.
-
-To assign connectors to an agent:
-
-1. Open the agent's detail page in the dashboard.
-2. Go to the **Configuration** tab.
-3. In the **Connectors** section, toggle the connectors this agent should have access to.
-4. Click **Save**.
+Connectors are installed per workspace, not per agent: once connected, every agent in the workspace can call it. To limit blast radius, use [budgets](/docs/build/budgets/) `toolLimits` (workflow nodes only), the approval and confidence gates, or a separate workspace. The agent page's Connectors card is a read-only list linking to `/connectors`.
 
 ## How agents use connectors
 
@@ -213,7 +196,7 @@ curl -X POST "http://localhost:8080/v1/connectors/gmail/execute?action=search" \
   -d '{"query": "from:boss@company.com subject:urgent"}'
 ```
 
-PAL Runtime classifies list, get, search and query actions as read-only; everything else (send, post, create) counts as side-effecting. In the workflow engine, [confidence gating](/docs/pal/human-in-the-loop/) (off by default) can route side-effecting steps to a human first.
+PAL Runtime keeps an explicit allowlist of read-only actions (for example `list_*`, `get_*`, `search`, `query` on the built-in connectors); every other action, including any on an unknown connector, counts as side-effecting. Agents receive a curated subset of actions as tools (for example `github__list_prs`, `slack__post_message`, `gmail__search`); the full list above is always callable over REST and from workflow connector nodes. Install needs `connectors:write`; `execute` needs `runs:execute`. In the workflow engine, [confidence gating](/docs/pal/human-in-the-loop/) (off by default) can route side-effecting steps to a human first.
 
 ## Connector permissions
 
@@ -226,3 +209,5 @@ OAuth scopes come from `oauth_providers.go`:
 <Aside type="tip">
 If a connector is missing or uninstalled, the action returns a missing-credentials error naming the connector.
 </Aside>
+
+Next: [webhook triggers](/docs/build/triggers/).
