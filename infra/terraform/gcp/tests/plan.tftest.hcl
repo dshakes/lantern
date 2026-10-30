@@ -44,7 +44,7 @@ run "new_cluster" {
     error_message = "bundles bucket must enforce public access prevention"
   }
   assert {
-    condition     = helm_release.lantern_data_plane.dependency_update
+    condition     = helm_release.pal_data_plane.dependency_update
     error_message = "the local chart's Bitnami deps are not vendored; dependency_update must be on"
   }
 }

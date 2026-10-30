@@ -20,12 +20,12 @@ make lima-broker-e2e   # broker egress mode (ADR 0026): no NIC, vsock-only, cred
 | Target | What it does |
 | ------ | ------------ |
 | `make lima-up` | Creates the VM from `firecracker-dev.yaml` if absent, starts it if stopped (idempotent when running). Fails fast with a clear message on M1/M2 or macOS < 15 (no nested virt). |
-| `make lima-image` | Builds `vmlinux` + `rootfs.ext4` with the current harness (musl, all tools incl. `write_file`) as PID 1. Cached at `~/.cache/lantern-lima/image` in the VM; rebuilt only when the harness binary or `build-image.sh` changes. |
-| `make lima-e2e` | `lima-image`, then builds the runtime-manager and runs `infra/firecracker/integration-test.sh` jailed (`FIRECRACKER_JAILER_*`, `EXPECT_VENDSECRET=1`). Timing table saved to `~/.cache/lantern-lima/timing/lifecycle-timing.md`. |
+| `make lima-image` | Builds `vmlinux` + `rootfs.ext4` with the current harness (musl, all tools incl. `write_file`) as PID 1. Cached at `~/.cache/pal-lima/image` in the VM; rebuilt only when the harness binary or `build-image.sh` changes. |
+| `make lima-e2e` | `lima-image`, then builds the runtime-manager and runs `infra/firecracker/integration-test.sh` jailed (`FIRECRACKER_JAILER_*`, `EXPECT_VENDSECRET=1`). Timing table saved to `~/.cache/pal-lima/timing/lifecycle-timing.md`. |
 | `make lima-broker-e2e` | Same build, then `infra/firecracker/broker-e2e.sh` (needs outbound HTTPS to httpbin.org). |
 | `make lima-runtime` | Same build, then runs a long-lived jailed Firecracker runtime-manager (foreground, Ctrl-C stops it) on `:52054` in the VM; Lima forwards it to the Mac's `localhost:52054`, and it self-registers with the host scheduler at `host.lima.internal:8085`. `dev` detects it and wires the API to it (ADR 0045). Dev-only: plaintext gRPC, no service token. |
 | `make lima-down` | `limactl stop firecracker-dev`. |
-| `make lima-clean` | `cargo clean --target-dir ~/.cache/lantern-lima/target` and removes the cached image files. |
+| `make lima-clean` | `cargo clean --target-dir ~/.cache/pal-lima/target` and removes the cached image files. |
 
 Both e2e targets fail if the run leaves a firecracker process, snapshot
 directory or jail behind. They wait (up to `LIMA_PORT_WAIT_SECS`, default
@@ -33,7 +33,7 @@ directory or jail behind. They wait (up to `LIMA_PORT_WAIT_SECS`, default
 another run in the VM, rather than killing it. Builds refuse to start when the
 VM disk is over `LIMA_DISK_MAX_PCT` (default 85%); `make lima-clean` frees the
 caches. The repo is mounted read-only in the guest, so all build output goes to
-`~/.cache/lantern-lima` there, not into the repo.
+`~/.cache/pal-lima` there, not into the repo.
 
 If `make lima-up` reports no `/dev/kvm`, use the KVM CI workflow
 (`.github/workflows/microvm-integration.yml`) or a remote Linux host instead;
@@ -83,7 +83,7 @@ mount is read-only, so cargo output goes under the guest's home via
 ```bash
 # Inside the guest (limactl shell firecracker-dev):
 cd /path/to/repo
-T="$HOME/.cache/lantern-lima/target" IMG="$HOME/.cache/lantern-lima/image"
+T="$HOME/.cache/pal-lima/target" IMG="$HOME/.cache/pal-lima/image"
 MUSL="$(uname -m)-unknown-linux-musl"
 
 # Install build deps (first time only; grpcurl comes from its GitHub release).
@@ -110,11 +110,11 @@ sudo FC_KERNEL_PATH="$IMG/vmlinux" FC_ROOTFS_PATH="$IMG/rootfs.ext4" \
   MANAGER_BIN="$T/release/lantern-runtime-manager" EXPECT_VENDSECRET=1 \
   FIRECRACKER_JAILER_PATH="$(command -v jailer)" FIRECRACKER_JAILER_UID=123 \
   FIRECRACKER_JAILER_GID=100 FIRECRACKER_CHROOT_BASE=/srv/jailer \
-  LIFECYCLE_TIMING_DIR="$HOME/.cache/lantern-lima/timing" \
+  LIFECYCLE_TIMING_DIR="$HOME/.cache/pal-lima/timing" \
   bash infra/firecracker/integration-test.sh
 
 # Timing summary (markdown table printed to stderr during the run too).
-cat "$HOME"/.cache/lantern-lima/timing/lifecycle-timing.md
+cat "$HOME"/.cache/pal-lima/timing/lifecycle-timing.md
 ```
 
 The provision script installs `jailer` from the v1.15.1 tarball alongside

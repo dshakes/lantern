@@ -34,3 +34,58 @@ postgres(ql)?://lantern:lantern@[^/\s"']*/lantern\b # dev DB user/password/name
 
 # --- checkout path: compose project, plists and worktrees derive from it
 /workspace/lantern\b # owner's checkout dir
+
+# --- infra (PR rename/pal-10-infra): names owned by service code, persisted data or customer clusters
+scope:^infra/helm/ \.Values\.\w+\.env\.LANTERN_\w+ # legacy values keys still honored as a fallback behind PAL_* (tests/legacy-env-keys.sh)
+scope:^infra/ LANTERN_\* names, so existing overrides keep working # compat banner: the binaries still accept the legacy env names
+\blantern\.dev/ # k8s label/annotation keys stamped by the runtime-manager and matched by chart policies and validators; renamed with the manager
+\blantern-system\b # data-plane install namespace of existing customer clusters (Cilium/NetworkPolicy selectors)
+\blantern-agent-runner\b # ServiceAccount + app label created by the runtime-manager (k8s.rs)
+managed-by: lantern-runtime-manager # label value stamped by the manager
+\blantern-(bundles|snapshots|dev|backups|prod)\b # S3 bucket names: persisted data, renaming orphans it
+\blantern-dev(-jwt-secret-do-not-use-in-production|-secret)?\b # dev-only credentials, same values the compose stack and the owner's DB use
+\b(lantern-db|lantern-app-password|lantern-backup-s3)\b # names of Secrets/keys operators already created in their clusters
+\b(username|database|user|rootUser): *"?lantern\b # dev Postgres/MinIO init names (owner's live dev DB)
+\bpostgresPassword: *"lantern"|\bpostgres-password: lantern\b # dev Postgres password
+scope:^infra/helm/ ^\s*lantern[-/]data-plane|"lantern/data-plane" # external-secrets example path
+\blantern\.run\b # public domains (DNS is owner-only)
+dshakes/lantern # GitHub repo / GHCR image path until the repo rename (owner step)
+-U lantern\b|-d lantern\b|DATABASE lantern\b|PGPASSWORD[=:] ?lantern\b|AWS_ACCESS_KEY_ID=lantern\b # dev DB/MinIO credentials in scripts and CI
+\blantern-(harness|runtime-manager|surface-gateway)\b|lantern_runtime_manager:: # cargo bin/crate names and guest paths baked into images; renamed in the binaries wave
+(/var/lib|/run|/etc)/lantern\b # guest and host paths baked into microVM images
+\bx-lantern-(service-token|reason)\b # wire headers, accepted under both names
+scope:^infra/monitoring/ \blantern_\w+ # metric names defined in service code (scheduler/control-plane); alerts match both until the services dual-emit
+scope:^infra/monitoring/ \(pal\|lantern\) # job selectors match both so existing scrape configs keep alerting
+scope:^infra/monitoring/ "uid": "lantern-dataplane-runtime" # Grafana dashboard uid: changing it orphans bookmarks and links
+scope:^infra/firecracker/ \bLANTERN_\w+ # e2e drivers speak the legacy env/wire the manager and harness accept under both names (a caller-supplied PAL_ identity key is dropped by design)
+scope:^infra/firecracker/ starting lantern-harness|manager\.lantern\.internal # harness boot banner and hostname constant in service code
+scope:^infra/terraform/ ^\s*default\s*=\s*"lantern-data-plane(-rg|-vpc|-subnet)?" # cluster/VPC/RG names: changing a default force-replaces real resources
+scope:^infra/terraform/ \blantern(-nodes|-bundles)?\b # state-bearing resource names (namespace, node pools, buckets): renaming would destroy/recreate
+scope:^infra/terraform/ lantern_(control_plane_endpoint|version) # deprecated variable aliases kept for existing tfvars
+scope:^infra/terraform/ (lantern_data_plane|kubernetes_namespace\.lantern|node_pool\.lantern) # `moved` blocks: old state addresses
+scope:^infra/terraform/ \blantern\.run/component # node labels the chart schedules on
+scope:^infra/terraform/ lantern-dp # Helm release name: changing it re-creates the release
+scope:^infra/lima/ lantern-lima # one-time migration of the old cache directory
+scope:^(Makefile|\.github/|scripts/(?!launchd|iphone)) \bLANTERN_(E2E|API_URL|OWNER|DEFAULT_TENANT_ID|BRIDGE|IMESSAGE|CONNECTOR|LLM|RECOVERY|AGENT|TENANT|INTROSPECT|MEASUREMENT|BENCH|RLS|APP_DB|SIGNAL|MANAGER|VM|REFERENCE|RUN) # test-harness and bridge env read through the compat layer; flipped with their consumers
+(dev\.lantern\.|Library/Logs/Lantern|/\.lantern/) # launchd labels, log dirs and state dir on the live machine (never touched)
+path:^scripts/env-read-check\.sh$ # the env-read gate names the legacy prefix it polices
+path:^\.mcp\.json$ # references the owner's live shell variable LANTERN_DATABASE_URL; the owner flips it with their shell profile
+scope:^scripts/bridge-setup\.sh \bLANTERN_\w+ # the wizard edits keys in the owner's .env.local in place; bridges read both names
+scope:^\.github/workflows/sdlc-lint\.yml LANTERN_ # step text for the env-read gate
+scope:^(scripts|\.github)/ \$\{LANTERN_\w+|\bLANTERN_API_URL\b # shell compat fallback ${PAL_X:-${LANTERN_X:-default}} (ADR 0032 convention) and the e2e API URL var
+scope:^(scripts|\.github)/ admin@lantern\.dev|"password":"lantern" # seeded dev user and its password
+scope:^(scripts|\.github)/ /tmp/lantern-(api|dashboard|whatsapp-bridge)\.log # logs written by the launchers and the bridge (other owners)
+dshakes\.github\.io/lantern|Pages at /lantern # docs site is served from the repo name until the repo rename (owner step)
+@lantern/bridge-core # npm package name, renamed in the packages wave
+\blantern-run\b # runtime handle prefix, persisted (filter without the trailing dash)
+scope:^\.github/ \blantern_scheduler_ # scheduler metric name defined in service code
+scope:^\.github/ \.\.\./lantern/web # published image path under the repo-named GHCR prefix
+^\.lantern/ # ignore rule for the live state dir
+scope:^Makefile \(pal\|lantern\) # launchctl grep matches both label families
+lantern\\\.dev/ # same label key inside a kubectl jsonpath
+scope:^infra/k8s/manifests/ \bLANTERN_\w+ # runner env contract stamped by the manager (k8s.rs)
+scope:^scripts/regression\.sh ^[^#]*"label":"lantern" # API label sent to the mail connector
+🟢 Lantern|/lantern ping # bridge self-chat strings the owner sees (bridges own these)
+scope:^(scripts|\.github)/ postgres(ql)?://lantern:|/lantern\?sslmode|%lantern\b|/lantern\?|\(lantern/(lantern)?\)|`lantern` DB|"password":"lantern"|\$\{_PASSWORD:-lantern\}|\blantern\b(?=\$\{RST\}) # dev DB URL/user/password forms (owner's live dev DB name is allowlisted above)
+scope:^scripts/introspect/PROMPT\.md -Users-shakes-workspace-lantern # Claude Code memory dir derived from the checkout path
+lantern-egress-proxy # app label selector of the data-plane egress proxy: Deployment selectors are immutable, kept for in-place upgrades

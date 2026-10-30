@@ -79,7 +79,9 @@ host_up() {
 # ---------------------------------------------------------------------------
 # Guest side (Linux, inside the VM).
 # ---------------------------------------------------------------------------
-CACHE="${HOME}/.cache/lantern-lima"
+CACHE="${HOME}/.cache/pal-lima"
+# ADR 0032: cache dir renamed; carry an existing cache over (no image rebuild).
+if [[ -d "${HOME}/.cache/lantern-lima" && ! -e "${CACHE}" ]]; then mv "${HOME}/.cache/lantern-lima" "${CACHE}"; fi
 TARGET="${CACHE}/target"   # shared cargo target dir: harness (musl) + manager
 IMG="${CACHE}/image"
 TIMING="${CACHE}/timing"
@@ -197,7 +199,7 @@ guest_e2e() {
   local before rc=0
   before="$(leak_snapshot)"
   sudo FC_KERNEL_PATH="${IMG}/vmlinux" FC_ROOTFS_PATH="${IMG}/rootfs.ext4" \
-    RUNTIME_BACKEND=firecracker LANTERN_RUNTIME_BACKEND=firecracker \
+    RUNTIME_BACKEND=firecracker PAL_RUNTIME_BACKEND=firecracker \
     MANAGER_BIN="${MANAGER_BIN}" EXPECT_VENDSECRET=1 \
     FIRECRACKER_JAILER_PATH="$(command -v jailer)" FIRECRACKER_JAILER_UID=123 \
     FIRECRACKER_JAILER_GID=100 FIRECRACKER_CHROOT_BASE=/srv/jailer \

@@ -61,11 +61,11 @@ run "new_cluster" {
     error_message = "IRSA trust must federate the OIDC provider ARN, not the issuer URL"
   }
   assert {
-    condition     = jsondecode(aws_iam_role.data_plane.assume_role_policy).Statement[0].Condition.StringEquals["oidc.eks.us-east-1.amazonaws.com/id/EXAMPLE:sub"] == "system:serviceaccount:lantern:lantern-data-plane"
+    condition     = jsondecode(aws_iam_role.data_plane.assume_role_policy).Statement[0].Condition.StringEquals["oidc.eks.us-east-1.amazonaws.com/id/EXAMPLE:sub"] == "system:serviceaccount:lantern:pal-data-plane"
     error_message = "IRSA subject must be the chart's service account"
   }
   assert {
-    condition     = helm_release.lantern_data_plane.dependency_update
+    condition     = helm_release.pal_data_plane.dependency_update
     error_message = "the local chart's Bitnami deps are not vendored; dependency_update must be on"
   }
 }
@@ -87,5 +87,28 @@ run "existing_cluster" {
   assert {
     condition     = length(aws_vpc.this) == 0 && length(aws_eks_cluster.this) == 0 && length(aws_iam_openid_connect_provider.eks) == 0
     error_message = "an existing cluster must not create a VPC, cluster or OIDC provider"
+  }
+}
+
+run "image_tag_prefers_pal_version" {
+  command = plan
+  variables {
+    pal_version     = "1.2.3"
+    lantern_version = "0.9.0"
+  }
+  assert {
+    condition     = contains([for s in helm_release.pal_data_plane.set : s.value if s.name == "global.image.tag"], "1.2.3")
+    error_message = "pal_version must set the image tag"
+  }
+}
+
+run "image_tag_falls_back_to_lantern_version" {
+  command = plan
+  variables {
+    lantern_version = "0.9.0"
+  }
+  assert {
+    condition     = contains([for s in helm_release.pal_data_plane.set : s.value if s.name == "global.image.tag"], "0.9.0")
+    error_message = "deprecated lantern_version must still set the image tag"
   }
 }

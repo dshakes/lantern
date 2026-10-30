@@ -36,7 +36,7 @@
 set -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CLUSTER_NAME="lantern-k8s-validate" # must match kind-cluster.yaml `name:`
+CLUSTER_NAME="pal-k8s-validate" # must match kind-cluster.yaml `name:`
 # In --ci mode the workflow owns the cluster + context; honor an override.
 KCTX="${CLUSTER_CONTEXT:-kind-${CLUSTER_NAME}}"
 NS="lantern-t-validate"
@@ -366,7 +366,7 @@ assert_runtimeclass_failclosed() {
 
 # ---- Cluster-side security artifacts (Kyverno / Cilium / ESO / cosign) --------
 #
-# The chart in infra/helm/lantern-data-plane ships OPT-IN cluster-side hardening:
+# The chart in infra/helm/pal-data-plane ships OPT-IN cluster-side hardening:
 # Kyverno tenant-baseline + verifyImages policies, Cilium egress policy + proxy,
 # and ESO SecretStore/ExternalSecret. Those need their OPERATORS installed
 # (Kyverno, Cilium CNI, External Secrets Operator) to apply against a live
@@ -380,7 +380,7 @@ assert_runtimeclass_failclosed() {
 # variable) without a live Kyverno/Cilium.
 assert_security_chart_renders() {
   section "(e) Cluster-side security chart renders (Kyverno/Cilium/ESO, operator-free)"
-  local chart="$SCRIPT_DIR/../helm/lantern-data-plane"
+  local chart="$SCRIPT_DIR/../helm/pal-data-plane"
   if ! command -v helm >/dev/null 2>&1; then
     step "helm not found — skipping chart render assertions (install: brew install helm)"
     return
@@ -548,7 +548,7 @@ assert_no_cotenancy() {
 # ---- Main ---------------------------------------------------------------------
 
 main() {
-  printf "${BLD}Lantern K8s isolation validation${RST} ${DIM}— $(date '+%H:%M:%S')${RST}\n"
+  printf "${BLD}PAL Runtime K8s isolation validation${RST} ${DIM}— $(date '+%H:%M:%S')${RST}\n"
 
   check_tools
   if [[ "$CI_MODE" -eq 1 ]]; then

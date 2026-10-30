@@ -15,7 +15,7 @@ DC="docker compose -f $ROOT/infra/docker/docker-compose.yml"
 PSQL="$DC exec -T postgres psql -U lantern -d lantern"
 DB_URL="postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable"
 N="${N:-120}"; C="${C:-24}"
-CP_BIN="/tmp/lantern-cp-load"; CP_LOG="/tmp/lantern-cp-load.log"; CP_PID=""
+CP_BIN="/tmp/pal-cp-load"; CP_LOG="/tmp/pal-cp-load.log"; CP_PID=""
 
 cleanup() { [ -n "$CP_PID" ] && kill "$CP_PID" 2>/dev/null || true; }
 trap cleanup EXIT

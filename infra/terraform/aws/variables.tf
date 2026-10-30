@@ -64,14 +64,20 @@ variable "existing_subnet_ids" {
   default     = []
 }
 
-variable "lantern_control_plane_endpoint" {
-  description = "Endpoint of the Lantern control plane (e.g., https://api.lantern.run)."
+variable "pal_control_plane_endpoint" {
+  description = "Endpoint of the PAL Runtime control plane (default https://api.lantern.run)."
   type        = string
-  default     = "https://api.lantern.run"
+  default     = null
+}
+
+variable "lantern_control_plane_endpoint" {
+  description = "Deprecated alias of pal_control_plane_endpoint; still honored when the PAL name is unset."
+  type        = string
+  default     = null
 }
 
 variable "tenant_id" {
-  description = "Lantern tenant ID provisioned during onboarding."
+  description = "PAL Runtime tenant ID provisioned during onboarding."
   type        = string
 }
 
@@ -81,10 +87,21 @@ variable "agent_token" {
   sensitive   = true
 }
 
-variable "lantern_version" {
-  description = "Data plane image tag (global.image.tag). The chart itself is the in-repo infra/helm/lantern-data-plane."
+variable "pal_version" {
+  description = "Data plane image tag (global.image.tag; default 0.1.0). The chart itself is the in-repo infra/helm/pal-data-plane."
   type        = string
-  default     = "0.1.0"
+  default     = null
+}
+
+variable "lantern_version" {
+  description = "Deprecated alias of pal_version; still honored when the PAL name is unset."
+  type        = string
+  default     = null
+}
+
+locals {
+  control_plane_endpoint = coalesce(var.pal_control_plane_endpoint, var.lantern_control_plane_endpoint, "https://api.lantern.run")
+  chart_version          = coalesce(var.pal_version, var.lantern_version, "0.1.0")
 }
 
 variable "firecracker_enabled" {
@@ -97,7 +114,7 @@ variable "tags" {
   description = "Tags to apply to all AWS resources."
   type        = map(string)
   default = {
-    "managed-by" = "lantern-terraform"
+    "managed-by" = "pal-terraform"
     "component"  = "data-plane"
   }
 }

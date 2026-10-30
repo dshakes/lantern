@@ -297,7 +297,7 @@ lantern run agent.yaml --input '{"name":"Ada"}'
 
 `deploy` exit codes: 3 auth, 4 quota/budget (402), 5 not found, 6 server error.
 The data plane the cloud schedules onto is provisioned from
-`infra/terraform/` (EKS/GKE/AKS) + `infra/helm/lantern`; see
+`infra/terraform/` (EKS/GKE/AKS) + `infra/helm/pal-data-plane`; see
 `infra/terraform/README.md` for what is validated.
 
 ---

@@ -285,7 +285,7 @@ resource "aws_iam_role" "data_plane" {
       }
       Condition = {
         StringEquals = {
-          "${local.oidc_issuer_hostpath}:sub" = "system:serviceaccount:lantern:lantern-data-plane"
+          "${local.oidc_issuer_hostpath}:sub" = "system:serviceaccount:lantern:pal-data-plane"
           "${local.oidc_issuer_hostpath}:aud" = "sts.amazonaws.com"
         }
       }

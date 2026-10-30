@@ -56,7 +56,7 @@ run "new_cluster" {
     error_message = "blob containers must not be publicly readable"
   }
   assert {
-    condition     = azurerm_federated_identity_credential.data_plane.subject == "system:serviceaccount:lantern:lantern-data-plane"
+    condition     = azurerm_federated_identity_credential.data_plane.subject == "system:serviceaccount:lantern:pal-data-plane"
     error_message = "workload identity must federate the chart's service account"
   }
 }
