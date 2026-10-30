@@ -506,9 +506,9 @@ func main() {
 	httpMux.HandleFunc("POST /v1/connectors/oauth/start", authHandler.WithScope(handlers.ScopeConnectorsWrite, connectorHandler.OAuthStart))
 	httpMux.HandleFunc("GET /v1/connectors/gmail/messages", authHandler.WithScope(handlers.ScopeConnectorsRead, gmailHandler.GetMessages))
 	// Connector executor — registered before {id} to avoid path conflict.
-	// GET variant is used for ?action= query-param style reads; scoped as
-	// connectors:read so read-only API keys can call informational actions.
-	httpMux.HandleFunc("GET /v1/connectors/{connectorId}/execute", authHandler.WithScope(handlers.ScopeConnectorsRead, connectorExecutor.Execute))
+	// Both GET (?action= style) and POST can invoke write-capable connector
+	// actions (send message, create event, etc.) so both require connectors:write.
+	httpMux.HandleFunc("GET /v1/connectors/{connectorId}/execute", authHandler.WithScope(handlers.ScopeConnectorsWrite, connectorExecutor.Execute))
 	httpMux.HandleFunc("POST /v1/connectors/{connectorId}/execute", authHandler.WithScope(handlers.ScopeRunsExecute, connectorExecutor.Execute))
 	// Twilio webhooks — owner's private agent channel. NO auth
 	// middleware (Twilio HMAC verification is done inside the handler).
