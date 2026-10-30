@@ -1,0 +1,184 @@
+---
+title: Observability
+description: One OTel trace per spawn, GenAI token telemetry, the lantern.* run metrics, anomaly detection and the service-health sweep.
+glance:
+  what: "One OpenTelemetry trace per run tagged with tenant, run and step ids, GenAI token attributes, the lantern.* run metrics and anomaly events."
+  why: "You can answer what an agent is doing now, and what it did last Tuesday, with one id."
+  how: "Set OTEL_EXPORTER_OTLP_ENDPOINT, then query your trace backend for lantern.run_id=<run_id>."
+sidebar:
+  order: 1
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import { TracePropagation } from '../../../../components/diagrams';
+
+<TracePropagation client:visible />
+
+Every run produces a trace: a timeline of each step with its timing, model, tokens and cost, tagged with tenant, run and step. It works with any OpenTelemetry backend (Grafana, Datadog, Jaeger) and is a no-op when switched off. Spans, metrics, journal rows and receipts share the same identifiers, so nothing needs correlation glue.
+
+## One trace per spawn
+
+Every run opens a single OTel trace. Spans from every entry point use the attribute keys in the [contract below](#otel-span-attribute-contract), stamped by one `EnrichSpan` helper (`internal/middleware/span.go`) so HTTP and gRPC paths never drift.
+
+On the **microVM tier**, scheduler spans carry `tenant_id` and `vm_id`; the per-VM isolation class is recorded as a container/pod label, and the trace context propagates through the manager into the harness (see [Identity and secrets](/docs/security/identity/) for the per-spawn identity). A [durable resume](/docs/runtime/durable-execution/) starts a new trace tagged with the same `lantern.run_id`.
+
+The trace spine, with W3C `traceparent` propagated at every boundary:
+
+```
+gateway.request                       tenant_id
+  control-plane: run dispatch         run_id
+    model-router: route               step_id · model_used · tokens · cost_usd
+      runtime-scheduler: schedule     tenant_id · vm_id
+        runtime-manager → harness     traceparent propagated
+```
+
+## Enabling OTel
+
+Export is env-gated. Set the endpoint and traces flow; leave it unset and tracing is a no-op (zero overhead):
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+# or
+PAL_OTEL_ENABLED=1   # uses default localhost endpoint
+```
+
+<Aside title="W3C traceparent is always active">
+Inbound trace context is forwarded correctly even without an exporter configured.
+</Aside>
+
+## GenAI semantic conventions
+
+LLM steps are annotated with OTel GenAI semantic-convention attributes, including **reasoning tokens** and **cache tokens**, not just plain input/output counts. Per-step cost attribution and model-usage breakdowns work out of the box with any OTel-compatible backend.
+
+## OTel span attribute contract
+
+Control-plane spans use the first four keys, set via `internal/middleware.EnrichSpan`. They are no-ops when telemetry is disabled.
+
+| Attribute | Key | Set by |
+| --- | --- | --- |
+| Tenant | `lantern.tenant_id` | HTTP enrichment middleware + gRPC tracing interceptor |
+| User | `lantern.user_id` | Same |
+| Run | `lantern.run_id` | Same + inline executor |
+| Step | `lantern.step_id` | Inline executor per step |
+| VM ID (microVM) | `vm_id` | Scheduler spans |
+| Model used | `model_used` | Model-router completion span |
+| Cost USD | `cost_usd` | Model-router completion span |
+| Tokens in / out | `tokens_in` / `tokens_out` | Model-router completion span |
+
+## The `lantern.*` run metrics
+
+The control plane registers seven OTel metric instruments via the `lantern.runtime` meter (`internal/middleware/metrics.go`). They are no-ops when the global `MeterProvider` is unset (the default no-op provider is safe to import with zero overhead).
+
+| Instrument | Type | Attributes | Description |
+| --- | --- | --- | --- |
+| `lantern.run.step.duration` | Histogram (ms) | `lantern.agent_name`, `lantern.node_type`, `lantern.tier`, `lantern.outcome` | Wall-clock duration of one workflow step, including all retry backoff. `outcome` is `ok`, `failed`, or `retried`. |
+| `lantern.run.step.retries` | Counter | `lantern.agent_name`, `lantern.node_type`, `lantern.tier` | Extra attempts beyond the first. Only incremented when `retryCount > 0`. |
+| `lantern.run.replay.skips` | Counter | `lantern.agent_name` | `CompletedStep` cache hits during crash-resume. Each hit means one node was skipped rather than re-executed. |
+| `lantern.run.budget.blocks` | Counter | `lantern.agent_name` | Runs denied by the agent's hard-fail budget policy (HTTP 402). |
+| `lantern.run.total` | Counter | `lantern.agent_name`, `lantern.tier`, `lantern.status` | Total runs dispatched through the inline executor. `lantern.tier` is currently always `shared`; `lantern.status` is `succeeded` or `failed` (workflow runs whose steps failed are counted as `succeeded`, a known gap). |
+| `lantern.budget.check.errors` | Counter | `lantern.budget_check` (`tenant`, `agent`, `run`, `tool`), `lantern.agent_name` | Budget lookups that errored and failed closed. |
+| `lantern.onboarding.step.total` | Counter | `lantern.onboarding_step`, `lantern.onboarding_event` | Steps of the agentic onboarding flow. |
+
+## Real-time anomaly detection
+
+The runtime watches the live event stream and journals an `anomaly_detected` event with one of `runaway_loop`, `excessive_steps`, `retry_storm`, `cost_spike` or `token_spike`. It shows up in the run waterfall.
+
+## Peer-service health sweep
+
+A background loop in the control-plane TCP-probes its peer services every 60 s (`PAL_HEALTH_SWEEP_INTERVAL`; set `"0"` or `"off"` to disable). After 3 consecutive failures it declares a peer **DOWN** and sends one alert to the operator's notification channel. It sends one more when the peer recovers. There are no alert storms: only state transitions fire notifications.
+
+Services probed when their address env var is set:
+
+- `model-router`: `PAL_MODEL_ROUTER_ADDR` (only when `PAL_USE_MODEL_ROUTER=1` or the address is non-default).
+- `runtime-scheduler`: `PAL_SCHEDULER_GRPC_ADDR`.
+- `runtime-manager`: `PAL_DEFAULT_MANAGER_ADDR`.
+- `workflow-engine`: `PAL_WORKFLOW_ENGINE_ADDR` (optional).
+
+Read the current snapshot:
+
+```
+GET /v1/system/health    # JWT-authed
+```
+
+```json
+{
+  "services": [
+    {
+      "name": "runtime-manager",
+      "addr": "localhost:50054",
+      "up": false,
+      "consecutiveFailures": 5,
+      "lastChecked": "2026-07-23T10:00:00Z",
+      "lastTransition": "2026-07-23T09:57:00Z"
+    }
+  ]
+}
+```
+
+## Metrics endpoint
+
+Per-VM live stats for the caller's tenant:
+
+```
+GET /v1/runtime/metrics
+```
+
+Returns a `vmMetricsDTO` array with `vmId`, `state`, `node`, `az`, `isolationClass`, `promMetrics` (raw Prometheus text from the harness), and timestamps. Per-instance detail: `GET /v1/runtime/vms/{id}`. Live log stream: `GET /v1/runtime/vms/{id}/logs` (SSE). The dashboard runtime page (`/runtime`) renders all three.
+
+## Gateway and model-router traces
+
+The **gateway** emits one span per HTTP request (`gateway.request`, tagged with `tenant_id`) via OTLP/HTTP. The **model-router** emits one span per routing call tagged with `tenant_id`, `run_id`, `step_id`, `model_used`, `tokens_in/out`, `cost_usd`, and `escalated` via OTLP/gRPC. Both honour inbound W3C `traceparent`, so spans join the caller's distributed trace automatically.
+
+<Aside type="caution" title="The gateway has no Prometheus metrics yet">
+The model-router and runtime-manager expose Prometheus metrics only when `PAL_METRICS_ADDR` is set (ports 9465 and 9466 in ADR 0041); the gateway still emits traces only, so its latency SLO lives in your tracing backend (Tempo / Jaeger / Honeycomb). Rules that need a missing series are parked in the `pal-TODO-needs-instrumentation` group in `infra/monitoring/prometheus/alerts.yml`.
+</Aside>
+
+## Find a run, its logs and its audit trail
+
+Every control-plane span carries `lantern.run_id`, so one run is one query in your trace backend:
+
+```
+# Jaeger:    service=lantern.control-plane lantern.run_id=<run_id>
+# Tempo:     { span.lantern.run_id = "<run_id>" }
+# Honeycomb: WHERE lantern.run_id = "<run_id>"
+```
+
+VM logs and the runtime audit trail (spawn, terminate, secret vend, egress deny, 403s) are plain API calls:
+
+```bash
+pal vm logs <vm-id>                                    # or: GET /v1/runtime/vms/{id}/logs (SSE)
+curl "$API/v1/runtime/audit?limit=50" -H "Authorization: Bearer $TOKEN"
+```
+
+Logs are stored in `runtime_vm_logs` with a retention sweep (`PAL_RUNTIME_LOG_RETENTION_DAYS`, see [Environment variables](/docs/reference/env-vars/)). Audit events are also attached to the trace as span events.
+
+## Prometheus alerts, dashboards, runbooks
+
+Production monitoring artifacts live in `infra/monitoring/`:
+
+| Group | Alerts | Source |
+| --- | --- | --- |
+| `pal-scheduler` | SchedulerDown, SchedulerNoLeader, SchedulerScheduleErrorRateHigh, SchedulerQuotaRejectionSurge, SchedulerNoRegisteredNodes | runtime-scheduler `:8085/metrics` |
+| `pal-liveness` | ControlPlaneDown, ControlPlaneNotReady, GatewayDown, ModelRouterDown | `up` scrape + blackbox `/readyz` |
+| `pal-postgres` | PostgresExporterDown, PostgresConnectionSaturation, DataPlaneHeartbeatStale, CronScheduleOverdue | postgres_exporter + custom queries |
+| `pal-instrumented-slos` | ControlPlane5xxRateHigh, ControlPlane403RateElevated, RunFailureRateHigh, BudgetDenied402Surge | control-plane `:9464` |
+
+Operator runbooks live in `docs/runbooks/` and are linked from each alert's `runbook:` annotation in `alerts.yml`. Grafana dashboards: `grafana/platform-overview.json` and `grafana/data-plane-runtime.json`.
+
+## SLOs and error budgets
+
+Ten SLOs over a 28-day window are defined once in the Helm values (`monitoring.slos`: SLI as bad over total, objective, job, runbook); recording rules and alerts are generated from that list (ADR 0041).
+
+| SLO | Objective |
+| --- | --- |
+| control-plane API availability / latency (under 1 s) | 99.9% / 99% |
+| run success | 98% |
+| scheduling availability / latency (under 1 s) | 99.5% / 99% |
+| model-router errors | 99.5% |
+| microVM spawn availability | 99.5% |
+| microVM cold boot (under 5 s) / snapshot restore (under 2 s) | 95% / 99% |
+| egress-broker errors | 99.5% |
+
+Alerts burn on multiple windows: page at 14.4x over 1 h and 5 m or 6x over 6 h and 30 m, ticket at 3x over 1 d and 2 h or 1x over 3 d and 6 h. Both windows must exceed the threshold, so a burst that already ended does not page. A policy deny at the egress broker counts as good; only platform faults burn that SLO.
+
+`monitoring.alerts.enabled` renders a `PrometheusRule` (needs the prometheus-operator CRDs; on in `values-prod.yaml`) and `monitoring.dashboards.enabled` a Grafana dashboard. Each alert links its `docs/runbooks/slo-*.md` runbook. The targets were chosen without production history, so review them after the first full window.
