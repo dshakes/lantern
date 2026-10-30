@@ -39,6 +39,10 @@ CREATE TABLE IF NOT EXISTS batches (
     concurrency     INT         NOT NULL DEFAULT 0,  -- 0 = unlimited within child budgets
     idempotency_key TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- Liveness: the dispatching replica bumps this while it is still fanning
+    -- out / waiting on items; crash recovery only touches batches whose
+    -- heartbeat is stale, so a long-running live batch is never finalized.
+    heartbeat_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     finished_at     TIMESTAMPTZ
 );
 

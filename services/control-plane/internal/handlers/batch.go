@@ -68,6 +68,15 @@ const (
 	// this long without dispatching all items is almost certainly dead.
 	batchRecoveryForceAge = 20 * time.Minute
 
+	// batchHeartbeatInterval is how often a live dispatcher bumps
+	// batches.heartbeat_at; must stay well under batchRecoveryMinAge.
+	batchHeartbeatInterval = 30 * time.Second
+
+	// Spawn-limiter backoff for batch items (see spawnBatchRun).
+	batchSpawnBackoffMin = 500 * time.Millisecond
+	batchSpawnBackoffMax = 10 * time.Second
+	batchSpawnRateWait   = 30 * time.Minute
+
 	// batchRecoverySweepLimit caps how many stuck batches are processed per
 	// sweep to bound single-tick latency.
 	batchRecoverySweepLimit = 50
@@ -505,6 +514,12 @@ func (h *BatchHandler) dispatchBatch(batchID, tenantID string, body createBatchR
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 
+	// Heartbeat until finalize so crash recovery (on any replica) can tell this
+	// batch is still live however long it runs (rate-limited fan-out included).
+	hbCtx, stopHeartbeat := context.WithCancel(ctx)
+	defer stopHeartbeat()
+	go h.heartbeat(hbCtx, batchID, log)
+
 	for _, item := range body.Items {
 		item := item
 		// Check if the batch was cancelled externally (CancelBatch) before
@@ -581,6 +596,26 @@ func (h *BatchHandler) dispatchBatch(batchID, tenantID string, body createBatchR
 	h.finalizeBatch(ctx, tenantID, batchID, body.CallbackUrl, log)
 }
 
+// heartbeat bumps batches.heartbeat_at every batchHeartbeatInterval until ctx
+// is cancelled (dispatchBatch returned).
+func (h *BatchHandler) heartbeat(ctx context.Context, batchID string, log *zap.Logger) {
+	t := time.NewTicker(batchHeartbeatInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		// rls-exempt: keyed by the authorised batch id.
+		if _, err := h.srv.Pool.Exec(ctx,
+			`UPDATE batches SET heartbeat_at = now() WHERE id = $1 AND status = 'running'`, batchID,
+		); err != nil && ctx.Err() == nil {
+			log.Warn("batch heartbeat failed", zap.Error(err))
+		}
+	}
+}
+
 // spawnBatchRun creates one child run and links it to the batch. Returns the
 // run ID on success, "" on failure.
 //
@@ -595,20 +630,45 @@ func (h *BatchHandler) spawnBatchRun(ctx context.Context, batchID, tenantID, age
 	// Use rest.CreateRun via an in-process recorder (same pattern as triggers.go
 	// startRun) so budget checks, spawn limits, and routing apply identically.
 	ctx = storeClaimsInCtx(ctx, &PalClaims{TenantID: tenantID, Role: "service"})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/v1/runs",
-		bytes.NewReader(inputJSON))
-	if err != nil {
-		log.Warn("spawnBatchRun: build request failed", zap.Error(err))
-		return ""
+	// A batch is queued work, not a spawn storm: when the per-tenant spawn
+	// limiter answers 429 (no side effect), wait for a token and retry instead
+	// of failing the item. Bounded by batchSpawnRateWait and by cancellation.
+	var rec *httptest.ResponseRecorder
+	backoff := batchSpawnBackoffMin
+	deadline := time.Now().Add(batchSpawnRateWait)
+	for {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/v1/runs",
+			bytes.NewReader(inputJSON))
+		if err != nil {
+			log.Warn("spawnBatchRun: build request failed", zap.Error(err))
+			return ""
+		}
+		// Per-item idempotency: if the caller supplied a key for this item, forward
+		// it so a crash-replay of dispatchBatch returns the existing run instead of
+		// creating a duplicate (ADR 0033 §per-item-dedup).
+		if item.IdempotencyKey != "" {
+			req.Header.Set("Idempotency-Key", item.IdempotencyKey)
+		}
+		rec = httptest.NewRecorder()
+		h.rest.CreateRun(rec, req)
+		if rec.Code != http.StatusTooManyRequests || time.Now().After(deadline) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ""
+		case <-time.After(backoff):
+		}
+		if backoff *= 2; backoff > batchSpawnBackoffMax {
+			backoff = batchSpawnBackoffMax
+		}
+		// rls-exempt: keyed by the authorised batch id.
+		var cancelled bool
+		_ = h.srv.Pool.QueryRow(ctx, `SELECT status = 'cancelled' FROM batches WHERE id = $1`, batchID).Scan(&cancelled)
+		if cancelled {
+			return ""
+		}
 	}
-	// Per-item idempotency: if the caller supplied a key for this item, forward
-	// it so a crash-replay of dispatchBatch returns the existing run instead of
-	// creating a duplicate (ADR 0033 §per-item-dedup).
-	if item.IdempotencyKey != "" {
-		req.Header.Set("Idempotency-Key", item.IdempotencyKey)
-	}
-	rec := httptest.NewRecorder()
-	h.rest.CreateRun(rec, req)
 	var resp map[string]any
 	if json.Unmarshal(rec.Body.Bytes(), &resp) != nil || rec.Code != http.StatusCreated {
 		log.Warn("spawnBatchRun: CreateRun failed",
@@ -751,7 +811,7 @@ func (h *BatchHandler) recoverStuckBatches(ctx context.Context, log *zap.Logger)
 		SELECT id, tenant_id, COALESCE(callback_url, ''),
 		       EXTRACT(EPOCH FROM now() - created_at)::BIGINT AS age_secs
 		FROM batches
-		WHERE status = 'running' AND created_at < now() - $1::interval
+		WHERE status = 'running' AND heartbeat_at < now() - $1::interval
 		LIMIT $2
 	`, batchRecoveryMinAge.String(), batchRecoverySweepLimit)
 	if err != nil {

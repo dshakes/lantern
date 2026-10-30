@@ -274,3 +274,43 @@ func TestRLSBatches_SSRFCallbackUrl(t *testing.T) {
 		t.Errorf("SSRF callbackUrl: got %d, want 400; body: %s", rr.Code, rr.Body.String())
 	}
 }
+
+// TestBatchRecovery_HeartbeatGatesFinalization pins the live-batch race fix:
+// recovery must never finalize a batch whose dispatcher is still heartbeating,
+// however old the batch is, and must finalize it once the heartbeat goes stale.
+func TestBatchRecovery_HeartbeatGatesFinalization(t *testing.T) {
+	e := newEnforcedServer(t)
+	h := newEnforcedBatchHandlers(t, e)
+	ctx := context.Background()
+	tenant := seedEnforcedTenant(t, e, "batch-hb-"+uuid.NewString()[:8])
+	id := seedBatchDirect(t, e, tenant, "agent-hb", 1)
+	log := zap.NewNop()
+
+	status := func() string {
+		var s string
+		if err := e.superPool.QueryRow(ctx, `SELECT status FROM batches WHERE id = $1`, id).Scan(&s); err != nil {
+			t.Fatalf("read status: %v", err)
+		}
+		return s
+	}
+
+	// Old batch, live dispatcher (fresh heartbeat), no child runs yet.
+	if _, err := e.superPool.Exec(ctx,
+		`UPDATE batches SET created_at = now() - interval '2 hours', heartbeat_at = now() WHERE id = $1`, id); err != nil {
+		t.Fatal(err)
+	}
+	h.recoverStuckBatches(ctx, log)
+	if got := status(); got != "running" {
+		t.Fatalf("live batch (fresh heartbeat) was finalized by recovery: status=%s", got)
+	}
+
+	// Dispatcher died: heartbeat stale → recovery finalizes.
+	if _, err := e.superPool.Exec(ctx,
+		`UPDATE batches SET heartbeat_at = now() - interval '1 hour' WHERE id = $1`, id); err != nil {
+		t.Fatal(err)
+	}
+	h.recoverStuckBatches(ctx, log)
+	if got := status(); got == "running" {
+		t.Fatalf("dead batch (stale heartbeat) was not recovered")
+	}
+}
