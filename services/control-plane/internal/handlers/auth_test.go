@@ -303,7 +303,7 @@ func mintExpiredToken(t *testing.T, tenantID, userID, role string) string {
 			Subject:   userID,
 			IssuedAt:  jwt.NewNumericDate(past.Add(-time.Hour)),
 			ExpiresAt: jwt.NewNumericDate(past),
-			Issuer:    "lantern-test",
+			Issuer:    "pal-test",
 		},
 		TenantID: tenantID,
 		Role:     role,

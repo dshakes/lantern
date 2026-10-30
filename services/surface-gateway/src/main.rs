@@ -171,15 +171,15 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    let tenant_resolver = TenantResolver::new(config.lantern_tenant_id.clone());
-    if config.lantern_tenant_id.is_none() {
+    let tenant_resolver = TenantResolver::new(config.pal_tenant_id.clone());
+    if config.pal_tenant_id.is_none() {
         tracing::warn!(
             "LANTERN_TENANT_ID is not set — all inbound webhooks will be rejected at \
              tenant resolution; set this to the PAL tenant UUID for this deployment"
         );
     } else {
         tracing::info!(
-            tenant_id = ?config.lantern_tenant_id,
+            tenant_id = ?config.pal_tenant_id,
             "tenant resolver configured"
         );
     }

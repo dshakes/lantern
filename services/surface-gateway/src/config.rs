@@ -55,7 +55,7 @@ pub struct Config {
     /// Set `LANTERN_TENANT_ID`.  Required for production.  If unset the gateway will
     /// still start but every webhook dispatch will be rejected at the tenant-resolution
     /// step with a 503.
-    pub lantern_tenant_id: Option<String>,
+    pub pal_tenant_id: Option<String>,
 }
 
 impl Config {
@@ -105,7 +105,7 @@ impl Config {
                 .collect(),
             service_token,
             agent_name,
-            lantern_tenant_id: pal_env::var("PAL_TENANT_ID").ok(),
+            pal_tenant_id: pal_env::var("PAL_TENANT_ID").ok(),
         })
     }
 }

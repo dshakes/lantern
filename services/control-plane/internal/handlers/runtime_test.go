@@ -55,7 +55,7 @@ func mintTestToken(t *testing.T, tenantID, userID, role string) string {
 			Subject:   userID,
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(24 * time.Hour)),
-			Issuer:    "lantern-test",
+			Issuer:    "pal-test",
 		},
 		TenantID: tenantID,
 		Email:    userID + "@test.example",

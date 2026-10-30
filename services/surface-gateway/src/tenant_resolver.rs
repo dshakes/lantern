@@ -39,7 +39,7 @@ pub struct TenantResolver {
 impl TenantResolver {
     /// Create a resolver from the configured tenant UUID.
     ///
-    /// `tenant_id` should come from `Config::lantern_tenant_id`.
+    /// `tenant_id` should come from `Config::pal_tenant_id`.
     pub fn new(tenant_id: Option<String>) -> Self {
         Self { tenant_id }
     }
