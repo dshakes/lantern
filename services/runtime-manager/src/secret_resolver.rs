@@ -290,7 +290,7 @@ impl RelaySecretResolver {
 
         // Enforce https:// unless the dev escape hatch is explicitly set.
         if url.starts_with("http://") {
-            let insecure_ok = pal_env::var(ENV_RELAY_ALLOW_INSECURE).as_deref() == Ok("1");
+            let insecure_ok = std::env::var(ENV_RELAY_ALLOW_INSECURE).as_deref() == Ok("1");
             if insecure_ok {
                 // Emit a prominent warning; never log the token.
                 tracing::warn!(
@@ -341,10 +341,10 @@ impl RelaySecretResolver {
     /// In practice `build()` calls `from_env_or_err` so a bad URL is a hard
     /// startup error, not a silent fallback.
     pub fn from_env() -> Option<Self> {
-        let url = pal_env::var(ENV_CONTROL_PLANE_URL).ok()?;
-        let token = pal_env::var(ENV_RUNTIME_SECRET_TOKEN).ok()?;
-        let tenant_id = pal_env::var("PAL_TENANT_ID").unwrap_or_default();
-        let vm_id = pal_env::var("PAL_VM_ID").unwrap_or_default();
+        let url = std::env::var(ENV_CONTROL_PLANE_URL).ok()?;
+        let token = std::env::var(ENV_RUNTIME_SECRET_TOKEN).ok()?;
+        let tenant_id = std::env::var("PAL_TENANT_ID").unwrap_or_default();
+        let vm_id = std::env::var("PAL_VM_ID").unwrap_or_default();
         // Silently suppress the error here; `build()` uses from_env_or_err
         // for the hard-failure path.
         Self::new(url, token, tenant_id, vm_id).ok()
@@ -354,16 +354,16 @@ impl RelaySecretResolver {
     /// than `None`, so callers can distinguish "env vars not set" (returns
     /// `Ok(None)`) from "vars set but URL is bad" (returns `Err`).
     pub fn from_env_or_err() -> Result<Option<Self>, SecretResolverError> {
-        let url = match pal_env::var(ENV_CONTROL_PLANE_URL) {
+        let url = match std::env::var(ENV_CONTROL_PLANE_URL) {
             Ok(v) => v,
             Err(_) => return Ok(None),
         };
-        let token = match pal_env::var(ENV_RUNTIME_SECRET_TOKEN) {
+        let token = match std::env::var(ENV_RUNTIME_SECRET_TOKEN) {
             Ok(v) => v,
             Err(_) => return Ok(None),
         };
-        let tenant_id = pal_env::var("PAL_TENANT_ID").unwrap_or_default();
-        let vm_id = pal_env::var("PAL_VM_ID").unwrap_or_default();
+        let tenant_id = std::env::var("PAL_TENANT_ID").unwrap_or_default();
+        let vm_id = std::env::var("PAL_VM_ID").unwrap_or_default();
         Self::new(url, token, tenant_id, vm_id).map(Some)
     }
 
@@ -911,8 +911,8 @@ mod tests {
         // In the test environment neither LANTERN_CONTROL_PLANE_URL nor
         // LANTERN_RUNTIME_SECRET_TOKEN should be set → None.
         // If they happen to be set in CI the test is a no-op (not a failure).
-        if pal_env::var(ENV_CONTROL_PLANE_URL).is_err()
-            || pal_env::var(ENV_RUNTIME_SECRET_TOKEN).is_err()
+        if std::env::var(ENV_CONTROL_PLANE_URL).is_err()
+            || std::env::var(ENV_RUNTIME_SECRET_TOKEN).is_err()
         {
             assert!(
                 relay.is_none(),
@@ -932,7 +932,7 @@ mod tests {
         // Ensure the escape hatch is NOT set.  We read the current value and
         // assert only when it is absent, so concurrent tests that set it for
         // their own purposes don't cause a false failure here.
-        if pal_env::var(ENV_RELAY_ALLOW_INSECURE).is_ok() {
+        if std::env::var(ENV_RELAY_ALLOW_INSECURE).is_ok() {
             // Escape hatch already active in this process; skip rather than
             // fight the global env.
             return;
@@ -1006,7 +1006,7 @@ mod tests {
 
     #[test]
     fn scheme_refusal_error_contains_no_token() {
-        if pal_env::var(ENV_RELAY_ALLOW_INSECURE).is_ok() {
+        if std::env::var(ENV_RELAY_ALLOW_INSECURE).is_ok() {
             return; // escape hatch active; test inapplicable
         }
 

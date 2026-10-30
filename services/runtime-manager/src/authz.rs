@@ -37,7 +37,7 @@ impl ManagerAuth {
     /// Build from env. Errors (refuse to start) in prod when the token is unset.
     pub fn from_env() -> anyhow::Result<Self> {
         Self::from_parts(
-            pal_env::var(ENV_SERVICE_TOKEN).ok(),
+            std::env::var(ENV_SERVICE_TOKEN).ok(),
             crate::tls::is_prod_env(),
         )
     }

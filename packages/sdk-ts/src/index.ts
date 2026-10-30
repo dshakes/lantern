@@ -127,5 +127,3 @@ export type {
   ExecStreamEvent,
   ExecResult,
 } from "./types.js";
-export * from "./deprecated.js";
-export * from "./runtime/deprecated.js";

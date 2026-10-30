@@ -66,7 +66,7 @@ use tonic::transport::ServerTlsConfig;
 /// Returns `true` when `LANTERN_ENV` indicates a production-like environment.
 pub fn is_prod_env() -> bool {
     matches!(
-        pal_env::var("PAL_ENV")
+        std::env::var("PAL_ENV")
             .unwrap_or_default()
             .to_lowercase()
             .as_str(),
@@ -113,9 +113,9 @@ const VM_CERT_TTL_DAYS: i64 = 1;
 ///
 /// The returned config requires client certs signed by `LANTERN_MANAGER_TLS_CA`.
 pub fn build_server_tls_config() -> anyhow::Result<Option<ServerTlsConfig>> {
-    let ca_path = pal_env::var(ENV_CA).ok();
-    let cert_path = pal_env::var(ENV_CERT).ok();
-    let key_path = pal_env::var(ENV_KEY).ok();
+    let ca_path = std::env::var(ENV_CA).ok();
+    let cert_path = std::env::var(ENV_CERT).ok();
+    let key_path = std::env::var(ENV_KEY).ok();
 
     match (ca_path, cert_path, key_path) {
         (Some(ca), Some(cert), Some(key)) => {
@@ -135,7 +135,7 @@ pub fn build_server_tls_config() -> anyhow::Result<Option<ServerTlsConfig>> {
                 eprintln!(
                     "FATAL: {ENV_CA}, {ENV_CERT}, {ENV_KEY} are required in production \
                      (LANTERN_ENV={:?}). Refusing to start without mTLS.",
-                    pal_env::var("PAL_ENV").unwrap_or_default()
+                    std::env::var("PAL_ENV").unwrap_or_default()
                 );
                 std::process::exit(1);
             }
@@ -456,16 +456,16 @@ fn set_dir_mode_0700(dir: &Path) -> anyhow::Result<()> {
 /// available — in that case per-VM cert issuance is skipped (dev plaintext;
 /// the prod gate in [`build_server_tls_config`] already forces mTLS on).
 pub fn load_signing_ca() -> anyhow::Result<Option<(String, String)>> {
-    let cert_path = pal_env::var(ENV_SIGNING_CA_CERT)
+    let cert_path = std::env::var(ENV_SIGNING_CA_CERT)
         .ok()
-        .or_else(|| pal_env::var(ENV_CA).ok());
+        .or_else(|| std::env::var(ENV_CA).ok());
     // The server cert env var holds the SERVER leaf, not a CA key, so we only
     // fall back to ENV_KEY when it is explicitly the CA key topology. To stay
     // safe we require an explicit signing-CA key unless ENV_CA doubles as a
     // self-signed CA whose key is in ENV_KEY.
-    let key_path = pal_env::var(ENV_SIGNING_CA_KEY)
+    let key_path = std::env::var(ENV_SIGNING_CA_KEY)
         .ok()
-        .or_else(|| pal_env::var(ENV_KEY).ok());
+        .or_else(|| std::env::var(ENV_KEY).ok());
 
     match (cert_path, key_path) {
         (Some(c), Some(k)) => {

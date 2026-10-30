@@ -100,7 +100,7 @@ impl ManagerClient {
     pub fn new(manager_addr: String, vm_id: String) -> Self {
         // Read the per-instance identity token once at construction. An empty
         // string is treated the same as absent — we never send a blank Bearer.
-        let agent_instance_token = pal_env::var("PAL_AGENT_INSTANCE_TOKEN")
+        let agent_instance_token = std::env::var("PAL_AGENT_INSTANCE_TOKEN")
             .ok()
             .filter(|t| !t.is_empty());
         Self {
@@ -110,7 +110,7 @@ impl ManagerClient {
             restore_hint: Arc::new(tokio::sync::Notify::new()),
             agent_instance_token: Arc::new(std::sync::RwLock::new(agent_instance_token)),
             exec_token: Arc::new(std::sync::RwLock::new(
-                pal_env::var("PAL_HARNESS_EXEC_TOKEN").unwrap_or_default(),
+                std::env::var("PAL_HARNESS_EXEC_TOKEN").unwrap_or_default(),
             )),
             inner: Arc::new(Mutex::new(Inner {
                 report_tx: None,
@@ -467,7 +467,7 @@ impl ManagerClient {
     /// development where no manager process is running.
     pub async fn vend_secret(&self, req: VendSecretRequest) -> Result<VendSecretResponse> {
         // Dev stub escape-hatch — explicit opt-in only.
-        if pal_env::var("PAL_ALLOW_SECRET_STUB")
+        if std::env::var("PAL_ALLOW_SECRET_STUB")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false)
         {
@@ -605,7 +605,7 @@ impl ManagerClient {
 /// relays it to its own listener. mTLS is unchanged — tonic layers TLS over
 /// the custom connector, with the server name taken from the endpoint URI.
 fn manager_vsock_port() -> Option<u32> {
-    pal_env::var("PAL_MANAGER_VSOCK_PORT")
+    std::env::var("PAL_MANAGER_VSOCK_PORT")
         .ok()
         .and_then(|p| p.trim().parse().ok())
         .filter(|p| *p != 0)
@@ -707,7 +707,7 @@ mod tests {
     async fn vend_secret_fails_when_manager_unreachable_without_stub() {
         // Guard: do not accidentally pass when the env var is already set in
         // the test environment.
-        if pal_env::var("PAL_ALLOW_SECRET_STUB").is_ok() {
+        if std::env::var("PAL_ALLOW_SECRET_STUB").is_ok() {
             return; // skip — env already enables stub; different code path
         }
 

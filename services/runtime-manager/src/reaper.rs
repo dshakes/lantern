@@ -51,7 +51,7 @@ const SPAWN_GRACE: Duration = Duration::from_secs(30);
 /// Read the sweep interval from `LANTERN_REAPER_INTERVAL_SECS`.
 /// Values below 1s are ignored so a typo cannot spin the loop hot.
 fn interval_from_env() -> Duration {
-    pal_env::var("PAL_REAPER_INTERVAL_SECS")
+    std::env::var("PAL_REAPER_INTERVAL_SECS")
         .ok()
         .and_then(|s| s.trim().parse::<u64>().ok())
         .filter(|&n| n >= 1)

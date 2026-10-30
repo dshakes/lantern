@@ -107,10 +107,10 @@ async fn main() -> anyhow::Result<()> {
                 wasm: config.runtimeclass_wasm.clone(),
                 kata_cc: config.runtimeclass_kata_cc.clone(),
                 allow_runc_standard: config.allow_runc_standard,
-                node_label_gvisor: pal_env::var("PAL_NODE_LABEL_GVISOR")
+                node_label_gvisor: std::env::var("PAL_NODE_LABEL_GVISOR")
                     .ok()
                     .filter(|s| !s.trim().is_empty()),
-                node_label_kata: pal_env::var("PAL_NODE_LABEL_KATA")
+                node_label_kata: std::env::var("PAL_NODE_LABEL_KATA")
                     .ok()
                     .filter(|s| !s.trim().is_empty()),
             };
@@ -145,7 +145,7 @@ async fn main() -> anyhow::Result<()> {
             // L3: production broker mode must use the tenant-bound relay.
             egress_broker::check_broker_resolver(
                 fc.egress_mode(),
-                pal_env::var("PAL_ENV").ok().as_deref(),
+                std::env::var("PAL_ENV").ok().as_deref(),
                 matches!(
                     crate::secret_resolver::RelaySecretResolver::from_env_or_err(),
                     Ok(Some(_))
@@ -180,7 +180,7 @@ async fn main() -> anyhow::Result<()> {
     // RuntimeClass is configured + cluster-present after preflight); `cc_tech` is
     // the operator-declared hardware technology (SEV-SNP/TDX), empty when unset.
     let cc_capable = backend.satisfies_confidential();
-    let cc_tech = pal_env::var("PAL_CC_TECH")
+    let cc_tech = std::env::var("PAL_CC_TECH")
         .ok()
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_default();

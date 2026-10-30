@@ -200,10 +200,10 @@ pub fn build_report_request(
 /// Returns `Some((url, token))` when both env vars are set and non-empty.
 /// Returns `None` (dev/local mode) when either is absent.
 pub fn forward_config() -> Option<(String, String)> {
-    let url = pal_env::var(ENV_CONTROL_PLANE_URL)
+    let url = std::env::var(ENV_CONTROL_PLANE_URL)
         .ok()
         .filter(|s| !s.trim().is_empty())?;
-    let token = pal_env::var(ENV_RUNTIME_SECRET_TOKEN)
+    let token = std::env::var(ENV_RUNTIME_SECRET_TOKEN)
         .ok()
         .filter(|s| !s.trim().is_empty())?;
     Some((url, token))
@@ -477,8 +477,8 @@ mod tests {
     fn forward_config_returns_none_when_vars_absent() {
         // Only reliable when the vars are definitely NOT set in the test env.
         // We don't mutate std::env to avoid thread-safety issues in parallel tests.
-        if pal_env::var(ENV_CONTROL_PLANE_URL).is_ok()
-            && pal_env::var(ENV_RUNTIME_SECRET_TOKEN).is_ok()
+        if std::env::var(ENV_CONTROL_PLANE_URL).is_ok()
+            && std::env::var(ENV_RUNTIME_SECRET_TOKEN).is_ok()
         {
             // Both vars happen to be set in CI env; skip this assertion.
             return;

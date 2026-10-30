@@ -77,8 +77,8 @@ impl ImagePolicy {
 
     pub fn from_env() -> Result<Self, String> {
         Self::parse(
-            pal_env::var("PAL_VERIFY_SIGNATURES").ok().as_deref(),
-            pal_env::var("PAL_IMAGE_ALLOWED_REPOS").ok().as_deref(),
+            std::env::var("PAL_VERIFY_SIGNATURES").ok().as_deref(),
+            std::env::var("PAL_IMAGE_ALLOWED_REPOS").ok().as_deref(),
             crate::tls::is_prod_env(),
         )
     }

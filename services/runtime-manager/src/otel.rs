@@ -48,7 +48,7 @@ pub fn init() -> Option<SdkShutdown> {
     let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
         .ok()
         .filter(|s| !s.trim().is_empty());
-    let enabled = pal_env::var("PAL_OTEL_ENABLED")
+    let enabled = std::env::var("PAL_OTEL_ENABLED")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
 

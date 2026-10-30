@@ -446,7 +446,7 @@ impl ControlPlaneClient {
             endpoint.connect_lazy()
         };
 
-        let service_token = pal_env::var("PAL_GRPC_SERVICE_TOKEN").unwrap_or_default();
+        let service_token = std::env::var("PAL_GRPC_SERVICE_TOKEN").unwrap_or_default();
         if service_token.is_empty() {
             tracing::warn!(
                 "control-plane channel: LANTERN_GRPC_SERVICE_TOKEN unset — no service token attached (acceptable in dev, required in production)"

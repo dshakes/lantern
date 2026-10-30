@@ -6,7 +6,6 @@ WORKDIR /app
 # We expect the build to be run from the repo root with:
 #   docker build -f services/runtime-scheduler/Dockerfile .
 COPY gen/go /workspace/gen/go
-COPY packages/palenv /workspace/packages/palenv
 COPY services/runtime-scheduler /workspace/services/runtime-scheduler
 
 WORKDIR /workspace/services/runtime-scheduler

@@ -108,7 +108,7 @@ impl HarnessReady {
 const DEFAULT_HARNESS_READY_TIMEOUT: Duration = Duration::from_millis(5000);
 
 fn harness_ready_timeout() -> Duration {
-    pal_env::var("PAL_HARNESS_READY_TIMEOUT_MS")
+    std::env::var("PAL_HARNESS_READY_TIMEOUT_MS")
         .ok()
         .and_then(|v| v.parse().ok())
         .map(Duration::from_millis)
@@ -120,7 +120,7 @@ fn harness_ready_timeout() -> Duration {
 const DEFAULT_HARNESS_EXEC_PORT: u16 = 50056;
 
 fn harness_exec_port() -> u16 {
-    pal_env::var("PAL_HARNESS_EXEC_PORT")
+    std::env::var("PAL_HARNESS_EXEC_PORT")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(DEFAULT_HARNESS_EXEC_PORT)
@@ -648,7 +648,7 @@ impl RuntimeManagerGrpc {
         let mut req = request.into_inner();
         own_workload_env(
             &mut req.env,
-            pal_env::var("PAL_ENV").ok().as_deref(),
+            std::env::var("PAL_ENV").ok().as_deref(),
             &req.tenant_id,
             &req.agent_version_id,
         );
@@ -1036,7 +1036,7 @@ impl RuntimeManagerGrpc {
         // dropped, never trusted.
         own_workload_env(
             &mut req.env,
-            pal_env::var("PAL_ENV").ok().as_deref(),
+            std::env::var("PAL_ENV").ok().as_deref(),
             &req.tenant_id,
             "",
         );

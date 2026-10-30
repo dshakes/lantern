@@ -7,7 +7,6 @@ WORKDIR /app
 # build.rs reads ../../packages/proto/lantern/v1/runtime.proto, so the build
 # context is the repo root (see build-images.yml) and we preserve that layout.
 COPY packages/proto/ /app/packages/proto/
-COPY packages/pal-env-rs/ /app/packages/pal-env-rs/
 COPY services/runtime-manager/ /app/services/runtime-manager/
 WORKDIR /app/services/runtime-manager
 RUN cargo build --release

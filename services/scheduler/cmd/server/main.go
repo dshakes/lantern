@@ -22,7 +22,6 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/packages/palenv"
 	"github.com/dshakes/lantern/services/scheduler/internal/cron"
 	"github.com/dshakes/lantern/services/scheduler/internal/db"
 	"github.com/dshakes/lantern/services/scheduler/internal/handlers"
@@ -32,7 +31,6 @@ import (
 )
 
 func main() {
-	palenv.Bridge()
 	cfg := loadConfig()
 
 	logger := mustInitLogger(cfg.LogLevel)

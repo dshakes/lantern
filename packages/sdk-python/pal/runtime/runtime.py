@@ -9,7 +9,6 @@ from __future__ import annotations
 import os
 from enum import StrEnum
 
-from pal import _env
 
 
 class RuntimeMode(StrEnum):
@@ -23,7 +22,7 @@ def detect_mode() -> RuntimeMode:
     The PAL runtime sets ``LANTERN_RUNTIME=1`` in the sandbox
     environment.  Anything else is treated as dev mode.
     """
-    if _env.get("RUNTIME") == "1":
+    if os.environ.get("PAL_RUNTIME") == "1":
         return RuntimeMode.PRODUCTION
     return RuntimeMode.DEV
 

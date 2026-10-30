@@ -10,7 +10,7 @@ from typing import Any
 
 import httpx
 
-from pal import _env
+import os
 from pal.errors import PalApiError
 from pal.types import (
     AgentInfo,
@@ -61,10 +61,10 @@ class PalClient:
         timeout: float = 30.0,
         route_strategy: str | None = None,
     ) -> None:
-        self.base_url = (base_url or _env.get("API_URL") or "https://api.lantern.run").rstrip("/")
-        self._api_key = api_key or _env.get("API_KEY") or ""
+        self.base_url = (base_url or os.environ.get("PAL_API_URL") or "https://api.lantern.run").rstrip("/")
+        self._api_key = api_key or os.environ.get("PAL_API_KEY") or ""
         self._timeout = timeout
-        self._route_strategy = route_strategy or _env.get("ROUTE_STRATEGY") or "auto"
+        self._route_strategy = route_strategy or os.environ.get("PAL_ROUTE_STRATEGY") or "auto"
         self._client: httpx.AsyncClient | None = None
 
         # Bind sub-resource namespaces
@@ -1461,4 +1461,3 @@ class RehearseResponse:
         self.reason = reason
 
 
-LanternClient = PalClient  # deprecated alias, ADR 0032

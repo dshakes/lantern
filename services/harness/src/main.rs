@@ -77,19 +77,19 @@ fn require_workload_identity(
 
 fn parse_env() -> Result<HarnessEnv> {
     require_workload_identity(tls::is_prod_env(), supervisor::workload_identity())?;
-    let vm_id = pal_env::var("PAL_VM_ID").context("LANTERN_VM_ID env var required")?;
+    let vm_id = std::env::var("PAL_VM_ID").context("LANTERN_VM_ID env var required")?;
     let manager_addr =
-        pal_env::var("PAL_MANAGER_ADDR").unwrap_or_else(|_| "127.0.0.1:50054".to_string());
+        std::env::var("PAL_MANAGER_ADDR").unwrap_or_else(|_| "127.0.0.1:50054".to_string());
     // LANTERN_WORKLOAD_ARGV (JSON array, from spawn.json) is authoritative —
     // it is the only form in which an argument containing a space survives.
     // Otherwise LANTERN_WORKLOAD_CMD, space-separated. A VM may legitimately
     // declare NO workload — a boot/verification VM whose job is to come up,
     // serve the secrets + exec channels, and heartbeat until it is stopped.
     // Absent or blank therefore means "supervise nothing", not an error.
-    let workload_cmd: Vec<String> = match pal_env::var("PAL_WORKLOAD_ARGV") {
+    let workload_cmd: Vec<String> = match std::env::var("PAL_WORKLOAD_ARGV") {
         Ok(json) => serde_json::from_str(&json)
             .context("LANTERN_WORKLOAD_ARGV must be a JSON array of strings")?,
-        Err(_) => pal_env::var("PAL_WORKLOAD_CMD")
+        Err(_) => std::env::var("PAL_WORKLOAD_CMD")
             .unwrap_or_default()
             .split_whitespace()
             .map(|s| s.to_string())
@@ -99,7 +99,7 @@ fn parse_env() -> Result<HarnessEnv> {
     // LANTERN_DECLARED_SECRETS is a JSON array of {env_name, secret_uri}.
     // Missing or unparseable -> empty list; secrets module rejects all
     // requests in that case.
-    let declared_secrets: Vec<SecretRef> = pal_env::var("PAL_DECLARED_SECRETS")
+    let declared_secrets: Vec<SecretRef> = std::env::var("PAL_DECLARED_SECRETS")
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
@@ -109,7 +109,7 @@ fn parse_env() -> Result<HarnessEnv> {
     // egress is "configured" (the proxy must be enforced); absent/empty → no
     // egress declared (default-deny applies once the manager pushes rules via
     // heartbeat). Parsing failure is treated as "no rules".
-    let declared_egress: Vec<EgressRule> = pal_env::var("PAL_EGRESS_RULES")
+    let declared_egress: Vec<EgressRule> = std::env::var("PAL_EGRESS_RULES")
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
@@ -225,7 +225,7 @@ async fn run() -> Result<()> {
     //    first heartbeat ack).
     // Broker mode (ADR 0026): no NIC — every request leaves via the host
     // broker, so always point the workload at the local forwarder.
-    let broker_mode = egress::is_broker_mode(pal_env::var("PAL_EGRESS_MODE").ok().as_deref());
+    let broker_mode = egress::is_broker_mode(std::env::var("PAL_EGRESS_MODE").ok().as_deref());
     let egress_configured = broker_mode || !env.declared_egress.is_empty();
     let egress_policy = Arc::new(EgressPolicy::new(
         env.declared_egress.clone(),
@@ -307,7 +307,7 @@ async fn run() -> Result<()> {
     let (stdio_tx, stdio_rx) = mpsc::channel(4);
     // Broker mode: trust the per-VM broker CA for TLS-terminated (credential-
     // injected) hosts. A failure here only breaks those hosts, closed.
-    let ca_env = match pal_env::var("PAL_EGRESS_CA_PEM") {
+    let ca_env = match std::env::var("PAL_EGRESS_CA_PEM") {
         Ok(pem) if broker_mode && !pem.is_empty() => egress::install_broker_ca_default(&pem)
             .unwrap_or_else(|e| {
                 tracing::error!(error = %e, "egress: could not install the broker CA");

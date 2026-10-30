@@ -188,13 +188,11 @@ test-go: ## Run Go tests
 	cd services/workflow-engine && go test -race -count=1 ./...
 	cd services/scheduler && go test -race -count=1 ./...
 	cd services/runtime-scheduler && CGO_ENABLED=0 go test ./...
-	cd packages/palenv && go test -race -count=1 ./...
 
 test-rust: ## Run Rust tests
 	cd services/gateway && cargo test
 	cd services/model-router && cargo test
 	cd services/runtime-manager && cargo test
-	cd packages/pal-env-rs && cargo test
 
 test-ts: ## Run TypeScript tests
 	cd packages/sdk-ts && npx vitest run
@@ -262,14 +260,13 @@ rls-validate: ## Validate RLS policies + handler cutover before flipping PAL_RLS
 # ---------- Lint ----------
 
 lint: lint-go lint-rust lint-ts ## Lint everything
-	bash scripts/env-read-check.sh
+	bash scripts/brand-check.sh --enforce
 
 lint-go: ## Lint Go code (same modules as CI sdlc-lint)
 	cd services/control-plane && golangci-lint run ./...
 	cd services/workflow-engine && golangci-lint run ./...
 	cd services/runtime-scheduler && golangci-lint run ./...
 	cd services/scheduler && golangci-lint run ./...
-	cd packages/palenv && golangci-lint run ./...
 
 lint-rust: lint-rust-fmt ## Lint Rust code
 	cd services/gateway && cargo clippy -- -D warnings
@@ -277,7 +274,6 @@ lint-rust: lint-rust-fmt ## Lint Rust code
 	cd services/runtime-manager && cargo clippy -- -D warnings
 	cd services/surface-gateway && cargo clippy -- -D warnings
 	cd services/harness && cargo clippy -- -D warnings
-	cd packages/pal-env-rs && cargo clippy --all-targets -- -D warnings
 
 lint-rust-fmt: ## Check rustfmt on every Rust crate (matches CI sdlc-lint)
 	@fail=0; for m in services/*/Cargo.toml packages/*/Cargo.toml; do \

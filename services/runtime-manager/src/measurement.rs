@@ -94,7 +94,7 @@ impl MeasurementGate {
 
     /// Read the gate mode from `LANTERN_MEASUREMENT_GATE`.
     pub fn from_env() -> Result<Self, String> {
-        Self::parse(pal_env::var("PAL_MEASUREMENT_GATE").ok().as_deref())
+        Self::parse(std::env::var("PAL_MEASUREMENT_GATE").ok().as_deref())
     }
 }
 
@@ -103,7 +103,7 @@ impl MeasurementGate {
 /// 64-char hex SHA-256 — a malformed one is an error, not a silently
 /// unmatchable reference.
 pub fn reference_measurements_from_env() -> Result<Vec<String>, String> {
-    parse_references(&pal_env::var("PAL_REFERENCE_MEASUREMENTS").unwrap_or_default())
+    parse_references(&std::env::var("PAL_REFERENCE_MEASUREMENTS").unwrap_or_default())
 }
 
 fn parse_references(raw: &str) -> Result<Vec<String>, String> {

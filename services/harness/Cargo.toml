@@ -9,7 +9,6 @@ name = "lantern-harness"
 path = "src/main.rs"
 
 [dependencies]
-pal_env = { path = "../../packages/pal-env-rs" }
 tokio = { version = "1", features = ["full"] }
 # ReceiverStream for the in-guest exec server's response stream.
 # Already a transitive dep of tonic — no new crate enters the tree.

@@ -596,7 +596,7 @@ fn exec_auth(
 /// logged; in prod a missing token is fatal (mirrors the TLS prod guard).
 pub async fn run(manager: ManagerClient, activity: ActivityTracker) -> Result<()> {
     let addr_raw =
-        pal_env::var("PAL_HARNESS_EXEC_ADDR").unwrap_or_else(|_| DEFAULT_EXEC_ADDR.to_string());
+        std::env::var("PAL_HARNESS_EXEC_ADDR").unwrap_or_else(|_| DEFAULT_EXEC_ADDR.to_string());
     let addr: std::net::SocketAddr = addr_raw
         .parse()
         .with_context(|| format!("exec: invalid LANTERN_HARNESS_EXEC_ADDR '{addr_raw}'"))?;
@@ -607,7 +607,7 @@ pub async fn run(manager: ManagerClient, activity: ActivityTracker) -> Result<()
                 "exec: LANTERN_HARNESS_EXEC_TOKEN must be set in production \
                  (LANTERN_ENV={}) — the Exec RPC is reachable on the guest tap \
                  interface and would accept commands without authentication",
-                pal_env::var("PAL_ENV").unwrap_or_default()
+                std::env::var("PAL_ENV").unwrap_or_default()
             );
         }
         tracing::warn!(
@@ -638,7 +638,7 @@ pub async fn run(manager: ManagerClient, activity: ActivityTracker) -> Result<()
     // Broker egress mode (ADR 0026): no NIC, so the manager reaches this
     // server by host-initiated vsock on the exec port. Same service, same
     // per-incarnation token interceptor — only the transport differs.
-    if crate::egress::is_broker_mode(pal_env::var("PAL_EGRESS_MODE").ok().as_deref()) {
+    if crate::egress::is_broker_mode(std::env::var("PAL_EGRESS_MODE").ok().as_deref()) {
         let port = u32::from(addr.port());
         let listener = crate::vsock::listen(port)
             .with_context(|| format!("exec: cannot listen on vsock port {port}"))?;

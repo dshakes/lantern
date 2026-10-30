@@ -13,7 +13,7 @@ from typing import Any
 
 import httpx
 
-from pal import _env
+import os
 
 from ..errors import PalApiError
 
@@ -31,8 +31,8 @@ class PalRuntimeClient:
         timeout: float = 120.0,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self.base_url = (base_url or _env.get("API_URL") or "https://api.lantern.run").rstrip("/")
-        self._api_key = api_key or _env.get("API_KEY") or ""
+        self.base_url = (base_url or os.environ.get("PAL_API_URL") or "https://api.lantern.run").rstrip("/")
+        self._api_key = api_key or os.environ.get("PAL_API_KEY") or ""
         headers = {"Content-Type": "application/json"}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
@@ -117,4 +117,3 @@ class PalRuntimeClient:
             time.sleep(poll_interval)
 
 
-LanternRuntimeClient = PalRuntimeClient  # deprecated alias, ADR 0032

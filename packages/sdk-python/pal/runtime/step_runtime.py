@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from pal import _env
+import os
 from pal.errors import PalStepError
 from pal.types import StepOptions
 
@@ -141,4 +141,4 @@ def create_journal_step_runner(journal: StepJournal) -> Callable[
 
 def get_journal_path() -> str:
     """Get the journal file path from the runtime environment."""
-    return _env.get("JOURNAL_PATH", "/tmp/lantern-journal.jsonl")
+    return os.environ.get("PAL_JOURNAL_PATH", "/tmp/lantern-journal.jsonl")

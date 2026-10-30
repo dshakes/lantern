@@ -22,7 +22,6 @@
 // service trusts the validated JID shape.
 
 // FIRST import: mirrors PAL_X <-> LANTERN_X before any module reads the env (ADR 0032).
-import "@pal/bridge-core/env-compat";
 import express, { type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
 import { createServer } from "http";

@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from pal import _env
+import os
 from pal.agent import get_agent, list_agents
 from pal.runtime.context import build_dev_context, build_production_context
 from pal.runtime.runtime import RuntimeMode, detect_mode
@@ -115,17 +115,17 @@ def main() -> None:
     )
     parser.add_argument(
         "--agent",
-        default=_env.get("AGENT_NAME"),
+        default=os.environ.get("PAL_AGENT_NAME"),
         help="Agent name (or set LANTERN_AGENT_NAME)",
     )
     parser.add_argument(
         "--input",
-        default=_env.get("INPUT", "{}"),
+        default=os.environ.get("PAL_INPUT", "{}"),
         help="JSON input (or set LANTERN_INPUT)",
     )
     parser.add_argument(
         "--dir",
-        default=_env.get("AGENT_DIR"),
+        default=os.environ.get("PAL_AGENT_DIR"),
         help="Directory to search for agent modules",
     )
 

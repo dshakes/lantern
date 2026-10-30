@@ -14,14 +14,12 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/dshakes/lantern/packages/palenv"
 	"github.com/dshakes/lantern/services/data-plane-agent/internal/dispatcher"
 	"github.com/dshakes/lantern/services/data-plane-agent/internal/reporter"
 	"github.com/dshakes/lantern/services/data-plane-agent/internal/tunnel"
 )
 
 func main() {
-	palenv.Bridge()
 	cfg := loadConfig()
 
 	logger := mustInitLogger(cfg.LogLevel)

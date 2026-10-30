@@ -44,7 +44,7 @@ impl Config {
             .filter(|s| !s.is_empty())
             .collect();
 
-        let control_plane_tls_ca = pal_env::var("PAL_CONTROL_PLANE_TLS_CA").ok();
+        let control_plane_tls_ca = std::env::var("PAL_CONTROL_PLANE_TLS_CA").ok();
 
         Ok(Config {
             listen_addr,

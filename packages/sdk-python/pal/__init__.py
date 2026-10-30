@@ -13,15 +13,9 @@ Quick start::
         return {"greeting": greeting}
 """
 
-from pal.agent import LanternAgent, PalAgent, agent, get_agent, list_agents
-from pal.client import LanternClient, PalClient
+from pal.agent import PalAgent, agent, get_agent, list_agents
+from pal.client import PalClient
 from pal.errors import (
-    LanternApiError,
-    LanternError,
-    LanternLlmError,
-    LanternStepError,
-    LanternTimeoutError,
-    LanternValidationError,
     PalApiError,
     PalError,
     PalLlmError,
@@ -86,14 +80,6 @@ __version__ = "0.1.0"
 
 __all__ = [
     # Deprecated aliases (ADR 0032)
-    "LanternAgent",
-    "LanternClient",
-    "LanternError",
-    "LanternApiError",
-    "LanternStepError",
-    "LanternLlmError",
-    "LanternTimeoutError",
-    "LanternValidationError",
     # Agent definition
     "agent",
     "PalAgent",

@@ -72,8 +72,8 @@ impl Config {
             .unwrap_or_else(|_| "http://localhost:50051".to_string());
 
         let log_level = std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
-        let service_token = pal_env::var("PAL_GRPC_SERVICE_TOKEN").unwrap_or_default();
-        let agent_name = pal_env::var("PAL_AGENT_NAME").ok();
+        let service_token = std::env::var("PAL_GRPC_SERVICE_TOKEN").unwrap_or_default();
+        let agent_name = std::env::var("PAL_AGENT_NAME").ok();
 
         Ok(Config {
             listen_addr,
@@ -105,7 +105,7 @@ impl Config {
                 .collect(),
             service_token,
             agent_name,
-            lantern_tenant_id: pal_env::var("PAL_TENANT_ID").ok(),
+            lantern_tenant_id: std::env::var("PAL_TENANT_ID").ok(),
         })
     }
 }

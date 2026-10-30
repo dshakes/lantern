@@ -11,12 +11,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/dshakes/lantern/packages/palenv"
 	"github.com/dshakes/lantern/services/control-plane/internal/llmreplay"
 )
 
 func main() {
-	palenv.Bridge()
 	addr := flag.String("addr", "127.0.0.1:9192", "listen address (loopback by default)")
 	rulesPath := flag.String("rules", "", "JSON rule file: [{\"match\":\"...\",\"reply\":\"...\"|\"tool\":{\"name\":\"...\",\"args\":{}}}]")
 	flag.Parse()

@@ -6,7 +6,7 @@ import logging
 import sys
 from typing import Any, Awaitable, Callable
 
-from pal import _env
+import os
 from pal.types import (
     AgentContext,
     AskOptions,
@@ -107,9 +107,9 @@ def build_production_context(
     from pal.runtime.memory_client import GrpcMemoryClient
     from pal.runtime.tool_client import GrpcToolClient
 
-    run_id = _env.get("RUN_ID", "")
-    tenant_id = _env.get("TENANT_ID", "")
-    grpc_endpoint = _env.get("GRPC_ENDPOINT", "localhost:50051")
+    run_id = os.environ.get("PAL_RUN_ID", "")
+    tenant_id = os.environ.get("PAL_TENANT_ID", "")
+    grpc_endpoint = os.environ.get("PAL_GRPC_ENDPOINT", "localhost:50051")
 
     return AgentContext(
         run_id=run_id,

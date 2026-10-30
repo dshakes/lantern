@@ -1,6 +1,4 @@
 # Context is the repo root; ship only what the surface-gateway build reads.
 *
-!packages/pal-env-rs
 !services/surface-gateway
-packages/pal-env-rs/target
 services/surface-gateway/target

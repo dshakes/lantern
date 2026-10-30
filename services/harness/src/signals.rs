@@ -153,7 +153,7 @@ async fn drain(manager: &ManagerClient, supervisor: &SupervisorHandles) {
         tracing::info!("drain: already in progress");
         return;
     }
-    let grace = pal_env::var("PAL_DRAIN_GRACE_SECS")
+    let grace = std::env::var("PAL_DRAIN_GRACE_SECS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(DEFAULT_DRAIN_GRACE_SECS);

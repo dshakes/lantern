@@ -130,7 +130,7 @@ fn peer_identity(_stream: &UnixStream) -> Option<PeerIdentity> {
 
 /// The expected workload uid the manager injected at spawn, if any.
 fn expected_workload_uid() -> Option<u32> {
-    pal_env::var("PAL_WORKLOAD_UID")
+    std::env::var("PAL_WORKLOAD_UID")
         .ok()
         .and_then(|s| s.trim().parse::<u32>().ok())
 }
@@ -206,7 +206,7 @@ impl SecretCache {
         for s in declared {
             map.insert(s.env_name.clone(), s);
         }
-        let socket_path = pal_env::var("PAL_SECRETS_SOCKET")
+        let socket_path = std::env::var("PAL_SECRETS_SOCKET")
             .unwrap_or_else(|_| "/run/lantern/secrets.sock".to_string());
         Self {
             inner: Arc::new(DashMap::new()),
@@ -255,7 +255,7 @@ impl SecretCache {
                         "FATAL: LANTERN_WORKLOAD_UID must be set in production \
                          (LANTERN_ENV={}) — secrets socket peer authentication is disabled. \
                          The manager MUST inject this env var at spawn time.",
-                        pal_env::var("PAL_ENV").unwrap_or_default()
+                        std::env::var("PAL_ENV").unwrap_or_default()
                     );
                     std::process::exit(1);
                 }

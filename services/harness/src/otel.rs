@@ -25,7 +25,7 @@ const BATCH_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_BATCH_BYTES: usize = 1024 * 1024;
 
 pub async fn run(manager: ManagerClient) -> Result<()> {
-    let path: PathBuf = pal_env::var("PAL_OTLP_SOCKET")
+    let path: PathBuf = std::env::var("PAL_OTLP_SOCKET")
         .unwrap_or_else(|_| "/run/lantern/otlp.sock".to_string())
         .into();
     if let Some(parent) = path.parent() {
@@ -156,7 +156,7 @@ impl Injector for MetadataInjector<'_> {
 pub fn init_propagator() -> Context {
     global::set_text_map_propagator(TraceContextPropagator::new());
 
-    let traceparent = pal_env::var("PAL_TRACE_PARENT")
+    let traceparent = std::env::var("PAL_TRACE_PARENT")
         .ok()
         .filter(|s| !s.trim().is_empty());
 

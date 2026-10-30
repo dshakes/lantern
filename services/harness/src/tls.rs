@@ -51,7 +51,7 @@ pub const DEFAULT_MANAGER_SERVER_NAME: &str = "manager.lantern.internal";
 
 /// Returns `true` when `LANTERN_ENV` indicates a production-like environment.
 pub fn is_prod_env() -> bool {
-    is_prod_value(&pal_env::var("PAL_ENV").unwrap_or_default())
+    is_prod_value(&std::env::var("PAL_ENV").unwrap_or_default())
 }
 
 /// Whether a `LANTERN_ENV` value is production-like.
@@ -62,9 +62,9 @@ pub fn is_prod_value(v: &str) -> bool {
 /// Build a tonic `ClientTlsConfig` from the three env-var paths, or return
 /// `None` when any are absent (dev mode).  Exits in production if absent.
 pub fn build_client_tls_config() -> anyhow::Result<Option<ClientTlsConfig>> {
-    let cert_path = pal_env::var(ENV_VM_CERT).ok();
-    let key_path = pal_env::var(ENV_VM_KEY).ok();
-    let ca_path = pal_env::var(ENV_MANAGER_CA).ok();
+    let cert_path = std::env::var(ENV_VM_CERT).ok();
+    let key_path = std::env::var(ENV_VM_KEY).ok();
+    let ca_path = std::env::var(ENV_MANAGER_CA).ok();
 
     match (cert_path, key_path, ca_path) {
         (Some(cert), Some(key), Some(ca)) => {
@@ -97,7 +97,7 @@ pub fn build_client_tls_config() -> anyhow::Result<Option<ClientTlsConfig>> {
                 eprintln!(
                     "FATAL: {ENV_VM_CERT}, {ENV_VM_KEY}, {ENV_MANAGER_CA} are required \
                      in production (LANTERN_ENV={:?}). Refusing to start without mTLS.",
-                    pal_env::var("PAL_ENV").unwrap_or_default()
+                    std::env::var("PAL_ENV").unwrap_or_default()
                 );
                 std::process::exit(1);
             }
@@ -152,7 +152,7 @@ pub fn build_client_tls_config_from_pem(
     // /30, so the manager's address differs per VM (172.16.x.1); pinning to a
     // name means one server cert covers every VM instead of needing a SAN for
     // each allocated host IP. Override with LANTERN_MANAGER_SERVER_NAME.
-    let server_name = pal_env::var("PAL_MANAGER_SERVER_NAME")
+    let server_name = std::env::var("PAL_MANAGER_SERVER_NAME")
         .unwrap_or_else(|_| DEFAULT_MANAGER_SERVER_NAME.to_string());
 
     let config = ClientTlsConfig::new()

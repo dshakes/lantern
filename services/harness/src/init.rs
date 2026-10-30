@@ -7,7 +7,7 @@ use anyhow::Result;
 
 /// Boot the guest: prep /run/lantern, mount tmpfs on /tmp, set rlimits.
 pub async fn boot() -> Result<()> {
-    let run_dir = pal_env::var("PAL_RUN_DIR").unwrap_or_else(|_| "/run/lantern".to_string());
+    let run_dir = std::env::var("PAL_RUN_DIR").unwrap_or_else(|_| "/run/lantern".to_string());
     if let Err(e) = tokio::fs::create_dir_all(&run_dir).await {
         tracing::warn!(error = %e, %run_dir, "init: could not create run dir (continuing)");
     }
@@ -95,7 +95,7 @@ fn mount_tmpfs() {
 fn set_rlimits() {
     // Cap open files at 4096 — generous for workload, prevents fd-exhaust DoS.
     do_setrlimit(libc::RLIMIT_NOFILE as u32, 4096);
-    if let Ok(bytes) = pal_env::var("PAL_RLIMIT_AS_BYTES")
+    if let Ok(bytes) = std::env::var("PAL_RLIMIT_AS_BYTES")
         .and_then(|s| s.parse::<u64>().map_err(|_| std::env::VarError::NotPresent))
     {
         do_setrlimit(libc::RLIMIT_AS as u32, bytes);

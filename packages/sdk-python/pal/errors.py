@@ -47,9 +47,3 @@ class PalValidationError(PalError):
     """Raised when input validation fails."""
 
 
-LanternError = PalError  # deprecated alias, ADR 0032
-LanternApiError = PalApiError  # deprecated alias, ADR 0032
-LanternStepError = PalStepError  # deprecated alias, ADR 0032
-LanternLlmError = PalLlmError  # deprecated alias, ADR 0032
-LanternTimeoutError = PalTimeoutError  # deprecated alias, ADR 0032
-LanternValidationError = PalValidationError  # deprecated alias, ADR 0032

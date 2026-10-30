@@ -89,7 +89,7 @@ struct NodeCapacity {
 /// the scheduler's capacity filter and bin-packing scored against a constant.
 /// On a smaller node that silently oversubscribes until workloads OOM.
 fn measure_capacity() -> NodeCapacity {
-    let vcpu_millis = pal_env::var("PAL_NODE_VCPU_MILLIS")
+    let vcpu_millis = std::env::var("PAL_NODE_VCPU_MILLIS")
         .ok()
         .and_then(|s| s.trim().parse::<i64>().ok())
         .filter(|&n| n > 0)
@@ -99,7 +99,7 @@ fn measure_capacity() -> NodeCapacity {
                 .unwrap_or(1000)
         });
 
-    let memory_bytes = pal_env::var("PAL_NODE_MEMORY_BYTES")
+    let memory_bytes = std::env::var("PAL_NODE_MEMORY_BYTES")
         .ok()
         .and_then(|s| s.trim().parse::<i64>().ok())
         .filter(|&n| n > 0)

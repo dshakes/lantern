@@ -92,8 +92,8 @@ async fn main() -> anyhow::Result<()> {
     let svc = ModelServiceImpl::new(router, cache);
 
     // Service-token gate (invariant #7). Prod-like env without a token: refuse to start.
-    let token = pal_env::var("PAL_GRPC_SERVICE_TOKEN").ok();
-    let env = pal_env::var("PAL_ENV").unwrap_or_default();
+    let token = std::env::var("PAL_GRPC_SERVICE_TOKEN").ok();
+    let env = std::env::var("PAL_ENV").unwrap_or_default();
     if let Err(msg) = auth::check_startup(&env, token.as_deref()) {
         anyhow::bail!(msg);
     }

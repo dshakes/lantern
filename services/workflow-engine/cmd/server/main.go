@@ -25,7 +25,6 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/packages/palenv"
 	"github.com/dshakes/lantern/services/workflow-engine/internal/db"
 	"github.com/dshakes/lantern/services/workflow-engine/internal/engine"
 	"github.com/dshakes/lantern/services/workflow-engine/internal/handlers"
@@ -34,7 +33,6 @@ import (
 )
 
 func main() {
-	palenv.Bridge()
 	cfg := loadConfig()
 
 	logger := mustInitLogger(cfg.LogLevel)

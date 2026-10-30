@@ -6,9 +6,6 @@
 //
 // Previously copied between bridges; now the single source of truth.
 
-// Mirror LANTERN_X -> PAL_X before this module's top-level env reads, for any
-// entrypoint that did not import env-compat first (ADR 0032).
-import "./env-compat.js";
 import type { Logger } from "pino";
 
 const API_BASE_URL =

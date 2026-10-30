@@ -169,4 +169,3 @@ class PalSandbox(BaseSandbox):
         return results
 
 
-LanternSandbox = PalSandbox  # deprecated alias, ADR 0032

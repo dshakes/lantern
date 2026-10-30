@@ -234,4 +234,3 @@ class PalAgent:
         """Optional init hook called once before the first run."""
 
 
-LanternAgent = PalAgent  # deprecated alias, ADR 0032
