@@ -49,13 +49,13 @@ INSERT INTO billing_plans (id, name, description, monthly_price_cents, self_serv
 VALUES
 	('free', 'Free', 'Try PAL on a small workload.', 0, true,
 	 1.00, true, 2, 1.00, 1, 1.00,
-	 '["1 concurrent sandbox","$1/day model spend","Community support"]'::jsonb, 0),
+	 '["Community support"]'::jsonb, 0),
 	('pro', 'Pro', 'For individuals running agents daily.', 2900, true,
 	 25.00, true, 10, 10.00, 5, 10.00,
-	 '["10 concurrent sandboxes","$25/day model spend","Usage-based overage","Email support"]'::jsonb, 10),
+	 '["Usage-based overage","Email support"]'::jsonb, 10),
 	('team', 'Team', 'For teams shipping agents to production.', 9900, true,
 	 150.00, true, 50, 50.00, 25, 50.00,
-	 '["50 concurrent sandboxes","$150/day model spend","Usage-based overage","Priority support"]'::jsonb, 20),
+	 '["Usage-based overage","Priority support"]'::jsonb, 20),
 	('enterprise', 'Enterprise', 'Custom limits, SSO, and a dedicated data plane.', NULL, false,
 	 NULL, false, NULL, NULL, NULL, NULL,
 	 '["Custom limits","Customer-cloud data plane","SSO + audit export","Dedicated support"]'::jsonb, 30)

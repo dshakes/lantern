@@ -14,7 +14,6 @@ import {
   Check,
   Loader2,
   Save,
-  ArrowUpRight,
   ToggleLeft,
   ToggleRight,
 } from "lucide-react";
@@ -29,6 +28,7 @@ import type { FleetUsage } from "@/lib/api";
 import { useToast } from "@/components/settings/toast";
 import { PageHeader } from "@/components/page-header";
 import { DangerZone } from "./danger-zone";
+import { BillingPlans } from "@/components/settings/billing-plans";
 import { Tabs } from "@/components/tabs";
 import { Button } from "@/components/button";
 
@@ -143,6 +143,12 @@ export default function SettingsPage() {
   const [removeTarget, setRemoveTarget] = useState<StoredMember | null>(null);
   const [billing, setBilling] = useState<BillingSettings>(defaultBilling);
   const [fleetUsage, setFleetUsage] = useState<FleetUsage | null>(null);
+
+  // Deep link: /settings?tab=billing (Stripe Checkout/Portal return here).
+  useEffect(() => {
+    const tab = new URLSearchParams(window.location.search).get("tab");
+    if (tab && TABS.some((t) => t.id === tab)) setActiveTab(tab as TabId);
+  }, []);
 
   // Load from real API with localStorage fallback
   useEffect(() => {
@@ -784,29 +790,12 @@ const costByAgent = [
 ];
 
 function BillingTab({ billing, setBilling, onSetBudget, onToggleHardLimit, fleetUsage }: { billing: BillingSettings; setBilling: (b: BillingSettings) => void; onSetBudget: () => void; onToggleHardLimit: () => void; fleetUsage: FleetUsage | null }) {
-  const plans = [
-    { name: "Personal", price: "$0/mo", features: ["1 user", "100 runs/mo", "1M tokens/mo"], current: billing.plan === "Personal" },
-    { name: "Team", price: "$49/mo", features: ["5 users", "1,000 runs/mo", "5M tokens/mo"], current: billing.plan === "Team" },
-    { name: "Enterprise", price: "Custom", features: ["Unlimited users", "Unlimited runs", "Custom limits"], current: billing.plan === "Enterprise" },
-  ];
-
   return (
     <div className="mx-auto max-w-3xl space-y-8">
-      {/* Plans */}
+      {/* Plans — live from /v1/billing (ADR 0049) */}
       <div>
-        <h3 className="mb-4 text-sm font-semibold text-zinc-100">Current Plan</h3>
-        <div className="grid grid-cols-3 gap-4">
-          {plans.map((plan) => (
-            <div key={plan.name} className={clsx("rounded-xl border p-5 transition-colors", plan.current ? "border-pal-500 bg-pal-500/5" : "border-zinc-800 bg-surface-1")}>
-              <div className="flex items-start justify-between">
-                <div><p className="text-sm font-semibold text-zinc-100">{plan.name}</p><p className="mt-0.5 text-lg font-bold text-pal-400">{plan.price}</p></div>
-                {plan.current && <span className="rounded-full bg-pal-500/10 px-2 py-0.5 text-xs font-medium text-pal-400">Current</span>}
-              </div>
-              <ul className="mt-3 space-y-1">{plan.features.map((f) => <li key={f} className="text-xs text-zinc-500">{f}</li>)}</ul>
-              {!plan.current && <button className="mt-4 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-surface-3"><ArrowUpRight className="h-3 w-3" />{plan.name === "Enterprise" ? "Contact Sales" : "Upgrade"}</button>}
-            </div>
-          ))}
-        </div>
+        <h3 className="mb-4 text-sm font-semibold text-zinc-100">Plan</h3>
+        <BillingPlans />
       </div>
 
       {/* Usage */}
