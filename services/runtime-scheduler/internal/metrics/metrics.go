@@ -4,7 +4,20 @@
 package metrics
 
 import (
+	"strings"
+
 	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
+	"google.golang.org/protobuf/proto"
+)
+
+// metricPrefix is the PAL name of every scheduler metric. legacyMetricPrefix
+// is the pre-PAL name (ADR 0032): each pal_scheduler_* family is re-exposed
+// under it at scrape time for one release, so dashboards and alerts that
+// still query lantern_scheduler_* keep working while they migrate.
+const (
+	metricPrefix       = "pal_scheduler_"
+	legacyMetricPrefix = "lantern_scheduler_"
 )
 
 // Registry is the scheduler's private Prometheus registry. Use this (not the
@@ -47,38 +60,38 @@ func New() *Registry {
 	m := &Registry{reg: reg}
 
 	m.ScheduleTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "lantern_scheduler_schedule_total",
+		Name: metricPrefix + "schedule_total",
 		Help: "Total Schedule RPCs, partitioned by result (ok|error|quota|standby).",
 	}, []string{"result"})
 	reg.MustRegister(m.ScheduleTotal)
 
 	m.ScheduleErrorsTotal = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "lantern_scheduler_schedule_errors_total",
+		Name: metricPrefix + "schedule_errors_total",
 		Help: "Total Schedule RPCs that returned an error.",
 	})
 	reg.MustRegister(m.ScheduleErrorsTotal)
 
 	m.PlacementScore = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:    "lantern_scheduler_placement_score",
+		Name:    metricPrefix + "placement_score",
 		Help:    "Placement score of the winning node (0–N weighted sum).",
 		Buckets: prometheus.LinearBuckets(0, 0.5, 12),
 	})
 	reg.MustRegister(m.PlacementScore)
 
 	m.ActiveVMs = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "lantern_scheduler_active_vms",
+		Name: metricPrefix + "active_vms",
 		Help: "Number of VMs in a non-terminal state tracked by the scheduler.",
 	})
 	reg.MustRegister(m.ActiveVMs)
 
 	m.Nodes = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "lantern_scheduler_nodes",
+		Name: metricPrefix + "nodes",
 		Help: "Number of registered nodes known to the scheduler.",
 	})
 	reg.MustRegister(m.Nodes)
 
 	m.IsLeader = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "lantern_scheduler_is_leader",
+		Name: metricPrefix + "is_leader",
 		Help: "1 if this replica currently holds the leader advisory lock, 0 otherwise.",
 	})
 	reg.MustRegister(m.IsLeader)
@@ -86,7 +99,19 @@ func New() *Registry {
 	return m
 }
 
-// Prometheus returns the underlying registry for use with promhttp.HandlerFor.
-func (m *Registry) Prometheus() *prometheus.Registry {
-	return m.reg
+// Prometheus returns the gatherer for promhttp.HandlerFor: the registry's
+// families plus a legacy-named copy of each pal_scheduler_* family.
+func (m *Registry) Prometheus() prometheus.Gatherer {
+	return prometheus.GathererFunc(func() ([]*dto.MetricFamily, error) {
+		mfs, err := m.reg.Gather()
+		out := mfs
+		for _, mf := range mfs {
+			if tail, ok := strings.CutPrefix(mf.GetName(), metricPrefix); ok {
+				legacy := proto.Clone(mf).(*dto.MetricFamily)
+				legacy.Name = proto.String(legacyMetricPrefix + tail)
+				out = append(out, legacy)
+			}
+		}
+		return out, err
+	})
 }
