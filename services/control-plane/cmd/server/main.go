@@ -17,6 +17,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
@@ -897,6 +898,9 @@ func main() {
 		handlers.CORSMiddleware(httpMux),
 		"lantern.control-plane.http",
 		otelhttp.WithSpanNameFormatter(httpSpanName),
+		otelhttp.WithMetricAttributesFn(func(r *http.Request) []attribute.KeyValue {
+			return []attribute.KeyValue{attribute.String("pal.traffic", trafficClass(r))}
+		}),
 	)
 	httpServer := &http.Server{
 		Addr:              envOrDefault("HTTP_ADDR", ":8080"),
@@ -1285,6 +1289,21 @@ func streamTracingInterceptor() grpc.StreamServerInterceptor {
 // not in the name, so cardinality stays bounded while traces remain filterable.
 func httpSpanName(_ string, r *http.Request) string {
 	return r.Method + " " + templatePath(r.URL.Path)
+}
+
+// trafficClass buckets a request for the availability/latency SLOs (ADR 0041):
+// "probe" (health/metrics scrapes) and "stream" (SSE / log tails, whose duration
+// is the connection lifetime, not latency) are excluded from the API SLIs.
+func trafficClass(r *http.Request) string {
+	p := r.URL.Path
+	switch {
+	case p == "/healthz" || p == "/readyz" || p == "/metrics":
+		return "probe"
+	case strings.Contains(r.Header.Get("Accept"), "text/event-stream"),
+		strings.HasSuffix(p, "/events"), strings.HasSuffix(p, "/logs"):
+		return "stream"
+	}
+	return "api"
 }
 
 // templatePath replaces id-like path segments with "{id}".
