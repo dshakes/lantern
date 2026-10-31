@@ -517,12 +517,25 @@ def main(argv: list[str]) -> int:
             if d.get("type") == "file":
                 rows.append(f"{d.get('key')}\t{d.get('size')}\t{d.get('etag', '')}")
         print("\n".join(sorted(rows)))
-    elif cmd == "urlenc":
-        # stdin lines -> percent-encoded lines (credentials for MC_HOST_*; never argv)
-        from urllib.parse import quote
-
-        for line in sys.stdin.read().splitlines():
-            print(quote(line, safe=""))
+    elif cmd == "mc-config":
+        # stdin "user\npassword" -> an mc config.json with alias "m" (never argv)
+        user, _, rest = sys.stdin.read().partition("\n")
+        print(
+            json.dumps(
+                {
+                    "version": "10",
+                    "aliases": {
+                        "m": {
+                            "url": "http://localhost:9000",
+                            "accessKey": user,
+                            "secretKey": rest.split("\n")[0],
+                            "api": "S3v4",
+                            "path": "auto",
+                        }
+                    },
+                }
+            )
+        )
     elif cmd == "url-part":
         sys.stdout.write(url_part(rest[0], rest[1]))
     else:

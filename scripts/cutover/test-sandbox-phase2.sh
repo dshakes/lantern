@@ -43,8 +43,10 @@ q()    { "$REAL_DOCKER" exec -i "$PG_CONTAINER" psql -X -q -At -U "$1" -d "$2" -
 export STUB_MINIO_CONTAINER=pal-cutover-sandbox-minio-test STUB_MINIO_VOLUME=pal-cutover-sandbox-minio-test-data STUB_MINIO_IMAGE="$MINIO_IMAGE"
 mc_() {  # mc_ USER PASS args… against the sandbox MinIO
   local u="$1" p="$2"; shift 2
-  local eu ep; eu="$(printf '%s' "$u" | python3 -I "$HERE/cutover_helper.py" urlenc)"; ep="$(printf '%s' "$p" | python3 -I "$HERE/cutover_helper.py" urlenc)"
-  "$REAL_DOCKER" exec -e MC_HOST_s="http://$eu:$ep@localhost:9000" "$STUB_MINIO_CONTAINER" mc "$@"
+  local a=()
+  for x in "$@"; do a+=("${x/#s\//m/}"); done   # harness uses alias s/, the config alias is m/
+  # shellcheck disable=SC2016  # the sh -c body expands inside the container
+  printf '%s\n%s\n' "$u" "$p" | python3 -I "$HERE/cutover_helper.py" mc-config | "$REAL_DOCKER" exec -i "$STUB_MINIO_CONTAINER" sh -c 'd=$(mktemp -d) && umask 077 && cat > "$d/config.json" && mc --config-dir "$d" "$@"; rc=$?; rm -rf "$d"; exit $rc' _ "${a[@]}"
 }
 objs() { mc_ "$1" "$2" ls -r --json "s/$3" 2>/dev/null | python3 -I "$HERE/cutover_helper.py" objects; }
 

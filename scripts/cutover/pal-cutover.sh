@@ -241,8 +241,10 @@ minio_creds_change() { [[ -n "$MINIO_NEW_USER" && ( "$MINIO_OLD_USER" != "$MINIO
 buckets_rename() { [[ "$OLD_BUCKET_PREFIX" != "$NEW_BUCKET_PREFIX" ]]; }
 mcx() {  # mcx USER PASS mc-args… — credentials travel on stdin, never argv
   local u="$1" pw="$2"; shift 2
-  # percent-encode (a password with @ : / # % would break the URL); stdin both ways, never argv
-  printf '%s\n%s\n' "$u" "$pw" | helper urlenc | docker exec -i "$MINIO_CONTAINER" sh -c 'IFS= read -r U; IFS= read -r P; export MC_HOST_m="http://$U:$P@localhost:9000"; exec mc "$@"' _ "$@"
+  # mc does not percent-decode MC_HOST, so a password with @ : / % breaks it. Instead a
+  # throwaway mc config dir per call, built on the host from stdin and piped in: any
+  # characters work and the credentials never touch argv or the environment.
+  printf '%s\n%s\n' "$u" "$pw" | helper mc-config | docker exec -i "$MINIO_CONTAINER" sh -c 'd=$(mktemp -d) && umask 077 && cat > "$d/config.json" && mc --config-dir "$d" "$@"; rc=$?; rm -rf "$d"; exit $rc' _ "$@"
 }
 minio_buckets() {  # minio_buckets USER PASS → bucket names
   mcx "$1" "$2" ls --json m/ 2>/dev/null | python3 -I -c 'import json,sys
