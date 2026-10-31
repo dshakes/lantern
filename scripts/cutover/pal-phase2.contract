@@ -1,0 +1,31 @@
+# shellcheck shell=bash
+# pal-cutover phase 2 — from the state the live machine is in after phase 1
+# (dev.pal.* labels, ~/.pal, PAL_* env, DB/MinIO still on the old names) to the
+# zero-lantern names (lantern-handoff/plans/ZERO-LANTERN-CONTRACT.md):
+#   DB lantern→pal, user lantern→pal, role lantern_app→pal_app,
+#   MinIO root lantern→pal + buckets lantern-*→pal-* (mirrored, old kept),
+#   agent_versions.bundle_uri rewritten, repo env files + NEXT_PUBLIC_* renamed,
+#   checkout → the zero-lantern release, dashboard rebuilt.
+#
+#   PAL_CUTOVER_CONTRACT=scripts/cutover/pal-phase2.contract scripts/cutover/pal-cutover.sh plan
+#
+# Labels, state dir and log dir are already the new names: old == new, so those
+# steps are skipped (plists are re-rendered in place from the release templates).
+: "${OLD_LABEL_PREFIX:=dev.pal}"
+: "${OLD_STATE_DIR:=$HOME/.pal}"
+: "${OLD_LOG_DIR:=$HOME/Library/Logs/PAL}"
+: "${STATE_COMPAT_SYMLINK:=0}"
+# the state dir + plists already use PAL_* (phase 1); LANTERN_* stragglers (e.g.
+# the checkout's .env.local) and NEXT_PUBLIC_LANTERN_* are handled as extra renames
+: "${OLD_ENV_PREFIX:=PAL_}"
+: "${EXTRA_ENV_RENAMES:=NEXT_PUBLIC_LANTERN_:NEXT_PUBLIC_PAL_ LANTERN_:PAL_}"
+: "${EXACT_VALUE_MAP:=lantern-dev-jwt-secret-do-not-use-in-production=pal-dev-jwt-secret-do-not-use-in-production}"
+OWNER_NOTES="${OWNER_NOTES:-Dashboard: everyone signs in again (cookie/localStorage keys and the JWT issuer changed); theme resets to dark.
+Dev seed: the admin row moves to admin@pal.local / password pal once (a changed dev-admin password is reset; bridges default PAL_BRIDGE_EMAIL to admin@pal.local — NOTE the contract doc says admin@pal.dev, the code says admin@pal.local).
+Agent-identity / data-plane tokens with the old issuer are rejected: running VMs re-mint on restart, data planes re-register.
+WhatsApp: NO re-pair needed — auth_sessions stays put and the new device name is only sent at pairing; the phone keeps showing the old linked-device name until a voluntary re-pair.
+iPhone Shortcuts: x-pal-signal-token header (old header accepted for one release); rename PAL-Status-Available / PAL-Parked.
+Owner shell profile: PAL_DATABASE_URL (used by .mcp.json) must point at postgres://pal:pal@localhost:5432/pal.
+Old lantern-* MinIO buckets are kept; delete them by hand once satisfied.}"
+# shellcheck shell=bash source-path=SCRIPTDIR source=pal-cutover.contract
+. "$(dirname "${BASH_SOURCE[0]}")/pal-cutover.contract"

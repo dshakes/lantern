@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # pal-cutover contract — the names the RELEASE code expects on this machine.
 #
 # Sourced by pal-cutover.sh (bash). Mirrors the zero-lantern contract
@@ -84,3 +85,25 @@ STOP_FIRST="${STOP_FIRST:-whatsapp-bridge imessage-bridge dashboard}"
 # override, e.g. a Tailscale NEXT_PUBLIC_API_URL). DATABASE_URL must follow the
 # DB rename; PATH follows the template's toolchain layout.
 TEMPLATE_WINS_KEYS="${TEMPLATE_WINS_KEYS:-DATABASE_URL PATH}"
+
+# ---- phase 2 (DB/MinIO/repo env) — every step below is a no-op when old == new
+# MinIO (compose). Root credentials are read from the compose file at the old
+# checkout and at the release (MINIO_ROOT_USER / MINIO_ROOT_PASSWORD) unless set
+# here; the values are never printed.
+MINIO_CONTAINER="${MINIO_CONTAINER:-docker-minio-1}"
+OLD_BUCKET_PREFIX="${OLD_BUCKET_PREFIX:-lantern-}"
+NEW_BUCKET_PREFIX="${NEW_BUCKET_PREFIX:-pal-}"
+# how MinIO is restarted so it picks up the release's credentials (empty = compose up at the checkout)
+MINIO_RECREATE_CMD="${MINIO_RECREATE_CMD:-}"
+# rewrite agent_versions.bundle_uri s3://<old prefix>… → s3://<new prefix>… after the mirror verifies
+BUNDLE_URI_REWRITE="${BUNDLE_URI_REWRITE:-1}"
+# gitignored env files in the checkout that also carry old key names (services/*/.env are added at runtime)
+REPO_ENV_FILES="${REPO_ENV_FILES:-.env.local .env apps/web/.env.local apps/web/.env}"
+# extra key-prefix renames applied to every env file, "OLD:NEW" pairs
+EXTRA_ENV_RENAMES="${EXTRA_ENV_RENAMES:-NEXT_PUBLIC_LANTERN_:NEXT_PUBLIC_PAL_}"
+# whole-value rewrites for well-known, non-secret dev constants whose default
+# changed with the rename ("old=new", space-separated; applies to any key in
+# plists and env files). Phase 2 sets the dev JWT secret here: the API falls back
+# to the NEW default while plists that pin the OLD literal (gateway,
+# runtime-scheduler) would reject every API-issued token.
+EXACT_VALUE_MAP="${EXACT_VALUE_MAP:-}"

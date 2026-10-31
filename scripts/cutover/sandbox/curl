@@ -23,7 +23,8 @@ side=""
 [[ -n "$svc" && -f "$S/jobs/${STUB_OLD_PREFIX}.$svc" ]] && side=old
 reply() { if [[ $wcode == 1 ]]; then printf '%s' "$1"; else printf '%s' "$2"; fi; exit 0; }
 [[ -z "$side" ]] && { [[ $wcode == 1 ]] && printf '000'; exit 7; }
-if [[ $side == new ]]; then envf="$HOME/.pal/bridge.env"; pre=PAL_; else envf="$HOME/.lantern/bridge.env"; pre=LANTERN_; fi
+if [[ $side == new ]]; then envf="$HOME/.pal/bridge.env"; pre=PAL_
+else envf="${STUB_OLD_STATE:-$HOME/.lantern}/bridge.env"; pre="${STUB_OLD_ENV_PREFIX:-LANTERN_}"; fi
 # expected token = what a real shell gets from the file (export, quotes, inline
 # comments), NOT the tool's own parser — otherwise a parser bug cancels out
 # shellcheck disable=SC1090  # the env file under test, chosen at runtime
@@ -33,11 +34,11 @@ case "$svc:$path" in
   api:/healthz|dashboard:/*|*-bridge:/health) reply 200 '{"status":"ok"}' ;;
   api:/v1/signals*)
     t="$(python3 -I "$STUB_HELPER" plist-get "$HOME/Library/LaunchAgents/${STUB_NEW_PREFIX}.api.plist" env:PAL_SIGNAL_TOKEN 2>/dev/null)"
-    [[ $side == old ]] && t="$(python3 -I "$STUB_HELPER" plist-get "$HOME/Library/LaunchAgents/${STUB_OLD_PREFIX}.api.plist" env:LANTERN_SIGNAL_TOKEN 2>/dev/null)"
+    [[ $side == old ]] && t="$(python3 -I "$STUB_HELPER" plist-get "$HOME/Library/LaunchAgents/${STUB_OLD_PREFIX}.api.plist" "env:${STUB_OLD_ENV_PREFIX:-LANTERN_}SIGNAL_TOKEN" 2>/dev/null)"
     case "$hdr" in "x-pal-signal-token: $t"|"x-lantern-signal-token: $t") reply 200 '[]';; *) reply 401 '{}';; esac ;;
   whatsapp-bridge:*/status)
     authed "${pre}BRIDGE_TOKEN" || reply 401 '{"error":"unauthorized"}'
-    reply 200 '{"exists":true,"connected":true}' ;;
+    reply 200 '{"status":"connected","paired":true}' ;;
   whatsapp-bridge:*/has-creds)
     authed "${pre}BRIDGE_TOKEN" || reply 401 '{"error":"unauthorized"}'
     [[ -s "$STUB_WA_CREDS/$STUB_TENANT/creds.json" ]] && reply 200 '{"hasCreds":true}' || reply 200 '{"hasCreds":false}' ;;

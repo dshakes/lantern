@@ -330,6 +330,77 @@ cutover is lost.
 - **Downtime:** a rollback after the git step rebuilds the old commit and takes
   about as long as the cutover.
 
+## Phase 2: database, MinIO and checkout to the zero-lantern names
+
+Phase 1 left the machine on `dev.pal.*`, `~/.pal` and `PAL_*`. The database
+(`lantern` / `lantern` / `lantern_app`), MinIO (`lantern:lanternsecret`, buckets
+`lantern-*`) and a few values still use the old names. Phase 2 takes them to the
+names in `lantern-handoff/plans/ZERO-LANTERN-CONTRACT.md`, using the same tool
+with `scripts/cutover/pal-phase2.contract`:
+
+```bash
+export PAL_CUTOVER_CONTRACT=~/pal-cutover-tool/scripts/cutover/pal-phase2.contract
+$T plan        # read-only; must end with "plan summary: 0 failure(s)"
+$T apply       # backup → stop → DB/MinIO/env → plists → checkout+build → MinIO restart → start → verify
+$T verify
+$T rollback    # if needed: DB from the dump, old commit rebuilt, MinIO back on the old creds
+```
+
+Run it after the zero-lantern PR is on `origin/master`. Before that, check a
+branch with `RELEASE_REF=origin/rename/pal-zero $T plan`.
+
+What changes:
+
+| What | From | To | How |
+|---|---|---|---|
+| database / superuser / app role | `lantern` / `lantern` / `lantern_app` | `pal` / `pal` / `pal_app` | Same DB step as phase 1. A temporary superuser does the rename, so the session never renames itself. `pal`'s password is set from the release `DATABASE_URL`. `pal_app` keeps its SCRAM password through the rename, and `PAL_APP_DB_PASSWORD` resets it if that is set. |
+| brand migration (`*_pal_brand_rename`) | | runs when the API starts | It renames the app role only if `lantern_app` exists and `pal_app` doesn't. Because the tool already renamed it, the migration finds nothing to do, so the two never conflict. `verify` asserts that `pal_app` exists, `lantern_app` is gone, and the schema equals the release's newest migration. |
+| MinIO buckets | `lantern-*` | `pal-*` (copies; old kept) | `mc mirror` inside the MinIO container, then a key/size/etag comparison per bucket. If etags differ on equal sizes, the contents are compared. |
+| `agent_versions.bundle_uri` | `s3://lantern-…` | `s3://pal-…` | Rewritten after the mirror has been verified. |
+| MinIO root credentials | from the old compose | from the release compose | `docker compose up -d --wait minio` at the new checkout recreates MinIO on the same volume, then a login with the new credentials is proven. Rollback recreates it with the old ones. |
+| plist values | `BUNDLE_S3_BUCKET=lantern-bundles`, the old dev `JWT_SECRET` | `pal-bundles`, `pal-dev-jwt-secret-…` | The release changed the dev JWT default. Without this, the gateway and runtime-scheduler would reject every API token. |
+| checkout env files (`.env.local`, …) | `LANTERN_*`, `NEXT_PUBLIC_LANTERN_*` | `PAL_*`, `NEXT_PUBLIC_PAL_*` | Keys are renamed; values are untouched. |
+| dashboard | | rebuilt | Built with the plist env plus `bridge.env`, as the wrapper does, so `NEXT_PUBLIC_*` is inlined correctly. |
+
+A residue scan fails the plan or apply if any plist or env value still points
+at the old DB user or DB, the old MinIO password, an old bucket, or the old dev
+JWT secret. It reports key names only.
+
+**A stray `pal_app` (or `pal`) role on the cluster.** An agent's test run can
+create the target role on the shared server. The live server had one: `pal_app`,
+with no grants in `lantern` and its only objects in test DB `p4_2781320577`.
+If it stays, the brand migration skips its rename and the new code connects as
+a role with no grants. `plan` refuses this state and names the databases that
+hold the role. To remove it, rerun with `PAL_CUTOVER_DROP_STRAY_ROLE=1`:
+
+1. In each database that holds the role, the DB step runs `REASSIGN OWNED BY
+   pal_app TO lantern` and then `DROP OWNED BY pal_app`. The leftover objects
+   survive, now owned by the superuser.
+2. It drops the role.
+3. Only then does it rename `lantern_app` to `pal_app`.
+
+It refuses if the old or new live database depends on the role. Rollback does
+not recreate the stray role. Its snapshot diff then shows exactly that one line,
+and the sandbox suite asserts that this is the only difference.
+
+**WhatsApp: no re-pair.** `auth_sessions/` doesn't move. The new linked-device
+name (`PAL`) is sent only when pairing, not when logging in (checked in
+Baileys' `validate-connection.js`), so the phone keeps showing the old name
+until you choose to re-pair.
+
+**After phase 2 (owner):**
+- Everyone signs in to the dashboard again: the JWT issuer and the
+  cookie/localStorage keys changed.
+- The dev admin becomes `admin@pal.local` / `pal`. The contract doc says
+  `admin@pal.dev`, but the code, bridges and scripts all use `admin@pal.local`.
+- Point `PAL_DATABASE_URL` in your shell profile at
+  `postgres://pal:pal@localhost:5432/pal`.
+- Delete the old `lantern-*` buckets once you're satisfied.
+
+**Rollback** restores the DB from the dump. That puts the schema back at
+master's version, so the pre-rename code can boot again; this is proven with
+the real master `migrate` binary.
+
 ## How this was tested
 
 `scripts/cutover/test-sandbox.sh` runs the whole thing against a synthetic
@@ -356,3 +427,16 @@ a build failure after checkout. Each must auto-roll back to a snapshot
 byte-identical to the start. The snapshot covers file checksums and modes,
 plists, launchd jobs, git HEAD/remote/worktree, the DB data checksum and the
 role verifiers. Expected result: `78 passed, 0 failed`.
+
+`scripts/cutover/test-sandbox-phase2.sh` replicates the state the live machine
+was in after phase 1, using a real throwaway MinIO container. It runs plan →
+apply → verify → rollback → verify --old, then injects failures after the
+mirror and after the MinIO restart. Each injection must roll back to a
+byte-identical snapshot, with MinIO back on the old credentials.
+
+With `E2E_REAL_MIGRATIONS=1` it uses a throwaway **Postgres container**. It
+never runs on the shared server, because the brand migration renames roles
+across the whole cluster. The run uses the real names and the **real** master
+and zero-lantern `migrate` binaries: master migrations build the DB, the tool
+renames it, the real brand migration runs, and rollback restores the dump,
+which the real master binary then boots against.

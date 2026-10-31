@@ -8,6 +8,7 @@ echo "$tool $* (cwd=${PWD#"$HOME"/}) node=${n#"$HOME"/}" >> "${STUB_STATE:?}/cal
 [[ -n "${STUB_BUILD_FAIL:-}" && "$tool $*" == *"$STUB_BUILD_FAIL"* ]] && { echo "stub $tool: injected build failure" >&2; exit 1; }
 case "$tool $*" in
   "go build -o "*) mkdir -p "$(dirname "$4")"; echo "fake $PWD" > "$4"; chmod +x "$4" ;;
-  "npm run build"*) mkdir -p .next/standalone; echo "// fake" > .next/standalone/server.js ;;
+  "npm run build"*) mkdir -p .next/standalone; echo "// fake" > .next/standalone/server.js
+    echo "  build-env NEXT_PUBLIC: $(env | sed -n 's/^\(NEXT_PUBLIC_[A-Z_]*\)=.*/\1/p' | sort | tr '\n' ' ')" >> "$STUB_STATE/calls.log" ;;
 esac
 exit 0

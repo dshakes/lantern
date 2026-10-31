@@ -10,6 +10,7 @@ PRIVACY: nothing here prints a VALUE unless the caller asks for exactly one
 (`plist-get`), and that is only ever captured into a shell variable, never
 echoed. Summaries list key NAMES only.
 """
+
 from __future__ import annotations
 
 import json
@@ -21,7 +22,9 @@ import sys
 import tempfile
 from urllib.parse import unquote, urlsplit
 
-ENV_LINE = re.compile(r"^(?P<lead>\s*(?:export\s+)?)(?P<key>[A-Za-z_][A-Za-z0-9_]*)(?P<rest>=.*)$", re.S)
+ENV_LINE = re.compile(
+    r"^(?P<lead>\s*(?:export\s+)?)(?P<key>[A-Za-z_][A-Za-z0-9_]*)(?P<rest>=.*)$", re.S
+)
 
 
 def _write_atomic(path: str, data: bytes, mode: int) -> None:
@@ -57,6 +60,18 @@ def env_rename(path: str, old: str, new: str, dry: bool) -> dict:
     """Rename OLD_X keys to NEW_X. Values, comments, blank lines and ordering
     are untouched. A file that already defines both OLD_X and NEW_X is a
     conflict only when the values differ (then nothing is written)."""
+    if (
+        old == new
+    ):  # identity rename: every key would look like its own duplicate and be dropped
+        return {
+            "file": path,
+            "renamed": [],
+            "dropped_duplicates": [],
+            "conflicts": [],
+            "values_referencing_old_prefix": [],
+            "values_with_old_state_path": [],
+            "written": False,
+        }
     with open(path, "rb") as f:
         text = f.read().decode("utf-8", "surrogateescape")
     lines = text.splitlines(keepends=True)
@@ -69,7 +84,7 @@ def env_rename(path: str, old: str, new: str, dry: bool) -> dict:
     out = []
     for raw in lines:
         body = raw.rstrip("\r\n")
-        eol = raw[len(body):]
+        eol = raw[len(body) :]
         m = ENV_LINE.match(body)
         if not m or not m.group("key").startswith(old):
             out.append(raw)
@@ -77,7 +92,7 @@ def env_rename(path: str, old: str, new: str, dry: bool) -> dict:
                 value_refs.append(m.group("key"))
             continue
         key = m.group("key")
-        nkey = new + key[len(old):]
+        nkey = new + key[len(old) :]
         rest = m.group("rest")
         if ("$" + old) in rest or ("${" + old) in rest:
             value_refs.append(key)
@@ -157,9 +172,109 @@ def rename_dir(old: str, new: str) -> str:
     if os.path.islink(new):
         raise SystemExit(f"target {new} is a symlink")
     if os.path.isdir(new) and os.listdir(new):
-        raise SystemExit(f"target {new} exists and is not empty: {sorted(os.listdir(new))[:10]}")
+        raise SystemExit(
+            f"target {new} exists and is not empty: {sorted(os.listdir(new))[:10]}"
+        )
     os.rename(old, new)
     return "renamed"
+
+
+# ---------------------------------------------------------------- value maps
+CRED_KEY = re.compile(r"(S3|MINIO|AWS)", re.I)
+BUCKET_KEY = re.compile(r"BUCKET", re.I)
+
+
+def map_value(key: str, value: str, bucket_maps, cred_maps, exact_maps=()) -> str:
+    """Exact, key-scoped value rewrites (phase 2): a *BUCKET* key whose value
+    starts with an old bucket prefix gets the new prefix; an S3/MINIO/AWS key
+    whose value EQUALS an old credential gets the new one. Nothing else is
+    touched — values are opaque everywhere else."""
+    if not isinstance(value, str):
+        return value
+    for (
+        old,
+        new,
+    ) in exact_maps:  # well-known dev constants (e.g. the dev JWT secret), any key
+        if value == old:
+            return new
+    for old, new in bucket_maps:  # any key: an s3:// URI on an old bucket
+        if value.startswith("s3://" + old):
+            return "s3://" + new + value[len("s3://" + old) :]
+    if BUCKET_KEY.search(key):
+        for old, new in bucket_maps:
+            if value.startswith(old):
+                return new + value[len(old) :]
+    if CRED_KEY.search(key):
+        for old, new in cred_maps:
+            if value == old:
+                return new
+    return value
+
+
+def env_map_values(path: str, bucket_maps, cred_maps, dry: bool, exact_maps=()) -> dict:
+    with open(path, "rb") as f:
+        text = f.read().decode("utf-8", "surrogateescape")
+    out, changed = [], []
+    for raw in text.splitlines(keepends=True):
+        body = raw.rstrip("\r\n")
+        eol = raw[len(body) :]
+        m = ENV_LINE.match(body)
+        if m:
+            cur = _shell_value(m.group("rest"))
+            new = map_value(m.group("key"), cur, bucket_maps, cred_maps, exact_maps)
+            if new != cur:
+                changed.append(m.group("key"))
+                body = m.group("lead") + m.group("key") + "=" + shlex.quote(new)
+        out.append(body + eol)
+    if changed and not dry:
+        _write_atomic(path, "".join(out).encode("utf-8", "surrogateescape"), 0o600)
+    return {"file": path, "changed": changed}
+
+
+def read_maps_stdin():
+    """Value maps / residue patterns arrive on STDIN, never argv (they can carry
+    the MinIO root password). One per line: kind<TAB>a[<TAB>b], kind in
+    bucket|cred|exact (a=old, b=new) or pattern (a=regex)."""
+    m = {"bucket": [], "cred": [], "exact": [], "pattern": []}
+    for line in sys.stdin.read().splitlines():
+        if not line:
+            continue
+        kind, _, rest = line.partition("\t")
+        if kind == "pattern":
+            m["pattern"].append(rest)
+        elif kind in m:
+            old, _, new = rest.partition("\t")
+            m[kind].append((old, new))
+    return m
+
+
+def residue(paths, patterns) -> list:
+    """KEY names (file:key) whose value matches any pattern. Env files and
+    plist EnvironmentVariables. Values are never returned."""
+    # "KEYRE=>VALRE" scopes a pattern to matching keys; a bare pattern applies to every key
+    rx = []
+    for p in patterns:
+        if not p:
+            continue
+        kre, _, vre = p.rpartition("=>")
+        rx.append((re.compile(kre) if kre else None, re.compile(vre)))
+    hits = []
+    for p in paths:
+        if p.endswith(".plist"):
+            items = (_load(p).get("EnvironmentVariables") or {}).items()
+        else:
+            items = []
+            with open(p, "rb") as f:
+                for raw in f.read().decode("utf-8", "surrogateescape").splitlines():
+                    m = ENV_LINE.match(raw)
+                    if m:
+                        items.append((m.group("key"), _shell_value(m.group("rest"))))
+        for k, v in items:
+            if isinstance(v, str) and any(
+                (kr is None or kr.search(k)) and vr.search(v) for kr, vr in rx
+            ):
+                hits.append(f"{os.path.basename(p)}:{k}")
+    return hits
 
 
 # ---------------------------------------------------------------- plists
@@ -202,30 +317,60 @@ def plist_convert(args: dict) -> dict:
     renamed_env = {}
     renamed_keys = []
     for k, v in old_env.items():
-        nk = np_ + k[len(op):] if k.startswith(op) else k
+        nk = np_ + k[len(op) :] if k.startswith(op) else k
         if nk != k:
             renamed_keys.append(k)
         renamed_env[nk] = v
     if args.get("template"):
         new = _load(args["template"])
         # a fallback template that still uses the old prefix gets renamed too
-        tenv = {(np_ + k[len(op):] if k.startswith(op) else k): v
-                for k, v in (new.get("EnvironmentVariables", {}) or {}).items()}
+        tenv = {
+            (np_ + k[len(op) :] if k.startswith(op) else k): v
+            for k, v in (new.get("EnvironmentVariables", {}) or {}).items()
+        }
         wins = set((args.get("template_wins") or "").split())
         carried = sorted(k for k in renamed_env if k not in tenv)
         differ = [k for k in renamed_env if k in tenv and tenv[k] != renamed_env[k]]
-        overridden = sorted(k for k in differ if k in wins)      # template value used
-        kept_live = sorted(k for k in differ if k not in wins)   # deliberate local override kept
+        overridden = sorted(k for k in differ if k in wins)  # template value used
+        kept_live = sorted(
+            k for k in differ if k not in wins
+        )  # deliberate local override kept
         for k in carried + kept_live:
             tenv[k] = renamed_env[k]
+        bm, cm, em = (
+            args.get("bucket_maps", []),
+            args.get("cred_maps", []),
+            args.get("exact_maps", []),
+        )
+        mapped = sorted(k for k in tenv if map_value(k, tenv[k], bm, cm, em) != tenv[k])
+        for k in mapped:
+            tenv[k] = map_value(k, tenv[k], bm, cm, em)
         if tenv:
             new["EnvironmentVariables"] = tenv
         source = "template"
     else:
         new = dict(old)
-        for key in ("ProgramArguments", "Program", "WorkingDirectory", "StandardOutPath", "StandardErrorPath"):
+        for key in (
+            "ProgramArguments",
+            "Program",
+            "WorkingDirectory",
+            "StandardOutPath",
+            "StandardErrorPath",
+        ):
             if key in new:
                 new[key] = _subst(new[key], maps)
+        bm, cm, em = (
+            args.get("bucket_maps", []),
+            args.get("cred_maps", []),
+            args.get("exact_maps", []),
+        )
+        mapped = sorted(
+            k
+            for k in renamed_env
+            if map_value(k, renamed_env[k], bm, cm, em) != renamed_env[k]
+        )
+        for k in mapped:
+            renamed_env[k] = map_value(k, renamed_env[k], bm, cm, em)
         if renamed_env:
             new["EnvironmentVariables"] = renamed_env
         carried, overridden, kept_live = sorted(renamed_env), [], []
@@ -241,6 +386,7 @@ def plist_convert(args: dict) -> dict:
         "env_keys_carried_from_live": carried,
         "env_keys_where_template_wins": overridden,
         "env_keys_live_override_kept": kept_live,
+        "env_values_mapped": mapped,
         "stdout": new.get("StandardOutPath", ""),
     }
 
@@ -294,18 +440,102 @@ def main(argv: list[str]) -> int:
     elif cmd == "plist-get":
         sys.stdout.write(plist_get(rest[0], rest[1]))
     elif cmd == "plist-env-keys":
-        print("\n".join(sorted((_load(rest[0]).get("EnvironmentVariables") or {}).keys())))
+        print(
+            "\n".join(sorted((_load(rest[0]).get("EnvironmentVariables") or {}).keys()))
+        )
     elif cmd == "plist-convert":
-        a = {"maps": [], "dry": False, "template": None}
+        a = {
+            "maps": [],
+            "dry": False,
+            "template": None,
+            "bucket_maps": [],
+            "cred_maps": [],
+            "exact_maps": [],
+        }
         it = iter(rest)
         for flag in it:
             if flag == "--dry":
                 a["dry"] = True
             elif flag == "--map":
                 a["maps"].append(next(it))
+            elif flag == "--bucket-map":
+                a["bucket_maps"].append(tuple(next(it).split("=", 1)))
+            elif flag == "--cred-map":
+                a["cred_maps"].append(tuple(next(it).split("=", 1)))
+            elif flag == "--exact-map":
+                a["exact_maps"].append(tuple(next(it).split("=", 1)))
+            elif flag == "--maps-stdin":
+                m = read_maps_stdin()
+                a["bucket_maps"] += m["bucket"]
+                a["cred_maps"] += m["cred"]
+                a["exact_maps"] += m["exact"]
             else:
                 a[flag.lstrip("-").replace("-", "_")] = next(it)
         print(json.dumps(plist_convert(a)))
+    elif cmd == "env-map-values":
+        path, bm, cm, em, dry = rest[0], [], [], [], False
+        it = iter(rest[1:])
+        for flag in it:
+            if flag == "--maps-stdin":
+                m = read_maps_stdin()
+                bm += m["bucket"]
+                cm += m["cred"]
+                em += m["exact"]
+            elif flag == "--exact-map":
+                em.append(tuple(next(it).split("=", 1)))
+            elif flag == "--bucket-map":
+                bm.append(tuple(next(it).split("=", 1)))
+            elif flag == "--cred-map":
+                cm.append(tuple(next(it).split("=", 1)))
+            elif flag == "--dry":
+                dry = True
+        print(json.dumps(env_map_values(path, bm, cm, dry, em)))
+    elif cmd == "residue":
+        if "--patterns-stdin" in rest:
+            files = [r for r in rest if r != "--patterns-stdin"]
+            hits = residue(files, read_maps_stdin()["pattern"])
+        else:
+            sep = rest.index("--")
+            hits = residue(rest[:sep], rest[sep + 1 :])
+        print("\n".join(hits))
+        return 1 if hits else 0
+    elif cmd == "plist-env-export":
+        for k, v in sorted((_load(rest[0]).get("EnvironmentVariables") or {}).items()):
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k) and isinstance(v, str):
+                print(f"export {k}={shlex.quote(v)}")
+    elif cmd == "objects":
+        # mc ls -r --json on stdin -> "key size etag" lines, sorted (for mirror verification)
+        rows = []
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                d = json.loads(line)
+            except ValueError:
+                continue
+            if d.get("type") == "file":
+                rows.append(f"{d.get('key')}\t{d.get('size')}\t{d.get('etag', '')}")
+        print("\n".join(sorted(rows)))
+    elif cmd == "mc-config":
+        # stdin "user\npassword" -> an mc config.json with alias "m" (never argv)
+        user, _, rest = sys.stdin.read().partition("\n")
+        print(
+            json.dumps(
+                {
+                    "version": "10",
+                    "aliases": {
+                        "m": {
+                            "url": "http://localhost:9000",
+                            "accessKey": user,
+                            "secretKey": rest.split("\n")[0],
+                            "api": "S3v4",
+                            "path": "auto",
+                        }
+                    },
+                }
+            )
+        )
     elif cmd == "url-part":
         sys.stdout.write(url_part(rest[0], rest[1]))
     else:
