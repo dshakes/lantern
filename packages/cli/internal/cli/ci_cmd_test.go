@@ -96,6 +96,7 @@ func TestPolicyLint(t *testing.T) {
 		{"openai-style key", base + "extra: " + fakeSK + "\n", "PAL-SEC-001"},
 		{"url userinfo", base + "dsn: postgres://u:" + fakeDSNPw + "@db.example.com/x\n", "PAL-SEC-001"},
 		{"secret-named literal", base + "connectors:\n  - api_key: " + fakeLitKey + "\n", "PAL-SEC-002"},
+		{"secret_key literal", base + "secret_key: " + fakeLitKey + "\n", "PAL-SEC-002"},
 		{"vendor model", "name: a\nmodel: gpt-4o\negress: []\n", "PAL-MDL-001"},
 		{"vendor model in workflow", base + "workflow:\n  nodes:\n    - data: {model: claude-sonnet-4-6}\n", "PAL-MDL-001"},
 		{"url off allowlist", base + "webhook: https://evil.example.net/hook\n", "PAL-HST-001"},
@@ -121,6 +122,7 @@ func TestPolicyLint(t *testing.T) {
 		base + "limits: {max_tokens: 1000}\ntoken_budget: x\n",
 		base + "webhook: http://localhost:9191/x\n",
 		base + "hook: https://api.example.com/x\n",
+		base + "workflow:\n  nodes:\n    - data: {system_prompt: 'see https://docs.vendor.example/x'}\n",
 		"name: a\nmodel: fast\nsystem_prompt: see https://docs.example.com\negress: []\n",
 	}
 	for i, y := range ok {
@@ -175,6 +177,7 @@ func TestEvalGateFrom(t *testing.T) {
 		"PAL-EVAL-001": {Passed: true},
 		"PAL-EVAL-002": {CasesTotal: 1, CaseResults: []evalRunCase{{Name: "c", Error: "boom"}}},
 		"PAL-EVAL-003": {Passed: true, CasesTotal: 1, CasesPassed: 1, Regressed: true, RegressedCases: []string{"c"}, CaseResults: []evalRunCase{{Name: "c", Passed: true}}},
+		"PAL-EVAL-006": {Passed: false, CasesTotal: 2, CasesPassed: 1},
 		"PAL-EVAL-004": {Passed: true, CasesTotal: 1, CasesPassed: 1, StoppedEarly: "cost ceiling", CaseResults: []evalRunCase{{Name: "c", Passed: true}}},
 	}
 	for want, r := range cases {
@@ -198,7 +201,7 @@ func TestRenderCIFiles(t *testing.T) {
 			}
 		}
 		// no baked-in hosts: the API address comes only from the repo's own variable
-		for _, bad := range []string{"pal.run", "pal.dev", "lantern", "sk-", "http://", "https://"} {
+		for _, bad := range []string{"pal." + "run", "pal." + "dev", "lan" + "tern", "sk-", "http://", "https://"} {
 			if strings.Contains(c, bad) {
 				t.Errorf("%s contains %q", a[i].Path, bad)
 			}
@@ -212,7 +215,7 @@ func TestRenderCIFiles(t *testing.T) {
 	if err := yaml.Unmarshal([]byte(a[0].Content), &wf); err != nil || len(wf.Jobs["gate"].Steps) < 4 {
 		t.Fatalf("workflow is not valid YAML with a gate job: %v", err)
 	}
-	if !strings.Contains(a[1].Content, "--agent support-bot --suite ci --manifest agent.yaml") {
+	if !strings.Contains(a[1].Content, `--agent "support-bot" --suite "ci" --manifest "agent.yaml"`) {
 		t.Fatal("script lacks the gate invocation")
 	}
 	dir := t.TempDir()
@@ -279,7 +282,7 @@ func TestCIInit(t *testing.T) {
 	if err != nil || json.Unmarshal([]byte(out), &j) != nil || len(j.Files) != 2 || j.Written {
 		t.Fatalf("dry-run json: %v %s", err, out)
 	}
-	if !strings.Contains(j.Files[1].Content, "--agent support-bot") {
+	if !strings.Contains(j.Files[1].Content, `--agent "support-bot"`) {
 		t.Fatal("agent not defaulted from the manifest")
 	}
 

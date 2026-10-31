@@ -32,6 +32,7 @@ mkdir -p "$tmp/bin"
 
 python3 - "$tmp/rules.json" <<'PY'
 import json, sys
+# reuses the eval-gated-deploy fixture: its "[policy-pack: legacy]" rule is the regression trigger used in step 2
 rules = json.load(open("examples/eval-gated-deploy/fixtures/llm-rules.json"))
 json.dump(rules, open(sys.argv[1], "w"))
 PY

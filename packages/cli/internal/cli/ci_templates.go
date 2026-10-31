@@ -92,7 +92,7 @@ fi
 
 branch="${PAL_CI_BASELINE_BRANCH:-@BRANCH@}"
 if [ -n "${PAL_CI_SET_BASELINE:-}" ]; then
-  exec pal ci check --agent @AGENT@ --suite @SUITE@ --manifest @MANIFEST@ --branch "$branch" --stage --set-baseline
+  exec pal ci check --agent "@AGENT@" --suite "@SUITE@" --manifest "@MANIFEST@" --branch "$branch" --stage --set-baseline
 fi
-exec pal ci check --agent @AGENT@ --suite @SUITE@ --manifest @MANIFEST@ --branch "$branch" --stage
+exec pal ci check --agent "@AGENT@" --suite "@SUITE@" --manifest "@MANIFEST@" --branch "$branch" --stage
 `

@@ -28,7 +28,7 @@ verdict is deterministic Go; no model call exists anywhere in `pal ci check`.
 2. **Policy / security lint** (`PAL-SEC|EGR|MDL|HST-*`): no credential-shaped
    values or secret-named literals (use `pal.secret/...` refs); an `egress:` key
    must exist (`egress: []` is an explicit deny-all) with exact hosts or `*.domain`
-   only; every `model` key (including inside `workflow`) is a capability, not a
+   (matches any subdomain depth) only; every `model` key (including inside `workflow`) is a capability, not a
    vendor id (invariant #6); every URL host must be in the egress allowlist or
    loopback. Findings carry rule id and path, **never the value** (invariant #10).
 3. **Hermetic eval** (`PAL-EVAL-*`): `POST /v1/eval-suites/{id}/run` against the

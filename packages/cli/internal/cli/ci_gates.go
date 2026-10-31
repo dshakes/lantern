@@ -181,7 +181,7 @@ func toFloat(v any) (float64, bool) {
 
 var (
 	secretValue = regexp.MustCompile(`AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|pal_brg_[A-Za-z0-9]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|://[^/\s:@]+:[^/\s@]+@`)
-	secretKey   = regexp.MustCompile(`(?i)(^|[_-])(api[_-]?key|secret|password|passwd|token|credential)$`)
+	secretKey   = regexp.MustCompile(`(?i)(^|[_-])((api|secret|private|access|signing|auth)[_-]?key|secret|password|passwd|token|credential)$`)
 	vendorModel = regexp.MustCompile(`(?i)^(gpt|chatgpt|o[0-9]|claude|gemini|llama|mistral|mixtral|command|grok|deepseek|qwen|text-embedding)|/`)
 	urlInText   = regexp.MustCompile(`https?://[^\s"'<>)\]]+`)
 )
@@ -287,7 +287,7 @@ func policyLint(m map[string]any) ciGate {
 		if key == "model" && vendorModel.MatchString(strings.TrimSpace(val)) {
 			add("PAL-MDL-001", path, "model must be addressed by capability (`auto`, `fast`, `reasoning-large`), not a vendor model id")
 		}
-		if path == "system_prompt" || path == "description" {
+		if strings.HasSuffix(path, "system_prompt") || strings.HasSuffix(path, "description") {
 			return
 		}
 		for _, u := range urlInText.FindAllString(val, -1) {
@@ -384,6 +384,11 @@ func evalGateFrom(r *evalRunResp, branch string) ciGate {
 			}
 			add("PAL-EVAL-002", c.Name, msg)
 		}
+	}
+	// Trust the server's own verdict and counts too, not only the per-case rows:
+	// a response with no caseResults must not read as green.
+	if !r.Passed || r.CasesPassed != r.CasesTotal {
+		add("PAL-EVAL-006", "", fmt.Sprintf("server verdict: passed=%v, %d/%d cases passed", r.Passed, r.CasesPassed, r.CasesTotal))
 	}
 	if r.Regressed {
 		if r.BaselineScore != nil {
