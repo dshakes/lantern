@@ -156,6 +156,11 @@ func purgeTenantRows(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger, t
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
+	// Sanctioned exception to the append-only promotion audit trail (migration 0037).
+	if _, err := tx.Exec(ctx, `SELECT set_config('pal.erasure', 'on', true)`); err != nil {
+		return nil, err
+	}
+
 	step := func(table, col string, args ...any) bool {
 		q := fmt.Sprintf(`DELETE FROM %s WHERE %s = $1`, table, col)
 		tag, execErr := tx.Exec(ctx, q, args...)

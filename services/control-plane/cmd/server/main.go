@@ -404,6 +404,7 @@ func main() {
 	evalHandler := handlers.NewEvalHandler(srv, authHandler)
 	evalHandler.SetLLM(llmProxyHandler) // hermetic runner + LLM judge + suite generator (ADR 0052)
 	experimentHandler := handlers.NewExperimentHandler(srv, authHandler)
+	promotionHandler := handlers.NewPromotionHandler(srv, authHandler)
 
 	// Frontier surface: verifiable receipts, RLHF feedback loop,
 	// rehearsal of past failures against new agent versions.
@@ -829,6 +830,18 @@ func main() {
 	httpMux.HandleFunc("POST /v1/experiments/{id}/record", authHandler.WithScope(handlers.ScopeAgentsWrite, experimentHandler.RecordOutcome))
 	httpMux.HandleFunc("POST /v1/experiments/{id}/conclude", authHandler.WithScope(handlers.ScopeAgentsWrite, experimentHandler.Conclude))
 
+	// Environments, approval, canary, rollback (ADR 0054).
+	httpMux.HandleFunc("POST /v1/agents/{name}/promote", authHandler.WithScope(handlers.ScopeAgentsWrite, promotionHandler.Promote))
+	httpMux.HandleFunc("POST /v1/agents/{name}/versions", authHandler.WithScope(handlers.ScopeAgentsWrite, promotionHandler.CreateVersion))
+	httpMux.HandleFunc("GET /v1/agents/{name}/environments", authHandler.WithScope(handlers.ScopeAgentsRead, promotionHandler.ListEnvironments))
+	httpMux.HandleFunc("POST /v1/agents/{name}/environments/{env}/rollback", authHandler.WithScope(handlers.ScopeAgentsWrite, promotionHandler.Rollback))
+	httpMux.HandleFunc("POST /v1/agents/{name}/environments/prod/canary/evaluate", authHandler.WithScope(handlers.ScopeAgentsWrite, promotionHandler.EvaluateCanaryHTTP))
+	httpMux.HandleFunc("POST /v1/agents/{name}/environments/sandbox/runs", authHandler.WithScope(handlers.ScopeAgentsWrite, promotionHandler.RecordSandboxRun))
+	httpMux.HandleFunc("GET /v1/promotions", authHandler.WithScope(handlers.ScopeAgentsRead, promotionHandler.ListPromotions))
+	httpMux.HandleFunc("GET /v1/promotions/audit", authHandler.WithScope(handlers.ScopeAgentsRead, promotionHandler.Audit))
+	httpMux.HandleFunc("POST /v1/promotions/{id}/approve", authHandler.WithScope(handlers.ScopeAgentsWrite, promotionHandler.Approve))
+	httpMux.HandleFunc("POST /v1/promotions/{id}/reject", authHandler.WithScope(handlers.ScopeAgentsWrite, promotionHandler.Reject))
+
 	// Verifiable execution receipts — HMAC-signed, journal-bound run summaries.
 	httpMux.HandleFunc("POST /v1/runs/{id}/receipt", authHandler.WithScope(handlers.ScopeRunsWrite, receiptHandler.IssueReceipt))
 	httpMux.HandleFunc("POST /v1/runs/receipts/verify", receiptHandler.VerifyReceipt)
@@ -1070,6 +1083,9 @@ func main() {
 
 		// LLM-distilled long-term memory (PAL_MEMORY_DISTILL, default OFF).
 		go handlers.RunMemoryDistillLoop(ctx, memoryDistillHandler)
+
+		// Canary guards (ADR 0054): a tripped SLO/eval guard rolls back with no human watching.
+		go handlers.RunCanaryLoop(ctx, promotionHandler, 0)
 
 		// Proactive Jarvis morning brief (opt-in via PAL_JARVIS_BRIEF_HOUR).
 		go jarvisHandler.RunBriefScheduler(ctx)

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -526,3 +527,51 @@ func assertAgentRestoredFromTemplate(t *testing.T, pool interface {
 		t.Errorf("labels pal.template: got %q, want %q", labelTemplate, tpl.ID)
 	}
 }
+
+// A run bound to a frozen version executes that version's prompt, not the working copy, and
+// never rewrites the working copy (ADR 0054).
+func TestInlineRun_ExecutesFrozenSnapshot(t *testing.T) {
+	t.Setenv("PAL_USE_CLAUDE_CODE", "")
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test-fake-key")
+	h, srv := newChaosHandler(t)
+	f := insertDRFixture(t, srv.Pool, fmt.Sprintf("frozen-run-%d", time.Now().UnixNano()), "queued")
+	ctx := context.Background()
+	man, _ := json.Marshal(map[string]any{"snapshot": agentSnapshot{SystemPrompt: "FROZEN-PROMPT-P1"}})
+	if _, err := srv.Pool.Exec(ctx, `UPDATE agent_versions SET manifest=$2::jsonb WHERE id=$1::uuid`, f.versionID, string(man)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.Pool.Exec(ctx, `UPDATE agents SET system_prompt='DRAFT-PROMPT-P2' WHERE id=$1::uuid`, f.agentID); err != nil {
+		t.Fatal(err)
+	}
+	var seen []string
+	var mu sync.Mutex
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		seen = append(seen, string(b))
+		mu.Unlock()
+		return okByProvider("done")(r)
+	})
+	h.llmProxy = NewLlmProxyHandler(srv, NewAuthHandler(srv, testJWTSecret))
+	h.llmProxy.httpClient = &http.Client{Transport: rt}
+	var name string
+	_ = srv.Pool.QueryRow(ctx, `SELECT name FROM agents WHERE id = $1`, f.agentID).Scan(&name)
+	if _, _, err := h.executeRunInlineSync(tenantCtx(recoveryTestDevTenantID), f.runID, recoveryTestDevTenantID, name, map[string]any{"message": "hi"}); err != nil {
+		t.Fatalf("executeRunInlineSync: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	all := strings.Join(seen, "\n")
+	if !strings.Contains(all, "FROZEN-PROMPT-P1") || strings.Contains(all, "DRAFT-PROMPT-P2") {
+		t.Fatalf("executor used the wrong definition; request bodies: %.400s", all)
+	}
+	var cur string
+	_ = srv.Pool.QueryRow(ctx, `SELECT system_prompt FROM agents WHERE id=$1::uuid`, f.agentID).Scan(&cur)
+	if cur != "DRAFT-PROMPT-P2" {
+		t.Fatalf("a frozen run rewrote the working copy: %q", cur)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

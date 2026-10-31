@@ -84,6 +84,15 @@ func (s *RunService) CreateRun(ctx context.Context, req *palv1.CreateRunRequest)
 	}
 	resolvedVersionID := *agentVersionID
 
+	// Environments (ADR 0054): an agent with a prod environment is served from it,
+	// including the deterministic canary split. The run id is chosen up front so
+	// the split is a pure function of it.
+	var preRunID string
+	if err := tx.QueryRow(ctx, `SELECT gen_random_uuid()::text`).Scan(&preRunID); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to allocate run id: %v", err)
+	}
+	resolvedVersionID, envLabels := pickPromotedVersion(ctx, tx, tenantID, agentID, req.GetAgentName(), preRunID, resolvedVersionID)
+
 	// Marshal input and trigger_meta to JSONB.
 	inputJSON, err := structToJSON(req.GetInput())
 	if err != nil {
@@ -97,7 +106,14 @@ func (s *RunService) CreateRun(ctx context.Context, req *palv1.CreateRunRequest)
 
 	triggerKind := triggerKindToString(req.GetTriggerKind())
 
-	labelsJSON, err := json.Marshal(req.GetLabels())
+	labels := map[string]string{}
+	for k, v := range req.GetLabels() {
+		labels[k] = v
+	}
+	for k, v := range envLabels {
+		labels[k] = v
+	}
+	labelsJSON, err := json.Marshal(labels)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to marshal labels: %v", err)
 	}
@@ -116,10 +132,10 @@ func (s *RunService) CreateRun(ctx context.Context, req *palv1.CreateRunRequest)
 		createdAt time.Time
 	)
 	err = tx.QueryRow(ctx, `
-		INSERT INTO runs (tenant_id, agent_id, agent_version_id, status, trigger_kind, trigger_meta, input, labels, session_id)
-		VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7, $8)
+		INSERT INTO runs (id, tenant_id, agent_id, agent_version_id, status, trigger_kind, trigger_meta, input, labels, session_id)
+		VALUES ($9::uuid, $1, $2, $3, 'queued', $4, $5, $6, $7, $8)
 		RETURNING id, created_at
-	`, tenantID, agentID, resolvedVersionID, triggerKind, triggerMetaJSON, inputJSON, labelsJSON, sessionIDArg,
+	`, tenantID, agentID, resolvedVersionID, triggerKind, triggerMetaJSON, inputJSON, labelsJSON, sessionIDArg, preRunID,
 	).Scan(&runID, &createdAt)
 	if err != nil {
 		s.logger().Error("insert run failed", zap.Error(err), zap.String("tenant_id", tenantID))
