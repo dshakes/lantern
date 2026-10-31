@@ -1760,8 +1760,8 @@ export class IMessageSession {
         this.logger.warn({}, "LIVENESS: kill switch ENGAGED — no contact gets a reply");
       } else if (this.muted) {
         this.logger.warn(
-          { mutedDropsSinceStart: this.mutedDropCount },
-          "LIVENESS: auto-reply is MUTED — contacts are being dropped (unmute to resume)",
+          { mutedHoldsSinceStart: this.mutedDropCount },
+          "LIVENESS: auto-reply is MUTED — contacts are being drafted for owner approval (unmute to resume)",
         );
       }
       const pausedNow = [...this.pausedUntil.values()].filter((t) => t > Date.now()).length;

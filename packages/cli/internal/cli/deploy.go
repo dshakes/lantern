@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -40,6 +41,10 @@ type agentManifest struct {
 	SystemPrompt string            `yaml:"system_prompt"`
 	Labels       map[string]string `yaml:"labels"`
 	Workflow     map[string]any    `yaml:"workflow"`
+	// Policy is the agent's least-privilege policy (ADR 0055). When absent on
+	// a NEW agent, deploy applies the server's proposal derived from the
+	// workflow (a new agent is default-deny and could do nothing otherwise).
+	Policy map[string]any `yaml:"policy"`
 }
 
 func newDeployCommand() *cobra.Command {
@@ -147,12 +152,56 @@ func runDeploy(c *internal.RESTClient, m *agentManifest, dryRun bool) (map[strin
 		}
 	}
 
+	granted, err := applyDeployPolicy(c, base, m.Policy, action == "create")
+	if err != nil {
+		return nil, err
+	}
+
 	out := map[string]any{}
 	if err := c.Call("POST", base+"/deploy", nil, &out); err != nil {
 		return nil, fmt.Errorf("deploy agent: %w", err)
 	}
 	out["agent"] = action + "d"
+	if granted != nil {
+		out["policy"] = granted
+	}
 	return out, nil
+}
+
+// applyDeployPolicy writes the manifest's policy (any agent), or — for a newly
+// created agent with no declared policy — the server's least-privilege
+// proposal. Either way it returns the read-back policy. An existing agent with
+// no declared policy is left as it is.
+func applyDeployPolicy(c *internal.RESTClient, base string, declared map[string]any, created bool) (map[string]any, error) {
+	body := declared
+	if body == nil {
+		if !created {
+			return nil, nil
+		}
+		var prop struct {
+			Proposal map[string]any `json:"proposal"`
+		}
+		if err := c.Call("POST", base+"/policy/propose", nil, &prop); err != nil {
+			return nil, fmt.Errorf("propose policy: %w", err)
+		}
+		body = prop.Proposal
+	} else {
+		var cur struct {
+			Policy map[string]any `json:"policy"`
+		}
+		if err := c.Call("GET", base+"/policy", nil, &cur); err != nil {
+			return nil, fmt.Errorf("read policy: %w", err)
+		}
+		body = maps.Clone(declared)
+		body["version"] = cur.Policy["version"]
+	}
+	var got struct {
+		Policy map[string]any `json:"policy"`
+	}
+	if err := c.Call("PUT", base+"/policy", body, &got); err != nil {
+		return nil, fmt.Errorf("apply policy: %w", err)
+	}
+	return got.Policy, nil
 }
 
 // mapDeployError turns an API status into a readable message and exit code.

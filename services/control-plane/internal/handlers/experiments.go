@@ -17,7 +17,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"hash/fnv"
 	"net/http"
 	"time"
 
@@ -280,6 +279,14 @@ func (h *ExperimentHandler) Conclude(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var agentName, aVer, bVer string
+	var linked bool
+	_ = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM agent_environments WHERE canary_experiment_id::text = $1 AND tenant_id = $2)`, id, tenantID).Scan(&linked)
+	})
+	if linked {
+		writeJSON(w, http.StatusConflict, map[string]string{"code": "managed_by_promotion", "error": "this experiment is a promotion canary; use `pal rollback` or the canary guards"})
+		return
+	}
 	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
 			UPDATE agent_experiments SET status = 'concluded', winner = $3, concluded_at = now()
@@ -324,10 +331,7 @@ func PickVariant(ctx context.Context, pool *pgxpool.Pool, tenantID, agentName, r
 		return "", "", ""
 	}
 	// Deterministic hash of run_id into [0,100).
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(runID))
-	bucket := int(h.Sum32() % 100)
-	if bucket < splitB {
+	if canaryBucket(runID, splitB) {
 		return "b", bVer, expID
 	}
 	return "a", aVer, expID

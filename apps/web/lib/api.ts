@@ -1,5 +1,13 @@
 "use client";
 
+import type {
+  AgentAuditLog,
+  AgentIdentity,
+  AgentPolicy,
+  AgentPolicyDocument,
+  AgentPolicyProposal,
+} from "./agent-policy";
+
 // Types only — we intentionally don't import any mock data runtime here.
 // Every method below either returns real API data, returns empty/null, or
 // throws. No fabricated rows leak into the UI as fake runs.
@@ -1730,6 +1738,46 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
       method: "POST",
       body: JSON.stringify({ templateId, name }),
     });
+  }
+
+  // ---- Agent identity + policy (ADR 0055) ---------------------------------
+
+  getAgentPolicy(name: string): Promise<AgentPolicyDocument> {
+    return this.request(`/v1/agents/${encodeURIComponent(name)}/policy`);
+  }
+
+  putAgentPolicy(name: string, policy: AgentPolicy): Promise<AgentPolicyDocument> {
+    return this.request(`/v1/agents/${encodeURIComponent(name)}/policy`, {
+      method: "PUT",
+      body: JSON.stringify(policy),
+    });
+  }
+
+  proposeAgentPolicy(name: string): Promise<AgentPolicyProposal> {
+    return this.request(`/v1/agents/${encodeURIComponent(name)}/policy/propose`, { method: "POST" });
+  }
+
+  getAgentIdentity(name: string): Promise<AgentIdentity> {
+    return this.request(`/v1/agents/${encodeURIComponent(name)}/identity`);
+  }
+
+  rotateAgentIdentity(name: string): Promise<AgentIdentity> {
+    return this.request(`/v1/agents/${encodeURIComponent(name)}/identity/rotate`, { method: "POST" });
+  }
+
+  revokeAgentIdentity(name: string, reason: string): Promise<AgentIdentity> {
+    return this.request(`/v1/agents/${encodeURIComponent(name)}/identity/revoke`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    });
+  }
+
+  listAgentAudit(name: string, opts: { limit?: number; event?: string } = {}): Promise<AgentAuditLog> {
+    const q = new URLSearchParams();
+    if (opts.limit) q.set("limit", String(opts.limit));
+    if (opts.event) q.set("event", opts.event);
+    const qs = q.toString();
+    return this.request(`/v1/agents/${encodeURIComponent(name)}/audit${qs ? `?${qs}` : ""}`);
   }
 
   // Setup gate: reads required connectors+surfaces written by the template

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/dshakes/pal/packages/agentpolicy"
 	"io"
 	"net/http"
 	"os"
@@ -1384,6 +1385,12 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 	}
 	defer releaseLease()
 
+	// Agent identity (ADR 0055): the run acts as its agent's principal.
+	ctx, aerr := h.establishRunPrincipal(ctx, runID, tenantID, agentName)
+	if aerr != nil {
+		return "", "", aerr
+	}
+
 	// Deferred pal.run.total counter. Fires once per lease-held run at
 	// the actual function return so it sees the final outErr value.
 	// The workflow path writes status='failed' itself and returns outErr=nil,
@@ -1543,6 +1550,11 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 		`SELECT system_prompt, COALESCE(labels, '{}'::jsonb)::text, COALESCE(model, '') FROM agents WHERE name = $1 AND tenant_id = $2`,
 		agentName, tenantID,
 	).Scan(&storedSystemPrompt, &labelsJSON, &agentModel)
+	frozenRun := false
+	if snap := h.runSnapshot(ctx, runID); snap != nil {
+		// Frozen version (ADR 0054): its prompt and model, not the mutable working copy.
+		storedSystemPrompt, agentModel, frozenRun = &snap.SystemPrompt, snap.Model, true
+	}
 	systemPromptStr := fmt.Sprintf("You are the agent '%s'. Process the user's input and produce a useful result.", agentName)
 	// resolvedTemplateID drives prefetch dispatch — MUST be set on every
 	// run, not just freshly-backfilled ones. Earlier bug: backfill ran
@@ -1570,7 +1582,7 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 	}
 	if storedSystemPrompt != nil && *storedSystemPrompt != "" {
 		systemPromptStr = *storedSystemPrompt
-	} else {
+	} else if !frozenRun { // a frozen run never rewrites the working copy
 		// Lazy back-fill for agents that pre-date templates.go storing
 		// system_prompt. resolvedTemplateID was already set above.
 		var tpl templateDef
@@ -2136,6 +2148,15 @@ func meteredLLMCall(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger,
 // that the rest of the run pipeline uses — the interpreter doesn't
 // bypass auth, tenant-scoped keys, or audit logging.
 func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID, agentName string, input map[string]any) bool {
+	// The recovery sweep re-drives workflows straight into here, so the
+	// principal is (re)established here too (ADR 0055).
+	if principalFrom(ctx) == nil {
+		pctx, err := h.establishRunPrincipal(ctx, runID, tenantID, agentName)
+		if err != nil {
+			return true // run already marked failed
+		}
+		ctx = pctx
+	}
 	if h.llmProxy == nil {
 		return false
 	}
@@ -2149,6 +2170,10 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 		`SELECT COALESCE(workflow, '{}'::jsonb)::text, COALESCE(model, '') FROM agents WHERE name = $1 AND tenant_id = $2`,
 		agentName, tenantID,
 	).Scan(&wfRaw, &agentModel)
+	// A run bound to a frozen version executes that version's definition (ADR 0054).
+	if snap := h.runSnapshot(ctx, runID); snap != nil {
+		wfRaw, agentModel, err = snap.Workflow, snap.Model, nil
+	}
 	if err != nil || len(wfRaw) == 0 {
 		return false
 	}
@@ -2192,6 +2217,9 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 			// tenant + connector and call the same execute<Connector>
 			// helpers used elsewhere. Per-tool limits key on connector.action.
 			key := connectorID + "." + action
+			if err := principalFrom(ctx).Authorize(ctx, agentpolicy.Action{Kind: agentpolicy.KindConnector, Target: connectorID, Sub: action}, ""); err != nil {
+				return nil, err
+			}
 			if err := gateWorkflowTool(ctx, h.srv.Pool, h.logger(), tenantID, agentName, key); err != nil {
 				return nil, err
 			}
@@ -2200,6 +2228,9 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 			return out, err
 		},
 		CallTool: func(ctx context.Context, tool string, params map[string]any) (any, error) {
+			if err := principalFrom(ctx).Authorize(ctx, agentpolicy.Action{Kind: agentpolicy.KindTool, Target: tool}, ""); err != nil {
+				return nil, err
+			}
 			exec, _ := h.microVMDispatcher.(toolExecer)
 			return callWorkflowTool(ctx, h.srv.Pool, h.logger(), exec, runID, tenantID, agentName, tool, params)
 		},
@@ -2289,6 +2320,11 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 			return workflow.ApprovalDisposition{}, workflow.ErrRunParked
 		},
 		RunSubAgent: func(subCtx context.Context, agentName string, input map[string]any) (map[string]any, error) {
+			// Agent→agent (ADR 0055): the CALLING agent's policy must list the
+			// child; the child then runs as its own principal.
+			if err := principalFrom(subCtx).Authorize(subCtx, agentpolicy.Action{Kind: agentpolicy.KindA2A, Target: agentName}, ""); err != nil {
+				return nil, err
+			}
 			// Depth guard: prevent infinite recursion when a workflow invokes
 			// itself or forms a cycle. The limit is enforced via context value
 			// so it survives across the synchronous call stack.
@@ -3181,4 +3217,28 @@ func runTotalStatus(outErr error, dbStatus string) string {
 		return "failed"
 	}
 	return "succeeded"
+}
+
+// establishRunPrincipal makes the run act as its agent's principal (ADR 0055).
+// A revoked identity (or a strict-mode unregistered agent) fails the run with
+// a typed error code; an unregistered agent name returns ctx unchanged.
+func (h *RESTHandler) establishRunPrincipal(ctx context.Context, runID, tenantID, agentName string) (context.Context, error) {
+	actx, _, aerr := currentAgentAuthz().Establish(ctx, tenantID, agentName, runID)
+	if aerr == nil {
+		return actx, nil
+	}
+	code := "agent_identity_unavailable"
+	switch {
+	case errors.Is(aerr, ErrAgentIdentityRevoked):
+		code = "agent_identity_revoked"
+	case errors.Is(aerr, ErrAgentPolicyDenied):
+		code = "agent_policy_denied"
+	}
+	h.logger().Warn("run refused: agent identity", zap.String("run_id", runID), zap.String("code", code), zap.Error(aerr))
+	failJSON, _ := json.Marshal(map[string]string{"code": code, "message": aerr.Error()})
+	// rls-exempt: inline executor — runs write keyed by id (authorized run).
+	_, _ = h.srv.Pool.Exec(context.WithoutCancel(ctx),
+		`UPDATE runs SET status = 'failed', finished_at = now(), error = $2::jsonb WHERE id = $1`,
+		runID, string(failJSON))
+	return ctx, aerr
 }

@@ -575,8 +575,11 @@ impl RuntimeManagerGrpc {
 /// other `PAL_*` key is harness configuration (`PAL_ENV`, egress,
 /// workload uid, …) and is manager-owned. Keep in sync with the harness's
 /// `bootenv::CALLER_PAL_KEYS`.
-pub const CALLER_PAL_KEYS: [&str; 4] = [
+pub const CALLER_PAL_KEYS: [&str; 6] = [
     "PAL_AGENT_INSTANCE_ID",
+    // The agent principal the VM runs as (ADR 0055): non-secret locators.
+    "PAL_AGENT_ID",
+    "PAL_AGENT_SPIFFE_ID",
     "PAL_AGENT_INSTANCE_TOKEN",
     "PAL_TRACE_PARENT",
     "PAL_RESUME",
@@ -3026,6 +3029,21 @@ fn extract_identity_from_report(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn caller_may_set_agent_identity_locators_but_not_harness_config() {
+        // ADR 0055: the VM's agent principal reaches the harness/workload.
+        for k in [
+            "PAL_AGENT_ID",
+            "PAL_AGENT_SPIFFE_ID",
+            "PAL_AGENT_INSTANCE_TOKEN",
+        ] {
+            assert!(super::caller_env_key_allowed(k), "{k} must pass");
+        }
+        for k in ["PAL_ENV", "PAL_WORKLOAD_UID", "PAL_EGRESS_FAIL_CLOSED"] {
+            assert!(!super::caller_env_key_allowed(k), "{k} must be dropped");
+        }
+    }
+
     use super::*;
     use futures::stream::BoxStream;
     // The `vend_secret` method is defined on the `RuntimeHarness` trait; tests

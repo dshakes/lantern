@@ -23,6 +23,9 @@ func newAgentsCommand() *cobra.Command {
 	cmd.AddCommand(newAgentsListCommand())
 	cmd.AddCommand(newAgentsDeleteCommand())
 	cmd.AddCommand(newAgentDevCommand())
+	cmd.AddCommand(newAgentPolicyCommand())
+	cmd.AddCommand(newAgentIdentityCommand())
+	cmd.AddCommand(newAgentAuditCommand())
 
 	return cmd
 }

@@ -3,7 +3,9 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"github.com/dshakes/pal/packages/agentpolicy"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -57,12 +59,31 @@ type AgentCard struct {
 	InputSchema  json.RawMessage   `json:"inputSchema"`
 	OutputSchema json.RawMessage   `json:"outputSchema"`
 	Provider     AgentCardProvider `json:"provider"`
+	// SpiffeID is the agent's principal (ADR 0055); an agent caller mints a
+	// token with this as its audience. JwksURI serves the verifying key.
+	SpiffeID string `json:"spiffeId,omitempty"`
+	JwksURI  string `json:"jwksUri,omitempty"`
 }
 
 // AgentCardAuth describes the authentication requirements for invoking an agent.
 type AgentCardAuth struct {
 	Type        string `json:"type"`
 	Description string `json:"description"`
+	Header      string `json:"header,omitempty"`
+	Audience    string `json:"audience,omitempty"`
+}
+
+// agentCardIdentity fills the card's identity fields (ADR 0055 §8): agents
+// authenticate as themselves with a short-lived, audience-bound agent token —
+// never a long-lived API key.
+func agentCardIdentity(card *AgentCard, tenantID, agentID string) {
+	card.Auth = AgentCardAuth{Type: "agent-token", Header: AgentTokenHeader,
+		Description: "Short-lived EdDSA agent token whose audience is this agent's SPIFFE id; human callers may use a PAL session instead"}
+	if z := currentAgentAuthz(); z != nil && agentID != "" {
+		card.SpiffeID = z.auth.SpiffeID(tenantID, agentID)
+		card.Auth.Audience = card.SpiffeID
+		card.JwksURI = "/.well-known/pal-agent-keys/" + agentID
+	}
 }
 
 // AgentCardProvider identifies who hosts the agent.
@@ -117,19 +138,21 @@ func (h *A2AHandler) GetAgentCard(w http.ResponseWriter, r *http.Request) {
 		description *string
 		labelsJSON  []byte
 		version     string
+		agentID     string
+		ownerTenant string
 	)
 	// rls-exempt: public A2A card discovery — intentionally cross-tenant. Serves
 	// anonymous callers (tenantID == "") and is gated by the explicit
 	// `is_public = true OR tenant_id = $2` clause, not by RLS. Running under the
 	// app role would hide other tenants' public agents from discovery.
 	err := h.srv.Pool.QueryRow(ctx, `
-		SELECT a.description, a.labels, COALESCE(av.version, '') AS version
+		SELECT a.description, a.labels, COALESCE(av.version, '') AS version, a.id::text, a.tenant_id::text
 		FROM agents a
 		LEFT JOIN agent_versions av ON av.id = a.current_version_id
 		WHERE a.name = $1 AND a.archived_at IS NULL
 		  AND (a.is_public = true OR a.tenant_id = $2)
 		LIMIT 1
-	`, name, nullableTenant(tenantID)).Scan(&description, &labelsJSON, &version)
+	`, name, nullableTenant(tenantID)).Scan(&description, &labelsJSON, &version, &agentID, &ownerTenant)
 	if err == pgx.ErrNoRows {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
 		return
@@ -167,10 +190,6 @@ func (h *A2AHandler) GetAgentCard(w http.ResponseWriter, r *http.Request) {
 		Version:      version, // real version from agent_versions; "" when no version deployed yet
 		Capabilities: caps,
 		Endpoint:     derivePublicURL(r) + "/v1/agents/" + name + "/a2a/invoke",
-		Auth: AgentCardAuth{
-			Type:        "bearer",
-			Description: "PAL API key",
-		},
 		InputSchema:  defaultInput,
 		OutputSchema: defaultOutput,
 		Provider: AgentCardProvider{
@@ -179,6 +198,7 @@ func (h *A2AHandler) GetAgentCard(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
+	agentCardIdentity(&card, ownerTenant, agentID)
 	writeJSON(w, http.StatusOK, card)
 }
 
@@ -195,7 +215,7 @@ func (h *A2AHandler) AgentDirectory(w http.ResponseWriter, r *http.Request) {
 	// gated by `is_public = true`. Must bypass RLS to list every tenant's
 	// public agents in the well-known directory.
 	rows, err := h.srv.Pool.Query(ctx, `
-		SELECT a.name, a.description, a.labels, COALESCE(av.version, '') AS version
+		SELECT a.name, a.description, a.labels, COALESCE(av.version, '') AS version, a.id::text, a.tenant_id::text
 		FROM agents a
 		LEFT JOIN agent_versions av ON av.id = a.current_version_id
 		WHERE a.archived_at IS NULL AND a.is_public = true
@@ -216,8 +236,10 @@ func (h *A2AHandler) AgentDirectory(w http.ResponseWriter, r *http.Request) {
 			description *string
 			labelsJSON  []byte
 			version     string
+			agentID     string
+			ownerTenant string
 		)
-		if err := rows.Scan(&name, &description, &labelsJSON, &version); err != nil {
+		if err := rows.Scan(&name, &description, &labelsJSON, &version, &agentID, &ownerTenant); err != nil {
 			h.logger().Error("scan agent row for directory failed", zap.Error(err))
 			continue
 		}
@@ -239,23 +261,21 @@ func (h *A2AHandler) AgentDirectory(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		cards = append(cards, AgentCard{
+		card := AgentCard{
 			Name:         name,
 			Description:  desc,
 			Version:      version, // real version from agent_versions; "" when none deployed
 			Capabilities: caps,
 			Endpoint:     derivePublicURL(r) + "/v1/agents/" + name + "/a2a/invoke",
-			Auth: AgentCardAuth{
-				Type:        "bearer",
-				Description: "PAL API key",
-			},
 			InputSchema:  json.RawMessage(`{"type":"object","properties":{"message":{"type":"string"}}}`),
 			OutputSchema: json.RawMessage(`{"type":"object","properties":{"result":{"type":"string"}}}`),
 			Provider: AgentCardProvider{
 				Name: "PAL",
 				URL:  "https://dshakes.github.io/pal",
 			},
-		})
+		}
+		agentCardIdentity(&card, ownerTenant, agentID)
+		cards = append(cards, card)
 	}
 	if err := rows.Err(); err != nil {
 		h.logger().Error("row iteration failed for agent directory", zap.Error(err))
@@ -278,11 +298,19 @@ func (h *A2AHandler) InvokeAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The invoke endpoint requires authentication.
-	claims, err := h.auth.validateRequest(r)
-	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-		return
+	// The caller is either an AGENT presenting its own short-lived token
+	// (ADR 0055 — the agent→agent path) or a human / API key.
+	agentTok := strings.TrimSpace(r.Header.Get(AgentTokenHeader))
+	var callerTenant string
+	if agentTok != "" {
+		callerTenant = unverifiedAgentTenant(agentTok) // only to resolve the name; verified below
+	} else {
+		claims, err := h.auth.validateRequest(r)
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return
+		}
+		callerTenant = claims.TenantID
 	}
 
 	var body struct {
@@ -298,17 +326,20 @@ func (h *A2AHandler) InvokeAgent(w http.ResponseWriter, r *http.Request) {
 	// explicitly is_public. Anything else returns 404 — we do NOT 403, to
 	// avoid leaking the existence of another tenant's private agent.
 	ctx := r.Context()
-	var agentID, agentTenantID string
+	var target agentRef
+	var targetPublic bool
 	// rls-exempt: authenticated A2A invoke is intentionally cross-tenant — a
 	// caller may invoke its OWN agent OR any tenant's `is_public` agent (the
 	// whole point of A2A). The explicit `is_public = true OR tenant_id = $2`
 	// clause does the gating; RLS would block legitimate public invocations.
-	err = h.srv.Pool.QueryRow(ctx, `
-		SELECT id, tenant_id FROM agents
+	// Own-tenant first so a name never resolves to a stranger's agent.
+	err := h.srv.Pool.QueryRow(ctx, `
+		SELECT id::text, name, tenant_id::text, COALESCE(current_version_id::text, ''), created_at, is_public FROM agents
 		WHERE name = $1 AND archived_at IS NULL
-		  AND (is_public = true OR tenant_id = $2)
+		  AND (is_public = true OR tenant_id::text = $2)
+		ORDER BY (tenant_id::text = $2) DESC, created_at
 		LIMIT 1
-	`, name, claims.TenantID).Scan(&agentID, &agentTenantID)
+	`, name, callerTenant).Scan(&target.ID, &target.Name, &target.TenantID, &target.VersionID, &target.CreatedAt, &targetPublic)
 	if err == pgx.ErrNoRows {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
 		return
@@ -318,7 +349,41 @@ func (h *A2AHandler) InvokeAgent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to look up agent"})
 		return
 	}
+	agentTenantID := target.TenantID
+	z := currentAgentAuthz()
 
+	// Caller identity + caller policy (outbound) + target policy (inbound).
+	callerID := "tenant:" + callerTenant
+	if agentTok != "" {
+		if z == nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"code": "agent_token_invalid", "error": "agent identity not configured"})
+			return
+		}
+		// The token must be bound to THIS target (audience = target SPIFFE id).
+		caller, verr := z.agentCallerFromRequest(r, z.auth.SpiffeID(target.TenantID, target.ID))
+		if verr != nil || caller.TenantID != callerTenant {
+			// A PRIVATE target was only resolvable through the (still
+			// unverified) tenant claim; answering 401 would confirm it
+			// exists. Look exactly like "no such agent" instead.
+			if !targetPublic {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
+				return
+			}
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"code": "agent_token_invalid", "error": "invalid agent token"})
+			return
+		}
+		callerID = caller.SpiffeID
+		cctx := withAgentPrincipal(middleware.InjectTenantID(ctx, caller.TenantID), caller)
+		if err := caller.Authorize(cctx, agentpolicy.Action{Kind: agentpolicy.KindA2A, Target: target.Name,
+			Aliases: []string{z.auth.SpiffeID(target.TenantID, target.ID)}}, ""); err != nil {
+			writeAgentPolicyDenied(w, err)
+			return
+		}
+	}
+	if err := z.authorizeInbound(ctx, target, callerID, callerTenant, agentTok != ""); err != nil {
+		writeAgentPolicyDenied(w, err)
+		return
+	}
 	if h.rest == nil || h.runSvc == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"error": "A2A invoke requires execution deps — call SetExecutionDeps at boot",
@@ -363,7 +428,8 @@ func (h *A2AHandler) InvokeAgent(w http.ResponseWriter, r *http.Request) {
 	h.logger().Info("a2a invoke: run created",
 		zap.String("agent", name),
 		zap.String("agentTenant", agentTenantID),
-		zap.String("callerTenant", claims.TenantID),
+		zap.String("callerTenant", callerTenant),
+		zap.String("caller", callerID),
 		zap.String("runId", runID),
 	)
 

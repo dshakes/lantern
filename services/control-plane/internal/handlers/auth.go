@@ -105,6 +105,10 @@ type PalClaims struct {
 	// Scopes is populated for API key auth only (Role=="service").
 	// Empty means "all scopes allowed" (unrestricted key).
 	Scopes []string `json:"scopes,omitempty"`
+	// Typ is set on every NON-session token the platform mints (agent-instance,
+	// agent, dataplane-session). A user session never carries it, so
+	// ValidateToken rejects any token that does (ADR 0055 §7).
+	Typ string `json:"typ,omitempty"`
 }
 
 // ---------- handlers ----------
@@ -1002,6 +1006,11 @@ func (h *AuthHandler) ValidateToken(tokenStr string) (*PalClaims, error) {
 	if !ok || !token.Valid {
 		return nil, fmt.Errorf("invalid token claims")
 	}
+	// Token confusion guard: agent-instance / agent / dataplane tokens can be
+	// HMAC-signed with the same secret in dev; none of them is a user session.
+	if claims.Typ != "" || claims.Issuer == "pal-agent" {
+		return nil, fmt.Errorf("not a session token")
+	}
 
 	return claims, nil
 }
@@ -1224,6 +1233,26 @@ func (h *AuthHandler) WithScope(required Scope, next http.HandlerFunc) http.Hand
 				zap.Strings("held", claims.Scopes))
 		}
 		next(w, r.WithContext(storeClaimsInCtx(r.Context(), claims)))
+	}
+}
+
+// WithScopeOrAgent is WithScope for the routes an AGENT may call as itself
+// (ADR 0055): a request carrying X-Pal-Agent-Token skips the user/API-key
+// scope check and goes to next, which MUST verify the agent token for its
+// audience and enforce the agent's policy (always on — agent principals are
+// never governed by PAL_AUTHZ_ENFORCE). Only wire agent-aware handlers here:
+// on any other route the header would be a scope bypass.
+func (h *AuthHandler) WithScopeOrAgent(required Scope, next http.HandlerFunc) http.HandlerFunc {
+	scoped := h.WithScope(required, next)
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Trimmed exactly as the handlers trim it: a whitespace-only header
+		// must NOT skip the scope check and then be treated as "no agent
+		// token" downstream (that was a scope bypass for restricted keys).
+		if strings.TrimSpace(r.Header.Get(AgentTokenHeader)) != "" {
+			next(w, r)
+			return
+		}
+		scoped(w, r)
 	}
 }
 

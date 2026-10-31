@@ -16,6 +16,20 @@ class PalApiError(PalError):
         super().__init__(f"PAL API error {status}: {body[:200]}")
 
 
+class PalPolicyDeniedError(PalApiError):
+    """403 ``agent_policy_denied``: the agent's policy does not allow this dispatch."""
+
+    def __init__(self, status: int, body: str, *, kind: str = "", target: str = "", message: str = "") -> None:
+        self.kind = kind
+        self.target = target
+        self.message = message
+        super().__init__(status, body)
+
+
+class PalPolicyVersionConflictError(PalApiError):
+    """409 ``version_conflict``: the policy changed since it was read; re-read and retry."""
+
+
 class PalStepError(PalError):
     """Raised when a durable step fails after exhausting retries."""
 

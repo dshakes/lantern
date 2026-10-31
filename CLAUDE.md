@@ -635,6 +635,17 @@ LLM answers are replays from `cmd/llm-replay` (W2-0). Env: `PAL_KIOSK`,
 `_ALLOW_PROD`, `_TTL_MIN` (30), `_SWEEP_SEC` (60), `_MAX_SESSIONS` (20),
 `_IP_PER_HOUR` (3). Dashboard: public `/kiosk` start page, `components/kiosk-tour.tsx`.
 
+### Agent promotion: environments, approval, canary, rollback (ADR 0054)
+
+`pal freeze` freezes the working copy into an immutable, content-addressed version (the executor and
+eval runner run that snapshot). `pal promote <agent> --to sandbox|staging|prod [--canary N]` is gated
+server-side (earlier env, fresh server-run hermetic eval vs env baseline, budget); prod needs a human
+owner/admin `pal approve` (API keys/agents can only propose). Canary routes runs via
+`agent_experiments` + `agent_environments`; guards (error rate, cost ratio, eval floor) auto-roll back;
+`pal rollback` is idempotent. Every decision is in the append-only `agent_promotion_audit`. Routes:
+`/v1/agents/{name}/{promote,versions,environments,environments/{env}/rollback}`, `/v1/promotions[/audit|/{id}/approve|reject]`.
+Env: `PAL_PROMOTE_REQUIRE_SANDBOX_RUN` (prod also needs a sandbox microVM run). E2E: `scripts/e2e-agent-promotion.sh`.
+
 ### Deployments
 
 | Method   | Path                       | Description                    |
@@ -646,6 +657,28 @@ LLM answers are replays from `cmd/llm-replay` (W2-0). Env: `PAL_KIOSK`,
 | `POST`   | `/v1/data-planes`          | Register data plane            |
 | `GET`    | `/v1/data-planes`          | List data planes               |
 | `DELETE` | `/v1/data-planes/{id}`     | Remove data plane              |
+
+### Agent identity + per-agent policy (ADR 0055)
+
+Every registered agent is a principal: `agent_identities` (SPIFFE id
+`spiffe://<PAL_TRUST_DOMAIN>/tenant/<t>/agent/<a>`, Ed25519 key HKDF-derived from
+`PAL_AGENT_IDENTITY_ROOT_KEY` — no private key stored), short-TTL (`PAL_AGENT_TOKEN_TTL`,
+5m, max 15m) audience-bound EdDSA tokens, rotate/revoke by generation. `agent_policies`
+allowlist tools / connector actions / MCP / egress hosts / A2A targets+inbound / secrets /
+`maxToolCallsPerRun`; **new agents are default-deny** (trigger; a `handoff=human` label grants
+only `handoff_to_human`), pre-existing agents were backfilled `legacy_permissive` (dashboard
+warns). Enforced at EVERY dispatch via `principalFrom(ctx).Authorize(...)`: `dispatchTool`,
+interpreter tool/connector/subagent, workflow-engine `tool_call`, connector execute, A2A +
+marketplace invoke (caller outbound AND target inbound), microVM schedule (egress/secrets) and
+the secret relay. Deny = typed `*AgentPolicyDeniedError` (403 `agent_policy_denied`) +
+`policy_denied` journal event + row in the append-only, hash-chained `agent_identity_audit`.
+Session names with no `agents` row (bridge personas) keep the caller's authority
+(`PAL_AGENT_POLICY_STRICT=1` denies). New dispatch point? Call `Authorize` before the side
+effect, or it is a policy bypass. `pal deploy` applies the manifest's `policy:` (or, for a new
+agent, the server proposal). REST: `GET|PUT /v1/agents/{name}/policy`, `POST …/policy/propose`,
+`GET …/identity`, `POST …/identity/{rotate,revoke,token}`, `GET …/audit`,
+`GET /.well-known/pal-agent-keys/{agentId}`. Agent-as-caller requests send
+`X-Pal-Agent-Token`; only routes wired with `WithScopeOrAgent` accept it.
 
 ### A2A (Agent-to-Agent)
 

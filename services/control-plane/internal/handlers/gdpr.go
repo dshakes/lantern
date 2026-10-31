@@ -156,6 +156,11 @@ func purgeTenantRows(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger, t
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
+	// Sanctioned exception to the append-only promotion audit trail (migration 0037).
+	if _, err := tx.Exec(ctx, `SELECT set_config('pal.erasure', 'on', true)`); err != nil {
+		return nil, err
+	}
+
 	step := func(table, col string, args ...any) bool {
 		q := fmt.Sprintf(`DELETE FROM %s WHERE %s = $1`, table, col)
 		tag, execErr := tx.Exec(ctx, q, args...)
@@ -257,6 +262,13 @@ func purgeTenantRows(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger, t
 		if !step(t, "tenant_id", targetID) {
 			return nil, failed
 		}
+	}
+
+	// The agent audit trail is append-only (ADR 0055); erasure of the whole
+	// tenant is the one sanctioned delete, scoped to THIS tenant and this tx.
+	if _, err := tx.Exec(ctx, `SELECT set_config('pal.audit_erasure', $1, true)`, targetID); err != nil {
+		log.Error("GDPR: enable audit erasure failed", zap.Error(err))
+		return nil, err
 	}
 
 	// ── 6b. Every other table with a tenant_id column ──────────────────────

@@ -76,6 +76,12 @@ jobs:
           version: latest
           working-directory: packages/grpctls
 
+      - name: golangci-lint (agentpolicy)
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+          working-directory: packages/agentpolicy
+
       # ---- Rust -------------------------------------------------------------
       - name: Set up Rust (pinned toolchain from rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@stable

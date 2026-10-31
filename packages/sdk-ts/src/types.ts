@@ -994,3 +994,91 @@ export type ExecStreamEvent =
 
 /** Buffered (non-streaming) exec response; shape is owned by the control-plane. */
 export type ExecResult = Record<string, unknown>;
+
+// ---------------------------------------------------------------------------
+// Agent identity + per-agent policy (ADR 0055)
+// ---------------------------------------------------------------------------
+
+export interface AgentPolicyBudget {
+  maxToolCallsPerRun: number;
+  maxA2AInboundPerMinute: number;
+}
+
+export interface AgentPolicy {
+  mode: "enforce" | "legacy_permissive";
+  tools: string[];
+  connectors: Record<string, string[]>;
+  mcpServers: string[];
+  egressHosts: string[];
+  a2aTargets: string[];
+  a2aInbound: string[];
+  secrets: string[];
+  budget: AgentPolicyBudget;
+  /** Optimistic-concurrency version; send back the value you read. */
+  version: number;
+}
+
+export interface AgentPolicyDocument {
+  agentName: string;
+  agentId: string;
+  policy: AgentPolicy;
+  updatedAt: string;
+  updatedBy: string;
+  warnings: string[];
+}
+
+export interface AgentPolicyProposal {
+  proposal: AgentPolicy;
+  rationale: Array<{ field: string; reason: string }>;
+  sources: string[];
+  unresolved: string[];
+}
+
+export interface AgentIdentity {
+  agentId: string;
+  spiffeId: string;
+  keyGeneration: number;
+  status: "active" | "revoked";
+  publicKeyJwk: Record<string, unknown>;
+  jwksUri: string;
+  tokenTtlSeconds: number;
+  createdAt: string;
+  rotatedAt: string | null;
+  revokedAt: string | null;
+  revokedReason: string | null;
+}
+
+export interface AgentToken {
+  token: string;
+  expiresAt: string;
+  jti: string;
+  audience: string;
+}
+
+export interface AgentAuditEvent {
+  id: number;
+  event: string;
+  actionKind: string;
+  target: string;
+  decision: "allow" | "deny" | "";
+  reason: string;
+  runId: string;
+  stepId: string;
+  agentVersionId: string;
+  jti: string;
+  principal: string;
+  createdAt: string;
+}
+
+export interface AgentAuditLog {
+  events: AgentAuditEvent[];
+  chainValid: boolean;
+}
+
+/** Body of a 403 from a dispatch surface when the agent's policy denies an action. */
+export interface AgentPolicyDeniedBody {
+  code: "agent_policy_denied";
+  kind: string;
+  target: string;
+  error: string;
+}

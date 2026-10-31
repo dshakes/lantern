@@ -77,6 +77,16 @@ describe("no reply-suppressing path returns without a trace", () => {
     expect(src).toMatch(/LIVENESS: auto-reply is MUTED/);
     expect(src).toMatch(/this\.reportSilentDrops\(\);/);
   });
+
+  it("the mute heartbeat does not claim contacts are dropped — since #250 they are drafted", () => {
+    // Regression: this line predated #250 (mute = draft, not drop) and was
+    // never updated, so the liveness heartbeat itself contradicted the actual
+    // behavior — misleading anyone (owner or a future audit) reading the logs.
+    const heartbeat = src.slice(src.indexOf("LIVENESS: auto-reply is MUTED"));
+    const line = heartbeat.slice(0, heartbeat.indexOf("\n"));
+    expect(line).not.toMatch(/are being dropped/);
+    expect(line).toMatch(/drafted for owner approval/);
+  });
 });
 
 describe("every send path reaches the outbound audit log", () => {

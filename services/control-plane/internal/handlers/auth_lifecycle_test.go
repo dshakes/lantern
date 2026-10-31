@@ -240,15 +240,22 @@ func TestExportRedacted_Catalog(t *testing.T) {
 		"api_keys.key_prefix":                      false,
 		"billing_meter_exports.idempotency_key":    false,
 		"batches.idempotency_key":                  false,
-		"commitments.idempotency_key":              false,
-		"domain_records.idempotency_key":           false,
-		"errands.idempotency_key":                  false,
-		"life_events.idempotency_key":              false,
-		"runs.idempotency_key":                     false,
-		"run_receipts.signature":                   false,
-		"side_effect_receipts.idem_key":            false,
-		"users.auth_provider":                      false,
-		"users.auth_subject":                       false,
+		// ADR 0055: public key material / chain digests — not secrets, but
+		// redacted from GDPR export (nothing for the data subject, and the
+		// redactor's name heuristic is the conservative default).
+		"agent_identities.key_generation": true,
+		"agent_identities.public_key":     true,
+		"agent_identity_audit.prev_hash":  true,
+		"agent_identity_audit.row_hash":   true,
+		"commitments.idempotency_key":     false,
+		"domain_records.idempotency_key":  false,
+		"errands.idempotency_key":         false,
+		"life_events.idempotency_key":     false,
+		"runs.idempotency_key":            false,
+		"run_receipts.signature":          false,
+		"side_effect_receipts.idem_key":   false,
+		"users.auth_provider":             false,
+		"users.auth_subject":              false,
 	}
 	rows, err := h.srv.Pool.Query(context.Background(), `
 		SELECT c.relname, a.attname
