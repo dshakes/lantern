@@ -700,3 +700,71 @@ class TestSessionMinimalCreateResponse:
         assert sess.tenant_id == "t1"
         assert sess.agent_name == "hello-test"
         assert sess.created_at is not None
+
+
+# ---------------------------------------------------------------------------
+# ADR 0052: hermetic eval run / generate / calibrate
+# ---------------------------------------------------------------------------
+
+
+class TestEvalsV2:
+    async def test_run_suite_posts_and_parses(self):
+        t = _MockTransport(
+            body={
+                "id": "r1",
+                "passed": True,
+                "score": 1.0,
+                "casesTotal": 1,
+                "casesPassed": 1,
+                "caseResults": [{"name": "a"}],
+            }
+        )
+        res = await _client(t).evals.run_suite("s 1", branch="main", samples=3, cases=["a"])
+        req = _last(t)
+        assert req.method == "POST"
+        assert req.url.raw_path == b"/v1/eval-suites/s%201/run"
+        assert json.loads(req.content) == {"branch": "main", "samples": 3, "cases": ["a"]}
+        assert res.passed and res.cases_passed == 1 and res.case_results == [{"name": "a"}]
+        assert res.regressed is False
+
+    async def test_run_suite_422_returns_result_not_raise(self):
+        t = _MockTransport(status=422, body={"id": "r2", "score": 0.4, "regressed": False, "regressedCases": ["a"]})
+        res = await _client(t).evals.run_suite("s1")
+        assert res.regressed is True
+        assert res.regressed_cases == ["a"]
+
+    async def test_run_suite_other_errors_raise(self):
+        import pytest
+
+        from pal.errors import PalApiError
+
+        t = _MockTransport(status=402, body={"error": "budget exceeded", "code": "budget_exceeded"})
+        with pytest.raises(PalApiError) as ei:
+            await _client(t).evals.run_suite("s1")
+        assert ei.value.status == 402
+
+    async def test_generate_suite(self):
+        t = _MockTransport(
+            body={
+                "draft": {"agentName": "a", "name": "n", "cases": []},
+                "dropped": [{"name": "x", "reason": "r"}],
+                "requiresApproval": True,
+            }
+        )
+        g = await _client(t).evals.generate_suite("a", goal="g", max_cases=4)
+        assert _last(t).url.path == "/v1/eval-suites/generate"
+        assert json.loads(_last(t).content) == {"agentName": "a", "goal": "g", "maxCases": 4}
+        assert g.requires_approval and g.draft["name"] == "n" and g.dropped[0]["name"] == "x"
+
+    async def test_calibrate_judge(self):
+        t = _MockTransport(
+            body={
+                "stats": {"n": 5, "labeled": 4, "agreement": 0.75, "kappa": 0.5, "mae": 0.1},
+                "pairs": [],
+                "verdict": "v",
+            }
+        )
+        c = await _client(t).evals.calibrate_judge("a", limit=5)
+        assert _last(t).url.path == "/v1/eval-judge/calibrate"
+        assert json.loads(_last(t).content) == {"agentName": "a", "limit": 5}
+        assert c.kappa == 0.5 and c.labeled == 4 and c.verdict == "v"

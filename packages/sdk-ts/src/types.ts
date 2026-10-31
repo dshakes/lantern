@@ -488,6 +488,56 @@ export interface EvalCase {
   expected?: string;
   assert?: Record<string, unknown>;
   weight?: number;
+  /** v2 (ADR 0052): independent agent samples per case, 1..5. */
+  samples?: number;
+  /** v2: deterministic tool fixtures for hermetic runs. */
+  mocks?: EvalMock[];
+}
+
+export interface EvalMock {
+  tool: string;
+  /** Arg matchers: literal, or `{$any:true}` / `{$contains:"x"}` / `{$regex:"…"}`. */
+  match?: Record<string, unknown>;
+  result?: unknown;
+  error?: string;
+  description?: string;
+  parameters?: Record<string, unknown>;
+  synthetic?: boolean;
+}
+
+export interface EvalAssertionResult {
+  kind: string;
+  passed: boolean;
+  score: number;
+  skipped?: boolean;
+  detail?: string;
+  rationale?: string;
+  stddev?: number;
+  samples?: number;
+  model?: string;
+  injectionSuspected?: boolean;
+}
+
+export interface EvalToolCall {
+  tool: string;
+  args?: Record<string, unknown>;
+  result?: unknown;
+  error?: string;
+  mocked: boolean;
+}
+
+export interface EvalSample {
+  output: string;
+  toolCalls?: EvalToolCall[];
+  latencyMs: number;
+  costUsd: number;
+  tokensIn?: number;
+  tokensOut?: number;
+  model?: string;
+  passed: boolean;
+  score: number;
+  error?: string;
+  assertions?: EvalAssertionResult[];
 }
 
 export interface EvalSuite {
@@ -509,6 +559,113 @@ export interface EvalCaseResult {
   error?: string;
   latencyMs?: number;
   costUsd?: number;
+  // v2 (server-run) detail; absent on client-posted results.
+  stddev?: number;
+  passRate?: number;
+  flaky?: boolean;
+  judgeCostUsd?: number;
+  assertions?: EvalAssertionResult[];
+  samples?: EvalSample[];
+}
+
+export interface RunEvalSuiteParams {
+  branch?: string;
+  commitSha?: string;
+  agentVersion?: string;
+  /** Overrides every case's `samples` (1..5). */
+  samples?: number;
+  judgeSamples?: number;
+  /** Capability name (e.g. "reasoning-large"), never a vendor model id. */
+  judgeModel?: string;
+  /** Hard cost ceiling in USD (server default 1, cap 25). */
+  maxCostUsd?: number;
+  /** Run a subset of cases by name. */
+  cases?: string[];
+  /** Pin this run as the branch baseline (all-pass, non-regressed only). */
+  setBaseline?: boolean;
+}
+
+export interface EvalCaseDelta {
+  name: string;
+  score: number;
+  baselineScore: number;
+  delta: number;
+  passed: boolean;
+  baselinePassed: boolean;
+  regressed: boolean;
+  flaky?: boolean;
+}
+
+export interface EvalSuiteRunResult {
+  id: string;
+  suiteId: string;
+  suiteName: string;
+  agentName: string;
+  mode: "hermetic";
+  passed: boolean;
+  score: number;
+  casesTotal: number;
+  casesPassed: number;
+  /** True when the server answered 422 (CI gate). */
+  regressed: boolean;
+  baselineScore?: number | null;
+  baselineRunId?: string;
+  caseDeltas?: EvalCaseDelta[];
+  regressedCases?: string[];
+  flakyCases?: string[];
+  caseResults: EvalCaseResult[];
+  durationMs: number;
+  totalCostUsd: number;
+  agentCostUsd: number;
+  judgeCostUsd: number;
+  judgeModel?: string;
+  agentModels?: string[];
+  pinnedBaseline: boolean;
+  stoppedEarly?: string;
+}
+
+export interface GenerateEvalSuiteParams {
+  agentName: string;
+  goal?: string;
+  /** Server cap 12. */
+  maxCases?: number;
+}
+
+export interface GenerateEvalSuiteResult {
+  /** Unsaved draft. Approve by passing it to `evalSuites.upsert`. */
+  draft: { agentName: string; name: string; description?: string; cases: EvalCase[] };
+  provenance: { case: string; source: string; grounding: string; notes?: string[] }[];
+  dropped: { name: string; reason: string }[];
+  evidence: { runs: number; feedback: number; tools: number };
+  model: string;
+  costUsd: number;
+  requiresApproval: boolean;
+  approve: { method: string; path: string };
+}
+
+export interface CalibrateEvalJudgeParams {
+  agentName: string;
+  rubric?: string;
+  judgeModel?: string;
+  /** Max 20. */
+  limit?: number;
+}
+
+export interface EvalCalibrationResult {
+  stats: { n: number; labeled: number; agreement: number; kappa: number; mae: number };
+  pairs: {
+    runId: string;
+    humanScore: number;
+    judgeScore: number;
+    judgePassed: boolean;
+    rationale?: string;
+    judgeError?: string;
+  }[];
+  verdict?: string;
+  rubric?: string;
+  costUsd?: number;
+  /** Present instead of verdict when the agent has no human feedback yet. */
+  note?: string;
 }
 
 export interface EvalRun {

@@ -8,6 +8,12 @@ import type {
   ConnectorResult,
   EvalBaseline,
   EvalCase,
+  EvalCalibrationResult,
+  CalibrateEvalJudgeParams,
+  GenerateEvalSuiteParams,
+  GenerateEvalSuiteResult,
+  RunEvalSuiteParams,
+  EvalSuiteRunResult,
   EvalCaseResult,
   EvalRun,
   EvalSuite,
@@ -468,6 +474,42 @@ export class PalClient {
 
     delete: (id: string): Promise<void> =>
       this.fetch(`/v1/eval-suites/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+    /** Hermetic server-side run (mocked tools, LLM judge; ADR 0052).
+     *  A regression is HTTP 422 with a full result body: unlike
+     *  `evalRuns.record`, this RETURNS it with `regressed: true` instead of
+     *  throwing, so callers can report per-case detail before failing CI.
+     *  Other errors (400/402/503) throw PalApiError. */
+    run: async (id: string, params: RunEvalSuiteParams = {}): Promise<EvalSuiteRunResult> => {
+      try {
+        return await this.fetch<EvalSuiteRunResult>(`/v1/eval-suites/${encodeURIComponent(id)}/run`, {
+          method: "POST",
+          body: JSON.stringify(params),
+        });
+      } catch (err) {
+        if (err instanceof PalApiError && err.status === 422) {
+          let parsed: EvalSuiteRunResult | undefined;
+          try {
+            parsed = JSON.parse(err.body) as EvalSuiteRunResult;
+          } catch {
+            throw err;
+          }
+          return { ...parsed, regressed: true };
+        }
+        throw err;
+      }
+    },
+
+    /** Draft a suite from the agent's instructions, runs and feedback. Never
+     *  saved: approve by passing `result.draft` to `upsert`. */
+    generate: (params: GenerateEvalSuiteParams): Promise<GenerateEvalSuiteResult> =>
+      this.fetch("/v1/eval-suites/generate", { method: "POST", body: JSON.stringify(params) }),
+  };
+
+  readonly evalJudge = {
+    /** Re-judge runs that carry human feedback; reports agreement and Cohen's kappa. */
+    calibrate: (params: CalibrateEvalJudgeParams): Promise<EvalCalibrationResult> =>
+      this.fetch("/v1/eval-judge/calibrate", { method: "POST", body: JSON.stringify(params) }),
   };
 
   readonly evalRuns = {

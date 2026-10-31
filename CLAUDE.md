@@ -717,6 +717,11 @@ Behind config: with `PAL_STRIPE_SECRET_KEY` unset, `GET /v1/billing` reports
 | `GET`    | `/v1/eval-runs`                         | List runs (`?suiteId=`, `?agentName=`, `?branch=`)                             |
 | `POST`   | `/v1/eval-baselines`                    | Pin a run as the baseline for `(agent, branch)`                                |
 | `GET`    | `/v1/eval-baselines?agentName=&branch=` | Get baseline                                                                   |
+| `POST`   | `/v1/eval-suites/{id}/run`              | Hermetic server-side run (mocked tools, LLM judge, `samples`). 422 = regression, body still parses |
+| `POST`   | `/v1/eval-suites/generate`              | Agent drafts a suite from its runs/feedback. Draft only, never saved; human approves via `POST /v1/eval-suites` |
+| `POST`   | `/v1/eval-judge/calibrate`              | Judge vs. human-feedback agreement (kappa) for a rubric                        |
+
+Case schema v2 (`samples`, `mocks`, `assert.judge/faithfulness/pairwise/trajectory`), judge routing/maker≠checker and the regression gate are specified in [ADR 0052](docs/adr/0052-agentic-evals-llm-judge.md). CLI: `pal eval run|generate|approve|calibrate`; SDKs: Go `RunEvalSuite`/`GenerateEvalSuite`/`CalibrateEvalJudge`, TS `evalSuites.run|generate` + `evalJudge.calibrate`, Python `evals.run_suite|generate_suite|calibrate_judge` (422 on run returns the result with `regressed=true`).
 
 #### Eval observability (read-only, over existing `eval_runs`)
 
