@@ -107,7 +107,7 @@ export const AGENT_CATALOG: Record<string, CatalogEntry> = {
     stages: ["Drive signal", "Task surface", "Parked recap", "You act"],
     tone: "amber",
     ownerFacing: true,
-    interface: "runs: bridge interval · you see it: self-chat · LANTERN_COMMUTE=on",
+    interface: "runs: bridge interval · you see it: self-chat · PAL_COMMUTE=on",
   },
   "energy-guardian": {
     whatItDoes: "Short sleep → offer to lighten the day's load.",
@@ -116,7 +116,7 @@ export const AGENT_CATALOG: Record<string, CatalogEntry> = {
     stages: ["Sleep signal", "Assess energy", "Lighten day", "You act"],
     tone: "rose",
     ownerFacing: true,
-    interface: "runs: bridge interval · you see it: self-chat · LANTERN_ENERGY=on",
+    interface: "runs: bridge interval · you see it: self-chat · PAL_ENERGY=on",
   },
   "health-coach": {
     whatItDoes: "Steps/sleep/workout nudges toward a daily goal.",
@@ -125,7 +125,7 @@ export const AGENT_CATALOG: Record<string, CatalogEntry> = {
     stages: ["Step/sleep data", "Track goal", "Nudge you", "You act"],
     tone: "emerald",
     ownerFacing: true,
-    interface: "runs: bridge interval · you see it: self-chat · LANTERN_HEALTH=on",
+    interface: "runs: bridge interval · you see it: self-chat · PAL_HEALTH=on",
   },
   "focus-guardian": {
     whatItDoes: "Holds non-urgent nudges during Focus mode, recaps after.",
@@ -134,7 +134,7 @@ export const AGENT_CATALOG: Record<string, CatalogEntry> = {
     stages: ["Focus signal", "Hold nudges", "Focus ends", "Recap to you"],
     tone: "violet",
     ownerFacing: true,
-    interface: "runs: bridge interval · you see it: self-chat · LANTERN_FOCUS=on",
+    interface: "runs: bridge interval · you see it: self-chat · PAL_FOCUS=on",
   },
   "whatsapp-assistant": {
     whatItDoes: "Auto-replies to your WhatsApp contacts in your voice.",

@@ -50,14 +50,14 @@ Once the stack is up (see [Develop locally](/docs/start/local-dev/)), `pal docto
 
 ## Dev credentials
 
-The local stack seeds these on first boot. They are the literal seeded values and carry the legacy name.
+The local stack seeds these on first boot. They are the literal seeded values.
 
 | Service | Value |
 | --- | --- |
-| PostgreSQL | `postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable` |
+| PostgreSQL | `postgres://pal:pal@localhost:5432/pal?sslmode=disable` |
 | Redis | `redis://localhost:6379` |
-| MinIO | `http://localhost:9000`, console `:9001`, `lantern` / `lanternsecret` |
-| Dashboard | `admin@lantern.dev` / `lantern` at `http://localhost:3001` |
+| MinIO | `http://localhost:9000`, console `:9001`, `pal` / `palsecret` |
+| Dashboard | `admin@pal.local` / `pal` at `http://localhost:3001` |
 | Dev tenant | `00000000-0000-0000-0000-000000000001` (slug `dev`) |
 | Dev user | `00000000-0000-0000-0000-000000000002` (role `owner`) |
 

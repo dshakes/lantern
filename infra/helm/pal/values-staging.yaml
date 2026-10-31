@@ -21,7 +21,7 @@
 #
 # READ docs/runbooks/rls-cutover.md BEFORE APPLYING. The database work (role,
 # password, grants) has to happen first — with PAL_RLS_ENFORCE=1 and no
-# usable lantern_app credential, both services refuse to start. That is
+# usable pal_app credential, both services refuse to start. That is
 # deliberate (a service that believes it is enforcing and is not is worse than
 # one that is plainly down), but it does mean a wrong order takes the
 # environment down rather than degrading it.
@@ -37,7 +37,7 @@ global:
 # -- Row-Level Security: ON here, and only here --
 #
 # PAL_RLS_ENFORCE=1 makes tenant-scoped queries run as the non-superuser
-# `lantern_app` role, which the policies actually apply to. Without the second
+# `pal_app` role, which the policies actually apply to. Without the second
 # variable the pool is never built and the services fail closed at startup, so
 # the two must always travel together.
 #
@@ -166,7 +166,7 @@ dashboard:
 secrets:
   # Supplied at deploy time — never committed. See the runbook.
   #   --set secrets.appDbPassword="$PAL_APP_DB_PASSWORD"
-  # This is the credential for the lantern_app role that RLS policies apply to;
+  # This is the credential for the pal_app role that RLS policies apply to;
   # it is NOT the superuser postgres password and must not be set to it (a
   # superuser bypasses RLS, which would leave enforcement silently off).
   appDbPassword: ""

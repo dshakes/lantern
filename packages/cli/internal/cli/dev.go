@@ -85,9 +85,9 @@ Defaults:
   - dashboard:  http://localhost:3001
   - api:        http://localhost:8080
   - whatsapp:   http://localhost:3100
-  - postgres:   localhost:5432 (lantern/lantern/lantern)
+  - postgres:   localhost:5432 (pal/pal/pal)
   - redis:      localhost:6379
-  - minio:      localhost:9000 (lantern/lanternsecret)`,
+  - minio:      localhost:9000 (pal/palsecret)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runDev(devOpts{
 				infraOnly: infraOnly,
@@ -177,7 +177,7 @@ func runDev(opts devOpts) error {
 	apiCmd := makeProc(ctx, repoRoot, tagAPI, "go", "run", "./cmd/server")
 	apiCmd.Dir = filepath.Join(repoRoot, "services", "control-plane")
 	apiCmd.Env = append(os.Environ(),
-		"DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable",
+		"DATABASE_URL=postgres://pal:pal@localhost:5432/pal?sslmode=disable",
 		"REDIS_URL=redis://localhost:6379",
 		"S3_ENDPOINT=http://localhost:9000",
 		"LOG_LEVEL=info",
@@ -207,9 +207,6 @@ func runDev(opts devOpts) error {
 		waCmd := makeProc(ctx, repoRoot, tagWA, "npm", "run", "dev")
 		waCmd.Dir = waDir
 		waCmd.Env = append(os.Environ(),
-			fmt.Sprintf("LANTERN_API_URL=http://localhost:%d", opts.apiPort),
-			// Both names: palenv.Bridge mirrored the parent env, and a stale PAL_API_URL
-			// would win over this override in the child (ADR 0032).
 			fmt.Sprintf("PAL_API_URL=http://localhost:%d", opts.apiPort),
 		)
 		if err := startProc(&wg, waCmd, tagWA); err != nil {
@@ -225,9 +222,6 @@ func runDev(opts devOpts) error {
 		imCmd := makeProc(ctx, repoRoot, tagIM, "npm", "run", "dev")
 		imCmd.Dir = imDir
 		imCmd.Env = append(os.Environ(),
-			fmt.Sprintf("LANTERN_API_URL=http://localhost:%d", opts.apiPort),
-			// Both names: palenv.Bridge mirrored the parent env, and a stale PAL_API_URL
-			// would win over this override in the child (ADR 0032).
 			fmt.Sprintf("PAL_API_URL=http://localhost:%d", opts.apiPort),
 		)
 		if err := startProc(&wg, imCmd, tagIM); err != nil {
@@ -261,7 +255,7 @@ func runDev(opts devOpts) error {
 		if opts.withIM && runtime.GOOS == "darwin" {
 			fmt.Fprintln(os.Stderr, tag(tagInfra, "  iMessage:  http://localhost:3200"))
 		}
-		fmt.Fprintln(os.Stderr, tag(tagInfra, "  Login:     admin@lantern.dev / lantern"))
+		fmt.Fprintln(os.Stderr, tag(tagInfra, "  Login:     admin@pal.local / pal"))
 		fmt.Fprintln(os.Stderr, tag(tagInfra, "──────────────────────────────────────────"))
 		if opts.openURL {
 			_ = openBrowser(dashURL)
@@ -274,7 +268,7 @@ func runDev(opts devOpts) error {
 
 // ensureNodeModules runs `npm install` in dir when node_modules is absent, so
 // a fresh clone's bridges start cleanly. The bridges depend on
-// @lantern/bridge-core via a file: link whose own deps live in
+// @pal/bridge-core via a file: link whose own deps live in
 // packages/bridge-core/node_modules; the bridge's postinstall hook installs
 // bridge-core in turn. Best-effort + idempotent (no-op once installed).
 func ensureNodeModules(dir string, t procTag) {

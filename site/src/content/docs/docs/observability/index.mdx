@@ -22,7 +22,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318   # control plane and gat
 PAL_OTEL_ENABLED=1   # uses the default localhost endpoint
 ```
 
-The model router and runtime manager export OTLP/gRPC, so point them at the collector's gRPC port (4317). Service names are `lantern.control-plane`, `lantern-gateway`, `lantern-model-router` and `lantern-runtime-manager`.
+The model router and runtime manager export OTLP/gRPC, so point them at the collector's gRPC port (4317). Service names are `pal.control-plane`, `pal-gateway`, `pal-model-router` and `pal-runtime-manager`.
 
 W3C `traceparent` is always honoured, even with no exporter: inbound trace context is forwarded correctly either way.
 
@@ -44,20 +44,18 @@ LLM steps carry the OTel GenAI semantic-convention attributes, including **reaso
 
 ## OTel span attribute contract
 
-The PAL keys are canonical. The pre-PAL `lantern.*` keys are still emitted next to them for one release (ADR 0032), so saved trace queries and dashboards keep matching while you migrate them.
-
-| Attribute | Key | Legacy key | Set by |
-| --- | --- | --- | --- |
-| Tenant | `pal.tenant_id` | `lantern.tenant_id` | HTTP enrichment middleware, gRPC tracing interceptor |
-| User | `pal.user_id` | `lantern.user_id` | Same |
-| Run | `pal.run_id` | `lantern.run_id` | Same, plus the inline executor |
-| Step | `pal.step_id` | `lantern.step_id` | Inline executor, per step |
-| VM id | `vm_id` | | Scheduler spans |
-| Model, cost, tokens | `model_used`, `cost_usd`, `tokens_in`, `tokens_out` | | Model-router completion span |
+| Attribute | Key | Set by |
+| --- | --- | --- |
+| Tenant | `pal.tenant_id` | HTTP enrichment middleware, gRPC tracing interceptor |
+| User | `pal.user_id` | Same |
+| Run | `pal.run_id` | Same, plus the inline executor |
+| Step | `pal.step_id` | Inline executor, per step |
+| VM id | `vm_id` | Scheduler spans |
+| Model, cost, tokens | `model_used`, `cost_usd`, `tokens_in`, `tokens_out` | Model-router completion span |
 
 ## Run metrics
 
-The control plane registers its OTel instruments on the `pal.runtime` meter (`services/control-plane/internal/middleware/metrics.go`). Each is also recorded under the legacy `lantern.` name on the `lantern.runtime` meter for one release, and attributes are dual-named the same way. They are no-ops when no `MeterProvider` is set.
+The control plane registers its OTel instruments on the `pal.runtime` meter (`services/control-plane/internal/middleware/metrics.go`). They are no-ops when no `MeterProvider` is set.
 
 | Instrument | Type | Attributes | Meaning |
 | --- | --- | --- | --- |
@@ -69,7 +67,7 @@ The control plane registers its OTel instruments on the `pal.runtime` meter (`se
 | `pal.budget.check.errors` | Counter | `budget_check` (`tenant`, `agent`, `run`, `tool`), `agent_name` | Budget lookups that errored and failed closed. |
 | `pal.onboarding.step.total` | Counter | `onboarding_step`, `onboarding_event` | Steps of the agentic onboarding flow. |
 
-Attribute names above are shown without their `pal.` prefix; on the wire each is `pal.<name>`, with `lantern.<name>` alongside. The shipped alert rules still query the `lantern_*` Prometheus series, so keep both until you have migrated your own rules.
+Attribute names above are shown without their `pal.` prefix; on the wire each is `pal.<name>`. In Prometheus the series are `pal_*`, which the shipped alert rules query.
 
 ## Anomaly detection
 
@@ -122,7 +120,7 @@ The model router and runtime manager expose Prometheus metrics only when `PAL_ME
 One run is one query in your trace backend:
 
 ```text
-# Jaeger:    service=lantern.control-plane pal.run_id=<run_id>
+# Jaeger:    service=pal.control-plane pal.run_id=<run_id>
 # Tempo:     { span.pal.run_id = "<run_id>" }
 # Honeycomb: WHERE pal.run_id = "<run_id>"
 ```

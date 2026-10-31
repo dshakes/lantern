@@ -24,7 +24,7 @@
 #   restore_rpc           Spawn{restore_snapshot_id} turnaround
 #   resume_to_exec        restore start → first ExecTool answered
 #   fork_<N>_spawn_wall   N Spawn{restore} calls, 16 in flight (the
-#                         control-plane's LANTERN_FORK_CONCURRENCY default)
+#                         control-plane's PAL_FORK_CONCURRENCY default)
 #   fork_<N>_ready_wall   batch start → every fork answered an ExecTool (only
 #                         for N <= FORK_READY_MAX, default 1 — see the doc)
 #   fork_<N>_spawn_each   each successful fork's own Spawn RPC turnaround
@@ -49,7 +49,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PROTO_DIR="${REPO_ROOT}/packages/proto"
-PROTO_FILE="lantern/v1/runtime.proto"
+PROTO_FILE="pal/v1/runtime.proto"
 ITERATIONS="${ITERATIONS:-20}"
 FORK_SIZES="${FORK_SIZES:-1 10 50}"
 FORK_ITERATIONS="${FORK_ITERATIONS:-${ITERATIONS}}"
@@ -81,7 +81,7 @@ rec() { echo "$1,$2,$3" >>"${SAMPLES}"; }
 g() {
   grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" \
     -servername localhost -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
-    -H "x-lantern-service-token: ${TOKEN}" -max-time 330 -d "$3" "$1" "lantern.v1.RuntimeManager/$2"
+    -H "x-pal-service-token: ${TOKEN}" -max-time 330 -d "$3" "$1" "pal.v1.RuntimeManager/$2"
 }
 export -f g
 
@@ -89,7 +89,7 @@ spawn_req() { # spawn_req <run_id> [snapshot_id vm_id]
   jq -cn --arg t "${TENANT}" --arg d "${DIGEST}" --arg r "$1" --arg s "${2:-}" --arg v "${3:-}" '
     {spec:{tenant_id:$t, image_digest:$d, isolation:"ISOLATION_HOSTILE",
            limits:{vcpu:"1", memory:"128Mi", timeout:"300s"}, run_id:$r,
-           command:["/usr/local/bin/lantern-harness"]}}
+           command:["/usr/local/bin/pal-harness"]}}
     | if $s != "" then .spec.restore_snapshot_id = $s | .handle = {vm_id:$v} else . end'
 }
 tool_req() { # tool_req <vm_id> <tool> <args-json> <key>
@@ -108,12 +108,12 @@ start_manager() { # start_manager <port> <extra env...>
   # shellcheck disable=SC2016  # $$ expands in the child bash
   setsid bash -c 'echo $$ >"$1"; shift; exec "$@"' _ "${WORK}/pgid.${port}" env \
     RUNTIME_BACKEND=firecracker LISTEN_ADDR="0.0.0.0:${port}" LOG_LEVEL=info \
-    LANTERN_GRPC_SERVICE_TOKEN="${TOKEN}" LANTERN_HARNESS_READY_TIMEOUT_MS=300000 \
+    PAL_GRPC_SERVICE_TOKEN="${TOKEN}" PAL_HARNESS_READY_TIMEOUT_MS=300000 \
     FC_KERNEL_PATH="${FC_KERNEL_PATH}" FC_ROOTFS_PATH="${FC_ROOTFS_PATH}" \
-    LANTERN_MANAGER_TLS_CA="${WORK}/ca.crt" LANTERN_MANAGER_TLS_CERT="${WORK}/server.crt" \
-    LANTERN_MANAGER_TLS_KEY="${WORK}/server.key" \
-    LANTERN_VM_SIGNING_CA_CERT="${WORK}/ca.crt" LANTERN_VM_SIGNING_CA_KEY="${WORK}/ca.key" \
-    LANTERN_VM_CERT_DIR="${WORK}/vm-certs.${port}" LANTERN_MEASUREMENT_GATE=warn \
+    PAL_MANAGER_TLS_CA="${WORK}/ca.crt" PAL_MANAGER_TLS_CERT="${WORK}/server.crt" \
+    PAL_MANAGER_TLS_KEY="${WORK}/server.key" \
+    PAL_VM_SIGNING_CA_CERT="${WORK}/ca.crt" PAL_VM_SIGNING_CA_KEY="${WORK}/ca.key" \
+    PAL_VM_CERT_DIR="${WORK}/vm-certs.${port}" PAL_MEASUREMENT_GATE=warn \
     "$@" "${MANAGER_BIN}" >"${WORK}/manager.${port}.log" 2>&1 &
   for _ in $(seq 50); do [ -s "${WORK}/pgid.${port}" ] && break; sleep 0.1; done
   for _ in $(seq 150); do (exec 3<>"/dev/tcp/127.0.0.1/${port}") 2>/dev/null && return 0; sleep 0.2; done
@@ -130,7 +130,7 @@ stop_manager() {
 }
 
 drop_snapshot() {
-  find /var/lib/lantern/snapshots -mindepth 3 -maxdepth 3 -type d -name "$1" -exec rm -r -- {} + 2>/dev/null
+  find /var/lib/pal/snapshots -mindepth 3 -maxdepth 3 -type d -name "$1" -exec rm -r -- {} + 2>/dev/null
   return 0
 }
 
@@ -165,7 +165,7 @@ for who in server client; do
     -subj "/CN=${who}" >/dev/null 2>&1 || fail "${who} csr"
 done
 openssl x509 -req -in "${WORK}/server.csr" -CA "${WORK}/ca.crt" -CAkey "${WORK}/ca.key" -CAcreateserial \
-  -days 1 -out "${WORK}/server.crt" -extfile <(printf 'subjectAltName=IP:127.0.0.1,DNS:localhost,DNS:manager.lantern.internal\nextendedKeyUsage=serverAuth\nbasicConstraints=CA:FALSE') >/dev/null 2>&1 || fail server
+  -days 1 -out "${WORK}/server.crt" -extfile <(printf 'subjectAltName=IP:127.0.0.1,DNS:localhost,DNS:manager.pal.internal\nextendedKeyUsage=serverAuth\nbasicConstraints=CA:FALSE') >/dev/null 2>&1 || fail server
 openssl x509 -req -in "${WORK}/client.csr" -CA "${WORK}/ca.crt" -CAkey "${WORK}/ca.key" -CAcreateserial \
   -days 1 -out "${WORK}/client.crt" -extfile <(printf 'extendedKeyUsage=clientAuth\nbasicConstraints=CA:FALSE') >/dev/null 2>&1 || fail client
 
@@ -230,7 +230,7 @@ fork_one() {
   req=$(jq -cn --arg t "${TENANT}" --arg d "${DIGEST}" --arg s "$1" --arg v "$2" \
     '{spec:{tenant_id:$t, image_digest:$d, isolation:"ISOLATION_HOSTILE",
       limits:{vcpu:"1", memory:"128Mi", timeout:"300s"}, run_id:("bench-"+$v),
-      command:["/usr/local/bin/lantern-harness"], restore_snapshot_id:$s}, handle:{vm_id:$v}}')
+      command:["/usr/local/bin/pal-harness"], restore_snapshot_id:$s}, handle:{vm_id:$v}}')
   t0=$(date +%s%3N); g "${ADDR}" Spawn "${req}" >/dev/null 2>&1 || rc=$?
   echo "$2 $(( $(date +%s%3N) - t0 )) ${rc}" >>"$3"
 }
@@ -274,14 +274,14 @@ fi # ONLY_BROKER
 if [ "${SKIP_BROKER:-0}" != "1" ]; then
   B="127.0.0.1:$((PORT + 1))"
   # Unjailed, like broker-e2e.sh: under the jailer the broker's vsock path
-  # (<chroot>/<id>/root/run/lantern/vsock/<id>.sock_3128) exceeds sun_path.
+  # (<chroot>/<id>/root/run/pal/vsock/<id>.sock_3128) exceeds sun_path.
   unset FIRECRACKER_JAILER_PATH FIRECRACKER_JAILER_UID FIRECRACKER_JAILER_GID FIRECRACKER_CHROOT_BASE
   # The broker refuses private/metadata IPs and non-443 ports (SSRF guard), so
   # the allowed upstream is a public HTTPS host: the number includes real
   # internet RTT. host_curl_upstream is the same request made from the host.
   UP_HOST="${BENCH_UPSTREAM_HOST:-example.com}"
   log "starting broker-mode manager on ${B}; upstream https://${UP_HOST}/"
-  start_manager "$((PORT + 1))" LANTERN_EGRESS_MODE=broker
+  start_manager "$((PORT + 1))" PAL_EGRESS_MODE=broker
   R=$(g "${B}" Spawn "$(spawn_req bench-broker | jq -c --arg h "${UP_HOST}" '.spec.egress_rules=[{pattern:$h}]')" 2>&1) \
     || fail "broker Spawn: ${R}"
   BVM=$(jq -r '.handle.vmId // empty' <<<"${R}"); [ -n "${BVM}" ] || fail "no vm_id: ${R}"

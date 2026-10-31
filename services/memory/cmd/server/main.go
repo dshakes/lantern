@@ -21,13 +21,11 @@ import (
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 
-	"github.com/dshakes/lantern/packages/palenv"
-	"github.com/dshakes/lantern/services/memory/internal/db"
-	"github.com/dshakes/lantern/services/memory/internal/middleware"
+	"github.com/dshakes/pal/services/memory/internal/db"
+	"github.com/dshakes/pal/services/memory/internal/middleware"
 )
 
 func main() {
-	palenv.Bridge()
 	cfg := loadConfig()
 
 	logger := mustInitLogger(cfg.LogLevel)
@@ -73,7 +71,7 @@ func main() {
 	// The canonical unified-memory + person-graph surface lives at
 	// /v1/memory/* and /v1/people/* (see control-plane handlers and CLAUDE.md
 	// "Cross-channel unified memory"). There is intentionally no
-	// lantern.v1.MemoryService proto: a gRPC MemoryService would duplicate
+	// pal.v1.MemoryService proto: a gRPC MemoryService would duplicate
 	// that REST surface, so this process exposes only the gRPC health +
 	// reflection endpoints used for liveness probes, never a memory RPC.
 	grpcServer := grpc.NewServer(
@@ -88,7 +86,7 @@ func main() {
 	)
 
 	// Health check. Only the overall server status is advertised; no
-	// per-service ("lantern.v1.MemoryService") status is set because no such
+	// per-service ("pal.v1.MemoryService") status is set because no such
 	// gRPC service is registered (it would be a false SERVING claim).
 	healthSvc := health.NewServer()
 	healthpb.RegisterHealthServer(grpcServer, healthSvc)
@@ -181,7 +179,7 @@ type config struct {
 
 func loadConfig() config {
 	return config{
-		DatabaseURL: envOrDefault("DATABASE_URL", "postgres://localhost:5432/lantern?sslmode=disable"),
+		DatabaseURL: envOrDefault("DATABASE_URL", "postgres://localhost:5432/pal?sslmode=disable"),
 		RedisURL:    envOrDefault("REDIS_URL", "redis://localhost:6379/0"),
 		ListenAddr:  envOrDefault("LISTEN_ADDR", ":50055"),
 		HTTPAddr:    envOrDefault("HTTP_ADDR", ":8085"),
@@ -216,7 +214,7 @@ func mustInitLogger(level string) *zap.Logger {
 
 // unaryTracingInterceptor returns a gRPC unary interceptor that creates OTel spans.
 func unaryTracingInterceptor() grpc.UnaryServerInterceptor {
-	tracer := otel.Tracer("lantern.memory")
+	tracer := otel.Tracer("pal.memory")
 	return func(
 		ctx context.Context,
 		req any,
@@ -231,7 +229,7 @@ func unaryTracingInterceptor() grpc.UnaryServerInterceptor {
 
 // streamTracingInterceptor returns a gRPC stream interceptor that creates OTel spans.
 func streamTracingInterceptor() grpc.StreamServerInterceptor {
-	tracer := otel.Tracer("lantern.memory")
+	tracer := otel.Tracer("pal.memory")
 	return func(
 		srv any,
 		ss grpc.ServerStream,

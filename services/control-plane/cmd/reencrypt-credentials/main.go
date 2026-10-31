@@ -35,8 +35,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/dshakes/lantern/packages/palenv"
-	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
+	"github.com/dshakes/pal/services/control-plane/internal/secrets"
 )
 
 // target describes one credential-bearing column.
@@ -54,7 +53,6 @@ var targets = []target{
 }
 
 func main() {
-	palenv.Bridge()
 	dryRun := flag.Bool("dry-run", false, "report what would change without writing")
 	flag.Parse()
 
@@ -193,7 +191,7 @@ func isEnveloped(stored []byte) bool {
 	if err := json.Unmarshal(stored, &probe); err != nil {
 		return false
 	}
-	_, ok := probe["__lantern_enc__"]
+	_, ok := probe["__pal_enc__"]
 	return ok
 }
 

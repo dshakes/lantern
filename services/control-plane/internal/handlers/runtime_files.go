@@ -30,8 +30,8 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
 )
 
 // fileAPIMaxBytes mirrors the harness's TOOL_OUTPUT_MAX_BYTES (1 MiB).
@@ -45,10 +45,10 @@ const harnessTruncatedMarker = "\n<truncated: output exceeded the cap>"
 // ExecTool RPC. The stub scheduler does not — the file API then returns 503.
 type toolExecer interface {
 	// ExecTool dispatches to the manager on `node` ("" = default manager).
-	ExecTool(ctx context.Context, node string, req *lanternv1.ExecToolRequest) (*lanternv1.ExecToolResponse, error)
+	ExecTool(ctx context.Context, node string, req *palv1.ExecToolRequest) (*palv1.ExecToolResponse, error)
 }
 
-func (c *grpcSchedulerClient) ExecTool(ctx context.Context, node string, req *lanternv1.ExecToolRequest) (*lanternv1.ExecToolResponse, error) {
+func (c *grpcSchedulerClient) ExecTool(ctx context.Context, node string, req *palv1.ExecToolRequest) (*palv1.ExecToolResponse, error) {
 	mgr, err := c.managerClient(node)
 	if err != nil {
 		return nil, err
@@ -82,7 +82,7 @@ func (h *RuntimeHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 }
 
 // ReadFile handles GET /v1/runtime/vms/{id}/files/content?path= → raw text.
-// A file over 1 MiB is cut at the cap and flagged with X-Pal-Truncated (and the legacy X-Lantern-Truncated).
+// A file over 1 MiB is cut at the cap and flagged with X-Pal-Truncated.
 func (h *RuntimeHandler) ReadFile(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
 	ctx, claims, node, vmID, ok := h.fileTarget(w, r, ScopeRuntimeRead, path)
@@ -97,7 +97,6 @@ func (h *RuntimeHandler) ReadFile(w http.ResponseWriter, r *http.Request) {
 	if res["truncated"] == true {
 		content = strings.TrimSuffix(content, harnessTruncatedMarker)
 		w.Header().Set("X-Pal-Truncated", "true")
-		w.Header().Set("X-Lantern-Truncated", "true") // legacy name for older SDKs (ADR 0032)
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
@@ -202,7 +201,7 @@ func (h *RuntimeHandler) runFileTool(ctx context.Context, w http.ResponseWriter,
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid arguments"})
 		return nil, false
 	}
-	resp, err := te.ExecTool(ctx, node, &lanternv1.ExecToolRequest{
+	resp, err := te.ExecTool(ctx, node, &palv1.ExecToolRequest{
 		VmId:           vmID,
 		ToolName:       tool,
 		Args:           argStruct,
@@ -222,9 +221,9 @@ func (h *RuntimeHandler) runFileTool(ctx context.Context, w http.ResponseWriter,
 		return nil, false
 	}
 	switch resp.GetStatus() {
-	case lanternv1.ToolStatus_TOOL_STATUS_OK:
+	case palv1.ToolStatus_TOOL_STATUS_OK:
 		return resp.GetResult().AsMap(), true
-	case lanternv1.ToolStatus_TOOL_STATUS_UNAVAILABLE:
+	case palv1.ToolStatus_TOOL_STATUS_UNAVAILABLE:
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": resp.GetError()})
 	default:
 		writeJSON(w, fileToolErrStatus(resp.GetError()), map[string]string{"error": resp.GetError()})

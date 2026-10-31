@@ -11,7 +11,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const testAuthMethod = "/lantern.v1.RuntimeScheduler/Schedule"
+const testAuthMethod = "/pal.v1.RuntimeScheduler/Schedule"
 
 func ctxWithToken(tok string) context.Context {
 	md := metadata.New(map[string]string{ServiceTokenMetadataKey: tok})
@@ -102,19 +102,15 @@ func TestUnaryServiceAuthInterceptor_RejectsThenAllows(t *testing.T) {
 	}
 }
 
-// ADR 0032: the legacy header still authenticates; a wrong PAL token is not
-// rescued by a right legacy one (exactly one value is compared).
-func TestAuthenticateServiceToken_LegacyAndPALNames(t *testing.T) {
+// A matching token authenticates; a wrong one does not.
+func TestAuthenticateServiceToken_Names(t *testing.T) {
 	cases := []struct {
 		name string
 		md   map[string]string
 		ok   bool
 	}{
-		{"pal", map[string]string{ServiceTokenMetadataKey: "s3cret"}, true},
-		{"legacy", map[string]string{LegacyServiceTokenMetadataKey: "s3cret"}, true},
-		{"both", OutgoingServiceTokenMetadata("s3cret"), true},
-		{"legacy wrong", map[string]string{LegacyServiceTokenMetadataKey: "nope"}, false},
-		{"pal wrong legacy right", map[string]string{ServiceTokenMetadataKey: "nope", LegacyServiceTokenMetadataKey: "s3cret"}, false},
+		{"valid", OutgoingServiceTokenMetadata("s3cret"), true},
+		{"wrong", map[string]string{ServiceTokenMetadataKey: "nope"}, false},
 	}
 	for _, tc := range cases {
 		ctx := metadata.NewIncomingContext(context.Background(), metadata.New(tc.md))

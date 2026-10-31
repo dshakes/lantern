@@ -40,7 +40,7 @@ When present:
    attempt, so a crash during the retry window loses the callback (see
    Alternatives; poll the run/batch to reconcile).
 5. The POST body is `{runId, status, output, error, costUsd, tokensIn, tokensOut}`.
-6. The signature is `X-Lantern-Signature: v1=<hmac-sha256>` over the body,
+6. The signature is `X-Pal-Signature: v1=<hmac-sha256>` over the body,
    matching the generic inbound-webhook format so callers can verify with the
    same code. The signing secret is `HMAC-SHA256(PAL_CALLBACK_SIGNING_SECRET,
    tenantID)` — per-tenant without a per-run DB row.
@@ -84,8 +84,8 @@ batch → 200, no-op).
 
 ## Consequences
 
-- **New env vars:** `PAL_CALLBACK_SIGNING_SECRET` (also `LANTERN_CALLBACK_SIGNING_SECRET`
-  for compat), `PAL_BATCH_MAX_ITEMS` / `LANTERN_BATCH_MAX_ITEMS`.
+- **New env vars:** `PAL_CALLBACK_SIGNING_SECRET` (also `PAL_CALLBACK_SIGNING_SECRET`
+  for compat), `PAL_BATCH_MAX_ITEMS` / `PAL_BATCH_MAX_ITEMS`.
 - **No new dependency.** The HTTP client for callback delivery reuses the stdlib
   `net/http.Client`.
 - **Migration 0032** adds `runs.callback_url`, `runs.batch_id`, and the `batches`

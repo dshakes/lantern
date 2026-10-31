@@ -20,7 +20,7 @@
 # and the job then VERIFIES what it just produced — signature under the expected identity,
 # a wrong identity must be rejected, SBOM + provenance attestations must verify — so a
 # broken signing chain fails CI instead of failing admission in a customer cluster.
-# Cluster-side checks: infra/helm/lantern-data-plane (imageVerification) for platform
+# Cluster-side checks: infra/helm/pal-data-plane (imageVerification) for platform
 # images, infra/k8s/supply-chain for tenant workload images.
 #
 # Action SHAs are pinned (same convention as sdlc-qa.yml / sign-images.yml).
@@ -77,7 +77,7 @@ jobs:
           - image: runtime-manager
             context: .
             file: services/runtime-manager/Dockerfile
-          - image: web   # dashboard — Helm pulls .../lantern/web (apps/web)
+          - image: web   # dashboard — Helm pulls .../pal/web (apps/web)
             context: apps/web
             file: apps/web/Dockerfile
     steps:

@@ -46,7 +46,7 @@ func otelEnabled() bool {
 //
 // The caller must wire the returned shutdown into the process exit path:
 //
-//	shutdown, err := telemetry.InitTracer(ctx, "lantern.control-plane")
+//	shutdown, err := telemetry.InitTracer(ctx, "pal.control-plane")
 //	if err != nil { /* handle */ }
 //	defer shutdown(ctx)
 //

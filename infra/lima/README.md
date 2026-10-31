@@ -91,23 +91,23 @@ sudo apt-get install -y musl-tools e2fsprogs jq curl openssl protobuf-compiler b
 rustup target add "$MUSL"
 
 # Build the harness (musl, static) and the runtime-manager.
-cargo build --release --locked --bin lantern-harness --target "$MUSL" \
+cargo build --release --locked --bin pal-harness --target "$MUSL" \
   --manifest-path services/harness/Cargo.toml --target-dir "$T"
 cargo build --release --locked \
   --manifest-path services/runtime-manager/Cargo.toml --target-dir "$T"
 
 # Build the kernel + rootfs (needs sudo for loop-mount; pass the harness via
 # env so sudo does not need cargo on its PATH).
-sudo FC_HARNESS_BIN="$T/$MUSL/release/lantern-harness" ARCH="$(uname -m)" \
+sudo FC_HARNESS_BIN="$T/$MUSL/release/pal-harness" ARCH="$(uname -m)" \
   bash infra/firecracker/build-image.sh "$IMG"
 
 # Run the test, jailed. Needs root for TAP + firecracker + loop devices.
 # Without FIRECRACKER_JAILER_PATH the fork step SKIPs (bare Firecracker
 # cannot fork a VM), so set all four jailer vars.
-sudo mkdir -p /srv/jailer /var/lib/lantern/snapshots
+sudo mkdir -p /srv/jailer /var/lib/pal/snapshots
 sudo FC_KERNEL_PATH="$IMG/vmlinux" FC_ROOTFS_PATH="$IMG/rootfs.ext4" \
   RUNTIME_BACKEND=firecracker PAL_RUNTIME_BACKEND=firecracker \
-  MANAGER_BIN="$T/release/lantern-runtime-manager" EXPECT_VENDSECRET=1 \
+  MANAGER_BIN="$T/release/pal-runtime-manager" EXPECT_VENDSECRET=1 \
   FIRECRACKER_JAILER_PATH="$(command -v jailer)" FIRECRACKER_JAILER_UID=123 \
   FIRECRACKER_JAILER_GID=100 FIRECRACKER_CHROOT_BASE=/srv/jailer \
   LIFECYCLE_TIMING_DIR="$HOME/.cache/pal-lima/timing" \

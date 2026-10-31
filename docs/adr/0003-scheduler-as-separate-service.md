@@ -72,5 +72,5 @@ Then quota and warm-pool views are inconsistent across control-plane replicas. W
 ## References
 
 - [`docs/architecture/04b-microvm-productionization.md`](../architecture/04b-microvm-productionization.md) — system overview
-- [`packages/proto/lantern/v1/runtime.proto`](../../packages/proto/lantern/v1/runtime.proto) — both service surfaces
+- [`packages/proto/pal/v1/runtime.proto`](../../packages/proto/pal/v1/runtime.proto) — both service surfaces
 - [Firecracker snapshotting](https://github.com/firecracker-microvm/firecracker/blob/main/docs/snapshotting/snapshot-support.md) — why locality matters

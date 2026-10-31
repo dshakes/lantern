@@ -14,11 +14,11 @@ Agent code is untrusted and tenants share infrastructure, so every hop between t
 | Boundary | Credential it demands | Fails closed when | Enforced in |
 | --- | --- | --- | --- |
 | Internet to gateway | TLS, then a JWT or API key | Key introspection is not configured: API-key auth is refused. Without `PAL_TLS_CERT` and `PAL_TLS_KEY` the gateway refuses to start in production; in dev it serves plaintext and warns. | `services/gateway` |
-| Gateway to control plane | `x-pal-service-token` (legacy `x-lantern-service-token` still accepted) on gRPC `:50051` | `PAL_GRPC_SERVICE_TOKEN` unset in production: the control plane refuses to start | `services/control-plane` interceptors |
+| Gateway to control plane | `x-pal-service-token` on gRPC `:50051` | `PAL_GRPC_SERVICE_TOKEN` unset in production: the control plane refuses to start | `services/control-plane` interceptors |
 | Caller to REST API | Bearer JWT or API key, then a required scope | Scope enforcement is on by default in production (`PAL_AUTHZ_ENFORCE`; `=0` opts out with a warning) | `internal/handlers/auth.go` |
 | Service to service | Service token on `:50051`, `:50052`, `:50053`, `:50054`, `:50055`, plus a client certificate when `PAL_GRPC_TLS_*` is set (mutual TLS, ADR 0043) | Token or certificate missing in production: the service refuses to start | each service's interceptor |
 | Data-plane tunnel | Server-auth TLS, a bootstrap token, then a session JWT | Exempt from the client certificate; `DataPlaneService` authenticates itself | control plane `DataPlaneService` |
-| Control plane to runtime manager | Service token; per-VM certificates refused | A peer presenting a per-VM certificate (`OU=pal-vm`, or the older `OU=lantern-vm`) gets `PERMISSION_DENIED` on every `RuntimeManager` method | `services/runtime-manager/src/authz.rs` |
+| Control plane to runtime manager | Service token; per-VM certificates refused | A peer presenting a per-VM certificate (`OU=pal-vm`) gets `PERMISSION_DENIED` on every `RuntimeManager` method | `services/runtime-manager/src/authz.rs` |
 | Guest to manager | A per-VM certificate bound to the request's `vm_id` | `vm_id` does not match the certificate, or the certificate is from another incarnation | `RuntimeHarness` service |
 | Workload to harness | Kernel-attested peer uid (`SO_PEERCRED`) on the secrets socket | Any uid other than the workload uid: denied, audited as `secret_access_denied` | `services/harness/src` |
 | Workload to internet | Egress allowlist | Not allowlisted: refused and audited | harness proxy or host broker |
@@ -32,7 +32,7 @@ Every row carries a `tenant_id`, every gRPC call carries one in metadata, and th
 <TenancyRls client:visible />
 
 1. **Handlers scope by the verified tenant.** The tenant comes from the auth context, never from a request body or path. Tenant-scoped queries run through `Server.WithTenant`, which sets the `app.tenant_id` setting so row-level security admits the read or write.
-2. **Postgres row-level security.** Every tenant table has a `tenant_isolation` policy with both `USING` and `WITH CHECK`. It is enforced when the connection uses the restricted `lantern_app` role. In production it is on whenever `PAL_APP_DB_PASSWORD` is set; without that password the control plane refuses to start unless you set `PAL_RLS_ENFORCE=0`. A catalog test fails the build when a tenant table has neither a policy nor an explicit exemption.
+2. **Postgres row-level security.** Every tenant table has a `tenant_isolation` policy with both `USING` and `WITH CHECK`. It is enforced when the connection uses the restricted `pal_app` role. In production it is on whenever `PAL_APP_DB_PASSWORD` is set; without that password the control plane refuses to start unless you set `PAL_RLS_ENFORCE=0`. A catalog test fails the build when a tenant table has neither a policy nor an explicit exemption.
 3. **Not-found, not forbidden.** A run, VM, snapshot, card or invoke that belongs to another tenant answers `NOT_FOUND` (404), indistinguishable from one that does not exist. The workflow engine's `CancelRun`, `ResumeRun` and `SignalRun` filter by the verified `tenant_id` the same way.
 
 The workflow engine writes run state for every tenant, so it uses a second, restricted connection pool for tenant-scoped work and keeps the privileged pool only for cross-tenant work such as polling for runnable runs and `run_locks` bookkeeping. A restricted connection with no tenant set matches no rows, which is why the two cannot be swapped.
@@ -43,7 +43,7 @@ The runtime manager is the only process that touches microVMs. Untrusted code ru
 
 Inside the guest, the harness is PID 1 and the last boundary:
 
-- It runs the workload as its own uid and gid, with every `PAL_*` key (and its legacy `LANTERN_*` alias) withheld from the child except a short allowlist of non-secret identifiers.
+- It runs the workload as its own uid and gid, with every `PAL_*` key withheld from the child except a short allowlist of non-secret identifiers.
 - It vends short-lived secrets only to that uid, and only for URIs declared in the VM's own spawn record.
 - Tool file operations are confined to `/workspace` with `openat2` and `RESOLVE_BENEATH`.
 - Security audits (`secret_vend`, egress deny, `secret_access_denied`, `egress_preflight`) are logged locally before they are forwarded and survive a manager outage.

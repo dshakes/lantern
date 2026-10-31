@@ -62,7 +62,7 @@ The workflow engine never runs tools. It asks the runtime manager, which hands a
 1. The engine calls `ExecTool` with `tool_name`, `args`, `run_id`, `step_id`, `vm_id`, a timeout, the idempotency key and `tenant_id`.
 2. The manager's authz interceptor requires the service token and refuses any per-VM certificate.
 3. The manager resolves the VM by `vm_id`, or by scanning for `run_id`. The owning tenant must match, or the answer is `NOT_FOUND`.
-4. The manager sends `Exec __lantern_tool_call__` to the harness, with the envelope in `argv[0]` and this incarnation's bearer token.
+4. The manager sends `Exec __pal_tool_call__` to the harness, with the envelope in `argv[0]` and this incarnation's bearer token.
 5. The harness's tool runner acts. File tools use `openat2` with `RESOLVE_BENEATH` under `/workspace`, as the workload's fsuid.
 6. The result returns, capped at 1 MiB, as `TOOL_STATUS_OK`, `TOOL_STATUS_ERROR` (the tool ran and failed) or `TOOL_STATUS_UNAVAILABLE` (not a Firecracker VM, or no heartbeat yet). An unavailable tool is never reported as a success.
 

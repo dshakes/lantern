@@ -67,7 +67,7 @@ Loops that serve the owner sit above the mute gate on the proactive tick; anythi
 
 ## Memory and state
 
-State is owner-only (mode 0600) JSONL in the state directory, resolved by `state-dir.ts`: `PAL_STATE_DIR`, else `~/.pal` when it exists, else the older `~/.lantern`. The highest-detail stores (`episodes.jsonl`, `topic-index.jsonl`, `dislike-patterns.jsonl`, `sent-log.jsonl`) are AES-256-GCM encrypted through `secure-store.ts`: an `enc1:` line envelope, a key created owner-only at `<stateDir>/state.key`, and legacy plaintext lines still read and age out.
+State is owner-only (mode 0600) JSONL in the state directory, resolved by `state-dir.ts`: `PAL_STATE_DIR`, else `~/.pal`. The highest-detail stores (`episodes.jsonl`, `topic-index.jsonl`, `dislike-patterns.jsonl`, `sent-log.jsonl`) are AES-256-GCM encrypted through `secure-store.ts`: an `enc1:` line envelope, a key created owner-only at `<stateDir>/state.key`, and legacy plaintext lines still read and age out.
 
 | Store | Purpose |
 | --- | --- |
@@ -98,7 +98,7 @@ The consent version is pinned between the CLI and the server by `services/testda
 
 ## Environment variables
 
-The essentials. Every variable accepts a `PAL_` name; the older `LANTERN_` name still works. The full list is in [Environment variables](/docs/reference/env-vars/).
+The essentials. The full list is in [Environment variables](/docs/reference/env-vars/).
 
 | Variable | Default | Purpose |
 | --- | --- | --- |

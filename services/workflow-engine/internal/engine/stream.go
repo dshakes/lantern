@@ -12,12 +12,12 @@ import (
 
 const (
 	// streamChannelPrefix is the Redis pub/sub channel prefix for run events.
-	streamChannelPrefix = "lantern:run:stream:"
+	streamChannelPrefix = "pal:run:stream:"
 
 	// streamBacklogPrefix is the Redis list prefix for buffered events that
 	// support reconnection. Events are stored with a TTL so they don't
 	// accumulate forever.
-	streamBacklogPrefix = "lantern:run:backlog:"
+	streamBacklogPrefix = "pal:run:backlog:"
 
 	// streamBacklogTTL is how long buffered events are retained for reconnect.
 	streamBacklogTTL = 30 * time.Minute

@@ -15,8 +15,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
-	"github.com/dshakes/lantern/services/control-plane/internal/storage"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/storage"
 )
 
 // mockBlob is an in-memory blobStore so dl tests stay hermetic (no MinIO).
@@ -279,10 +279,9 @@ func TestSanitizeFilename(t *testing.T) {
 	}
 }
 
-// ADR 0032: /internal/dl/stage authenticates x-pal-service-token and the
-// legacy x-lantern-service-token through the same constant-time compare; a
-// wrong PAL token is not rescued by a right legacy one.
-func TestDL_AuthServiceAcceptsPALAndLegacyHeader(t *testing.T) {
+// /internal/dl/stage authenticates x-pal-service-token through a
+// constant-time compare.
+func TestDL_AuthServiceHeader(t *testing.T) {
 	t.Setenv(dlServiceTokenEnv, "dl-secret")
 	h := newDLHandlerForTest(t)
 	for _, tc := range []struct {
@@ -291,8 +290,7 @@ func TestDL_AuthServiceAcceptsPALAndLegacyHeader(t *testing.T) {
 		ok   bool
 	}{
 		{"pal", map[string]string{"x-pal-service-token": "dl-secret"}, true},
-		{"legacy", map[string]string{"x-lantern-service-token": "dl-secret"}, true},
-		{"pal wrong legacy right", map[string]string{"x-pal-service-token": "no", "x-lantern-service-token": "dl-secret"}, false},
+		{"wrong", map[string]string{"x-pal-service-token": "no"}, false},
 		{"none", map[string]string{}, false},
 	} {
 		req := httptest.NewRequest("POST", "/internal/dl/stage", nil)

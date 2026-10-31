@@ -16,9 +16,7 @@ type Credentials struct {
 	UserID   string `json:"userId,omitempty"`
 }
 
-// ConfigDir is the CLI's config/state directory (ADR 0032): $PAL_HOME when set,
-// else ~/.pal when it exists, else the legacy ~/.lantern when it exists, else
-// ~/.pal. An existing ~/.lantern is used in place — user files are never moved.
+// ConfigDir is the CLI's config/state directory: $PAL_HOME when set, else ~/.pal.
 func ConfigDir() (string, error) {
 	if d := os.Getenv("PAL_HOME"); d != "" {
 		return d, nil
@@ -27,13 +25,7 @@ func ConfigDir() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("home directory: %w", err)
 	}
-	pal := filepath.Join(home, ".pal")
-	for _, d := range []string{pal, filepath.Join(home, ".lantern")} {
-		if fi, err := os.Stat(d); err == nil && fi.IsDir() {
-			return d, nil
-		}
-	}
-	return pal, nil
+	return filepath.Join(home, ".pal"), nil
 }
 
 // CredentialsPath returns the path to credentials.json in ConfigDir.

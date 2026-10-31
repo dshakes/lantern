@@ -55,7 +55,7 @@ fixed order:
 | 1 | **kernel image** | SHA-256 of file bytes at `FC_KERNEL_PATH` |
 | 2 | **rootfs image** | SHA-256 of file bytes at `FC_ROOTFS_PATH` |
 | 3 | **harness binary** | SHA-256 of file bytes at `FC_HARNESS_PATH` (32 zero bytes when unset — harness baked into rootfs) |
-| 4 | **boot arguments** | SHA-256 of the kernel cmdline with per-VM tokens, secret refs and the `lantern.env.*` copy removed (see below) |
+| 4 | **boot arguments** | SHA-256 of the kernel cmdline with per-VM tokens, secret refs and the `pal.env.*` copy removed (see below) |
 | 5 | **spawn contract** | SHA-256 of `spawn.json` canonical JSON (env is a `BTreeMap`, so key-ordered) minus secrets and per-VM identity (see below) |
 
 **Final value:** SHA-256 of the 160-byte concatenation of the five 32-byte
@@ -86,7 +86,7 @@ without changing the measurement. Reference approvers must therefore NOT approve
 a spec whose workload *executes or interprets* a secret-named env value (e.g. a
 `*_TOKEN` that is really a script, a `*_KEY` that selects code) — that input is
 invisible to the gate. Credentials belong in `declared_secrets`
-(`lantern.secret/…`), not plain env; the name heuristic is a backstop, and a
+(`pal.secret/…`), not plain env; the name heuristic is a backstop, and a
 credential under an innocuous name that is not a URL is still measured.
 
 ### "Minus identity" rule
@@ -94,12 +94,12 @@ credential under an innocuous name that is not a URL is still measured.
 The measurement must be reproducible across VMs launched from the same images
 and spec, or no reference set could ever match it. So per-incarnation values are
 excluded too: the contract's `vm_id`, `network` and per-VM `egress_ca_pem`, and
-the caller-set per-incarnation env keys (`CALLER_LANTERN_KEYS`:
+the caller-set per-incarnation env keys (`CALLER_PAL_KEYS`:
 `PAL_AGENT_INSTANCE_ID`, `PAL_AGENT_INSTANCE_TOKEN` — a live bearer
 credential — `PAL_TRACE_PARENT`, `PAL_RESUME`); and from the cmdline the
-`ip=`, `lantern.vm_id=`, `lantern.run_id=`, `lantern.tls_cert=`/`lantern.tls_key=`
-(per-VM paths), `lantern.manager_ca=` (host-path dependent), `lantern.secret.*`
-tokens, and **every** `lantern.env.*` token. The `lantern.env.*` tokens are now
+`ip=`, `pal.vm_id=`, `pal.run_id=`, `pal.tls_cert=`/`pal.tls_key=`
+(per-VM paths), `pal.manager_ca=` (host-path dependent), `pal.secret.*`
+tokens, and **every** `pal.env.*` token. The `pal.env.*` tokens are now
 only the manager-owned keys the harness needs before reading `spawn.json`
 (`PAL_ENV`, `PAL_MANAGER_ADDR`, `PAL_WORKLOAD_UID`): caller env is no
 longer emitted on the cmdline at all (the guest kernel echoes the cmdline to the

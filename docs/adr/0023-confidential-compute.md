@@ -69,7 +69,7 @@ The flag threads through the entire runtime stack:
    When `confidential` passes both gates: the Kata-CC RuntimeClass overrides the
    isolation-class → RuntimeClass mapping, `PAL_CONFIDENTIAL=1` is injected
    into the pod env, and node affinity + toleration on the operator-set label
-   `lantern.dev/confidential-compute` ensures the pod lands only on CC hardware.
+   `pal.dev/confidential-compute` ensures the pod lands only on CC hardware.
 
 4. **Harness** — on boot, when `PAL_CONFIDENTIAL=1`, the in-VM harness
    (`services/harness/src/cc_attest.rs`) makes a **best-effort** read of the
@@ -113,7 +113,7 @@ the flag. The floor closes that gap.
 
 ### Helm opt-in
 
-Two new `runtimeManager` Helm values in `infra/helm/lantern-data-plane/values.yaml`:
+Two new `runtimeManager` Helm values in `infra/helm/pal-data-plane/values.yaml`:
 
 | Value | Purpose |
 |-------|---------|
@@ -123,7 +123,7 @@ Two new `runtimeManager` Helm values in `infra/helm/lantern-data-plane/values.ya
 Operators must also label and taint CC-capable nodes:
 
 ```
-lantern.dev/confidential-compute=<tech>   # e.g. sev-snp or tdx
+pal.dev/confidential-compute=<tech>   # e.g. sev-snp or tdx
 ```
 
 This mirrors NFD (`node-feature-discovery`) labels for SEV-SNP/TDX.

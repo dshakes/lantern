@@ -46,16 +46,16 @@ DO $$BEGIN
 END$$;
 
 -- Grant DML to the restricted app role so RLS-enforced queries can read/write
--- (the privileged lantern superuser pool bypasses RLS and needs no extra
--- GRANTs). Without this, RLS-enforced queries on the lantern_app pool fail
+-- (the privileged pal superuser pool bypasses RLS and needs no extra
+-- GRANTs). Without this, RLS-enforced queries on the pal_app pool fail
 -- with "permission denied" before the row-level policy even runs.
 DO $$BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.role_table_grants
         WHERE table_name  = 'immigration_deadlines'
-          AND grantee       = 'lantern_app'
+          AND grantee       = 'pal_app'
           AND privilege_type = 'SELECT'
     ) THEN
-        GRANT SELECT, INSERT, UPDATE, DELETE ON immigration_deadlines TO lantern_app;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON immigration_deadlines TO pal_app;
     END IF;
 END$$;

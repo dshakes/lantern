@@ -1,7 +1,7 @@
 // Package connectorreplay serves recorded vendor API responses (Slack, GitHub,
 // Sentry, PagerDuty, Google Calendar) so connector actions and examples run
 // without a real SaaS account. Point a connector at it with
-// LANTERN_CONNECTOR_BASEURL_<NAME> (dev/test only; see handlers/connector_baseurl.go).
+// PAL_CONNECTOR_BASEURL_<NAME> (dev/test only; see handlers/connector_baseurl.go).
 //
 // Every request is recorded so tests can assert the outbound call shape. The
 // Authorization header is never stored (invariant #10) — only whether it was set.

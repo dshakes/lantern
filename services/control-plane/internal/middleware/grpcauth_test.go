@@ -12,7 +12,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const testMethod = "/lantern.v1.AgentService/ListAgents"
+const testMethod = "/pal.v1.AgentService/ListAgents"
 
 func ctxWithToken(tok string) context.Context {
 	md := metadata.New(map[string]string{ServiceTokenMetadataKey: tok})
@@ -70,8 +70,8 @@ func TestAuthenticateServiceToken_HealthAndDataPlaneExempt(t *testing.T) {
 	exempt := []string{
 		"/grpc.health.v1.Health/Check",
 		"/grpc.reflection.v1.ServerReflection/ServerReflectionInfo",
-		"/lantern.v1.DataPlaneService/Register",
-		"/lantern.v1.DataPlaneService/RunStream",
+		"/pal.v1.DataPlaneService/Register",
+		"/pal.v1.DataPlaneService/RunStream",
 	}
 	for _, m := range exempt {
 		t.Run(m, func(t *testing.T) {
@@ -112,21 +112,17 @@ func TestUnaryServiceAuthInterceptor_RejectsThenAllows(t *testing.T) {
 	}
 }
 
-// ADR 0032: the legacy header name still authenticates, and a wrong PAL token
-// is not rescued by a right legacy one (exactly one value is compared).
-func TestAuthenticateServiceToken_LegacyAndPALNames(t *testing.T) {
+// A matching token authenticates; a wrong or absent one does not.
+func TestAuthenticateServiceToken_Names(t *testing.T) {
 	logger := zap.NewNop()
 	cases := []struct {
 		name string
 		md   map[string]string
 		ok   bool
 	}{
-		{"pal", map[string]string{ServiceTokenMetadataKey: "s3cret"}, true},
-		{"legacy", map[string]string{LegacyServiceTokenMetadataKey: "s3cret"}, true},
-		{"both", OutgoingServiceTokenMetadata("s3cret"), true},
-		{"legacy wrong", map[string]string{LegacyServiceTokenMetadataKey: "nope"}, false},
-		{"pal wrong legacy right", map[string]string{ServiceTokenMetadataKey: "nope", LegacyServiceTokenMetadataKey: "s3cret"}, false},
-		{"pal empty legacy right", map[string]string{ServiceTokenMetadataKey: "", LegacyServiceTokenMetadataKey: "s3cret"}, true},
+		{"valid", OutgoingServiceTokenMetadata("s3cret"), true},
+		{"wrong", map[string]string{ServiceTokenMetadataKey: "nope"}, false},
+		{"empty", map[string]string{ServiceTokenMetadataKey: ""}, false},
 	}
 	for _, tc := range cases {
 		ctx := metadata.NewIncomingContext(context.Background(), metadata.New(tc.md))
@@ -137,18 +133,14 @@ func TestAuthenticateServiceToken_LegacyAndPALNames(t *testing.T) {
 	}
 }
 
-// The HTTP twin (introspect-key, dl staging) reads the same two names.
-func TestServiceTokenFromHeader_PALThenLegacy(t *testing.T) {
+// The HTTP twin (introspect-key, dl staging) reads the same header.
+func TestServiceTokenFromHeader(t *testing.T) {
 	h := http.Header{}
 	if got := ServiceTokenFromHeader(h); got != "" {
 		t.Fatalf("empty header: got %q", got)
 	}
-	h.Set(LegacyServiceTokenMetadataKey, "old")
-	if got := ServiceTokenFromHeader(h); got != "old" {
-		t.Fatalf("legacy only: got %q", got)
-	}
 	h.Set(ServiceTokenMetadataKey, "new")
 	if got := ServiceTokenFromHeader(h); got != "new" {
-		t.Fatalf("both: got %q, want the PAL value", got)
+		t.Fatalf("got %q, want new", got)
 	}
 }

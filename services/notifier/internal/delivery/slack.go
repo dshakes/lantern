@@ -33,14 +33,14 @@ func (s *SlackDeliverer) Channel() Channel {
 
 // slackMessage represents the Slack webhook payload.
 type slackMessage struct {
-	Text        string           `json:"text,omitempty"`
-	Blocks      []slackBlock     `json:"blocks,omitempty"`
+	Text        string            `json:"text,omitempty"`
+	Blocks      []slackBlock      `json:"blocks,omitempty"`
 	Attachments []slackAttachment `json:"attachments,omitempty"`
 }
 
 type slackBlock struct {
-	Type string         `json:"type"`
-	Text *slackTextObj  `json:"text,omitempty"`
+	Type string        `json:"type"`
+	Text *slackTextObj `json:"text,omitempty"`
 }
 
 type slackTextObj struct {

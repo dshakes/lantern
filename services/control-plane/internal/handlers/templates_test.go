@@ -10,15 +10,15 @@ import (
 	"testing"
 )
 
-// TestTemplatePALGuide_Registered verifies that the lantern-guide template
+// TestTemplatePALGuide_Registered verifies that the pal-guide template
 // is present in the registry with the required fields.
 func TestTemplatePALGuide_Registered(t *testing.T) {
-	tpl, ok := templates["lantern-guide"]
+	tpl, ok := templates["pal-guide"]
 	if !ok {
-		t.Fatal("lantern-guide template is not registered in the templates map")
+		t.Fatal("pal-guide template is not registered in the templates map")
 	}
-	if tpl.ID != "lantern-guide" {
-		t.Errorf("ID: want %q, got %q", "lantern-guide", tpl.ID)
+	if tpl.ID != "pal-guide" {
+		t.Errorf("ID: want %q, got %q", "pal-guide", tpl.ID)
 	}
 	if tpl.Name == "" {
 		t.Error("Name must not be empty")
@@ -46,7 +46,7 @@ func TestTemplatePALGuide_Registered(t *testing.T) {
 // TestTemplatePALGuide_BudgetCaps verifies the spend caps are set and
 // are small enough not to surprise-bill.
 func TestTemplatePALGuide_BudgetCaps(t *testing.T) {
-	tpl := templates["lantern-guide"]
+	tpl := templates["pal-guide"]
 
 	const maxDayCap = 1.00 // never more than a dollar a day for an onboarding guide
 	const maxRunCap = 0.10 // never more than 10¢ per guide run
@@ -67,16 +67,16 @@ func TestTemplatePALGuide_BudgetCaps(t *testing.T) {
 // has no cron schedule (it's invoked on-demand by onboard, not scheduled) and
 // requires no external connectors.
 func TestTemplatePALGuide_NoScheduleNoConnectors(t *testing.T) {
-	tpl := templates["lantern-guide"]
+	tpl := templates["pal-guide"]
 
 	if tpl.CronExpr != "" {
-		t.Errorf("CronExpr must be empty for lantern-guide (on-demand only), got %q", tpl.CronExpr)
+		t.Errorf("CronExpr must be empty for pal-guide (on-demand only), got %q", tpl.CronExpr)
 	}
 	if len(tpl.Connectors) != 0 {
-		t.Errorf("Connectors must be empty for lantern-guide, got %v", tpl.Connectors)
+		t.Errorf("Connectors must be empty for pal-guide, got %v", tpl.Connectors)
 	}
 	if len(tpl.Surfaces) != 0 {
-		t.Errorf("Surfaces must be empty for lantern-guide (no delivery surface needed), got %v", tpl.Surfaces)
+		t.Errorf("Surfaces must be empty for pal-guide (no delivery surface needed), got %v", tpl.Surfaces)
 	}
 }
 

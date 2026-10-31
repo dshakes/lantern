@@ -27,7 +27,7 @@ stack.
 ```bash
 export TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"email":"admin@lantern.dev","password":"lantern"}' | jq -r .token)
+  -d '{"email":"admin@pal.local","password":"pal"}' | jq -r .token)
 
 # 1. create the agent
 curl -s -X POST http://localhost:8080/v1/agents \
@@ -41,7 +41,7 @@ curl -s -X POST http://localhost:8080/v1/runs \
 # -> {"id":"<run-id>","status":"queued",...}; poll GET /v1/runs/<run-id>
 ```
 
-### lantern CLI equivalent
+### pal CLI equivalent
 
 ```bash
 cd packages/cli && go run ./cmd/pal runs create \

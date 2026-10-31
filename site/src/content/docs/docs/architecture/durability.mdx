@@ -40,7 +40,7 @@ For each step the executor writes `step_started` before it acts and `step_comple
 
 <Diagram name="crash-resume" />
 
-When the run is an in-VM agent, the re-drive injects `LANTERN_RESUME=1` into its environment so the agent knows it is being resumed (`recovery.go`). The picture of this flow is on [Durable execution](/docs/runtime/durable-execution/).
+When the run is an in-VM agent, the re-drive injects `PAL_RESUME=1` into its environment so the agent knows it is being resumed (`recovery.go`). The picture of this flow is on [Durable execution](/docs/runtime/durable-execution/).
 
 ## The durable engine
 

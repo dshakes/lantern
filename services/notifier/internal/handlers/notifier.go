@@ -14,12 +14,12 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/dshakes/lantern/services/notifier/internal/delivery"
-	"github.com/dshakes/lantern/services/notifier/internal/middleware"
-	"github.com/dshakes/lantern/services/notifier/internal/server"
+	"github.com/dshakes/pal/services/notifier/internal/delivery"
+	"github.com/dshakes/pal/services/notifier/internal/middleware"
+	"github.com/dshakes/pal/services/notifier/internal/server"
 )
 
-var tracer = otel.Tracer("lantern.notifier")
+var tracer = otel.Tracer("pal.notifier")
 
 // NotifyRequest represents a request to send a notification.
 type NotifyRequest struct {

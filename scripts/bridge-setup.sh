@@ -13,8 +13,8 @@
 #
 # Idempotent — safe to re-run at any time.
 #
-# LANTERN_ENV_FILE — override the target env file (useful for testing):
-#   LANTERN_ENV_FILE=/tmp/test.env bash scripts/bridge-setup.sh
+# PAL_ENV_FILE — override the target env file (useful for testing):
+#   PAL_ENV_FILE=/tmp/test.env bash scripts/bridge-setup.sh
 
 set -o pipefail
 
@@ -183,7 +183,7 @@ find_repo_root() {
 
 # ---- ENV FILE ---------------------------------------------------------------
 
-# Allow override for testing: LANTERN_ENV_FILE=/tmp/test.env bash bridge-setup.sh
+# Allow override for testing: PAL_ENV_FILE=/tmp/test.env bash bridge-setup.sh
 setup_env_file() {
   local env_file="$1"
   local example_file="${REPO_ROOT}/.env.example"
@@ -260,33 +260,33 @@ collect_identity() {
   printf "\n  ${DIM}Core identity vars — used by both bridges and the control-plane.${RST}\n"
   printf "  ${DIM}Press Enter to keep the value shown in [brackets].${RST}\n\n"
 
-  # LANTERN_OWNER_NAME
+  # PAL_OWNER_NAME
   local cur_name
-  cur_name=$(env_get "$env_file" "LANTERN_OWNER_NAME")
-  prompt_with_default LANTERN_OWNER_NAME "Your first name" "${cur_name:-}"
-  if [[ -n "$LANTERN_OWNER_NAME" ]]; then
-    env_set "$env_file" "LANTERN_OWNER_NAME" "$LANTERN_OWNER_NAME"
-    pass "LANTERN_OWNER_NAME" "$LANTERN_OWNER_NAME"
+  cur_name=$(env_get "$env_file" "PAL_OWNER_NAME")
+  prompt_with_default PAL_OWNER_NAME "Your first name" "${cur_name:-}"
+  if [[ -n "$PAL_OWNER_NAME" ]]; then
+    env_set "$env_file" "PAL_OWNER_NAME" "$PAL_OWNER_NAME"
+    pass "PAL_OWNER_NAME" "$PAL_OWNER_NAME"
   fi
 
-  # LANTERN_OWNER_EMAIL
+  # PAL_OWNER_EMAIL
   local cur_email
-  cur_email=$(env_get "$env_file" "LANTERN_OWNER_EMAIL")
-  prompt_with_default LANTERN_OWNER_EMAIL "Your email address (for mirror alerts)" "${cur_email:-}"
-  if [[ -n "$LANTERN_OWNER_EMAIL" ]]; then
-    env_set "$env_file" "LANTERN_OWNER_EMAIL" "$LANTERN_OWNER_EMAIL"
-    pass "LANTERN_OWNER_EMAIL" "$LANTERN_OWNER_EMAIL"
+  cur_email=$(env_get "$env_file" "PAL_OWNER_EMAIL")
+  prompt_with_default PAL_OWNER_EMAIL "Your email address (for mirror alerts)" "${cur_email:-}"
+  if [[ -n "$PAL_OWNER_EMAIL" ]]; then
+    env_set "$env_file" "PAL_OWNER_EMAIL" "$PAL_OWNER_EMAIL"
+    pass "PAL_OWNER_EMAIL" "$PAL_OWNER_EMAIL"
   fi
 
-  # LANTERN_OWNER_TIMEZONE
+  # PAL_OWNER_TIMEZONE
   local cur_tz detected_tz
-  cur_tz=$(env_get "$env_file" "LANTERN_OWNER_TIMEZONE")
+  cur_tz=$(env_get "$env_file" "PAL_OWNER_TIMEZONE")
   detected_tz=$(detect_timezone)
   local tz_default="${cur_tz:-$detected_tz}"
-  prompt_with_default LANTERN_OWNER_TIMEZONE "Your IANA timezone (quiet hours + digest)" "$tz_default"
-  if [[ -n "$LANTERN_OWNER_TIMEZONE" ]]; then
-    env_set "$env_file" "LANTERN_OWNER_TIMEZONE" "$LANTERN_OWNER_TIMEZONE"
-    pass "LANTERN_OWNER_TIMEZONE" "$LANTERN_OWNER_TIMEZONE"
+  prompt_with_default PAL_OWNER_TIMEZONE "Your IANA timezone (quiet hours + digest)" "$tz_default"
+  if [[ -n "$PAL_OWNER_TIMEZONE" ]]; then
+    env_set "$env_file" "PAL_OWNER_TIMEZONE" "$PAL_OWNER_TIMEZONE"
+    pass "PAL_OWNER_TIMEZONE" "$PAL_OWNER_TIMEZONE"
   fi
 }
 
@@ -298,32 +298,32 @@ collect_optional_jids() {
   printf "  ${DIM}Bot-account mode: owner DMs a SEPARATE bot number — set the JID below.${RST}\n\n"
 
   local yn
-  prompt_yn yn "Configure a dedicated WhatsApp bot account? (sets LANTERN_WA_OWNER_JID)" "n"
+  prompt_yn yn "Configure a dedicated WhatsApp bot account? (sets PAL_WA_OWNER_JID)" "n"
   if [[ "$yn" == "y" ]]; then
     local cur_jid
-    cur_jid=$(env_get "$env_file" "LANTERN_WA_OWNER_JID")
-    prompt_with_default LANTERN_WA_OWNER_JID \
+    cur_jid=$(env_get "$env_file" "PAL_WA_OWNER_JID")
+    prompt_with_default PAL_WA_OWNER_JID \
       "Your WhatsApp number (digits only, e.g. 15125551234)" \
       "${cur_jid:-}"
-    if [[ -n "$LANTERN_WA_OWNER_JID" ]]; then
-      env_set "$env_file" "LANTERN_WA_OWNER_JID" "$LANTERN_WA_OWNER_JID"
-      pass "LANTERN_WA_OWNER_JID" "$LANTERN_WA_OWNER_JID"
+    if [[ -n "$PAL_WA_OWNER_JID" ]]; then
+      env_set "$env_file" "PAL_WA_OWNER_JID" "$PAL_WA_OWNER_JID"
+      pass "PAL_WA_OWNER_JID" "$PAL_WA_OWNER_JID"
     fi
   else
     info "Skipped — WhatsApp will use self-chat mode (owner messages their own number)"
   fi
 
   printf "\n"
-  prompt_yn yn "Configure a dedicated iMessage bot account? (sets LANTERN_IMESSAGE_OWNER_HANDLE)" "n"
+  prompt_yn yn "Configure a dedicated iMessage bot account? (sets PAL_IMESSAGE_OWNER_HANDLE)" "n"
   if [[ "$yn" == "y" ]]; then
     local cur_handle
-    cur_handle=$(env_get "$env_file" "LANTERN_IMESSAGE_OWNER_HANDLE")
-    prompt_with_default LANTERN_IMESSAGE_OWNER_HANDLE \
+    cur_handle=$(env_get "$env_file" "PAL_IMESSAGE_OWNER_HANDLE")
+    prompt_with_default PAL_IMESSAGE_OWNER_HANDLE \
       "Your iMessage handle (phone +15125551234 or Apple ID email)" \
       "${cur_handle:-}"
-    if [[ -n "$LANTERN_IMESSAGE_OWNER_HANDLE" ]]; then
-      env_set "$env_file" "LANTERN_IMESSAGE_OWNER_HANDLE" "$LANTERN_IMESSAGE_OWNER_HANDLE"
-      pass "LANTERN_IMESSAGE_OWNER_HANDLE" "$LANTERN_IMESSAGE_OWNER_HANDLE"
+    if [[ -n "$PAL_IMESSAGE_OWNER_HANDLE" ]]; then
+      env_set "$env_file" "PAL_IMESSAGE_OWNER_HANDLE" "$PAL_IMESSAGE_OWNER_HANDLE"
+      pass "PAL_IMESSAGE_OWNER_HANDLE" "$PAL_IMESSAGE_OWNER_HANDLE"
     fi
   else
     info "Skipped — iMessage will use self-chat mode (owner messages their own number)"
@@ -397,12 +397,12 @@ print_next_steps() {
 
   printf "  ${BLD}4. Open the dashboard${RST}\n"
   printf "       http://localhost:3001\n"
-  printf "       Login: ${CYN}admin@lantern.dev${RST} / ${CYN}lantern${RST}\n\n"
+  printf "       Login: ${CYN}admin@pal.local${RST} / ${CYN}pal${RST}\n\n"
 
   printf "  ${BLD}5. Add an LLM provider key${RST}\n"
   printf "       Dashboard → Settings → LLM Providers\n"
   printf "       Add an Anthropic or OpenAI key. Without this the assistant has no brain.\n"
-  printf '       '"${DIM}"'Free alternative: add LANTERN_USE_CLAUDE_CODE=1 to .env.local to route\n'
+  printf '       '"${DIM}"'Free alternative: add PAL_USE_CLAUDE_CODE=1 to .env.local to route\n'
   printf '       through your local `claude` CLI (Claude Max subscription, $0 API cost).'"${RST}"'\n\n'
 
   if [[ "$want_wa" == "y" ]]; then
@@ -437,11 +437,11 @@ print_next_steps() {
 main() {
   printf "${BLD}PAL Runtime bridge setup wizard${RST} ${DIM}— personal-assistant onboarding${RST}\n"
 
-  # Determine env file path (testable via LANTERN_ENV_FILE override)
+  # Determine env file path (testable via PAL_ENV_FILE override)
   section "Repo detection"
   check_repo_root
 
-  local ENV_FILE="${PAL_ENV_FILE:-${LANTERN_ENV_FILE:-${REPO_ROOT}/.env.local}}"
+  local ENV_FILE="${PAL_ENV_FILE:-${REPO_ROOT}/.env.local}"
 
   section "Prereq checks"
   check_macos

@@ -4,10 +4,10 @@
 #
 # GitHub-hosted CI cannot run these legs (no runsc, no nested virt). This script
 # stands up a real cluster with:
-#   - a gVisor (GKE Sandbox) node pool, labelled lantern.dev/runtimeclass=gvisor
+#   - a gVisor (GKE Sandbox) node pool, labelled pal.dev/runtimeclass=gvisor
 #   - a Kata node pool (or a second sandbox pool), labelled & TAINTED for hostile
 #   - the gvisor + kata RuntimeClass objects
-#   - the lantern-t-validate namespace (PSA restricted)
+#   - the pal-t-validate namespace (PSA restricted)
 # then prints the KUBECONFIG you feed to the cluster-e2e execution job.
 #
 # Usage:
@@ -44,7 +44,7 @@ gcloud container node-pools create "$GVISOR_POOL" \
   --project "$PROJECT" --region "$REGION" --cluster "$CLUSTER" \
   --machine-type "$MACHINE" --num-nodes 1 \
   --sandbox type=gvisor \
-  --node-labels "lantern.dev/runtimeclass=gvisor"
+  --node-labels "pal.dev/runtimeclass=gvisor"
 
 echo "==> Adding dedicated Kata/hostile node pool '$KATA_POOL' (labelled + tainted)"
 # On GKE this pool also runs gVisor sandbox; on a self-hosted cluster swap in a
@@ -53,8 +53,8 @@ gcloud container node-pools create "$KATA_POOL" \
   --project "$PROJECT" --region "$REGION" --cluster "$CLUSTER" \
   --machine-type "$MACHINE" --num-nodes 1 \
   --sandbox type=gvisor \
-  --node-labels "lantern.dev/runtimeclass=kata" \
-  --node-taints "lantern.dev/runtimeclass=kata:NoSchedule"
+  --node-labels "pal.dev/runtimeclass=kata" \
+  --node-taints "pal.dev/runtimeclass=kata:NoSchedule"
 
 echo "==> Fetching cluster credentials"
 gcloud container clusters get-credentials "$CLUSTER" \
@@ -78,9 +78,9 @@ metadata:
 handler: gvisor
 scheduling:
   nodeSelector:
-    lantern.dev/runtimeclass: kata
+    pal.dev/runtimeclass: kata
   tolerations:
-    - key: lantern.dev/runtimeclass
+    - key: pal.dev/runtimeclass
       operator: Equal
       value: kata
       effect: NoSchedule
@@ -91,7 +91,7 @@ kubectl apply -f - <<'YAML'
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: lantern-t-validate
+  name: pal-t-validate
   labels:
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/warn: restricted

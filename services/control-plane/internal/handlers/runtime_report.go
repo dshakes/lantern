@@ -63,8 +63,8 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 const (
@@ -674,9 +674,9 @@ var validStepEventKinds = map[string]bool{
 // Uses the same seq-generation pattern as dispatchMicroVMRun so the inline
 // and microVM tiers share an identical journal shape.
 //
-// Span: runtime.report.step_event (attrs: lantern.run_id, lantern.vm_id).
+// Span: runtime.report.step_event (attrs: pal.run_id, pal.vm_id).
 func (h *RuntimeReportHandler) handleStepEvent(ctx context.Context, req reportRequest, vmRow vmBindingRow) error {
-	tracer := otel.Tracer("lantern.control-plane")
+	tracer := otel.Tracer("pal.control-plane")
 	ctx, span := tracer.Start(ctx, "runtime.report.step_event")
 	defer span.End()
 
@@ -687,8 +687,8 @@ func (h *RuntimeReportHandler) handleStepEvent(ctx context.Context, req reportRe
 		return ridErr
 	}
 	span.SetAttributes(
-		attribute.String("pal.run_id", runID), attribute.String("lantern.run_id", runID),
-		attribute.String("pal.vm_id", req.VmID), attribute.String("lantern.vm_id", req.VmID),
+		attribute.String("pal.run_id", runID),
+		attribute.String("pal.vm_id", req.VmID),
 	)
 
 	if runID == "" {
@@ -740,9 +740,9 @@ func (h *RuntimeReportHandler) handleStepEvent(ctx context.Context, req reportRe
 // Idempotent via ON CONFLICT DO NOTHING on the journal seq insert and a
 // conditional UPDATE on runs (WHERE status NOT IN ('succeeded','failed')).
 //
-// Span: runtime.report.vm_exit (attrs: lantern.run_id, lantern.vm_id).
+// Span: runtime.report.vm_exit (attrs: pal.run_id, pal.vm_id).
 func (h *RuntimeReportHandler) handleVMExit(ctx context.Context, req reportRequest, vmRow vmBindingRow) error {
-	tracer := otel.Tracer("lantern.control-plane")
+	tracer := otel.Tracer("pal.control-plane")
 	ctx, span := tracer.Start(ctx, "runtime.report.vm_exit")
 	defer span.End()
 
@@ -753,9 +753,9 @@ func (h *RuntimeReportHandler) handleVMExit(ctx context.Context, req reportReque
 		return ridErr
 	}
 	span.SetAttributes(
-		attribute.String("pal.run_id", runID), attribute.String("lantern.run_id", runID),
-		attribute.String("pal.vm_id", req.VmID), attribute.String("lantern.vm_id", req.VmID),
-		attribute.Int("pal.exit_code", req.VMExit.ExitCode), attribute.Int("lantern.exit_code", req.VMExit.ExitCode),
+		attribute.String("pal.run_id", runID),
+		attribute.String("pal.vm_id", req.VmID),
+		attribute.Int("pal.exit_code", req.VMExit.ExitCode),
 	)
 
 	if runID == "" {

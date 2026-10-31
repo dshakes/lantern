@@ -26,7 +26,7 @@ Money and unverifiable claims are [always held](/docs/pal/human-in-the-loop/), w
 
 | Where | What | Protection |
 | --- | --- | --- |
-| Your Mac, `~/.pal/` (`~/.lantern/` on installs from before the rename) | pal's state: profile, episodes, topics, dislikes, the log of sent replies, OCR cache | Owner-only (mode 0600). The stores with the most personal detail (episodes, topics, dislikes, the sent log) are also AES-256-GCM encrypted, with a key created beside them. |
+| Your Mac, `~/.pal/` | pal's state: profile, episodes, topics, dislikes, the log of sent replies, OCR cache | Owner-only (mode 0600). The stores with the most personal detail (episodes, topics, dislikes, the sent log) are also AES-256-GCM encrypted, with a key created beside them. |
 | Your control plane | The person graph and timeline that link iMessage and WhatsApp | Row-level security by tenant |
 | Your model provider | The message text sent for each reply | Nothing else leaves the Mac |
 

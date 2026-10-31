@@ -320,11 +320,11 @@ The Spectrum streams from the upstream provider to the caller in **the same wire
 - llama.cpp REST → buffered → PAL stream
 
 The wire format is the **OpenAI Chat Completions stream** (the de facto standard) extended with optional PAL fields:
-- `lantern.generation_id` — set on first chunk for resumption
-- `lantern.model_used` — the actual model the Spectrum picked
-- `lantern.cost_estimate_usd` — running cost
-- `lantern.cache` — `none` | `exact` | `semantic` | `provider`
-- `lantern.tier` — `0` (edge) through `5` (frontier)
+- `pal.generation_id` — set on first chunk for resumption
+- `pal.model_used` — the actual model the Spectrum picked
+- `pal.cost_estimate_usd` — running cost
+- `pal.cache` — `none` | `exact` | `semantic` | `provider`
+- `pal.tier` — `0` (edge) through `5` (frontier)
 
 These extras are wrapped in the `metadata` channel of the protocol; vanilla OpenAI clients ignore them.
 

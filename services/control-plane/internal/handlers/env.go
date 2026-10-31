@@ -9,12 +9,11 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/dshakes/lantern/packages/grpctls"
-	"github.com/dshakes/lantern/packages/palenv"
+	"github.com/dshakes/pal/packages/grpctls"
 )
 
 // IsProd reports whether the server is running in a production-like environment.
-// Dev is the default (unset) so the out-of-box `make dev` / `lantern dev`
+// Dev is the default (unset) so the out-of-box `make dev` / `pal dev`
 // experience works without any configuration; operators opt into prod behaviour
 // by setting PAL_ENV to "prod", "production", or "staging".
 //
@@ -81,11 +80,11 @@ func AuthzGuardDecision(isProdEnv bool, authzEnforceVal string) string {
 // marketplace_invoke.go when PAL_RECEIPT_SECRET is unset in dev. A single
 // constant prevents the two callers from drifting to different fallback strings
 // (which would cause signature mismatches between issue and verify).
-const devReceiptSecret = "lantern-dev-receipt-secret-do-not-use-in-production"
+const devReceiptSecret = "pal-dev-receipt-secret-do-not-use-in-production"
 
 // devJWTSecret is the well-known dev-only JWT signing key. It is exported only
 // so main.go can compare against it at startup.
-const devJWTSecret = "lantern-dev-jwt-secret-do-not-use-in-production"
+const devJWTSecret = "pal-dev-jwt-secret-do-not-use-in-production"
 
 // GRPCServerTLS resolves the server-side TLS credentials for the :50051 gRPC
 // server (ADR 0043). In order of preference:
@@ -109,8 +108,8 @@ func GRPCServerTLS() (creds credentials.TransportCredentials, mtls bool, err err
 		return credentials.NewTLS(cfg), true, nil
 	}
 
-	certPath := strings.TrimSpace(palenv.Get("CONTROL_PLANE_TLS_CERT"))
-	keyPath := strings.TrimSpace(palenv.Get("CONTROL_PLANE_TLS_KEY"))
+	certPath := strings.TrimSpace(os.Getenv("PAL_CONTROL_PLANE_TLS_CERT"))
+	keyPath := strings.TrimSpace(os.Getenv("PAL_CONTROL_PLANE_TLS_KEY"))
 	if certPath == "" && keyPath == "" {
 		return nil, false, nil
 	}

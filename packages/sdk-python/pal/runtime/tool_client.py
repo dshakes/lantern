@@ -32,6 +32,7 @@ class GrpcToolClient(ToolClientBase):
         if self._channel is None:
             try:
                 import grpc.aio  # type: ignore[import-untyped]
+
                 self._channel = grpc.aio.insecure_channel(self._endpoint)
             except ImportError:
                 raise PalError("grpcio is required for production tool calls")
@@ -60,9 +61,9 @@ class GrpcToolClient(ToolClientBase):
 
             metadata = [
                 ("x-pal-tenant-id", self._tenant_id),
-                ("x-lantern-tenant-id", self._tenant_id),
+                ("x-pal-tenant-id", self._tenant_id),
                 ("x-pal-run-id", self._run_id),
-                ("x-lantern-run-id", self._run_id),
+                ("x-pal-run-id", self._run_id),
             ]
 
             response = await stub(request_struct, metadata=metadata)
@@ -83,10 +84,10 @@ class GrpcToolClient(ToolClientBase):
             self._client = client
 
         async def search(self, query: str) -> Any:
-            return await self._client._call_tool("lantern.web", "search", {"query": query})
+            return await self._client._call_tool("pal.web", "search", {"query": query})
 
         async def fetch(self, url: str) -> str:
-            result = await self._client._call_tool("lantern.web", "fetch", {"url": url})
+            result = await self._client._call_tool("pal.web", "fetch", {"url": url})
             return str(result)
 
     class _GrpcPython:
@@ -94,15 +95,15 @@ class GrpcToolClient(ToolClientBase):
             self._client = client
 
         async def exec(self, code: str) -> Any:
-            return await self._client._call_tool("lantern.python", "exec", {"code": code})
+            return await self._client._call_tool("pal.python", "exec", {"code": code})
 
     class _GrpcFs:
         def __init__(self, client: GrpcToolClient) -> None:
             self._client = client
 
         async def read(self, path: str) -> str:
-            result = await self._client._call_tool("lantern.fs", "read", {"path": path})
+            result = await self._client._call_tool("pal.fs", "read", {"path": path})
             return str(result)
 
         async def write(self, path: str, content: str) -> None:
-            await self._client._call_tool("lantern.fs", "write", {"path": path, "content": content})
+            await self._client._call_tool("pal.fs", "write", {"path": path, "content": content})

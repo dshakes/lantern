@@ -16,7 +16,7 @@ function baseUrl(): string {
     );
   }
   return (
-    (process.env.PAL_API_URL ?? process.env.LANTERN_API_URL) ??
+    process.env.PAL_API_URL ??
     process.env.NEXT_PUBLIC_API_URL ??
     "http://localhost:8080"
   );
@@ -52,7 +52,6 @@ function purgeTokenAndRedirect() {
   if (typeof window === "undefined") return;
   try {
     localStorage.removeItem("pal_token");
-    localStorage.removeItem("lantern_token"); // legacy name; else the boot-time migration would resurrect the session
     // Clear the HttpOnly cookie via the server-side Route Handler.
     fetch("/api/auth/session", { method: "DELETE" }).catch(() => {});
   } catch {

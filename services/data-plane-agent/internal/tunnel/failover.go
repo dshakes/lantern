@@ -4,7 +4,7 @@ package tunnel
 //
 // The agent is given an ordered list of control-plane endpoints, one per
 // region, primary first. A standby region runs in read-only mode and reports
-// lantern.v1.DataPlaneService NOT_SERVING on the standard gRPC health service,
+// pal.v1.DataPlaneService NOT_SERVING on the standard gRPC health service,
 // so "first endpoint that reports SERVING" is exactly "the active region".
 // After a failover the promoted region flips to SERVING and the agent moves to
 // it on its next reconnect; once a higher-priority region is healthy again the
@@ -30,7 +30,7 @@ import (
 var errFailback = errors.New("higher-priority control plane is healthy again; failing back")
 
 const (
-	dataPlaneHealthService = "lantern.v1.DataPlaneService"
+	dataPlaneHealthService = "pal.v1.DataPlaneService"
 	healthCheckTimeout     = 3 * time.Second
 	// failbackHealthyProbes consecutive healthy probes are required before
 	// failing back, so a flapping primary doesn't bounce every agent.

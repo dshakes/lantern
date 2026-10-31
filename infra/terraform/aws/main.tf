@@ -285,7 +285,7 @@ resource "aws_iam_role" "data_plane" {
       }
       Condition = {
         StringEquals = {
-          "${local.oidc_issuer_hostpath}:sub" = "system:serviceaccount:lantern:pal-data-plane"
+          "${local.oidc_issuer_hostpath}:sub" = "system:serviceaccount:pal:pal-data-plane"
           "${local.oidc_issuer_hostpath}:aud" = "sts.amazonaws.com"
         }
       }
@@ -345,7 +345,7 @@ resource "aws_eks_cluster" "this" {
 
 resource "aws_eks_node_group" "this" {
   cluster_name    = local.create_cluster ? aws_eks_cluster.this[0].name : var.existing_cluster_name
-  node_group_name = "${local.cluster_name}-lantern-nodes"
+  node_group_name = "${local.cluster_name}-pal-nodes"
   node_role_arn   = aws_iam_role.node_group.arn
   subnet_ids      = local.subnet_ids
 
@@ -362,7 +362,7 @@ resource "aws_eks_node_group" "this" {
   }
 
   labels = {
-    "lantern.run/component" = "data-plane"
+    "pal.dev/component" = "data-plane"
   }
 
   lifecycle {
@@ -384,10 +384,10 @@ resource "aws_eks_node_group" "this" {
 # ---------------------------------------------------------------------------
 
 resource "aws_s3_bucket" "bundles" {
-  bucket = "${local.cluster_name}-lantern-bundles-${local.account_id}"
+  bucket = "${local.cluster_name}-pal-bundles-${local.account_id}"
 
   tags = {
-    Name = "${local.cluster_name}-lantern-bundles"
+    Name = "${local.cluster_name}-pal-bundles"
   }
 }
 

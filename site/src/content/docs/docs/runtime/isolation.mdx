@@ -45,7 +45,7 @@ Untrusted and hostile code never runs in a bare pod.
 - A node without the required RuntimeClass fails closed: the run is refused. `untrusted` and `hostile` are never downgraded to `runc`.
 - `standard`, `devcontainer` and `wasm` also refuse by default, but the manager can be told to run them on bare `runc` with `PAL_ALLOW_RUNC_STANDARD=1`. That flag never applies to `untrusted` or `hostile`.
 
-The requirement is enforced twice. The manager refuses to build the job when the RuntimeClass is not configured, and the pod carries a node selector on the `lantern.dev/runtimeclass` node label, which only nodes labelled as having the handler match.
+The requirement is enforced twice. The manager refuses to build the job when the RuntimeClass is not configured, and the pod carries a node selector on the `pal.dev/runtimeclass` node label, which only nodes labelled as having the handler match.
 
 If your cluster has not provisioned the gVisor and Kata RuntimeClasses, `untrusted` and `hostile` workloads are refused. That is correct, but you will see it. The data-plane installer provisions the classes, and a preflight check surfaces a gap before traffic.
 

@@ -31,10 +31,10 @@ const ROOT = join(__dirname, "..", "..");
 const ARGS = parseArgs(process.argv.slice(2));
 const THRESHOLD = Number(ARGS.threshold ?? "0.3");
 const SEED_PATH = ARGS.seeds ?? join(__dirname, "seeds.json");
-const API_URL = (process.env.PAL_API_URL || process.env.LANTERN_API_URL) || "http://localhost:8080";
-const TENANT = (process.env.PAL_TENANT || process.env.LANTERN_TENANT) || "00000000-0000-0000-0000-000000000001";
-const AGENT_NAME = (process.env.PAL_AGENT || process.env.LANTERN_AGENT) || "whatsapp-assistant";
-const OWNER_NAME = ((process.env.PAL_OWNER_NAME || process.env.LANTERN_OWNER_NAME) || "Ada").split(/\s+/)[0];
+const API_URL = process.env.PAL_API_URL || "http://localhost:8080";
+const TENANT = process.env.PAL_TENANT || "00000000-0000-0000-0000-000000000001";
+const AGENT_NAME = process.env.PAL_AGENT || "whatsapp-assistant";
+const OWNER_NAME = (process.env.PAL_OWNER_NAME || "Ada").split(/\s+/)[0];
 
 function parseArgs(argv) {
   const out = {};
@@ -48,7 +48,7 @@ async function login() {
   const r = await fetch(`${API_URL}/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: "admin@lantern.dev", password: "lantern" }),
+    body: JSON.stringify({ email: "admin@pal.local", password: "pal" }),
   });
   if (!r.ok) throw new Error(`login failed: ${r.status}`);
   const d = await r.json();

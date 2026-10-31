@@ -11,9 +11,9 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // A2AHandler provides REST endpoints for the A2A (Agent-to-Agent) protocol.
@@ -166,7 +166,7 @@ func (h *A2AHandler) GetAgentCard(w http.ResponseWriter, r *http.Request) {
 		Description:  desc,
 		Version:      version, // real version from agent_versions; "" when no version deployed yet
 		Capabilities: caps,
-		Endpoint:     "https://api.lantern.run/v1/agents/" + name + "/a2a/invoke",
+		Endpoint:     derivePublicURL(r) + "/v1/agents/" + name + "/a2a/invoke",
 		Auth: AgentCardAuth{
 			Type:        "bearer",
 			Description: "PAL API key",
@@ -175,7 +175,7 @@ func (h *A2AHandler) GetAgentCard(w http.ResponseWriter, r *http.Request) {
 		OutputSchema: defaultOutput,
 		Provider: AgentCardProvider{
 			Name: "PAL",
-			URL:  "https://lantern.run",
+			URL:  "https://dshakes.github.io/pal",
 		},
 	}
 
@@ -244,7 +244,7 @@ func (h *A2AHandler) AgentDirectory(w http.ResponseWriter, r *http.Request) {
 			Description:  desc,
 			Version:      version, // real version from agent_versions; "" when none deployed
 			Capabilities: caps,
-			Endpoint:     "https://api.lantern.run/v1/agents/" + name + "/a2a/invoke",
+			Endpoint:     derivePublicURL(r) + "/v1/agents/" + name + "/a2a/invoke",
 			Auth: AgentCardAuth{
 				Type:        "bearer",
 				Description: "PAL API key",
@@ -253,7 +253,7 @@ func (h *A2AHandler) AgentDirectory(w http.ResponseWriter, r *http.Request) {
 			OutputSchema: json.RawMessage(`{"type":"object","properties":{"result":{"type":"string"}}}`),
 			Provider: AgentCardProvider{
 				Name: "PAL",
-				URL:  "https://lantern.run",
+				URL:  "https://dshakes.github.io/pal",
 			},
 		})
 	}
@@ -263,7 +263,7 @@ func (h *A2AHandler) AgentDirectory(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"agents":   cards,
-		"provider": map[string]string{"name": "PAL", "url": "https://lantern.run"},
+		"provider": map[string]string{"name": "PAL", "url": "https://dshakes.github.io/pal"},
 	})
 }
 
@@ -341,10 +341,10 @@ func (h *A2AHandler) InvokeAgent(w http.ResponseWriter, r *http.Request) {
 	agentCtx = metadata.NewIncomingContext(agentCtx, metadata.Pairs("tenant_id", agentTenantID))
 
 	inputStruct, _ := structpb.NewStruct(input)
-	run, runErr := h.runSvc.CreateRun(agentCtx, &lanternv1.CreateRunRequest{
+	run, runErr := h.runSvc.CreateRun(agentCtx, &palv1.CreateRunRequest{
 		AgentName:   name,
 		Input:       inputStruct,
-		TriggerKind: lanternv1.TriggerKind_TRIGGER_KIND_MANUAL,
+		TriggerKind: palv1.TriggerKind_TRIGGER_KIND_MANUAL,
 	})
 	if runErr != nil {
 		h.logger().Error("a2a invoke: CreateRun failed",

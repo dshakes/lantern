@@ -21,8 +21,8 @@ These two Rust services sit on the hot path:
   2m. Process unreachable.
 - **`GatewayP99LatencyHigh` / `ModelRouterP99LatencyHigh`** — **TODO, not active.**
   These depend on Prometheus histograms
-  (`lantern_gateway_request_duration_seconds_bucket`,
-  `lantern_model_router_request_duration_seconds_bucket`) that are **not emitted
+  (`pal_gateway_request_duration_seconds_bucket`,
+  `pal_model_router_request_duration_seconds_bucket`) that are **not emitted
   yet**. Today these Rust services export **OTel traces only**
   (`services/{gateway,model-router}/src/otel.rs`) — no scrapeable histogram. The
   rules are parked, commented, in `infra/monitoring/prometheus/alerts.yml`.

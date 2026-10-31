@@ -7,19 +7,19 @@
 //!   - `PAL_GRPC_TLS_ALLOWED_PEERS` — comma-separated SPIFFE IDs a server
 //!     accepts (URI SAN, checked per request by [`peer_interceptor`]).
 //!   - `PAL_GRPC_INSECURE=1` — the only way a prod-like env runs plaintext.
-//!   - A per-VM guest cert (OU `lantern-vm`) is never accepted as a service.
+//!   - A per-VM guest cert (OU `pal-vm`) is never accepted as a service.
 //!
-//! Reads go through `pal_env` (PAL_ name, LANTERN_ fallback; ADR 0032).
+//! Reads are plain `std::env::var` lookups of the `PAL_*` names.
 
 use tonic::transport::{Certificate, ClientTlsConfig, Endpoint, Identity, ServerTlsConfig};
 use tonic::{Request, Status};
 use x509_parser::extensions::GeneralName;
 
 /// OU stamped on per-VM guest certs by the runtime-manager (`VM_CERT_OU`).
-pub const VM_CERT_OU: &str = "lantern-vm";
+pub const VM_CERT_OU: &str = "pal-vm";
 
 fn var(name: &str) -> Option<String> {
-    pal_env::var(name)
+    std::env::var(name)
         .ok()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())

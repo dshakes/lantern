@@ -13,14 +13,14 @@ tenants until rolled back.
 
 When `PAL_RLS_ENFORCE=1` AND `PAL_APP_DB_PASSWORD` is set, the
 control-plane opens a second database connection pool (`AppPool`) as the
-`lantern_app` role — a non-superuser with no `BYPASSRLS` grant.
+`pal_app` role — a non-superuser with no `BYPASSRLS` grant.
 
 All handler queries that flow through `srv.WithTenant` (the tenant-scoped
 accessor) are routed through this pool.  The database then enforces
 `tenant_isolation` RLS policies on every tenant-scoped table, providing a
 database-layer backstop against missing `WHERE tenant_id = $1` predicates.
 
-Recovery sweeps and migrations continue to use the privileged `lantern`
+Recovery sweeps and migrations continue to use the privileged `pal`
 superuser pool, which bypasses RLS — so system operations are unaffected.
 
 ---
@@ -29,8 +29,8 @@ superuser pool, which bypasses RLS — so system operations are unaffected.
 
 - [ ] Migrations have been applied (`0003_rls_all_tenant_tables` must be
   present — confirmed by `TestRLSEnforcement_AllTenantTables`).
-- [ ] The `lantern_app` role exists (`SELECT rolname FROM pg_roles WHERE rolname='lantern_app'`).
-- [ ] You have a strong password ready for the `lantern_app` role.
+- [ ] The `pal_app` role exists (`SELECT rolname FROM pg_roles WHERE rolname='pal_app'`).
+- [ ] You have a strong password ready for the `pal_app` role.
 - [ ] `make dev-infra` (or the target Postgres) is running.
 - [ ] All `TestRLS*` tests pass against the target database (step 1 below).
 
@@ -62,7 +62,7 @@ tracking issue.
 To validate against a remote (non-dev) Postgres:
 
 ```bash
-DATABASE_URL=postgres://lantern:<pw>@<host>:5432/lantern?sslmode=require \
+DATABASE_URL=postgres://pal:<pw>@<host>:5432/pal?sslmode=require \
   make rls-validate
 ```
 
@@ -71,20 +71,20 @@ DATABASE_URL=postgres://lantern:<pw>@<host>:5432/lantern?sslmode=require \
 | Validated by `make rls-validate` | Requires the target cluster |
 |---|---|
 | RLS policies enabled + forced on all ~40 tenant tables | `PAL_APP_DB_PASSWORD` accepted by target Postgres |
-| `lantern_app` role exists and is RLS-subject | AppPool actually connects as `lantern_app` in the live process |
+| `pal_app` role exists and is RLS-subject | AppPool actually connects as `pal_app` in the live process |
 | Cross-tenant reads return 0 rows | Live traffic / RLS miss-rate under production load |
 | Same-tenant reads still return rows (no regression) | Response time impact under real concurrency |
 | Handler cutover paths (`WithTenant` / `WithTenantConn`) correct | |
 
 ---
 
-## Step 2 — Set the lantern_app password
+## Step 2 — Set the pal_app password
 
-On the target Postgres (run as the `lantern` superuser or a role with
+On the target Postgres (run as the `pal` superuser or a role with
 `CREATEROLE`):
 
 ```sql
-ALTER ROLE lantern_app PASSWORD '<strong-random-password>';
+ALTER ROLE pal_app PASSWORD '<strong-random-password>';
 ```
 
 Keep the password in your secrets store.  It will be set as
@@ -114,7 +114,7 @@ Perform a rolling restart (or a canary restart on one pod first):
 
 ```bash
 # Kubernetes example:
-kubectl rollout restart deployment/control-plane -n lantern
+kubectl rollout restart deployment/control-plane -n pal
 
 # docker-compose example:
 docker compose restart control-plane
@@ -123,18 +123,18 @@ docker compose restart control-plane
 After restart, confirm enforcement is active by checking the logs:
 
 ```
-INFO  RLS enforcement active — AppPool connects as lantern_app
+INFO  RLS enforcement active — AppPool connects as pal_app
 ```
 
-And from `lantern doctor` (or `GET /healthz`):
+And from `pal doctor` (or `GET /healthz`):
 
 ```bash
-curl -s http://localhost:8080/healthz | jq '{rlsEnforce, appPoolActive, lanternAppRoleExists}'
+curl -s http://localhost:8080/healthz | jq '{rlsEnforce, appPoolActive, palAppRoleExists}'
 ```
 
 Expected:
 ```json
-{"rlsEnforce": true, "appPoolActive": true, "lanternAppRoleExists": true}
+{"rlsEnforce": true, "appPoolActive": true, "palAppRoleExists": true}
 ```
 
 ---
@@ -149,7 +149,7 @@ Monitor:
   set or a handler path not yet on `WithTenant`.
 - **Database errors**: search logs for `ERROR: new row violates row-level
   security` — this would indicate a write path that sets the wrong `tenant_id`.
-- **AppPool connection errors**: if `lantern_app` cannot log in, the API
+- **AppPool connection errors**: if `pal_app` cannot log in, the API
   will log connection errors and fall through to the superuser alias (RLS
   inactive but not fatal — check `PAL_APP_DB_PASSWORD` matches the
   ALTER ROLE).
@@ -177,7 +177,7 @@ Then restart the control-plane (same as step 4).
 ### "AppPool aliased to privileged pool; RLS not enforced at runtime"
 
 `PAL_RLS_ENFORCE=1` is set but `PAL_APP_DB_PASSWORD` is missing
-or wrong.  Run `ALTER ROLE lantern_app PASSWORD '...'` and update the
+or wrong.  Run `ALTER ROLE pal_app PASSWORD '...'` and update the
 secret.
 
 ### Tests pass but live traffic returns empty rows
@@ -191,9 +191,9 @@ Grep for `// rls-exempt: <reason>` and `srv.Pool.` sites in
 
 ### "permission denied for table X"
 
-`lantern_app` lacks the necessary GRANTs on table X.  Check migration
+`pal_app` lacks the necessary GRANTs on table X.  Check migration
 `0001_baseline.sql` — it should `GRANT SELECT, INSERT, UPDATE, DELETE ON
-ALL TABLES IN SCHEMA public TO lantern_app`.  If the table was added after
+ALL TABLES IN SCHEMA public TO pal_app`.  If the table was added after
 the baseline, add a targeted GRANT in a new migration.
 
 ### TestRLSEnforcement_AllTenantTables fails on a new table

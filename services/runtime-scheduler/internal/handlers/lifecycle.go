@@ -28,9 +28,9 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/cluster"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/middleware"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/cluster"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/middleware"
 )
 
 // defaultMaxForkCount is the default upper bound for a single Fork call.
@@ -124,7 +124,7 @@ func (s *SchedulerService) ownedVM(ctx context.Context, vmID string) (string, er
 
 // Pause snapshots a RUNNING VM, stops it, marks it PAUSED and releases its
 // quota slot. Pausing an already-PAUSED VM returns the existing snapshot.
-func (s *SchedulerService) Pause(ctx context.Context, req *lanternv1.PauseRequest) (*lanternv1.PauseResponse, error) {
+func (s *SchedulerService) Pause(ctx context.Context, req *palv1.PauseRequest) (*palv1.PauseResponse, error) {
 	ctx, span := tracer.Start(ctx, "RuntimeScheduler.Pause")
 	defer span.End()
 
@@ -141,9 +141,9 @@ func (s *SchedulerService) Pause(ctx context.Context, req *lanternv1.PauseReques
 		return nil, status.Errorf(codes.NotFound, "vm %q not found", vmID)
 	}
 	switch vm.State {
-	case lanternv1.VmState_VM_STATE_PAUSED:
-		return &lanternv1.PauseResponse{VmId: vmID, SnapshotId: vm.SnapshotID, State: vm.State}, nil
-	case lanternv1.VmState_VM_STATE_RUNNING:
+	case palv1.VmState_VM_STATE_PAUSED:
+		return &palv1.PauseResponse{VmId: vmID, SnapshotId: vm.SnapshotID, State: vm.State}, nil
+	case palv1.VmState_VM_STATE_RUNNING:
 	default:
 		return nil, status.Errorf(codes.FailedPrecondition, "vm %q is %s; only a RUNNING vm can be paused", vmID, vm.State)
 	}
@@ -152,7 +152,7 @@ func (s *SchedulerService) Pause(ctx context.Context, req *lanternv1.PauseReques
 	if !ok {
 		return nil, status.Errorf(codes.Unavailable, "pause %s: node %q is not registered", vmID, vm.NodeName)
 	}
-	snap, err := s.Dialer.Snapshot(ctx, node.Address, &lanternv1.SnapshotRequest{VmId: vmID})
+	snap, err := s.Dialer.Snapshot(ctx, node.Address, &palv1.SnapshotRequest{VmId: vmID})
 	if err != nil {
 		// No synthetic id here (unlike Snapshot): pausing onto a snapshot that
 		// does not exist would destroy the sandbox's state on Stop.
@@ -169,35 +169,35 @@ func (s *SchedulerService) Pause(ctx context.Context, req *lanternv1.PauseReques
 	// resolves a pausing VM that leaves the node's inventory to PAUSED (not
 	// TERMINATED), and a crash here reloads it still holding its slot.
 	s.Store.SetVMSnapshot(vmID, snap.SnapshotId)
-	s.Store.UpdateVMState(vmID, lanternv1.VmState_VM_STATE_DRAINING, ReasonPausing, nil, time.Now().UTC())
+	s.Store.UpdateVMState(vmID, palv1.VmState_VM_STATE_DRAINING, ReasonPausing, nil, time.Now().UTC())
 
-	if _, err := s.Dialer.Stop(ctx, node.Address, &lanternv1.StopRequest{VmId: vmID, Reason: "paused"}); err != nil {
+	if _, err := s.Dialer.Stop(ctx, node.Address, &palv1.StopRequest{VmId: vmID, Reason: "paused"}); err != nil {
 		// Still running on the node: restore RUNNING, keep the slot.
-		s.Store.TransitionVMState(vmID, lanternv1.VmState_VM_STATE_DRAINING, ReasonPausing,
-			lanternv1.VmState_VM_STATE_RUNNING, "pause failed: "+err.Error(), time.Now().UTC())
+		s.Store.TransitionVMState(vmID, palv1.VmState_VM_STATE_DRAINING, ReasonPausing,
+			palv1.VmState_VM_STATE_RUNNING, "pause failed: "+err.Error(), time.Now().UTC())
 		return nil, status.Errorf(codes.Unavailable, "pause %s: manager stop failed: %v", vmID, err)
 	}
 
 	// Reconcile may already have settled it (node heartbeat after Stop) and
 	// released the slot; only the winner releases.
-	if s.Store.TransitionVMState(vmID, lanternv1.VmState_VM_STATE_DRAINING, ReasonPausing,
-		lanternv1.VmState_VM_STATE_PAUSED, "paused", time.Now().UTC()) {
+	if s.Store.TransitionVMState(vmID, palv1.VmState_VM_STATE_DRAINING, ReasonPausing,
+		palv1.VmState_VM_STATE_PAUSED, "paused", time.Now().UTC()) {
 		s.Store.IncrTenantVMs(tenantID, -1)
 		if s.Metrics != nil {
 			s.Metrics.ActiveVMs.Dec()
 		}
 	}
-	s.emit(tenantID, &lanternv1.StatusEvent{
-		VmId: vmID, State: lanternv1.VmState_VM_STATE_PAUSED, At: timestamppb.Now(), Reason: "paused",
+	s.emit(tenantID, &palv1.StatusEvent{
+		VmId: vmID, State: palv1.VmState_VM_STATE_PAUSED, At: timestamppb.Now(), Reason: "paused",
 	})
 	s.Logger.Info("vm paused", zap.String("vm_id", vmID), zap.String("snapshot_id", snap.SnapshotId))
-	return &lanternv1.PauseResponse{VmId: vmID, SnapshotId: snap.SnapshotId, State: lanternv1.VmState_VM_STATE_PAUSED}, nil
+	return &palv1.PauseResponse{VmId: vmID, SnapshotId: snap.SnapshotId, State: palv1.VmState_VM_STATE_PAUSED}, nil
 }
 
 // Resume re-spawns a PAUSED VM under its SAME vm_id from its snapshot, on the
 // node that holds the snapshot. On spawn failure the slot is released and the
 // VM stays PAUSED (resumable again).
-func (s *SchedulerService) Resume(ctx context.Context, req *lanternv1.ResumeRequest) (*lanternv1.ResumeResponse, error) {
+func (s *SchedulerService) Resume(ctx context.Context, req *palv1.ResumeRequest) (*palv1.ResumeResponse, error) {
 	ctx, span := tracer.Start(ctx, "RuntimeScheduler.Resume")
 	defer span.End()
 
@@ -213,7 +213,7 @@ func (s *SchedulerService) Resume(ctx context.Context, req *lanternv1.ResumeRequ
 	if !ok {
 		return nil, status.Errorf(codes.NotFound, "vm %q not found", vmID)
 	}
-	if vm.State != lanternv1.VmState_VM_STATE_PAUSED {
+	if vm.State != palv1.VmState_VM_STATE_PAUSED {
 		return nil, status.Errorf(codes.FailedPrecondition, "vm %q is %s; only a PAUSED vm can be resumed", vmID, vm.State)
 	}
 	node, ok := s.Store.GetNode(vm.NodeName)
@@ -227,22 +227,22 @@ func (s *SchedulerService) Resume(ctx context.Context, req *lanternv1.ResumeRequ
 
 	// Persist the resuming marker BEFORE Spawn so a crash mid-spawn reloads
 	// the VM holding the slot just reserved, not as PAUSED.
-	s.Store.UpdateVMState(vmID, lanternv1.VmState_VM_STATE_SPAWNING, ReasonResuming, nil, time.Now().UTC())
+	s.Store.UpdateVMState(vmID, palv1.VmState_VM_STATE_SPAWNING, ReasonResuming, nil, time.Now().UTC())
 
 	if err := s.spawnFromSnapshot(ctx, node.Address, vm, vm.Handle, vm.SnapshotID); err != nil {
-		if s.Store.TransitionVMState(vmID, lanternv1.VmState_VM_STATE_SPAWNING, ReasonResuming,
-			lanternv1.VmState_VM_STATE_PAUSED, "resume failed: "+err.Error(), time.Now().UTC()) {
+		if s.Store.TransitionVMState(vmID, palv1.VmState_VM_STATE_SPAWNING, ReasonResuming,
+			palv1.VmState_VM_STATE_PAUSED, "resume failed: "+err.Error(), time.Now().UTC()) {
 			s.Store.IncrTenantVMs(tenantID, -1)
 		}
 		return nil, status.Errorf(codes.Unavailable, "resume %s: manager spawn failed (vm stays paused): %v", vmID, err)
 	}
 
-	if !s.Store.TransitionVMState(vmID, lanternv1.VmState_VM_STATE_SPAWNING, ReasonResuming,
-		lanternv1.VmState_VM_STATE_RUNNING, "resumed", time.Now().UTC()) {
+	if !s.Store.TransitionVMState(vmID, palv1.VmState_VM_STATE_SPAWNING, ReasonResuming,
+		palv1.VmState_VM_STATE_RUNNING, "resumed", time.Now().UTC()) {
 		// Reconcile gave up on this resume (spawn outlived its grace), recorded
 		// it PAUSED and released the slot. Stop what we just booted rather than
 		// leave it running uncounted.
-		if _, err := s.Dialer.Stop(ctx, node.Address, &lanternv1.StopRequest{VmId: vmID, Reason: "resume superseded"}); err != nil {
+		if _, err := s.Dialer.Stop(ctx, node.Address, &palv1.StopRequest{VmId: vmID, Reason: "resume superseded"}); err != nil {
 			s.Logger.Error("resume: superseded respawn could not be stopped — running outside quota until reconciled",
 				zap.String("vm_id", vmID), zap.String("node", vm.NodeName), zap.Error(err))
 		}
@@ -251,11 +251,11 @@ func (s *SchedulerService) Resume(ctx context.Context, req *lanternv1.ResumeRequ
 	if s.Metrics != nil {
 		s.Metrics.ActiveVMs.Inc()
 	}
-	s.emit(tenantID, &lanternv1.StatusEvent{
-		VmId: vmID, State: lanternv1.VmState_VM_STATE_RUNNING, At: timestamppb.Now(), Reason: "resumed",
+	s.emit(tenantID, &palv1.StatusEvent{
+		VmId: vmID, State: palv1.VmState_VM_STATE_RUNNING, At: timestamppb.Now(), Reason: "resumed",
 	})
-	return &lanternv1.ResumeResponse{
-		VmId: vmID, SnapshotId: vm.SnapshotID, State: lanternv1.VmState_VM_STATE_RUNNING, Node: vm.NodeName,
+	return &palv1.ResumeResponse{
+		VmId: vmID, SnapshotId: vm.SnapshotID, State: palv1.VmState_VM_STATE_RUNNING, Node: vm.NodeName,
 	}, nil
 }
 
@@ -264,7 +264,7 @@ func (s *SchedulerService) Resume(ctx context.Context, req *lanternv1.ResumeRequ
 // forks from its pause snapshot. Quota for all `count` is taken up front
 // (all-or-nothing); each child that fails to spawn is reported and its slot
 // released.
-func (s *SchedulerService) Fork(ctx context.Context, req *lanternv1.ForkRequest) (*lanternv1.ForkResponse, error) {
+func (s *SchedulerService) Fork(ctx context.Context, req *palv1.ForkRequest) (*palv1.ForkResponse, error) {
 	ctx, span := tracer.Start(ctx, "RuntimeScheduler.Fork")
 	defer span.End()
 
@@ -296,11 +296,11 @@ func (s *SchedulerService) Fork(ctx context.Context, req *lanternv1.ForkRequest)
 		return nil, status.Errorf(codes.NotFound, "vm %q not found", srcID)
 	}
 	switch src.State {
-	case lanternv1.VmState_VM_STATE_PAUSED:
+	case palv1.VmState_VM_STATE_PAUSED:
 		if src.SnapshotID == "" {
 			return nil, status.Errorf(codes.FailedPrecondition, "vm %q is paused without a snapshot", srcID)
 		}
-	case lanternv1.VmState_VM_STATE_RUNNING:
+	case palv1.VmState_VM_STATE_RUNNING:
 	default:
 		return nil, status.Errorf(codes.FailedPrecondition, "vm %q is %s; only a RUNNING or PAUSED vm can be forked", srcID, src.State)
 	}
@@ -315,8 +315,8 @@ func (s *SchedulerService) Fork(ctx context.Context, req *lanternv1.ForkRequest)
 			"tenant %s cannot fit %d more VMs under the concurrent-VM hard cap (%d)", tenantID, count, s.TenantHardCap)
 	}
 	snapID := src.SnapshotID
-	if src.State == lanternv1.VmState_VM_STATE_RUNNING {
-		snap, err := s.Dialer.Snapshot(ctx, node.Address, &lanternv1.SnapshotRequest{VmId: srcID, KeepRunning: true})
+	if src.State == palv1.VmState_VM_STATE_RUNNING {
+		snap, err := s.Dialer.Snapshot(ctx, node.Address, &palv1.SnapshotRequest{VmId: srcID, KeepRunning: true})
 		if err != nil {
 			s.Store.IncrTenantVMs(tenantID, -count)
 			return nil, status.Errorf(codes.Unavailable, "fork %s: manager snapshot failed: %v", srcID, err)
@@ -334,11 +334,11 @@ func (s *SchedulerService) Fork(ctx context.Context, req *lanternv1.ForkRequest)
 	// Pre-allocate handles and VM records sequentially so each child has a
 	// stable index before any goroutine runs.  The handles array is indexed by
 	// child slot so goroutines can write results[i] without a mutex.
-	handles := make([]*lanternv1.VmHandle, count)
+	handles := make([]*palv1.VmHandle, count)
 	children := make([]*cluster.VM, count)
-	results := make([]*lanternv1.ForkChild, count)
+	results := make([]*palv1.ForkChild, count)
 	for i := 0; i < count; i++ {
-		handles[i] = &lanternv1.VmHandle{
+		handles[i] = &palv1.VmHandle{
 			VmId:             "vm-" + uuid.NewString(),
 			Node:             src.NodeName,
 			AvailabilityZone: node.AvailabilityZone,
@@ -348,7 +348,7 @@ func (s *SchedulerService) Fork(ctx context.Context, req *lanternv1.ForkRequest)
 		children[i] = &cluster.VM{
 			Handle:      handles[i],
 			Spec:        withIdentity(src.Spec, ident),
-			State:       lanternv1.VmState_VM_STATE_SPAWNING,
+			State:       palv1.VmState_VM_STATE_SPAWNING,
 			TenantID:    tenantID,
 			NodeName:    src.NodeName,
 			LastEventAt: time.Now().UTC(),
@@ -356,7 +356,7 @@ func (s *SchedulerService) Fork(ctx context.Context, req *lanternv1.ForkRequest)
 			ParentVMID:  srcID,
 		}
 		s.Store.CreateVM(children[i])
-		results[i] = &lanternv1.ForkChild{
+		results[i] = &palv1.ForkChild{
 			VmId:            handles[i].VmId,
 			Node:            src.NodeName,
 			AgentInstanceId: req.GetIdentities()[i].GetAgentInstanceId(),
@@ -377,55 +377,48 @@ func (s *SchedulerService) Fork(ctx context.Context, req *lanternv1.ForkRequest)
 			defer func() { <-sem; wg.Done() }()
 			vmID := handles[i].VmId
 			if err := s.spawnFromSnapshot(ctx, node.Address, children[i], handles[i], snapID); err != nil {
-				s.Store.UpdateVMState(vmID, lanternv1.VmState_VM_STATE_FAILED, err.Error(), nil, time.Now().UTC())
+				s.Store.UpdateVMState(vmID, palv1.VmState_VM_STATE_FAILED, err.Error(), nil, time.Now().UTC())
 				s.Store.IncrTenantVMs(tenantID, -1)
-				results[i].State = lanternv1.VmState_VM_STATE_FAILED
+				results[i].State = palv1.VmState_VM_STATE_FAILED
 				results[i].Error = err.Error()
-				s.emit(tenantID, &lanternv1.StatusEvent{
-					VmId: vmID, State: lanternv1.VmState_VM_STATE_FAILED, At: timestamppb.Now(), Reason: err.Error(),
+				s.emit(tenantID, &palv1.StatusEvent{
+					VmId: vmID, State: palv1.VmState_VM_STATE_FAILED, At: timestamppb.Now(), Reason: err.Error(),
 				})
 			} else {
-				s.Store.UpdateVMState(vmID, lanternv1.VmState_VM_STATE_RUNNING, "forked from "+srcID, nil, time.Now().UTC())
+				s.Store.UpdateVMState(vmID, palv1.VmState_VM_STATE_RUNNING, "forked from "+srcID, nil, time.Now().UTC())
 				if s.Metrics != nil {
 					s.Metrics.ActiveVMs.Inc()
 				}
-				results[i].State = lanternv1.VmState_VM_STATE_RUNNING
-				s.emit(tenantID, &lanternv1.StatusEvent{
-					VmId: vmID, State: lanternv1.VmState_VM_STATE_RUNNING, At: timestamppb.Now(), Reason: "forked from " + srcID,
+				results[i].State = palv1.VmState_VM_STATE_RUNNING
+				s.emit(tenantID, &palv1.StatusEvent{
+					VmId: vmID, State: palv1.VmState_VM_STATE_RUNNING, At: timestamppb.Now(), Reason: "forked from " + srcID,
 				})
 			}
 		}()
 	}
 	wg.Wait()
 
-	resp := &lanternv1.ForkResponse{SourceVmId: srcID, SnapshotId: snapID, Forks: results}
+	resp := &palv1.ForkResponse{SourceVmId: srcID, SnapshotId: snapID, Forks: results}
 	s.Logger.Info("vm forked", zap.String("vm_id", srcID), zap.String("snapshot_id", snapID), zap.Int("count", count))
 	return resp, nil
 }
 
 // Spawn-contract env keys carrying a VM's agent identity.
 const (
-	envAgentInstanceID    = "LANTERN_AGENT_INSTANCE_ID"
-	envAgentInstanceToken = "LANTERN_AGENT_INSTANCE_TOKEN"
+	envAgentInstanceID    = "PAL_AGENT_INSTANCE_ID"
+	envAgentInstanceToken = "PAL_AGENT_INSTANCE_TOKEN"
 )
 
 // withIdentity returns a copy of spec whose env carries `ident` instead of
 // whatever identity the source had. The source spec is never mutated.
-func withIdentity(spec *lanternv1.AgentSpec, ident *lanternv1.ForkIdentity) *lanternv1.AgentSpec {
-	out := &lanternv1.AgentSpec{}
+func withIdentity(spec *palv1.AgentSpec, ident *palv1.ForkIdentity) *palv1.AgentSpec {
+	out := &palv1.AgentSpec{}
 	if spec != nil {
-		out = proto.Clone(spec).(*lanternv1.AgentSpec)
+		out = proto.Clone(spec).(*palv1.AgentSpec)
 	}
 	if out.Env == nil {
 		out.Env = map[string]string{}
 	}
-	delete(out.Env, envAgentInstanceID)
-	delete(out.Env, envAgentInstanceToken)
-	// ADR 0032: the source's identity must not survive under its PAL_ name
-	// either — a fork would inherit the source's token once the harness
-	// prefers PAL_. Only the LANTERN_ names are written until writers flip.
-	delete(out.Env, "PAL_AGENT_INSTANCE_ID")
-	delete(out.Env, "PAL_AGENT_INSTANCE_TOKEN")
 	out.Env[envAgentInstanceID] = ident.GetAgentInstanceId()
 	out.Env[envAgentInstanceToken] = ident.GetAgentInstanceToken()
 	return out
@@ -433,14 +426,14 @@ func withIdentity(spec *lanternv1.AgentSpec, ident *lanternv1.ForkIdentity) *lan
 
 // spawnFromSnapshot asks the manager to boot `handle` restored from snapID,
 // using a copy of vm's spec (the stored spec is never mutated).
-func (s *SchedulerService) spawnFromSnapshot(ctx context.Context, nodeAddr string, vm *cluster.VM, handle *lanternv1.VmHandle, snapID string) error {
-	spec := &lanternv1.AgentSpec{}
+func (s *SchedulerService) spawnFromSnapshot(ctx context.Context, nodeAddr string, vm *cluster.VM, handle *palv1.VmHandle, snapID string) error {
+	spec := &palv1.AgentSpec{}
 	if vm.Spec != nil {
-		spec = proto.Clone(vm.Spec).(*lanternv1.AgentSpec)
+		spec = proto.Clone(vm.Spec).(*palv1.AgentSpec)
 	}
 	spec.RestoreSnapshotId = snapID
 	spec.TenantId = vm.TenantID
-	resp, err := s.Dialer.Spawn(ctx, nodeAddr, &lanternv1.SpawnRequest{Spec: spec, Handle: handle})
+	resp, err := s.Dialer.Spawn(ctx, nodeAddr, &palv1.SpawnRequest{Spec: spec, Handle: handle})
 	if err != nil {
 		return fmt.Errorf("spawn %s from snapshot %s: %w", handle.GetVmId(), snapID, err)
 	}

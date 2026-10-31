@@ -134,7 +134,7 @@ curl -s -X POST http://localhost:8080/v1/batches \
 | `GET /v1/batches/{id}/results` | Each run's output, 100 per page |
 | `POST /v1/batches/{id}/cancel` | Cancel every child that has not finished |
 
-A single run takes the same `callbackUrl` on `POST /v1/runs`. The callback is a POST of `{runId, status, output, error, costUsd, tokensIn, tokensOut}`, signed `X-Lantern-Signature: v1=<HMAC-SHA256 of the body>` with a per-tenant key. It is tried up to 4 times (5xx and network errors only) and delivered **at most once**: if the control plane crashes between attempts the callback is lost, so poll the run or batch to reconcile. The SDKs do not wrap batches yet; call the REST API.
+A single run takes the same `callbackUrl` on `POST /v1/runs`. The callback is a POST of `{runId, status, output, error, costUsd, tokensIn, tokensOut}`, signed `X-Pal-Signature: v1=<HMAC-SHA256 of the body>` with a per-tenant key. It is tried up to 4 times (5xx and network errors only) and delivered **at most once**: if the control plane crashes between attempts the callback is lost, so poll the run or batch to reconcile. The SDKs do not wrap batches yet; call the REST API.
 
 </TabItem>
 </Tabs>

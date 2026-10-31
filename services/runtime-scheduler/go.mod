@@ -1,11 +1,11 @@
-module github.com/dshakes/lantern/services/runtime-scheduler
+module github.com/dshakes/pal/services/runtime-scheduler
 
 go 1.25.0
 
 toolchain go1.26.6
 
 require (
-	github.com/dshakes/lantern/gen/go v0.0.0
+	github.com/dshakes/pal/gen/go v0.0.0
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.7.4
@@ -22,8 +22,7 @@ require (
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/dshakes/lantern/packages/grpctls v0.0.0
-	github.com/dshakes/lantern/packages/palenv v0.0.0
+	github.com/dshakes/pal/packages/grpctls v0.0.0
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
@@ -45,8 +44,7 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 )
 
-replace github.com/dshakes/lantern/gen/go => ../../gen/go
+replace github.com/dshakes/pal/gen/go => ../../gen/go
 
-replace github.com/dshakes/lantern/packages/palenv => ../../packages/palenv
 
-replace github.com/dshakes/lantern/packages/grpctls => ../../packages/grpctls
+replace github.com/dshakes/pal/packages/grpctls => ../../packages/grpctls

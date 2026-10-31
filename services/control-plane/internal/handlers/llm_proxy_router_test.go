@@ -12,7 +12,7 @@ package handlers
 // DB-gated: skipped when DATABASE_URL is unset (same convention as the rest of
 // the package). Run with:
 //
-//	DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable \
+//	DATABASE_URL=postgres://pal:pal@localhost:5432/pal?sslmode=disable \
 //	  go test ./internal/handlers/ -run ModelRouter -count=1 -v
 
 import (
@@ -28,28 +28,28 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // fakeModelService is a configurable in-memory ModelServiceServer driven over
 // bufconn. It records the last CompleteRequest so tests can assert that the
 // tenant's provider_credentials crossed the wire.
 type fakeModelService struct {
-	lanternv1.UnimplementedModelServiceServer
+	palv1.UnimplementedModelServiceServer
 
 	mu          sync.Mutex
 	calls       int
-	lastRequest *lanternv1.CompleteRequest
+	lastRequest *palv1.CompleteRequest
 
 	// respondErr, when set, makes Complete return a gRPC error (forces the
 	// caller to fall back to the direct path).
 	respondErr error
 	// response is returned on success.
-	response *lanternv1.CompleteResponse
+	response *palv1.CompleteResponse
 }
 
-func (f *fakeModelService) Complete(ctx context.Context, req *lanternv1.CompleteRequest) (*lanternv1.CompleteResponse, error) {
+func (f *fakeModelService) Complete(ctx context.Context, req *palv1.CompleteRequest) (*palv1.CompleteResponse, error) {
 	f.mu.Lock()
 	f.calls++
 	f.lastRequest = req
@@ -68,7 +68,7 @@ func (f *fakeModelService) callCount() int {
 	return f.calls
 }
 
-func (f *fakeModelService) capturedRequest() *lanternv1.CompleteRequest {
+func (f *fakeModelService) capturedRequest() *palv1.CompleteRequest {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.lastRequest
@@ -80,13 +80,13 @@ func startFakeModelRouter(t *testing.T, fake *fakeModelService) modelRouterClien
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
 	srv := grpc.NewServer()
-	lanternv1.RegisterModelServiceServer(srv, fake)
+	palv1.RegisterModelServiceServer(srv, fake)
 	go func() {
 		_ = srv.Serve(lis)
 	}()
 	t.Cleanup(srv.Stop)
 
-	return func(addr string) (lanternv1.ModelServiceClient, func() error, error) {
+	return func(addr string) (palv1.ModelServiceClient, func() error, error) {
 		conn, err := grpc.NewClient("passthrough:///bufnet",
 			grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
 				return lis.DialContext(ctx)
@@ -96,7 +96,7 @@ func startFakeModelRouter(t *testing.T, fake *fakeModelService) modelRouterClien
 		if err != nil {
 			return nil, nil, err
 		}
-		return lanternv1.NewModelServiceClient(conn), conn.Close, nil
+		return palv1.NewModelServiceClient(conn), conn.Close, nil
 	}
 }
 
@@ -122,7 +122,7 @@ func seedRouterTenant(t *testing.T, srv *server.Server, slug string) string {
 	var id string
 	if err := srv.Pool.QueryRow(context.Background(), `
 		INSERT INTO tenants (slug, name, tier, k8s_namespace)
-		VALUES ($1, $1, 'personal', 'lantern-t-' || $1)
+		VALUES ($1, $1, 'personal', 'pal-t-' || $1)
 		RETURNING id
 	`, slug).Scan(&id); err != nil {
 		t.Fatalf("seed tenant %q: %v", slug, err)
@@ -140,8 +140,8 @@ func seedRouterTenant(t *testing.T, srv *server.Server, slug string) string {
 // never constructed (dialCount stays 0).
 func TestModelRouterFlagOff_DirectPath_RouterNeverDialed(t *testing.T) {
 	fake := &fakeModelService{
-		response: &lanternv1.CompleteResponse{
-			Message: &lanternv1.Message{Role: "assistant", Content: "FROM ROUTER"},
+		response: &palv1.CompleteResponse{
+			Message: &palv1.Message{Role: "assistant", Content: "FROM ROUTER"},
 		},
 	}
 	factory := startFakeModelRouter(t, fake)
@@ -171,9 +171,9 @@ func TestModelRouterFlagOff_DirectPath_RouterNeverDialed(t *testing.T) {
 // provider_credentials.
 func TestModelRouterFlagOn_OK_MapsResponse(t *testing.T) {
 	fake := &fakeModelService{
-		response: &lanternv1.CompleteResponse{
+		response: &palv1.CompleteResponse{
 			ModelUsed: "gpt-4o",
-			Message:   &lanternv1.Message{Role: "assistant", Content: "routed reply"},
+			Message:   &palv1.Message{Role: "assistant", Content: "routed reply"},
 			TokensIn:  11,
 			TokensOut: 22,
 		},

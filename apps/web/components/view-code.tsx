@@ -132,7 +132,7 @@ export function ViewCode({ title, snippets, variant = "button", className }: Vie
                 <code className="font-mono text-zinc-400">
                   {active === "ts" && "npm install ./packages/sdk-ts  # from a PAL checkout; not on npm yet"}
                   {active === "python" && "pip install ./packages/sdk-python  # from a PAL checkout; not on PyPI yet"}
-                  {active === "go" && "go get github.com/dshakes/lantern/packages/sdk-go"}
+                  {active === "go" && "go get github.com/dshakes/pal/packages/sdk-go"}
                   {active === "curl" && "—"}
                 </code>
               </span>
@@ -153,15 +153,15 @@ export function snippetsForGetRun(runId: string, apiBase = "http://localhost:808
   return {
     ts: `import { PAL } from "@pal-runtime/sdk";
 
-const lantern = new PAL({ apiKey: process.env.LANTERN_API_KEY });
+const pal = new PAL({ apiKey: process.env.PAL_API_KEY });
 
-const run = await lantern.runs.get("${runId}");
+const run = await pal.runs.get("${runId}");
 console.log(run.status, run.output);`,
     python: `from pal import PAL
 
-lantern = PAL(api_key="...")  # or set LANTERN_API_KEY env var
+pal = PAL(api_key="...")  # or set PAL_API_KEY env var
 
-run = lantern.runs.get("${runId}")
+run = pal.runs.get("${runId}")
 print(run.status, run.output)`,
     go: `package main
 
@@ -169,16 +169,16 @@ import (
 \t"context"
 \t"fmt"
 
-\tlantern "github.com/dshakes/lantern/packages/sdk-go"
+\tpal "github.com/dshakes/pal/packages/sdk-go"
 )
 
 func main() {
-\tclient := lantern.New(lantern.WithAPIKey("..."))
+\tclient := pal.New(pal.WithAPIKey("..."))
 \trun, err := client.Runs.Get(context.Background(), "${runId}")
 \tif err != nil { panic(err) }
 \tfmt.Println(run.Status, run.Output)
 }`,
-    curl: `curl -H "Authorization: Bearer $LANTERN_API_KEY" \\
+    curl: `curl -H "Authorization: Bearer $PAL_API_KEY" \\
   ${apiBase}/v1/runs/${runId}`,
   };
 }
@@ -188,18 +188,18 @@ export function snippetsForCreateRun(agentName: string, apiBase = "http://localh
   return {
     ts: `import { PAL } from "@pal-runtime/sdk";
 
-const lantern = new PAL({ apiKey: process.env.LANTERN_API_KEY });
+const pal = new PAL({ apiKey: process.env.PAL_API_KEY });
 
-const run = await lantern.runs.create({
+const run = await pal.runs.create({
   agentName: "${agentName}",
   input: ${inputJSON},
 });
 console.log("started:", run.id);`,
     python: `from pal import PAL
 
-lantern = PAL(api_key="...")
+pal = PAL(api_key="...")
 
-run = lantern.runs.create(
+run = pal.runs.create(
     agent_name="${agentName}",
     input=${inputJSON},
 )
@@ -210,12 +210,12 @@ import (
 \t"context"
 \t"fmt"
 
-\tlantern "github.com/dshakes/lantern/packages/sdk-go"
+\tpal "github.com/dshakes/pal/packages/sdk-go"
 )
 
 func main() {
-\tclient := lantern.New(lantern.WithAPIKey("..."))
-\trun, err := client.Runs.Create(context.Background(), &lantern.CreateRunRequest{
+\tclient := pal.New(pal.WithAPIKey("..."))
+\trun, err := client.Runs.Create(context.Background(), &pal.CreateRunRequest{
 \t\tAgentName: "${agentName}",
 \t\tInput:     map[string]any{"message": "your input here"},
 \t})
@@ -223,7 +223,7 @@ func main() {
 \tfmt.Println("started:", run.ID)
 }`,
     curl: `curl -X POST \\
-  -H "Authorization: Bearer $LANTERN_API_KEY" \\
+  -H "Authorization: Bearer $PAL_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{"agentName": "${agentName}", "input": ${inputJSON}}' \\
   ${apiBase}/v1/runs`,
@@ -234,24 +234,24 @@ export function snippetsForSubmitFeedback(runId: string, apiBase = "http://local
   return {
     ts: `import { PAL } from "@pal-runtime/sdk";
 
-const lantern = new PAL({ apiKey: process.env.LANTERN_API_KEY });
+const pal = new PAL({ apiKey: process.env.PAL_API_KEY });
 
-await lantern.runs.feedback("${runId}", {
+await pal.runs.feedback("${runId}", {
   score: 5,                 // 1-5
   comment: "nailed it",
   source: "sdk",
 });`,
     python: `from pal import PAL
 
-lantern = PAL(api_key="...")
-lantern.runs.feedback(
+pal = PAL(api_key="...")
+pal.runs.feedback(
     run_id="${runId}",
     score=5,                 # 1-5
     comment="nailed it",
     source="sdk",
 )`,
     curl: `curl -X POST \\
-  -H "Authorization: Bearer $LANTERN_API_KEY" \\
+  -H "Authorization: Bearer $PAL_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{"score":5,"comment":"nailed it","source":"sdk"}' \\
   ${apiBase}/v1/runs/${runId}/feedback`,

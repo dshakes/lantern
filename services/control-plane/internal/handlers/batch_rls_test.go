@@ -4,7 +4,7 @@ package handlers
 //
 // These tests use the newEnforcedServer harness (rls_integration_test.go) so
 // every DB access the handlers route through s.srv.WithTenant is executed by
-// the non-superuser `lantern_app` role with RLS genuinely enforced — NOT
+// the non-superuser `pal_app` role with RLS genuinely enforced — NOT
 // simulated.
 //
 // Skipped automatically when DATABASE_URL is unset.
@@ -21,7 +21,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // newEnforcedBatchHandlers builds a BatchHandler whose server uses the

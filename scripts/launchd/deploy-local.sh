@@ -26,9 +26,7 @@
 #   FORCE=1 make deploy-local    # restart everything regardless
 set -uo pipefail
 
-# Works on either side of the PAL cutover (ADR 0032): dev.pal.* once installed.
-LABEL_PREFIX=dev.lantern
-if [ -e "$HOME/Library/LaunchAgents/dev.pal.api.plist" ]; then LABEL_PREFIX=dev.pal; fi
+LABEL_PREFIX=dev.pal
 # `ps -o lstart=` and `date -j -f "%a %b %d %T %Y"` both parse/format against
 # the locale — a non-English LC_TIME (or, on the 1st-9th of the month, extra
 # padding that only appears in some locales) breaks the parse. Pin to C so the
@@ -105,7 +103,7 @@ want_restart() {  # label, newest-source-epoch → decides + records reason
 
 # --- 2. Rust: rebuild when stale, restart when the binary outruns the process
 for rs in gateway model-router runtime-manager surface-gateway; do
-  dir="services/$rs"; bin="$dir/target/release/lantern-$rs"
+  dir="services/$rs"; bin="$dir/target/release/pal-$rs"
   [[ -d "$dir" ]] || continue
   src="$(newest_source_epoch "$dir/src" "$dir/Cargo.lock" "$dir/Cargo.toml")"
   b_before="$(stat -f %m "$bin" 2>/dev/null || echo 0)"

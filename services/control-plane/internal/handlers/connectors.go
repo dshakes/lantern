@@ -15,9 +15,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/secrets"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // ConnectorHandler provides REST endpoints for managing connector installs
@@ -631,7 +631,7 @@ func (h *ConnectorHandler) renderOAuthPopupClose(w http.ResponseWriter, success 
 <script>
   if (window.opener) {
     window.opener.postMessage({
-      type: "lantern:oauth:complete",
+      type: "pal:oauth:complete",
       success: %s,
       message: %q
     }, "*");

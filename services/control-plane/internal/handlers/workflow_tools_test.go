@@ -4,7 +4,7 @@ package handlers
 // rest of the DB suite). Each drives runWorkflowIfPresent end-to-end so the
 // rest.go Deps wiring is what's under test, not just callWorkflowTool.
 //
-//	DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable \
+//	DATABASE_URL=postgres://pal:pal@localhost:5432/pal?sslmode=disable \
 //	    go test ./internal/handlers/ -run TestWorkflowTool -count=1 -v
 
 import (
@@ -21,16 +21,16 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // fakeToolRuntime is a MicroVMDispatcher that also serves ExecTool, standing in
 // for RuntimeHandler backed by a real manager.
 type fakeToolRuntime struct {
 	mu   sync.Mutex
-	reqs []*lanternv1.ExecToolRequest
-	resp *lanternv1.ExecToolResponse
+	reqs []*palv1.ExecToolRequest
+	resp *palv1.ExecToolResponse
 	err  error
 }
 
@@ -38,26 +38,26 @@ func (f *fakeToolRuntime) ScheduleRunInMicroVM(context.Context, string, string, 
 	return "", errors.New("not used")
 }
 
-func (f *fakeToolRuntime) ExecTool(_ context.Context, _ string, req *lanternv1.ExecToolRequest) (*lanternv1.ExecToolResponse, error) {
+func (f *fakeToolRuntime) ExecTool(_ context.Context, _ string, req *palv1.ExecToolRequest) (*palv1.ExecToolResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.reqs = append(f.reqs, req)
 	return f.resp, f.err
 }
 
-func (f *fakeToolRuntime) calls() []*lanternv1.ExecToolRequest {
+func (f *fakeToolRuntime) calls() []*palv1.ExecToolRequest {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]*lanternv1.ExecToolRequest(nil), f.reqs...)
+	return append([]*palv1.ExecToolRequest(nil), f.reqs...)
 }
 
-func okToolResp(t *testing.T, result map[string]any) *lanternv1.ExecToolResponse {
+func okToolResp(t *testing.T, result map[string]any) *palv1.ExecToolResponse {
 	t.Helper()
 	s, err := structpb.NewStruct(result)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &lanternv1.ExecToolResponse{Status: lanternv1.ToolStatus_TOOL_STATUS_OK, Result: s}
+	return &palv1.ExecToolResponse{Status: palv1.ToolStatus_TOOL_STATUS_OK, Result: s}
 }
 
 type toolFixture struct {
@@ -217,10 +217,10 @@ func TestWorkflowTool_FailurePaths(t *testing.T) {
 	}{
 		{"unwired", nil, "tool runtime unavailable", 0},
 		{"stub scheduler", &fakeToolRuntime{err: errToolRuntimeUnavailable}, "tool runtime unavailable", 0},
-		{"tool error", &fakeToolRuntime{resp: &lanternv1.ExecToolResponse{
-			Status: lanternv1.ToolStatus_TOOL_STATUS_ERROR, Error: "exit status 2"}}, "exit status 2", 1},
-		{"tool unavailable on vm", &fakeToolRuntime{resp: &lanternv1.ExecToolResponse{
-			Status: lanternv1.ToolStatus_TOOL_STATUS_UNAVAILABLE, Error: "no harness"}}, "tool runtime unavailable", 1},
+		{"tool error", &fakeToolRuntime{resp: &palv1.ExecToolResponse{
+			Status: palv1.ToolStatus_TOOL_STATUS_ERROR, Error: "exit status 2"}}, "exit status 2", 1},
+		{"tool unavailable on vm", &fakeToolRuntime{resp: &palv1.ExecToolResponse{
+			Status: palv1.ToolStatus_TOOL_STATUS_UNAVAILABLE, Error: "no harness"}}, "tool runtime unavailable", 1},
 		{"rpc error", &fakeToolRuntime{err: errors.New("rpc error: code = NotFound desc = no active vm")}, "no active vm", 1},
 	}
 	for _, tc := range cases {
@@ -252,7 +252,7 @@ func TestWorkflowTool_FailurePaths(t *testing.T) {
 // manager-capable scheduler reports the typed unavailable error.
 func TestRuntimeHandler_ExecTool_StubScheduler(t *testing.T) {
 	h := &RuntimeHandler{scheduler: &stubSchedulerClient{}}
-	if _, err := h.ExecTool(context.Background(), "", &lanternv1.ExecToolRequest{}); !errors.Is(err, errToolRuntimeUnavailable) {
+	if _, err := h.ExecTool(context.Background(), "", &palv1.ExecToolRequest{}); !errors.Is(err, errToolRuntimeUnavailable) {
 		t.Fatalf("err = %v, want errToolRuntimeUnavailable", err)
 	}
 }

@@ -5,7 +5,7 @@ package handlers
 // Skipped automatically when DATABASE_URL is unset (same convention as
 // runtime_test.go / telemetry_test.go). Run with:
 //
-//	DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable \
+//	DATABASE_URL=postgres://pal:pal@localhost:5432/pal?sslmode=disable \
 //	  go test -run TestSubagentRunRow ./internal/handlers/ -v
 
 import (
@@ -16,9 +16,9 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc/metadata"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // newRESTHandlerForTest builds a minimal RESTHandler backed by a real pool.
@@ -55,7 +55,7 @@ func TestSubagentRunRow_CreatesChildRun(t *testing.T) {
 	// self-contained.
 	agentName := "subagent-test-" + t.Name()
 	// Auto-create agent so the row exists.
-	_, _ = h.agentSvc.CreateAgent(ctx, &lanternv1.CreateAgentRequest{
+	_, _ = h.agentSvc.CreateAgent(ctx, &palv1.CreateAgentRequest{
 		Name:        agentName,
 		Description: "subagent test agent",
 	})

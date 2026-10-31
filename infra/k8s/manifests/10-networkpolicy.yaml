@@ -2,28 +2,28 @@
 # then allow only DNS (port 53) and the runtime manager.
 #
 # What k8s.rs emits today (build_network_policy) vs this hardened target:
-#   MATCHES: per-run podSelector on lantern.dev/run-id; default-deny egress;
+#   MATCHES: per-run podSelector on pal.dev/run-id; default-deny egress;
 #            DNS allow on UDP+TCP 53 to any peer; CIDR allowlist peers for
 #            AllowlistDomain/TenantVpc classes (none used here).
 #   GAP 1:   k8s.rs sets policyTypes: [Egress] only — no ingress deny. This
 #            manifest adds Ingress with no rules (deny all inbound).
 #   GAP 2:   k8s.rs has no manager-allow egress rule (harness -> runtime
 #            manager heartbeats/logs would be fenced too). This manifest
-#            allows TCP 50054 to the manager pod in lantern-system.
+#            allows TCP 50054 to the manager pod in pal-system.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: lantern-run-validate-00000001-egress
-  namespace: lantern-t-validate
+  name: pal-run-validate-00000001-egress
+  namespace: pal-t-validate
   labels:
-    app.kubernetes.io/name: lantern-agent-runner
-    app.kubernetes.io/managed-by: lantern-runtime-manager
-    lantern.dev/run-id: run-validate-00000001
-    lantern.dev/isolation-class: untrusted
+    app.kubernetes.io/name: pal-agent-runner
+    app.kubernetes.io/managed-by: pal-runtime-manager
+    pal.dev/run-id: run-validate-00000001
+    pal.dev/isolation-class: untrusted
 spec:
   podSelector:
     matchLabels:
-      lantern.dev/run-id: run-validate-00000001
+      pal.dev/run-id: run-validate-00000001
   policyTypes:
     - Ingress
     - Egress
@@ -42,10 +42,10 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: lantern-system
+              kubernetes.io/metadata.name: pal-system
           podSelector:
             matchLabels:
-              app.kubernetes.io/name: lantern-runtime-manager
+              app.kubernetes.io/name: pal-runtime-manager
       ports:
         - protocol: TCP
           port: 50054

@@ -21,8 +21,8 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/scoring"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/scoring"
 )
 
 // HeartbeatDeadline is how long a node may go without a heartbeat
@@ -62,12 +62,12 @@ type Node struct {
 // state here to satisfy List / Events / Terminate without round-tripping
 // to the manager.
 type VM struct {
-	Handle        *lanternv1.VmHandle
-	Spec          *lanternv1.AgentSpec
-	State         lanternv1.VmState
+	Handle        *palv1.VmHandle
+	Spec          *palv1.AgentSpec
+	State         palv1.VmState
 	TenantID      string
 	NodeName      string
-	Usage         *lanternv1.ResourceUsage
+	Usage         *palv1.ResourceUsage
 	LastEventAt   time.Time
 	LastHeartbeat time.Time
 	Reason        string
@@ -121,12 +121,12 @@ type ClusterStore interface {
 	MarkDrainingIfStale(now time.Time, deadline time.Duration) []string
 
 	CreateVM(v *VM)
-	UpdateVMState(vmID string, state lanternv1.VmState, reason string, usage *lanternv1.ResourceUsage, at time.Time) bool
+	UpdateVMState(vmID string, state palv1.VmState, reason string, usage *palv1.ResourceUsage, at time.Time) bool
 	// TransitionVMState is UpdateVMState guarded by compare-and-set: it applies
 	// only while the VM is still in (from, fromReason) and reports whether it
 	// did. Two racing resolvers of the same intermediate state (a lifecycle RPC
 	// and inventory reconciliation) use it so exactly one releases the slot.
-	TransitionVMState(vmID string, from lanternv1.VmState, fromReason string, to lanternv1.VmState, reason string, at time.Time) bool
+	TransitionVMState(vmID string, from palv1.VmState, fromReason string, to palv1.VmState, reason string, at time.Time) bool
 	GetVM(vmID string) (*VM, bool)
 	ListVMs(tenantID string, filter func(*VM) bool) []*VM
 	DeleteVM(vmID string) bool
@@ -154,8 +154,8 @@ type ClusterStore interface {
 	// stays within hardCap (<= 0 = uncapped). All-or-nothing.
 	TryReserveTenantVMs(tenantID string, n, hardCap int) bool
 
-	Subscribe(vmID, tenantID string) (<-chan *lanternv1.StatusEvent, func())
-	Publish(ev *lanternv1.StatusEvent, tenantID string)
+	Subscribe(vmID, tenantID string) (<-chan *palv1.StatusEvent, func())
+	Publish(ev *palv1.StatusEvent, tenantID string)
 }
 
 // capReservation holds the pending capacity subtracted from a node by a
@@ -190,7 +190,7 @@ type InMemoryStore struct {
 
 type subscriber struct {
 	vmID string
-	ch   chan *lanternv1.StatusEvent
+	ch   chan *palv1.StatusEvent
 }
 
 // NewInMemoryStore returns a freshly initialized in-memory cluster store.
@@ -334,7 +334,7 @@ func (s *InMemoryStore) CreateVM(v *VM) {
 	}
 }
 
-func (s *InMemoryStore) UpdateVMState(vmID string, state lanternv1.VmState, reason string, usage *lanternv1.ResourceUsage, at time.Time) bool {
+func (s *InMemoryStore) UpdateVMState(vmID string, state palv1.VmState, reason string, usage *palv1.ResourceUsage, at time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	v, ok := s.vms[vmID]
@@ -345,7 +345,7 @@ func (s *InMemoryStore) UpdateVMState(vmID string, state lanternv1.VmState, reas
 	return true
 }
 
-func (s *InMemoryStore) TransitionVMState(vmID string, from lanternv1.VmState, fromReason string, to lanternv1.VmState, reason string, at time.Time) bool {
+func (s *InMemoryStore) TransitionVMState(vmID string, from palv1.VmState, fromReason string, to palv1.VmState, reason string, at time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	v, ok := s.vms[vmID]
@@ -358,7 +358,7 @@ func (s *InMemoryStore) TransitionVMState(vmID string, from lanternv1.VmState, f
 
 // applyVMStateLocked moves v to state, keeping node occupancy in step. Must be
 // called under mu.
-func (s *InMemoryStore) applyVMStateLocked(v *VM, state lanternv1.VmState, reason string, usage *lanternv1.ResourceUsage, at time.Time) {
+func (s *InMemoryStore) applyVMStateLocked(v *VM, state palv1.VmState, reason string, usage *palv1.ResourceUsage, at time.Time) {
 	vmID := v.Handle.VmId
 	// Node occupancy is decremented on the NON-TERMINAL → TERMINAL edge.
 	// Previously only DeleteVM decremented, so a VM that reached TERMINATED
@@ -372,7 +372,7 @@ func (s *InMemoryStore) applyVMStateLocked(v *VM, state lanternv1.VmState, reaso
 			n.RunningVms--
 		}
 		s.releaseReservationLocked(vmID)
-	} else if v.State == lanternv1.VmState_VM_STATE_PAUSED && occupiesNode(state) {
+	} else if v.State == palv1.VmState_VM_STATE_PAUSED && occupiesNode(state) {
 		// Resume: back on the node. Capacity is re-learned from the next heartbeat.
 		if n, exists := s.nodes[v.NodeName]; exists {
 			n.RunningVms++
@@ -391,21 +391,21 @@ func (s *InMemoryStore) applyVMStateLocked(v *VM, state lanternv1.VmState, reaso
 	// starts fresh from that point. This also covers snapshot-restore clock skew:
 	// a VM that was auto-suspended carries stale guest timestamps; resetting here
 	// guarantees the sweeper ignores it until a fresh harness heartbeat arrives.
-	if state == lanternv1.VmState_VM_STATE_RUNNING {
+	if state == palv1.VmState_VM_STATE_RUNNING {
 		v.LastActivityAt = time.Time{}
 		v.lastActivityUnixMsSeen = 0
 	}
 }
 
 // isTerminalVMState reports whether a VM has finished for good.
-func isTerminalVMState(s lanternv1.VmState) bool {
-	return s == lanternv1.VmState_VM_STATE_TERMINATED ||
-		s == lanternv1.VmState_VM_STATE_FAILED
+func isTerminalVMState(s palv1.VmState) bool {
+	return s == palv1.VmState_VM_STATE_TERMINATED ||
+		s == palv1.VmState_VM_STATE_FAILED
 }
 
 // occupiesNode reports whether a VM in state s is holding node capacity.
-func occupiesNode(s lanternv1.VmState) bool {
-	return !isTerminalVMState(s) && s != lanternv1.VmState_VM_STATE_PAUSED
+func occupiesNode(s palv1.VmState) bool {
+	return !isTerminalVMState(s) && s != palv1.VmState_VM_STATE_PAUSED
 }
 
 func (s *InMemoryStore) SetVMSnapshot(vmID, snapshotID string) bool {
@@ -429,7 +429,7 @@ func (s *InMemoryStore) SetVMMeasurement(vmID, measurement string) bool {
 	if !ok || v.Handle == nil {
 		return false
 	}
-	h := proto.Clone(v.Handle).(*lanternv1.VmHandle)
+	h := proto.Clone(v.Handle).(*palv1.VmHandle)
 	h.SoftwareMeasurement = measurement
 	v.Handle = h
 	return true
@@ -598,8 +598,8 @@ func (s *InMemoryStore) TenantLiveVMs(tenantID string) int {
 // Subscribe returns a channel that receives status events for the given
 // (vm_id, tenant_id) filter and a cancel function the caller MUST call
 // when finished. Empty vmID means "all VMs for this tenant".
-func (s *InMemoryStore) Subscribe(vmID, tenantID string) (<-chan *lanternv1.StatusEvent, func()) {
-	ch := make(chan *lanternv1.StatusEvent, 32)
+func (s *InMemoryStore) Subscribe(vmID, tenantID string) (<-chan *palv1.StatusEvent, func()) {
+	ch := make(chan *palv1.StatusEvent, 32)
 	subID := uuid.NewString()
 
 	s.mu.Lock()
@@ -626,7 +626,7 @@ func (s *InMemoryStore) Subscribe(vmID, tenantID string) (<-chan *lanternv1.Stat
 // Publish fans an event out to all matching subscribers. Non-blocking
 // per-subscriber send: if a subscriber's buffer is full, the event is
 // dropped (back-pressure: slow clients lose updates, fast ones don't).
-func (s *InMemoryStore) Publish(ev *lanternv1.StatusEvent, tenantID string) {
+func (s *InMemoryStore) Publish(ev *palv1.StatusEvent, tenantID string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	subs, ok := s.subscribers[tenantID]
@@ -652,7 +652,7 @@ func (s *InMemoryStore) Publish(ev *lanternv1.StatusEvent, tenantID string) {
 // SizeKey returns the canonical "vcpu/memory" string the warm-pool
 // inventory is keyed by. Centralized here so scheduler and manager
 // agree without a comment dance.
-func SizeKey(limits *lanternv1.ResourceLimits) string {
+func SizeKey(limits *palv1.ResourceLimits) string {
 	if limits == nil {
 		return ""
 	}

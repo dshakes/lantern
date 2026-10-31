@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS pal_region_fence (
 );
 
 -- pal_current_fence_epoch returns the armed epoch, or NULL when unarmed.
--- SECURITY DEFINER so the restricted lantern_app role (RLS enforcement) can
+-- SECURITY DEFINER so the restricted pal_app role (RLS enforcement) can
 -- evaluate it without a grant on pal_region_fence; search_path pinned.
 CREATE OR REPLACE FUNCTION pal_current_fence_epoch() RETURNS BIGINT
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public AS $$

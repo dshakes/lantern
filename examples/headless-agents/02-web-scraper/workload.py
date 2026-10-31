@@ -7,7 +7,7 @@ If the URL doesn't match an `egress_rules` pattern from the AgentSpec,
 the harness proxy returns 403 and writes an audit event. The workload
 sees a clean error response and exits with code 3 ("egress denied").
 
-User-Agent is vended at boot via /run/lantern/secrets/USER_AGENT. The
+User-Agent is vended at boot via /run/pal/secrets/USER_AGENT. The
 raw value never appears in the OCI image or in env.
 """
 
@@ -21,8 +21,7 @@ from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 
-
-SECRETS_DIR = Path("/run/lantern/secrets")
+SECRETS_DIR = Path("/run/pal/secrets")
 PROXY = "http://127.0.0.1:3128"
 
 
@@ -41,7 +40,9 @@ def main() -> int:
         print(json.dumps({"error": "url required"}), file=sys.stderr)
         return 2
 
-    user_agent = read_secret("USER_AGENT", "lantern-demo/0.1 (+https://lantern.dev)")
+    user_agent = read_secret(
+        "USER_AGENT", "pal-demo/0.1 (+https://dshakes.github.io/pal)"
+    )
 
     try:
         resp = requests.get(

@@ -187,7 +187,7 @@ async fn resolve_claims(
             Some(i) => i.introspect(&key).await,
             None => Err(AppError::Auth(
                 "API-key authentication is not configured at this gateway (set \
-                 LANTERN_CONTROL_PLANE_URL and LANTERN_GRPC_SERVICE_TOKEN)"
+                 PAL_CONTROL_PLANE_URL and PAL_GRPC_SERVICE_TOKEN)"
                     .to_string(),
             )),
         },

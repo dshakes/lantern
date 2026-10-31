@@ -12,7 +12,7 @@
 -- Apply ONCE at provisioning, as the database owner/superuser, AFTER the
 -- schema exists (i.e. after the control-plane has run its migrations once, or
 -- after you adopt a dedicated migration tool). Then point the app's
--- DATABASE_URL at lantern_app.
+-- DATABASE_URL at pal_app.
 --
 --   psql "$ADMIN_DATABASE_URL" -v app_password="$PAL_APP_DB_PASSWORD" \
 --        -f infra/db/least-privilege.sql
@@ -22,27 +22,27 @@
 -- 1. The application role: can log in, can run DML, cannot own/alter schema.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'lantern_app') THEN
-    EXECUTE format('CREATE ROLE lantern_app LOGIN PASSWORD %L', :'app_password');
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pal_app') THEN
+    EXECUTE format('CREATE ROLE pal_app LOGIN PASSWORD %L', :'app_password');
   ELSE
-    EXECUTE format('ALTER ROLE lantern_app LOGIN PASSWORD %L', :'app_password');
+    EXECUTE format('ALTER ROLE pal_app LOGIN PASSWORD %L', :'app_password');
   END IF;
 END
 $$;
 
 -- 2. Connect + schema usage (no CREATE — cannot add/alter objects).
-GRANT CONNECT ON DATABASE lantern TO lantern_app;
-GRANT USAGE  ON SCHEMA public      TO lantern_app;
+GRANT CONNECT ON DATABASE pal TO pal_app;
+GRANT USAGE  ON SCHEMA public      TO pal_app;
 
 -- 3. DML only on existing + future tables/sequences. No DDL, no ownership.
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES    IN SCHEMA public TO lantern_app;
-GRANT USAGE, SELECT                  ON ALL SEQUENCES  IN SCHEMA public TO lantern_app;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES    TO lantern_app;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT                  ON SEQUENCES TO lantern_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES    IN SCHEMA public TO pal_app;
+GRANT USAGE, SELECT                  ON ALL SEQUENCES  IN SCHEMA public TO pal_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES    TO pal_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT                  ON SEQUENCES TO pal_app;
 
 -- 4. Explicitly NOT a superuser and NOT BYPASSRLS — so FORCE ROW LEVEL
 --    SECURITY on agents/runs (see internal/db/migrate.go) actually applies.
-ALTER ROLE lantern_app NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+ALTER ROLE pal_app NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
 
 -- Note: PostgreSQL superusers ALWAYS bypass RLS regardless of FORCE — never
 -- run the application as a superuser in production.

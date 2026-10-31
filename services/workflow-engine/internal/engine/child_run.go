@@ -37,9 +37,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
-	paldb "github.com/dshakes/lantern/services/workflow-engine/internal/db"
+	paldb "github.com/dshakes/pal/services/workflow-engine/internal/db"
 
-	"github.com/dshakes/lantern/services/workflow-engine/internal/journal"
+	"github.com/dshakes/pal/services/workflow-engine/internal/journal"
 )
 
 // maxChildRunDepth caps how deeply child runs may nest before the chain is

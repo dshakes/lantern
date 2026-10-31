@@ -10,7 +10,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var tracer = otel.Tracer("lantern.billing.aggregator")
+var tracer = otel.Tracer("pal.billing.aggregator")
 
 // NotifyFunc is called when a budget threshold is crossed.
 // In production, this calls the notifier service.

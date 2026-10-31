@@ -23,14 +23,14 @@ all: the Rust services (model-router, runtime-manager) exported traces only.
    | --- | --------- | ------------ |
    | control-plane-api-availability | 99.9% | non-5xx of API requests (`http_server_request_duration_seconds_count`, `pal_traffic="api"`) |
    | control-plane-api-latency | 99% | API requests under 1s (same histogram, `le="1"`) |
-   | run-success | 98% | `lantern_run_total{lantern_status}` (failed vs all) |
-   | scheduling-availability | 99.5% | `lantern_scheduler_schedule_total` error vs ok+error |
-   | scheduling-latency | 99% | `lantern_scheduler_schedule_duration_seconds` under 1s (new) |
-   | model-router-errors | 99.5% | `lantern_model_router_requests_total{outcome}` (new) |
-   | microvm-spawn-availability | 99.5% | `lantern_manager_spawn_duration_seconds_count{outcome}` (new) |
+   | run-success | 98% | `pal_run_total{pal_status}` (failed vs all) |
+   | scheduling-availability | 99.5% | `pal_scheduler_schedule_total` error vs ok+error |
+   | scheduling-latency | 99% | `pal_scheduler_schedule_duration_seconds` under 1s (new) |
+   | model-router-errors | 99.5% | `pal_model_router_requests_total{outcome}` (new) |
+   | microvm-spawn-availability | 99.5% | `pal_manager_spawn_duration_seconds_count{outcome}` (new) |
    | microvm-cold-boot-latency | 95% | cold boots under 5s (new) |
    | microvm-restore-latency | 99% | snapshot restores under 2s (new) |
-   | egress-broker-errors | 99.5% | `lantern_egress_broker_decisions_total{outcome="error"}` (new) |
+   | egress-broker-errors | 99.5% | `pal_egress_broker_decisions_total{outcome="error"}` (new) |
 
    Targets are deliberately set below what a healthy system delivers today and were
    chosen without production history; review them after the first full 28-day window.
@@ -42,7 +42,7 @@ all: the Rust services (model-router, runtime-manager) exported traces only.
    failure in a quiet hour is not a 100% burn.
 
 3. **New instrumentation, minimal and in each service's own style.**
-   - runtime-scheduler: `lantern_scheduler_schedule_duration_seconds{result}` histogram (client_golang).
+   - runtime-scheduler: `pal_scheduler_schedule_duration_seconds{result}` histogram (client_golang).
    - control-plane: `pal.traffic` attribute (`api|probe|stream`) on the existing otelhttp metric so
      health probes and SSE/log streams (whose duration is the connection lifetime) do not pollute the API SLIs.
    - model-router and runtime-manager (Rust, previously no metrics): `prometheus` 0.14 with
@@ -89,5 +89,5 @@ triaged within one working day. Emergency changes (security patches) are exempt 
 - Alerts only fire where the SLI has data. `SLOSignalAbsent` guards the two control-plane SLOs; a fully down
   service is caught by the existing `*Down` alerts rather than by burn alerts.
 - Prometheus must scrape the new ports; the NetworkPolicy `allow-metrics-scrape` now admits 9465 and 9466.
-  Scrape `job` names are assumed (`pal-*`, `lantern-*` still matched) and overridable per SLO.
+  Scrape `job` names are assumed (`pal-*`, `pal-*` still matched) and overridable per SLO.
 - Cardinality: all new metrics use bounded label sets (method, outcome, kind, result); no tenant or VM ids.

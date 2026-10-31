@@ -33,21 +33,19 @@ import (
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/packages/palenv"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/cluster"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/dialer"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/handlers"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/leader"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/metrics"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/middleware"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/placement"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/scoring"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/store"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/cluster"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/dialer"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/handlers"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/leader"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/metrics"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/middleware"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/placement"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/scoring"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/store"
 )
 
 func main() {
-	palenv.Bridge()
 	cfg := loadConfig()
 	logger := mustInitLogger(cfg.LogLevel)
 	defer logger.Sync() //nolint:errcheck
@@ -255,11 +253,11 @@ func main() {
 		logger.Warn("runtime-scheduler gRPC server: TLS unset — serving plaintext (acceptable in dev; production requires PAL_GRPC_TLS_CA/_CERT/_KEY)")
 	}
 	grpcServer := grpc.NewServer(grpcOpts...)
-	lanternv1.RegisterRuntimeSchedulerServer(grpcServer, schedSvc)
+	palv1.RegisterRuntimeSchedulerServer(grpcServer, schedSvc)
 
 	healthSvc := health.NewServer()
 	healthpb.RegisterHealthServer(grpcServer, healthSvc)
-	healthSvc.SetServingStatus("lantern.v1.RuntimeScheduler", healthpb.HealthCheckResponse_SERVING)
+	healthSvc.SetServingStatus("pal.v1.RuntimeScheduler", healthpb.HealthCheckResponse_SERVING)
 	reflection.Register(grpcServer)
 
 	lis, err := net.Listen("tcp", cfg.GRPCAddr)
@@ -333,7 +331,7 @@ func main() {
 		logger.Fatal("HTTP server failed", zap.Error(err))
 	}
 
-	healthSvc.SetServingStatus("lantern.v1.RuntimeScheduler", healthpb.HealthCheckResponse_NOT_SERVING)
+	healthSvc.SetServingStatus("pal.v1.RuntimeScheduler", healthpb.HealthCheckResponse_NOT_SERVING)
 	grpcServer.GracefulStop()
 	logger.Info("gRPC server stopped")
 
@@ -372,7 +370,7 @@ func loadConfig() config {
 	return config{
 		GRPCAddr:        envOrDefault("LISTEN_ADDR", ":50055"),
 		HTTPAddr:        envOrDefault("HTTP_ADDR", ":8085"),
-		JWTSecret:       envOrDefault("JWT_SECRET", "lantern-dev-jwt-secret-do-not-use-in-production"),
+		JWTSecret:       envOrDefault("JWT_SECRET", "pal-dev-jwt-secret-do-not-use-in-production"),
 		NodeToken:       os.Getenv("SCHEDULER_NODE_TOKEN"),
 		ServiceToken:    os.Getenv("PAL_GRPC_SERVICE_TOKEN"),
 		LogLevel:        envOrDefault("LOG_LEVEL", "info"),

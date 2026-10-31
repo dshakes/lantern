@@ -1,7 +1,7 @@
 # ADR 0042 — AuthZ + RLS: secure defaults in production
 
 - **Status:** Accepted
-- **Relates to:** ADR 0011 (RLS), ADR 0018 (SOC 2 / authZ gaps), ADR 0027 (per-endpoint scope authZ), ADR 0032 (PAL rename)
+- **Relates to:** ADR 0011 (RLS), ADR 0018 (SOC 2 / authZ gaps), ADR 0027 (per-endpoint scope authZ), ADR 0032 (rename to PAL)
 
 ## Context
 
@@ -9,7 +9,7 @@ Two security controls exist but shipped as **opt-in** with flag defaults of OFF:
 
 1. **Per-endpoint scope authZ** (`PAL_AUTHZ_ENFORCE`): `AuthHandler.WithScope` wraps every route and checks that an API-key's declared scopes permit the action. When enforcement is OFF, a missing scope is logged at debug and the request proceeds — any API key can reach any endpoint.
 
-2. **Row-Level Security** (`PAL_RLS_ENFORCE` + `PAL_APP_DB_PASSWORD`): in production every tenant-scoped query must run through the `lantern_app` role so Postgres's RLS policies enforce `tenant_id` isolation at the query level. When the app pool is not configured, the privileged `lantern` superuser bypasses RLS.
+2. **Row-Level Security** (`PAL_RLS_ENFORCE` + `PAL_APP_DB_PASSWORD`): in production every tenant-scoped query must run through the `pal_app` role so Postgres's RLS policies enforce `tenant_id` isolation at the query level. When the app pool is not configured, the privileged `pal` superuser bypasses RLS.
 
 Additionally, read endpoints (GET) had no scope annotation at all — only POST/PUT/PATCH/DELETE routes were annotated. A `read`-scoped API key could read any tenant data regardless of which table.
 
@@ -71,9 +71,9 @@ true   when PAL_RLS_ENFORCE=1/true/on
 true   when PAL_RLS_ENFORCE is unset AND prod AND PAL_APP_DB_PASSWORD is set
 ```
 
-### 4. GRANT audit: fix missing `lantern_app` grant on `brief_items`
+### 4. GRANT audit: fix missing `pal_app` grant on `brief_items`
 
-Migration `0020_brief_items` created the table without granting `SELECT/INSERT/UPDATE/DELETE` to `lantern_app`. Migration `0031_grant_brief_items` adds the missing grants. All future migrations must include grants to `lantern_app` for tenant-scoped tables.
+Migration `0020_brief_items` created the table without granting `SELECT/INSERT/UPDATE/DELETE` to `pal_app`. Migration `0031_grant_brief_items` adds the missing grants. All future migrations must include grants to `pal_app` for tenant-scoped tables.
 
 ### 5. Permanent gate tests
 
@@ -88,7 +88,7 @@ Both scan `main.go` and `internal/handlers/*.go` and require stale exemptions to
 
 ### Upgrading an existing deployment
 
-1. **Run migrations** — `0031_grant_brief_items` adds the missing `lantern_app` grant. Safe to run against a live database.
+1. **Run migrations** — `0031_grant_brief_items` adds the missing `pal_app` grant. Safe to run against a live database.
 
 2. **AuthZ enforcement** — now defaults ON in production. If you are running with unscoped API keys, either:
    - Set `PAL_AUTHZ_ENFORCE=0` temporarily and set appropriate scopes on existing keys, then remove the override.
@@ -97,7 +97,7 @@ Both scan `main.go` and `internal/handlers/*.go` and require stale exemptions to
 
 3. **RLS enforcement** — if `PAL_APP_DB_PASSWORD` is not yet configured:
    - Set `PAL_RLS_ENFORCE=0` to acknowledge operating without enforcement (loud WARN).
-   - Or configure `PAL_APP_DB_PASSWORD` + `ALTER ROLE lantern_app PASSWORD '<strong>'` to activate enforcement (the recommended path).
+   - Or configure `PAL_APP_DB_PASSWORD` + `ALTER ROLE pal_app PASSWORD '<strong>'` to activate enforcement (the recommended path).
 
 4. **No production deployment should start without at least one of:**
    - `PAL_APP_DB_PASSWORD` set (RLS enforced), OR

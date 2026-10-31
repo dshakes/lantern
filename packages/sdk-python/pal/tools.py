@@ -30,7 +30,7 @@ class _ToolRegistry:
     def web(self) -> ToolDef:
         """Web search and fetch tool."""
         return ToolDef(
-            name="lantern.web",
+            name="pal.web",
             description="Web search and fetch. Search the web or fetch a URL.",
             parameters={
                 "type": "object",
@@ -47,7 +47,7 @@ class _ToolRegistry:
     def python(self) -> ToolDef:
         """Execute Python code in a sandboxed environment."""
         return ToolDef(
-            name="lantern.python",
+            name="pal.python",
             description="Execute Python code in a sandboxed environment.",
             parameters={
                 "type": "object",
@@ -67,7 +67,7 @@ class _ToolRegistry:
     def fs(self) -> ToolDef:
         """Read and write files in the agent's scoped workspace."""
         return ToolDef(
-            name="lantern.fs",
+            name="pal.fs",
             description="Read and write files in the agent's scoped workspace.",
             parameters={
                 "type": "object",
@@ -84,7 +84,7 @@ class _ToolRegistry:
     def browser(self) -> ToolDef:
         """Control a headless browser for web automation."""
         return ToolDef(
-            name="lantern.browser",
+            name="pal.browser",
             description="Control a headless browser for web automation.",
             parameters={
                 "type": "object",

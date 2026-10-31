@@ -27,7 +27,7 @@ This is the **fastest look** at PAL Runtime. Pick the **no-key demo** if you hav
    ```
 
    ```text title="Last lines of a real run"
-    Container lantern-demo-dashboard-1  Started
+    Container pal-demo-dashboard-1  Started
    demo ready in 1m15s: http://localhost:3001/kiosk
    ```
 
@@ -42,8 +42,8 @@ This is the **fastest look** at PAL Runtime. Pick the **no-key demo** if you hav
    ```
 
    ```text title="Last lines of a real run"
-    Volume lantern-demo_pg-data  Removed
-    Network lantern-demo_default  Removed
+    Volume pal-demo_pg-data  Removed
+    Network pal-demo_default  Removed
    demo stopped, data deleted
    ```
 
@@ -128,7 +128,7 @@ async with PalClient(base_url="http://localhost:8080") as client:
 </TabItem>
 <TabItem label="Go" icon="seti:go">
 ```go
-import pal "github.com/dshakes/lantern/packages/sdk-go" // module path predates the rename
+import pal "github.com/dshakes/pal/packages/sdk-go"
 
 c := pal.New(pal.WithBaseURL("http://localhost:8080"))
 r, err := c.CreateRun(ctx, pal.RunOptions{AgentName: "my-agent", Input: map[string]string{"notes": "..."}})
@@ -161,7 +161,7 @@ Each check prints one pass or fail line and, for a failure, the fix. When every 
 | --- | --- |
 | `docker is required` | The CLI could not run `docker`. Start Docker Desktop, or `sudo systemctl start docker` on Linux, then retry. |
 | ``run `pal demo` from inside a PAL checkout`` | `pal demo` reads the compose files from the repo. `cd` into the clone. |
-| `waiting for http://localhost:8080/healthz` times out | A container did not become healthy, usually a port already in use. Inspect it with `docker compose -p lantern-demo logs`, or override with `KIOSK_API_PORT` or `KIOSK_WEB_PORT`. |
+| `waiting for http://localhost:8080/healthz` times out | A container did not become healthy, usually a port already in use. Inspect it with `docker compose -p pal-demo logs`, or override with `KIOSK_API_PORT` or `KIOSK_WEB_PORT`. |
 | `pal: command not found` | `$(go env GOPATH)/bin` is not on your `PATH`. Add `export PATH="$PATH:$(go env GOPATH)/bin"` to your shell profile. |
 
 Next: [Your first agent](/docs/start/quickstart/).

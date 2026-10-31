@@ -22,7 +22,7 @@ pal demo            # builds, waits until healthy, opens the browser (--no-open 
 pal demo --down     # stop it and delete all demo data
 ```
 
-Stop a demo with the command that started it: `make demo` uses the compose project `pal-demo`, `pal demo` uses `lantern-demo`. The stack is Postgres, Redis, the control plane, the dashboard and the replay server. It has no gateway, model router, workflow engine or MinIO. The first run builds images and is slow.
+`make demo` and `pal demo` both use the compose project `pal-demo`; stop it with `make demo-down` or `pal demo --down`. The stack is Postgres, Redis, the control plane, the dashboard and the replay server. It has no gateway, model router, workflow engine or MinIO. The first run builds images and is slow.
 
 The demo publishes `:8080` and `:3001`, the same host ports as `make dev`. Stop one before starting the other, or set `KIOSK_API_PORT` and `KIOSK_WEB_PORT` (both commands honour them). If something fails to start, run `docker compose -p <project> logs` with the project name above.
 

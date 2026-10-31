@@ -12,7 +12,7 @@ support for live migration).
 2. Writes a running `state.json` to `./workspace/` (PVC-backed).
 3. Loops: think → take a note → save → sleep 2s. Repeats `max_steps` times.
 4. Responds to `SIGUSR1` (harness snapshot signal) by flushing state and
-   writing `/run/lantern/snapshot.ready`. The harness then triggers
+   writing `/run/pal/snapshot.ready`. The harness then triggers
    Firecracker to take a microVM snapshot.
 5. On resume from snapshot: the workload sees `PAL_RESTORE_HINT` set,
    loads `state.json`, and continues from where it left off.
@@ -20,14 +20,14 @@ support for live migration).
 ## Run it
 
 ```bash
-docker build -t lantern/demos/stateful-research:latest examples/headless-agents/03-stateful-research
+docker build -t pal/demos/stateful-research:latest examples/headless-agents/03-stateful-research
 
 pal run examples/headless-agents/03-stateful-research/agent.yaml \
   --input '{"topic": "Firecracker snapshots", "max_steps": 10}' \
   --follow
 
 # In another terminal — drain the node mid-run:
-lantern node drain $(lantern node list -o name)
+pal node drain $(pal node list -o name)
 
 # Watch the dashboard at localhost:3001/runtime — you'll see:
 #   * state: running → draining → snapshotting → terminated  (on the old node)

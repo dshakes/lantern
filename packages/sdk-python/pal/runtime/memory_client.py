@@ -14,9 +14,11 @@ from pal.errors import PalError
 from pal.types import (
     ArchivalMemory,
     CoreMemory,
-    MemoryClient as MemoryClientBase,
     MemoryEntry,
     RecallMemory,
+)
+from pal.types import (
+    MemoryClient as MemoryClientBase,
 )
 
 
@@ -39,6 +41,7 @@ class GrpcMemoryClient(MemoryClientBase):
         if self._channel is None:
             try:
                 import grpc.aio  # type: ignore[import-untyped]
+
                 self._channel = grpc.aio.insecure_channel(self._endpoint)
             except ImportError:
                 raise PalError("grpcio is required for production memory calls")
@@ -55,16 +58,16 @@ class GrpcMemoryClient(MemoryClientBase):
             json_format.ParseDict(params, request_struct)
 
             stub = channel.unary_unary(
-                f"/lantern.memory.v1.MemoryService/{method}",
+                f"/pal.memory.v1.MemoryService/{method}",
                 request_serializer=request_struct.SerializeToString,
                 response_deserializer=struct_pb2.Struct.FromString,
             )
 
             metadata = [
                 ("x-pal-tenant-id", self._tenant_id),
-                ("x-lantern-tenant-id", self._tenant_id),
+                ("x-pal-tenant-id", self._tenant_id),
                 ("x-pal-run-id", self._run_id),
-                ("x-lantern-run-id", self._run_id),
+                ("x-pal-run-id", self._run_id),
             ]
 
             response = await stub(request_struct, metadata=metadata)

@@ -709,37 +709,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lantern-harness"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "dashmap",
- "hyper-util",
- "libc",
- "nix",
- "opentelemetry",
- "opentelemetry_sdk",
- "pal_env",
- "prost",
- "prost-types",
- "rcgen",
- "reqwest",
- "ring",
- "rustls",
- "rustls-pemfile",
- "rustls-pki-types",
- "serde",
- "serde_json",
- "tokio",
- "tokio-stream",
- "tonic",
- "tonic-build",
- "tower 0.4.13",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -901,8 +870,34 @@ dependencies = [
 ]
 
 [[package]]
-name = "pal_env"
+name = "pal-harness"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dashmap",
+ "hyper-util",
+ "libc",
+ "nix",
+ "opentelemetry",
+ "opentelemetry_sdk",
+ "prost",
+ "prost-types",
+ "rcgen",
+ "reqwest",
+ "ring",
+ "rustls",
+ "rustls-pemfile",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tonic-build",
+ "tower 0.4.13",
+ "tracing",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "parking_lot"

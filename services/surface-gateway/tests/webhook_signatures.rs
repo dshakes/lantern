@@ -34,7 +34,7 @@ fn free_port() -> u16 {
 
 async fn boot() -> Gateway {
     let port = free_port();
-    let child = Command::new(env!("CARGO_BIN_EXE_lantern-surface-gateway"))
+    let child = Command::new(env!("CARGO_BIN_EXE_pal-surface-gateway"))
         .env("LISTEN_ADDR", format!("127.0.0.1:{port}"))
         .env("TELEGRAM_BOT_TOKEN", "123:fake")
         .env("TELEGRAM_SECRET_TOKEN", TG_SECRET)
@@ -42,7 +42,7 @@ async fn boot() -> Gateway {
         .env("WHATSAPP_API_TOKEN", "wa-token")
         .env("WHATSAPP_PHONE_NUMBER_ID", "555")
         .env("WHATSAPP_APP_SECRET", WA_APP_SECRET)
-        .env_remove("LANTERN_ENV")
+        .env_remove("PAL_ENV")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -149,9 +149,9 @@ async fn whatsapp_hub_signature_is_enforced() {
 
 #[tokio::test]
 async fn telegram_fixture_base_url_is_refused_in_production() {
-    let out = Command::new(env!("CARGO_BIN_EXE_lantern-surface-gateway"))
+    let out = Command::new(env!("CARGO_BIN_EXE_pal-surface-gateway"))
         .env("LISTEN_ADDR", format!("127.0.0.1:{}", free_port()))
-        .env("LANTERN_ENV", "production")
+        .env("PAL_ENV", "production")
         .env("TELEGRAM_BOT_TOKEN", "123:fake")
         .env("TELEGRAM_SECRET_TOKEN", TG_SECRET)
         .env("TELEGRAM_API_BASE_URL", "http://127.0.0.1:9")

@@ -34,10 +34,10 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc/metadata"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
 )
 
 // ---------- Input schema validation (M4) ----------
@@ -285,10 +285,10 @@ func (h *MarketplaceHandler) Invoke(w http.ResponseWriter, r *http.Request) {
 	sellerCtx = metadata.NewIncomingContext(sellerCtx, metadata.Pairs("tenant_id", sellerTenant))
 
 	inputStruct, _ := structpb.NewStruct(body.Input)
-	run, runErr := h.runSvc.CreateRun(sellerCtx, &lanternv1.CreateRunRequest{
+	run, runErr := h.runSvc.CreateRun(sellerCtx, &palv1.CreateRunRequest{
 		AgentName:   agentName,
 		Input:       inputStruct,
-		TriggerKind: lanternv1.TriggerKind_TRIGGER_KIND_MANUAL,
+		TriggerKind: palv1.TriggerKind_TRIGGER_KIND_MANUAL,
 	})
 	if runErr != nil {
 		errMsg := runErr.Error()

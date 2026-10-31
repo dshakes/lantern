@@ -30,7 +30,7 @@ pal --version
 
 ## demo
 
-Starts the self-contained demo (kiosk mode): Docker only, no API key. Each visitor gets a private workspace with sample agents that is deleted after 30 minutes; answers are recorded replays from a local fixture server. Run it from inside a PAL checkout. It builds and starts Postgres, Redis, the control plane, the dashboard and the replay server as the compose project `lantern-demo`, waits for `/healthz` and the demo page (up to 5 minutes), then opens `http://localhost:3001/kiosk`.
+Starts the self-contained demo (kiosk mode): Docker only, no API key. Each visitor gets a private workspace with sample agents that is deleted after 30 minutes; answers are recorded replays from a local fixture server. Run it from inside a PAL checkout. It builds and starts Postgres, Redis, the control plane, the dashboard and the replay server as the compose project `pal-demo`, waits for `/healthz` and the demo page (up to 5 minutes), then opens `http://localhost:3001/kiosk`.
 
 Flags: `--no-open` (don't open the browser), `--down` (stop and delete all demo data). Host ports default to 8080 and 3001; override with `KIOSK_API_PORT` and `KIOSK_WEB_PORT`. See [Demo](/docs/start/demo/).
 

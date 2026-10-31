@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run the webhook-example e2e suite (e2e/examples) on a throwaway fixture stack:
 # own Postgres database, connector-replay + llm-replay, and a control-plane on
-# its own ports. Never touches the dev stack on :8080 or the shared `lantern` DB.
+# its own ports. Never touches the dev stack on :8080 or the shared `pal` DB.
 #   scripts/e2e-examples.sh [go test args...]
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -16,19 +16,19 @@ LLM_PORT=${E2E_EXAMPLES_LLM_PORT:-19192}
 GW_PORT=${E2E_EXAMPLES_GATEWAY_PORT:-18444}
 TG_PORT=${E2E_EXAMPLES_TELEGRAM_PORT:-19193}   # fixture Telegram Bot API (the Go test listens here)
 RDB=${E2E_EXAMPLES_REDIS_DB:-$((RANDOM % 14 + 1))}
-export PGPASSWORD=lantern
+export PGPASSWORD=pal
 
 tmp=$(mktemp -d)
 pids=()
 cleanup() {
   for p in "${pids[@]:-}"; do [ -n "$p" ] && kill "$p" 2>/dev/null || true; done
-  dropdb -h localhost -U lantern --if-exists --force "$DB" >/dev/null 2>&1 || true
+  dropdb -h localhost -U pal --if-exists --force "$DB" >/dev/null 2>&1 || true
   rm -rf "$tmp"
 }
 trap cleanup EXIT
 
-dropdb -h localhost -U lantern --if-exists --force "$DB"
-createdb -h localhost -U lantern "$DB"
+dropdb -h localhost -U pal --if-exists --force "$DB"
+createdb -h localhost -U pal "$DB"
 
 python3 - "$tmp/rules.json" <<'PY'
 import json, sys
@@ -46,20 +46,20 @@ cd services/control-plane
 go build -o "$tmp/connector-replay" ./cmd/connector-replay
 go build -o "$tmp/llm-replay" ./cmd/llm-replay
 go build -o "$tmp/server" ./cmd/server
-(cd ../surface-gateway && cargo build --quiet && cp target/debug/lantern-surface-gateway "$tmp/gateway")
+(cd ../surface-gateway && cargo build --quiet && cp target/debug/pal-surface-gateway "$tmp/gateway")
 
 "$tmp/connector-replay" -addr "127.0.0.1:$CONN_PORT" >"$tmp/connector.log" 2>&1 & pids+=($!)
 "$tmp/llm-replay" -addr "127.0.0.1:$LLM_PORT" -rules "$tmp/rules.json" >"$tmp/llm.log" 2>&1 & pids+=($!)
 
 conn="http://127.0.0.1:$CONN_PORT"; llm="http://127.0.0.1:$LLM_PORT"
 env \
-  DATABASE_URL="postgres://lantern:lantern@localhost:5432/$DB?sslmode=disable" \
+  DATABASE_URL="postgres://pal:pal@localhost:5432/$DB?sslmode=disable" \
   REDIS_URL="redis://localhost:6379/$RDB" \
   HTTP_ADDR=":$API_PORT" LISTEN_ADDR=":$GRPC_PORT" LOG_LEVEL=warn \
-  LANTERN_CONNECTOR_BASEURL_SLACK="$conn" LANTERN_CONNECTOR_BASEURL_GITHUB="$conn" \
-  LANTERN_CONNECTOR_BASEURL_SENTRY="$conn" LANTERN_CONNECTOR_BASEURL_PAGERDUTY="$conn" \
-  LANTERN_CONNECTOR_BASEURL_GOOGLE="$conn" LANTERN_RECOVERY_INTERVAL=2s \
-  LANTERN_LLM_BASEURL_OPENAI="$llm" LANTERN_LLM_BASEURL_ANTHROPIC="$llm" \
+  PAL_CONNECTOR_BASEURL_SLACK="$conn" PAL_CONNECTOR_BASEURL_GITHUB="$conn" \
+  PAL_CONNECTOR_BASEURL_SENTRY="$conn" PAL_CONNECTOR_BASEURL_PAGERDUTY="$conn" \
+  PAL_CONNECTOR_BASEURL_GOOGLE="$conn" PAL_RECOVERY_INTERVAL=2s \
+  PAL_LLM_BASEURL_OPENAI="$llm" PAL_LLM_BASEURL_ANTHROPIC="$llm" \
   OPENAI_API_KEY=fixture-key \
   "$tmp/server" >"$tmp/server.log" 2>&1 & pids+=($!)
 
@@ -68,7 +68,7 @@ env LISTEN_ADDR="127.0.0.1:$GW_PORT" REDIS_URL="redis://localhost:6379/$RDB" \
   CONTROL_PLANE_ADDR="http://127.0.0.1:$GRPC_PORT" LOG_LEVEL=warn \
   TELEGRAM_BOT_TOKEN="123:e2e" TELEGRAM_SECRET_TOKEN="e2e-telegram-secret" \
   TELEGRAM_API_BASE_URL="http://127.0.0.1:$TG_PORT" \
-  LANTERN_TENANT_ID="00000000-0000-0000-0000-000000000001" LANTERN_AGENT_NAME="e2e-assistant" \
+  PAL_TENANT_ID="00000000-0000-0000-0000-000000000001" PAL_AGENT_NAME="e2e-assistant" \
   "$tmp/gateway" >"$tmp/gateway.log" 2>&1 & pids+=($!)
 
 for _ in $(seq 1 60); do
@@ -78,14 +78,14 @@ for _ in $(seq 1 60); do
 done
 
 if [ -n "${E2E_EXAMPLES_SERVE:-}" ]; then   # debugging: keep the stack up, no tests
-  echo "stack up: LANTERN_E2E_API_URL=http://127.0.0.1:$API_PORT (ctrl-c to stop)"; wait "${pids[2]}"; exit
+  echo "stack up: PAL_E2E_API_URL=http://127.0.0.1:$API_PORT (ctrl-c to stop)"; wait "${pids[2]}"; exit
 fi
 cd "$root/e2e/examples"
 # TestDataAnalystSandbox needs a real runtime (scheduler + manager); this stack has
 # only the stub scheduler, so it runs from `make test-e2e-analyst` (see its README).
-LANTERN_E2E_API_URL="http://127.0.0.1:$API_PORT" \
-LANTERN_E2E_CONNECTOR_REPLAY_URL="$conn" LANTERN_E2E_LLM_REPLAY_URL="$llm" \
-DATABASE_URL="postgres://lantern:lantern@localhost:5432/$DB?sslmode=disable" \
-LANTERN_E2E_REPLAY_URL="$conn" LANTERN_E2E_GATEWAY_URL="http://127.0.0.1:$GW_PORT" \
-LANTERN_E2E_TELEGRAM_FIXTURE_ADDR="127.0.0.1:$TG_PORT" LANTERN_E2E_TELEGRAM_SECRET="e2e-telegram-secret" \
+PAL_E2E_API_URL="http://127.0.0.1:$API_PORT" \
+PAL_E2E_CONNECTOR_REPLAY_URL="$conn" PAL_E2E_LLM_REPLAY_URL="$llm" \
+DATABASE_URL="postgres://pal:pal@localhost:5432/$DB?sslmode=disable" \
+PAL_E2E_REPLAY_URL="$conn" PAL_E2E_GATEWAY_URL="http://127.0.0.1:$GW_PORT" \
+PAL_E2E_TELEGRAM_FIXTURE_ADDR="127.0.0.1:$TG_PORT" PAL_E2E_TELEGRAM_SECRET="e2e-telegram-secret" \
   go test -tags e2e -count=1 -p 1 -v -skip 'TestDataAnalystSandbox' "${@:-./...}" || { echo "--- control-plane log tail ---"; tail -40 "$tmp/server.log" "$tmp/gateway.log"; exit 1; }

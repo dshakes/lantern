@@ -41,7 +41,7 @@ DELETE /v1/marketplace/{slug}     # unpublish
 It returns `{ id, slug, url }`. The slug is `<your-tenant-slug>-<agent-name>`.
 
 <Aside type="caution">
-Any signed-in tenant can read a published agent's manifest, including its system prompt (`GET /v1/marketplace` and `/{slug}` return 401 without auth). The public A2A card needs no auth. Do not put secrets in a manifest. Use `lantern.secret/...` refs (the ref prefix keeps its original name), which each tenant resolves from its own store at run time.
+Any signed-in tenant can read a published agent's manifest, including its system prompt (`GET /v1/marketplace` and `/{slug}` return 401 without auth). The public A2A card needs no auth. Do not put secrets in a manifest. Use `pal.secret/...` refs, which each tenant resolves from its own store at run time.
 </Aside>
 
 ## Discover and fork

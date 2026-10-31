@@ -108,7 +108,7 @@ runs); per-run fields → `SandboxClaim`.**
 | `limits.vcpu` / `limits.memory` / `limits.gpu` | container `resources.requests`/`limits` | K8s quantities already (`"500m"`, `"512Mi"`) — no conversion |
 | `limits.scratch_size` | `volumeClaimTemplates[scratch]` or `emptyDir.sizeLimit` | tmpfs scratch → `emptyDir`; durable (DEVCONTAINER) → PVC template |
 | `limits.timeout` | `Sandbox.spec.lifecycle.shutdownTime` (now + timeout) + `shutdownPolicy: Delete` | the CRD's TTL is absolute; compute `now + timeout` at claim time |
-| `tenant_id` (authenticated) | claim **namespace** `lantern-t-<tenant_id>` + `additionalPodMetadata.labels[tenant-id]` | reuses `namespace_for` (`k8s.rs:133`); never from caller env |
+| `tenant_id` (authenticated) | claim **namespace** `pal-t-<tenant_id>` + `additionalPodMetadata.labels[tenant-id]` | reuses `namespace_for` (`k8s.rs:133`); never from caller env |
 | `secrets` (`SecretRef`) | **NOT mapped to K8s Secrets** — left to the harness | secret refs stay in the pod env as PAL URIs; the in-VM harness vends short-TTL tokens (ADR 0005/0008). Deliberately *not* `envFrom: secretRef`. |
 | `egress_rules` / `network` | `SandboxTemplate.spec.networkPolicy` (default-deny) **+** harness egress proxy | NetworkPolicy is defense-in-depth; the allowlist proxy (ADR 0006) is the real enforcement, unchanged |
 | `env` (caller-supplied) | container `env` (+ injected `tenant_id`/`run_id`) | direct |
@@ -185,7 +185,7 @@ impl RuntimeBackend for SandboxBackend {
 
     async fn schedule(&self, req: &ScheduleRequest) -> Result<Handle> {
         let template = self.ensure_template(req).await?;          // SandboxTemplate
-        let ns = crate::backends::k8s::namespace_for(req)?;       // lantern-t-<tenant>
+        let ns = crate::backends::k8s::namespace_for(req)?;       // pal-t-<tenant>
         // Create a SandboxClaim; controller adopts a warm pod or cold-starts.
         let claim = SandboxClaim::new_for(&template, &ns, req);
         let created = kube::Api::namespaced(self.client.clone(), &ns)
@@ -237,7 +237,7 @@ Nothing in this backend touches the differentiators — that's the design:
   `Secret` objects.
 - **Egress allowlist** (ADR 0006): in-guest proxy + nftables stay; the CRD's
   `networkPolicy` is only defense-in-depth.
-- **Tenant model**: namespace `lantern-t-<tenant_id>`, JWT-stamped `tenant_id`,
+- **Tenant model**: namespace `pal-t-<tenant_id>`, JWT-stamped `tenant_id`,
   RLS, quotas, `agent_budgets` HTTP-402 — all upstream of this backend, in the
   control-plane and scheduler.
 - **Scoring**: warm-pool/region/fair-share/cost/health scoring stays in the

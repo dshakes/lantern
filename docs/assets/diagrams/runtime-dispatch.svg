@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 520" class="lx" role="img" aria-labelledby="runtime-dispatch-title runtime-dispatch-desc">
   <title id="runtime-dispatch-title">A spawn request lands on a hardened RuntimeClass or is refused at one of two gates</title>
-  <desc id="runtime-dispatch-desc">Decision flow for one spawn request in the runtime-manager. The request carries an isolation class and a confidential flag. A confidential request is first raised to the hostile tier, audited, and never lowered. The first gate, choose_backend, asks whether the node backend satisfies the class and, for confidential work, the Kata-CC class; if not it returns Unavailable with failed_precondition and nothing runs. The second gate, build_job, maps the class to a RuntimeClass and bails if none is configured, so a bare runc pod is never emitted for untrusted, hostile or confidential work. On success the Pod is emitted with the RuntimeClass name, node affinity and a toleration. A rules panel lists the requirements: untrusted needs gVisor, hostile needs Kata, confidential needs Kata-CC, and standard uses gVisor with runc only behind LANTERN_ALLOW_RUNC_STANDARD.</desc>
+  <desc id="runtime-dispatch-desc">Decision flow for one spawn request in the runtime-manager. The request carries an isolation class and a confidential flag. A confidential request is first raised to the hostile tier, audited, and never lowered. The first gate, choose_backend, asks whether the node backend satisfies the class and, for confidential work, the Kata-CC class; if not it returns Unavailable with failed_precondition and nothing runs. The second gate, build_job, maps the class to a RuntimeClass and bails if none is configured, so a bare runc pod is never emitted for untrusted, hostile or confidential work. On success the Pod is emitted with the RuntimeClass name, node affinity and a toleration. A rules panel lists the requirements: untrusted needs gVisor, hostile needs Kata, confidential needs Kata-CC, and standard uses gVisor with runc only behind PAL_ALLOW_RUNC_STANDARD.</desc>
   <style class="lx-style">
     .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
     @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
@@ -87,7 +87,7 @@
   <text class="t-b" x="76" y="350">untrusted needs gVisor, hostile needs Kata</text>
   <text class="t-b" x="76" y="370">confidential needs Kata-CC (SEV-SNP or TDX)</text>
   <text class="t-b" x="76" y="390">standard uses gVisor; bare runc only with</text>
-  <text class="t-b mono" x="76" y="410">LANTERN_ALLOW_RUNC_STANDARD=1</text>
+  <text class="t-b mono" x="76" y="410">PAL_ALLOW_RUNC_STANDARD=1</text>
   <text class="t-b" x="76" y="434">trusted runs on runc by design</text>
   <text class="t-h" x="480" y="436">Result: a workload runs on the class it declared, or it does not run.</text>
   <g transform="translate(40 484)">

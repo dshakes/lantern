@@ -8,11 +8,11 @@ returned without re-executing the step function.
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from pal import _env
 from pal.errors import PalStepError
 from pal.types import StepOptions
 
@@ -98,7 +98,9 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def create_journal_step_runner(journal: StepJournal) -> Callable[
+def create_journal_step_runner(
+    journal: StepJournal,
+) -> Callable[
     [str, Callable[[], Awaitable[Any]], StepOptions | None],
     Awaitable[Any],
 ]:
@@ -141,4 +143,4 @@ def create_journal_step_runner(journal: StepJournal) -> Callable[
 
 def get_journal_path() -> str:
     """Get the journal file path from the runtime environment."""
-    return _env.get("JOURNAL_PATH", "/tmp/lantern-journal.jsonl")
+    return os.environ.get("PAL_JOURNAL_PATH", "/tmp/pal-journal.jsonl")

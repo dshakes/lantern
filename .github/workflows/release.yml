@@ -164,8 +164,6 @@ jobs:
   #     --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
   #   sha256sum -c SHA256SUMS --ignore-missing
   #   gh attestation verify pal_<os>_<arch> --repo <repo>
-  # The binary also answers to its legacy name (ADR 0032): `ln -s pal lantern`
-  # (the Homebrew formula installs that symlink).
   cli-artifacts:
     needs: release
     runs-on: ubuntu-latest

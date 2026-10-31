@@ -3,8 +3,6 @@
 #
 #   brew install dshakes/tap/pal
 #
-# Installs `pal` plus a `lantern` symlink, the CLI's pre-rename name (ADR 0032),
-# so existing scripts keep working.
 class Pal < Formula
   desc "CLI for PAL Runtime, the production runtime for AI agents"
   homepage "https://github.com/dshakes/pal"
@@ -17,15 +15,11 @@ class Pal < Formula
 
   def install
     cd "packages/cli" do
-      # v0.2.0 predates the rename and only has cmd/lantern; drop once a newer tag is pinned.
-      main = File.directory?("cmd/pal") ? "./cmd/pal" : "./cmd/lantern"
-      system "go", "build", *std_go_args(output: bin/"pal", ldflags: "-s -w -X main.version=#{version}"), main
+      system "go", "build", *std_go_args(output: bin/"pal", ldflags: "-s -w -X main.version=#{version}"), "./cmd/pal"
     end
-    bin.install_symlink "pal" => "lantern"
   end
 
   test do
     system bin/"pal", "--version"
-    system bin/"lantern", "--version"
   end
 end

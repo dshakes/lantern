@@ -4,7 +4,6 @@
 // The JSON is the source of truth for descriptions and defaults (hand-written);
 // this script only refreshes WHICH variables exist and WHERE they are read.
 // New variables get an empty description; variables no longer read are dropped.
-// LANTERN_* reads are folded into PAL_* (ADR 0032: both spellings are honoured).
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 
@@ -12,16 +11,16 @@ const ref = process.argv[2] || 'origin/master';
 const out = new URL('../src/components/docs/env-vars.json', import.meta.url);
 
 // A "read" is the name inside a string literal, a process.env access, or a shell expansion.
-const pattern = '(["\'`]|process\\.env\\.|\\$\\{?)(PAL|LANTERN)_[A-Z0-9_]+';
+const pattern = '(["\'`]|process\\.env\\.|\\$\\{?)PAL_[A-Z0-9_]+';
 const raw = execFileSync('git', ['grep', '-n', '-o', '-E', pattern, ref, '--',
   'services', 'packages', 'apps', 'infra/helm', 'scripts',
   ':!*_test.go', ':!*.test.ts', ':!*.test.tsx', ':!*.spec.ts', ':!**/tests/**', ':!**/test_*.py',
-  ':!*.md', ':!*.mdx', ':!**/node_modules/**', ':!packages/palenv/**', ':!packages/pal-env-rs/**',
+  ':!*.md', ':!*.mdx', ':!**/node_modules/**',
 ], { cwd: new URL('../..', import.meta.url) /* repo root: pathspecs are root-relative */, maxBuffer: 64 << 20 }).toString();
 
 const found = new Map(); // name -> { services:Set, sources:Set }
 for (const line of raw.split('\n')) {
-  const m = line.match(/^[^:]+:([^:]+):(\d+):.*?(?:PAL|LANTERN)_([A-Z0-9_]+)$/);
+  const m = line.match(/^[^:]+:([^:]+):(\d+):.*?PAL_([A-Z0-9_]+)$/);
   if (!m) continue;
   const [, file, ln, suffix] = m;
   if (suffix.endsWith('_') || suffix.length < 2) continue; // prefixes like PAL_NODE_ADDR_<NODE>

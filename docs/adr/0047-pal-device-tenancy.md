@@ -122,7 +122,7 @@ order:
    anything else → JWT / API key (`write`/`read`, kiosk refused).
    Reads/writes go through `WithTenantConn` on the RLS pool.
 2. **No `Authorization` → legacy single-owner path**, unchanged:
-   `PAL_SIGNAL_TOKEN` in `x-lantern-signal-token` (or `x-pal-signal-token`),
+   `PAL_SIGNAL_TOKEN` in `x-pal-signal-token` (or `x-pal-signal-token`),
    fail-closed when unset. Writes still append to the device-signals file the
    live bridge reads (the file is authoritative and decides the response), and
    are additionally mirrored best-effort (2 s budget, errors logged, never

@@ -93,7 +93,7 @@ pub struct Reidentify {
     /// The new incarnation's exec-server token (`None` = not provided).
     pub exec_token: Option<String>,
     /// The new incarnation's agent identity (`spawn.json` env
-    /// `LANTERN_AGENT_INSTANCE_TOKEN`; minted per fork child).
+    /// `PAL_AGENT_INSTANCE_TOKEN`; minted per fork child).
     pub agent_instance_token: Option<String>,
     pub declared_secrets: Vec<SecretRef>,
     pub egress_rules: Vec<EgressRule>,
@@ -114,7 +114,7 @@ pub fn plan(contract: SpawnContract) -> anyhow::Result<Reidentify> {
     Ok(Reidentify {
         vm_id,
         exec_token: nonempty(contract.exec_token.as_ref()),
-        agent_instance_token: nonempty(contract.env.get("LANTERN_AGENT_INSTANCE_TOKEN")),
+        agent_instance_token: nonempty(contract.env.get("PAL_AGENT_INSTANCE_TOKEN")),
         declared_secrets: contract.declared_secrets.unwrap_or_default(),
         egress_rules: contract.egress_rules.unwrap_or_default(),
         network: contract
@@ -449,14 +449,14 @@ mod tests {
     fn plan_adopts_the_restoring_contract_and_requires_a_vm_id() {
         let c = crate::bootenv::parse_spawn_contract(
             br#"{"version":1,"vm_id":"vm-fork-2",
-                "declared_secrets":[{"env_name":"K","secret_uri":"lantern.secret://t/K"}],
+                "declared_secrets":[{"env_name":"K","secret_uri":"pal.secret://t/K"}],
                 "egress_rules":[{"pattern":"api.example.com"}],
                 "network":{"guest_ip":"172.16.0.6","host_ip":"172.16.0.5","netmask":"255.255.255.252"}}"#,
         )
         .expect("valid");
         let p = plan(c).expect("plan");
         assert_eq!(p.vm_id, "vm-fork-2");
-        assert_eq!(p.declared_secrets[0].secret_uri, "lantern.secret://t/K");
+        assert_eq!(p.declared_secrets[0].secret_uri, "pal.secret://t/K");
         assert_eq!(p.egress_rules[0].pattern, "api.example.com");
         assert_eq!(p.network.expect("net").host_ip, "172.16.0.5");
 
@@ -471,14 +471,14 @@ mod tests {
 
     #[test]
     fn hosts_repins_the_manager_name_only() {
-        let before = "127.0.0.1\tlocalhost\n172.16.0.1\tmanager.lantern.internal\n10.0.0.9 other\n";
+        let before = "127.0.0.1\tlocalhost\n172.16.0.1\tmanager.pal.internal\n10.0.0.9 other\n";
         assert_eq!(
             hosts_with_manager(before, "172.16.0.5"),
-            "127.0.0.1\tlocalhost\n10.0.0.9 other\n172.16.0.5\tmanager.lantern.internal\n"
+            "127.0.0.1\tlocalhost\n10.0.0.9 other\n172.16.0.5\tmanager.pal.internal\n"
         );
         assert_eq!(
             hosts_with_manager("", "172.16.0.5"),
-            "127.0.0.1\tlocalhost\n172.16.0.5\tmanager.lantern.internal\n"
+            "127.0.0.1\tlocalhost\n172.16.0.5\tmanager.pal.internal\n"
         );
     }
 
@@ -489,12 +489,12 @@ mod tests {
             m.clone(),
             vec![SecretRef {
                 env_name: "OLD".into(),
-                secret_uri: "lantern.secret://t/OLD".into(),
+                secret_uri: "pal.secret://t/OLD".into(),
             }],
         );
         cache.reset(vec![SecretRef {
             env_name: "NEW".into(),
-            secret_uri: "lantern.secret://t/NEW".into(),
+            secret_uri: "pal.secret://t/NEW".into(),
         }]);
         let err = cache
             .get_or_vend("OLD")
@@ -513,7 +513,7 @@ mod tests {
     fn plan_takes_the_new_incarnations_tokens() {
         let c = crate::bootenv::parse_spawn_contract(
             br#"{"vm_id":"vm-f","exec_token":"exec-new",
-                "env":{"LANTERN_AGENT_INSTANCE_TOKEN":"agent-new","OTHER":"x"}}"#,
+                "env":{"PAL_AGENT_INSTANCE_TOKEN":"agent-new","OTHER":"x"}}"#,
         )
         .expect("valid");
         let p = plan(c).expect("plan");
@@ -530,7 +530,7 @@ mod tests {
     fn reidentify_reinstalls_the_new_broker_ca() {
         let old = "-----BEGIN CERTIFICATE-----\nOLD\n-----END CERTIFICATE-----\n";
         let new = "-----BEGIN CERTIFICATE-----\nNEW\n-----END CERTIFICATE-----\n";
-        let dir = std::env::temp_dir().join(format!("lantern-reid-ca-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("pal-reid-ca-{}", std::process::id()));
         crate::egress::install_broker_ca(&dir, old, &[]).unwrap();
         let c = crate::bootenv::parse_spawn_contract(
             format!(

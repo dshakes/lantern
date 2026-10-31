@@ -25,9 +25,9 @@ the same day.
 | model-router | response cache key had no `tenant_id` — cross-tenant response + cost-attribution leak (invariant #7) | ✅ tenant-scoped cache key |
 | model-router | provider HTTP clients had no timeouts — a hung provider blocked failover forever | ✅ connect(10s)/read(60s) timeouts |
 | model-router | `idempotency_key` parsed but never sent to providers (invariant #8) — retries double-billed | ✅ `Idempotency-Key` header on both providers, 4 tests |
-| CLI | `lantern deploy` printed "Deployed successfully!" for a simulated pipeline | ✅ honest SIMULATED output + README relabel |
-| Docs | README/quickstart documented `lantern logs --run/--vm` flags that don't exist; docs-site pointed at the wrong make target | ✅ corrected |
-| TS SDK | broken `./connectors` subpath export (no such build output); `LanternApiError` not exported | ✅ removed / exported |
+| CLI | `pal deploy` printed "Deployed successfully!" for a simulated pipeline | ✅ honest SIMULATED output + README relabel |
+| Docs | README/quickstart documented `pal logs --run/--vm` flags that don't exist; docs-site pointed at the wrong make target | ✅ corrected |
+| TS SDK | broken `./connectors` subpath export (no such build output); `PalApiError` not exported | ✅ removed / exported |
 
 ### Fixed same-day by the delegated batch (verify in git log)
 
@@ -85,7 +85,7 @@ the same day.
 9. **SDK/CLI truthfulness sweep**: Go SDK sessions/connectors namespaces (CLAUDE.md
    parity claim is currently false); retry/backoff (429/503, full-jitter) in all
    three SDKs — mirror `packages/bridge-core/src/retry.ts` semantics; CLI help must
-   stop advertising namespaces that don't exist; `lantern test --rehearse` either
+   stop advertising namespaces that don't exist; `pal test --rehearse` either
    implemented (endpoint exists) or undocumented; sdk-go module-path vs README
    `go get` check; both secondary SDK READMEs undersell shipped features.
 10. **Dashboard consistency**: migrate the 9 `personal/*` pages to shared

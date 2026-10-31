@@ -25,9 +25,6 @@ use crate::error::AppError;
 
 const CACHE_TTL: Duration = Duration::from_secs(60);
 const SERVICE_TOKEN_HEADER: &str = "x-pal-service-token";
-/// Pre-PAL name, sent too so a control plane that has not upgraded still
-/// authenticates the call (ADR 0032).
-const LEGACY_SERVICE_TOKEN_HEADER: &str = "x-lantern-service-token";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Deserialize)]
@@ -115,10 +112,10 @@ impl ApiKeyIntrospector {
     /// when either `PAL_CONTROL_PLANE_URL` or `PAL_GRPC_SERVICE_TOKEN`
     /// is unset/empty.
     pub fn from_env() -> Option<Self> {
-        let base = pal_env::var("PAL_CONTROL_PLANE_URL")
+        let base = std::env::var("PAL_CONTROL_PLANE_URL")
             .ok()
             .filter(|v| !v.is_empty())?;
-        let service_token = pal_env::var("PAL_GRPC_SERVICE_TOKEN")
+        let service_token = std::env::var("PAL_GRPC_SERVICE_TOKEN")
             .ok()
             .filter(|v| !v.is_empty())?;
         let http = reqwest::Client::builder()
@@ -148,7 +145,6 @@ impl ApiKeyIntrospector {
             .http
             .post(&self.url)
             .header(SERVICE_TOKEN_HEADER, &self.service_token)
-            .header(LEGACY_SERVICE_TOKEN_HEADER, &self.service_token)
             .json(&serde_json::json!({ "key": raw_key }))
             .send()
             .await

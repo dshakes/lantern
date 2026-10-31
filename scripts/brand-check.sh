@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# brand-check.sh — count `lantern` references left after the PAL rename (ADR 0032).
+# brand-check.sh — fail on any reference to the previous brand (ADR 0032).
 #
 #   scripts/brand-check.sh            # --report (default): counts by top-level dir
 #   scripts/brand-check.sh --enforce  # same, exit 1 if anything outside the allowlist remains
 #
-# Scans git-tracked text files (case-insensitive), skipping lockfiles. Hits
+# Scans every git-tracked text file (case-insensitive), lockfiles included. Hits
 # matched by scripts/brand-allowlist.txt are not counted. Allowlist format, one
 # entry per line, `<perl regex> # <reason>` (reason required):
 #   <regex>                     stripped from every content line AND file path before counting
@@ -26,19 +26,17 @@ cd "$root"
 allow="scripts/brand-allowlist.txt"
 [[ -f "$allow" ]] || { echo "brand-check: missing $allow" >&2; exit 2; }
 
-lockfiles=(':!:*.lock' ':!:**/package-lock.json' ':!:package-lock.json' ':!:**/go.sum'
-  ':!:go.sum' ':!:**/pnpm-lock.yaml' ':!:pnpm-lock.yaml')
 
 # grep-family exit 1 means "no match"; anything above it is a real failure
 # (not a repo, bad pathspec, I/O) and must fail the check, not read as clean.
 content_hits() {
   local rc=0
-  git grep -I -i --null -e lantern -- . "${lockfiles[@]}" || rc=$?
+  git grep -I -i --null -e lantern -- . || rc=$?
   [[ $rc -le 1 ]] || { echo "brand-check: git grep failed (exit $rc)" >&2; return "$rc"; }
 }
 path_hits() {
   local files rc=0
-  files="$(git ls-files -- . "${lockfiles[@]}")" || { echo "brand-check: git ls-files failed" >&2; return 2; }
+  files="$(git ls-files -- .)" || { echo "brand-check: git ls-files failed" >&2; return 2; }
   grep -i lantern <<<"$files" || rc=$?
   [[ $rc -le 1 ]] || { echo "brand-check: grep failed (exit $rc)" >&2; return "$rc"; }
 }
@@ -86,3 +84,19 @@ path_hits() {
     exit 1;
   }
 '
+
+# Third-party domains. pal.run and pal.dev are owned by strangers: a default
+# URL, copy button or e-mail on them would send users' API keys, agent tokens
+# or mail to someone else's server. Hosts only — K8s label keys (pal.dev/<key>)
+# are names, never contacted. Use
+# localhost / a derived origin in code, RFC 2606 pal.example.com in examples,
+# the docs site https://dshakes.github.io/pal for docs links.
+rc=0
+domains="$(git grep -n -I -P \
+  '((https?|wss?)://|@)([a-z0-9-]+\.)*pal\.(run|dev)\b(?![._-])|\b[a-z0-9-]+\.pal\.(run|dev)\b(?![._-])|(?<![\w./@-])pal\.run(?![\w.-])' \
+  -- . ':!scripts/brand-check.sh' ':!scripts/zero-lantern/**' ':!scripts/cutover/**' ':!docs/runbooks/pal-cutover.md')" || rc=$?
+[[ $rc -le 1 ]] || { echo "brand-check: git grep failed (exit $rc)" >&2; exit "$rc"; }
+if [[ -n "$domains" ]]; then
+  printf '%s\n' "$domains" | sed 's/^/third-party domain: /' >&2
+  [[ "$mode" != enforce ]] || { echo "brand-check: hosts on pal.run / pal.dev (third-party domains) found" >&2; exit 1; }
+fi

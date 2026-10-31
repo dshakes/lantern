@@ -11,7 +11,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/dshakes/lantern/packages/cli/internal/cli/templates"
+	"github.com/dshakes/pal/packages/cli/internal/cli/templates"
 	"github.com/spf13/cobra"
 )
 

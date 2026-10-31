@@ -12,8 +12,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DC="docker compose -f $ROOT/infra/docker/docker-compose.yml"
-PSQL="$DC exec -T postgres psql -U lantern -d lantern"
-DB_URL="postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable"
+PSQL="$DC exec -T postgres psql -U pal -d pal"
+DB_URL="postgres://pal:pal@localhost:5432/pal?sslmode=disable"
 N="${N:-120}"; C="${C:-24}"
 CP_BIN="/tmp/pal-cp-load"; CP_LOG="/tmp/pal-cp-load.log"; CP_PID=""
 
@@ -28,13 +28,13 @@ for i in $(seq 1 30); do $PSQL -c "SELECT 1" >/dev/null 2>&1 && break; [ "$i" = 
 ( cd "$ROOT/services/control-plane" && CGO_ENABLED=0 GOTOOLCHAIN=go1.26.5 go build -o "$CP_BIN" ./cmd/server ) || fail "build"
 bash "$ROOT/scripts/kill-port.sh" 8080 50051 >/dev/null 2>&1 || true
 DATABASE_URL="$DB_URL" REDIS_URL="redis://localhost:6379" S3_ENDPOINT="http://localhost:9000" \
-  JWT_SECRET="lantern-dev-jwt-secret-do-not-use-in-production" LOG_LEVEL="warn" \
+  JWT_SECRET="pal-dev-jwt-secret-do-not-use-in-production" LOG_LEVEL="warn" \
   "$CP_BIN" >"$CP_LOG" 2>&1 &
 CP_PID=$!
 for i in $(seq 1 45); do curl -fsS "http://localhost:8080/healthz" >/dev/null 2>&1 && break; [ "$i" = 45 ] && fail "cp not healthy"; sleep 1; done
 
 TOKEN=$(curl -fsS -X POST "http://localhost:8080/auth/login" -H "Content-Type: application/json" \
-  -d '{"email":"admin@lantern.dev","password":"lantern"}' | jget token)
+  -d '{"email":"admin@pal.local","password":"pal"}' | jget token)
 [ -n "$TOKEN" ] || fail "login"
 curl -fsS -X POST "http://localhost:8080/v1/agents" -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" -d '{"name":"load-agent","description":"loadtest"}' >/dev/null 2>&1 || true

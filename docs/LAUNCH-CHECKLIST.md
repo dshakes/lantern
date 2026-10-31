@@ -21,7 +21,7 @@ Items that are already done or intentionally deferred to beta/GA.
 - [x] Gateway — TLS, JWT auth, rate limiting, SSE streaming (`services/gateway`)
 - [x] Personal agent bridges — WhatsApp + iMessage (`services/whatsapp-bridge`, `services/imessage-bridge`)
 - [x] TypeScript SDK + Python SDK + Go SDK (`packages/sdk-ts`, `packages/sdk-python`, `packages/sdk-go`)
-- [x] `lantern` CLI (`packages/cli`)
+- [x] `pal` CLI (`packages/cli`)
 - [x] Dashboard, landing, docs site (`apps/web`; `site/` for landing + docs)
 - [x] Dev credentials seeded on first boot; `PAL_ENV=prod` hard-fails without `JWT_SECRET` / `PAL_CREDENTIAL_KEY`
 - [x] Security audits remediated (auth, tenant isolation, webhook verification, XSS, secrets, fail-closed posture) — see `SECURITY.md`
@@ -78,7 +78,7 @@ Work needed before accepting non-owner production traffic.
 - [x] **Version tags** — `v0.2.0` exists (`git tag`)
 - [ ] **Release process documented** — `.github/workflows/release.yml` does tag + GitHub Release + Homebrew tap sync, but there is no `RELEASING.md` and no SDK/Helm publish step. OPEN
 - [x] **Go SDK populated** — `packages/sdk-go/client.go` (+ `client_test.go`) is at management-surface parity with the Python SDK
-- [ ] **SDKs published to registries** — OPEN: `lantern-sdk` is not on PyPI (`packages/sdk-python`, v0.1.0), the TS SDK is not on npm (`packages/sdk-ts`, v0.1.0), and `release.yml` has no publish step; install-from-repo only
+- [ ] **SDKs published to registries** — OPEN: `pal-sdk` is not on PyPI (`packages/sdk-python`, v0.1.0), the TS SDK is not on npm (`packages/sdk-ts`, v0.1.0), and `release.yml` has no publish step; install-from-repo only
 
 ---
 

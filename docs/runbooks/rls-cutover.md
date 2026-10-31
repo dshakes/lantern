@@ -9,7 +9,7 @@ is switched on**. Both the control-plane and the workflow engine ship with the
 scoping code merged and the flag off. This runbook is the cutover.
 
 **Read the ordering section before doing anything.** The failure mode is not
-gradual: with `PAL_RLS_ENFORCE=1` and no usable `lantern_app` credential,
+gradual: with `PAL_RLS_ENFORCE=1` and no usable `pal_app` credential,
 both services **refuse to start**. That is deliberate — a service that believes
 it is enforcing isolation and is not is worse than one that is plainly down —
 but it means the wrong order takes the environment offline rather than degrading
@@ -21,15 +21,15 @@ it.
 
 | role | RLS applies? | used for |
 | --- | --- | --- |
-| `lantern` (owner/superuser) | **NO — bypassed** | migrations, cross-tenant sweeps, the scheduler's poll |
-| `lantern_app` (non-superuser) | **yes** | every tenant-scoped query |
+| `pal` (owner/superuser) | **NO — bypassed** | migrations, cross-tenant sweeps, the scheduler's poll |
+| `pal_app` (non-superuser) | **yes** | every tenant-scoped query |
 
 A superuser **bypasses RLS entirely**. Pointing the app pool at the superuser
 leaves policies inert while every dashboard says enforcement is on — the exact
 false-green this runbook exists to prevent. `secrets.appDbPassword` is the
-`lantern_app` password and must never be set to the superuser's.
+`pal_app` password and must never be set to the superuser's.
 
-Conversely the cross-tenant paths must **not** use `lantern_app`: under
+Conversely the cross-tenant paths must **not** use `pal_app`: under
 enforcement a restricted connection with no `app.tenant_id` set matches **no
 rows**, so the scheduler would stop finding work and the engine would go quiet
 rather than error. Both roles are required; neither is sufficient.
@@ -43,7 +43,7 @@ Database first, services second. Every step is idempotent.
 ### 1. Confirm the role exists and can log in
 
 ```sql
-SELECT rolname, rolcanlogin, rolsuper FROM pg_roles WHERE rolname = 'lantern_app';
+SELECT rolname, rolcanlogin, rolsuper FROM pg_roles WHERE rolname = 'pal_app';
 ```
 
 Expect `rolcanlogin = t` and **`rolsuper = f`**. The role is created by the
@@ -52,16 +52,16 @@ control-plane's baseline migration. If it is missing, run migrations first.
 ### 2. Set its password
 
 ```sql
-ALTER ROLE lantern_app PASSWORD '<strong-random>';
+ALTER ROLE pal_app PASSWORD '<strong-random>';
 ```
 
 Store it wherever the environment keeps secrets. It is passed to Helm at deploy
 time and never committed:
 
 ```bash
-helm upgrade --install lantern infra/helm/lantern \
-  -f infra/helm/lantern/values.yaml \
-  -f infra/helm/lantern/values-staging.yaml \
+helm upgrade --install pal infra/helm/pal \
+  -f infra/helm/pal/values.yaml \
+  -f infra/helm/pal/values-staging.yaml \
   --set secrets.appDbPassword="$PAL_APP_DB_PASSWORD"
 ```
 
@@ -75,8 +75,8 @@ row-level denial.
 
 ```sql
 SELECT t AS table_name,
-       has_table_privilege('lantern_app', t, 'SELECT') AS can_select,
-       has_table_privilege('lantern_app', t, 'INSERT') AS can_insert
+       has_table_privilege('pal_app', t, 'SELECT') AS can_select,
+       has_table_privilege('pal_app', t, 'INSERT') AS can_insert
 FROM unnest(ARRAY['runs','agents','journal_events','run_locks','step_state']) t;
 ```
 
@@ -112,9 +112,9 @@ it means a deploy that supplies only the RLS password fails on something that
 looks unrelated. Set them together:
 
 ```bash
-helm upgrade --install lantern infra/helm/lantern \
-  -f infra/helm/lantern/values.yaml \
-  -f infra/helm/lantern/values-staging.yaml \
+helm upgrade --install pal infra/helm/pal \
+  -f infra/helm/pal/values.yaml \
+  -f infra/helm/pal/values-staging.yaml \
   --set secrets.appDbPassword="$PAL_APP_DB_PASSWORD" \
   --set secrets.credentialKey="$PAL_CREDENTIAL_KEY" \
   --set secrets.receiptSecret="$PAL_RECEIPT_SECRET" \
@@ -138,7 +138,7 @@ curl -s http://<control-plane>:8080/healthz
 ```
 
 ```json
-{"status":"ok","rlsEnforce":true,"appPoolActive":true,"lanternAppRoleExists":true}
+{"status":"ok","rlsEnforce":true,"appPoolActive":true,"palAppRoleExists":true}
 ```
 
 **`appPoolActive: true` is the one that matters.** `rlsEnforce: true` with
@@ -148,20 +148,20 @@ impossible (the services fail closed), so treat it as a bug worth reporting
 rather than a state to work around.
 
 The workflow engine has no equivalent endpoint; check its startup log for
-`RLS enforcement on: tenant-scoped queries use the lantern_app pool`.
+`RLS enforcement on: tenant-scoped queries use the pal_app pool`.
 
 ### Prove isolation end to end
 
 The strongest check is a cross-tenant read that *should* fail:
 
 ```sql
-SET ROLE lantern_app;
+SET ROLE pal_app;
 SELECT set_config('app.tenant_id', '<tenant-A-uuid>', false);
 SELECT count(*) FROM runs WHERE tenant_id = '<tenant-B-uuid>';  -- expect 0
 RESET ROLE;
 ```
 
-Zero rows while connected as `lantern_app` with tenant A's GUC — but non-zero
+Zero rows while connected as `pal_app` with tenant A's GUC — but non-zero
 for the same query as the owner role — is the proof. A test that only shows
 tenant A seeing its own rows does not distinguish enforcement from an ordinary
 `WHERE` clause.
@@ -171,14 +171,14 @@ tenant A seeing its own rows does not distinguish enforcement from an ordinary
 ```sql
 -- as owner
 SELECT count(*) FROM runs;                       -- e.g. 17323
--- as lantern_app with tenant A's GUC set
+-- as pal_app with tenant A's GUC set
 SELECT count(*) FROM runs;                       -- e.g. 17318
 ```
 
 The second number must be **lower**. If they are equal, either the environment
 has only one tenant — in which case the test proves nothing and you should
 create a second tenant's row first — or enforcement is not actually on. Verified
-on a database with 4 tenants: 17323 visible to the owner, 17318 to `lantern_app`,
+on a database with 4 tenants: 17323 visible to the owner, 17318 to `pal_app`,
 and 0 rows from other tenants.
 
 ---

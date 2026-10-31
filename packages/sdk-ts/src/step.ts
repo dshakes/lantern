@@ -28,7 +28,7 @@ interface DevStepAPI {
  *
  * In dev mode, steps execute directly without journal replay, the
  * workflow engine, or durable timers. This is the default behavior
- * when LANTERN_RUNTIME is not set.
+ * when PAL_RUNTIME is not set.
  */
 function createDevStepProxy(): DevStepAPI {
   const handler = async <T>(
@@ -137,7 +137,7 @@ export function setStepRuntime(runtime: Runtime): void {
  *
  * - If a production runtime has been injected via `setStepRuntime`,
  *   returns the production step proxy.
- * - If LANTERN_RUNTIME=true but no runtime injected yet, returns
+ * - If PAL_RUNTIME=true but no runtime injected yet, returns
  *   a deferred proxy that throws helpful errors.
  * - Otherwise, returns the dev-mode step proxy.
  */

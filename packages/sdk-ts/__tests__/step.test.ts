@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 
 // We test the dev-mode step proxy by importing the step module directly.
-// In dev mode (no LANTERN_RUNTIME env var), step() calls execute functions
+// In dev mode (no PAL_RUNTIME env var), step() calls execute functions
 // directly without journal replay.
 
 // The step module is a singleton — import it fresh.

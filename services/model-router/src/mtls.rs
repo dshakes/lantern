@@ -89,7 +89,7 @@ async fn call(addr: std::net::SocketAddr, files: &Files, token: bool) -> tonic::
             .insert(crate::auth::TOKEN_HEADER, "tok".parse().unwrap());
     }
     let codec = tonic::codec::ProstCodec::<CompleteRequest, CompleteResponse>::default();
-    let path = http::uri::PathAndQuery::from_static("/lantern.v1.ModelService/Complete");
+    let path = http::uri::PathAndQuery::from_static("/pal.v1.ModelService/Complete");
     match grpc.unary(req, path, codec).await {
         Ok(_) => tonic::Code::Ok,
         Err(s) => s.code(),

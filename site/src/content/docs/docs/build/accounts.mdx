@@ -119,7 +119,7 @@ The From address is `PAL_MAIL_FROM` (default `PAL <no-reply@localhost>`). The re
 
 ## Export your data
 
-`GET /v1/tenants/{id}/export` returns everything the workspace owns as one JSON document, sent with `Content-Disposition: attachment; filename="lantern-export-<tenantId>.json"`. It needs an owner JWT, and the id must be your own tenant. Another tenant's id is `404` (existence is not leaked), a non-owner is `403 owner role required`, and no token is `401`.
+`GET /v1/tenants/{id}/export` returns everything the workspace owns as one JSON document, sent with `Content-Disposition: attachment; filename="pal-export-<tenantId>.json"`. It needs an owner JWT, and the id must be your own tenant. Another tenant's id is `404` (existence is not leaked), a non-owner is `403 owner role required`, and no token is `401`.
 
 ```json
 {

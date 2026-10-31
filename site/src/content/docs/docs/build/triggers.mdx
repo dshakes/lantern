@@ -91,7 +91,7 @@ async with PalClient(api_key=os.environ["PAL_API_KEY"], base_url="http://localho
 <TabItem label="Go">
 
 ```go
-import pal "github.com/dshakes/lantern/packages/sdk-go"
+import pal "github.com/dshakes/pal/packages/sdk-go"
 
 c := pal.New(pal.WithAPIKey(key), pal.WithBaseURL("http://localhost:8080"))
 
@@ -151,7 +151,7 @@ printf '%s' "<sentry client secret>" | pal hooks update <trigger-id> --secret-st
 
 **PagerDuty.** PagerDuty shows its signing secret after you create the webhook subscription, so the order is the same: create the `pagerduty` trigger, use its URL as the delivery URL, then replace the trigger's secret with the one PagerDuty displays. During a secret rotation PagerDuty sends several `v1=` signatures in one header, and any match passes. The delivery id and event come from `event.id` and `event.event_type` in the body.
 
-**Generic HMAC.** For anything else, sign `<unix-timestamp>.<body>` with HMAC-SHA256 and send `X-Pal-Signature: t=<unix>,v1=<hex>`. The timestamp must be within five minutes of server time, in either direction. Send `X-Pal-Delivery` as a stable id per event, and optionally `X-Pal-Event`. Senders configured with the older `X-Lantern-Signature`, `X-Lantern-Delivery` and `X-Lantern-Event` names still work; each `X-Pal-*` header is read first and the older name is used only when it is absent.
+**Generic HMAC.** For anything else, sign `<unix-timestamp>.<body>` with HMAC-SHA256 and send `X-Pal-Signature: t=<unix>,v1=<hex>`. The timestamp must be within five minutes of server time, in either direction. Send `X-Pal-Delivery` as a stable id per event, and optionally `X-Pal-Event`.
 
 ```bash
 SECRET=whsec_...   # from the create response

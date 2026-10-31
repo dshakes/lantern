@@ -1,10 +1,10 @@
 // In-guest exec server — serves `RuntimeHarness.Exec` so the manager can
-// dial back into the guest for `lantern vm exec` against Firecracker VMs.
+// dial back into the guest for `pal vm exec` against Firecracker VMs.
 //
 // Direction note: Heartbeat / VendSecret / Report are RPCs the harness
 // CALLS on the manager. Exec is the one RPC the harness SERVES: the
 // manager learns this guest's address from the Heartbeat peer and dials
-// `LANTERN_HARNESS_EXEC_ADDR` (default 0.0.0.0:50056) to run a one-shot
+// `PAL_HARNESS_EXEC_ADDR` (default 0.0.0.0:50056) to run a one-shot
 // command inside the guest.
 //
 // Framing mirrors the manager's docker exec path exactly:
@@ -452,7 +452,7 @@ impl pb::runtime_harness_server::RuntimeHarness for ExecService {
         // The general audit logs argv, which for tool calls contains the
         // serialized args envelope that may carry secrets (invariant #10).
         // tool_runner::run_tool_call emits its own audit without args content.
-        if first.command == "__lantern_tool_call__" {
+        if first.command == "__pal_tool_call__" {
             // Drain any stray frames (there should be none for a one-shot call).
             tokio::spawn(async move { while let Ok(Some(_)) = stream.message().await {} });
             let (tx, rx) = mpsc::channel(4);
@@ -584,35 +584,35 @@ fn exec_auth(
 }
 
 /// Bind and serve the in-guest exec server. Address comes from
-/// `LANTERN_HARNESS_EXEC_ADDR` (default [`DEFAULT_EXEC_ADDR`]). Runs until
+/// `PAL_HARNESS_EXEC_ADDR` (default [`DEFAULT_EXEC_ADDR`]). Runs until
 /// process exit; the caller spawns it and the harness tolerates failure
 /// (the workload always runs even if exec is unavailable).
 ///
 /// # Security
 ///
-/// `LANTERN_HARNESS_EXEC_TOKEN` must be set in prod/staging: the Exec RPC
+/// `PAL_HARNESS_EXEC_TOKEN` must be set in prod/staging: the Exec RPC
 /// accepts arbitrary shell commands as the harness uid; anything on the guest
 /// tap interface can reach it.  In dev (token unset) a SECURITY warning is
 /// logged; in prod a missing token is fatal (mirrors the TLS prod guard).
 pub async fn run(manager: ManagerClient, activity: ActivityTracker) -> Result<()> {
     let addr_raw =
-        pal_env::var("PAL_HARNESS_EXEC_ADDR").unwrap_or_else(|_| DEFAULT_EXEC_ADDR.to_string());
+        std::env::var("PAL_HARNESS_EXEC_ADDR").unwrap_or_else(|_| DEFAULT_EXEC_ADDR.to_string());
     let addr: std::net::SocketAddr = addr_raw
         .parse()
-        .with_context(|| format!("exec: invalid LANTERN_HARNESS_EXEC_ADDR '{addr_raw}'"))?;
+        .with_context(|| format!("exec: invalid PAL_HARNESS_EXEC_ADDR '{addr_raw}'"))?;
 
     if manager.exec_token().is_empty() {
         if crate::tls::is_prod_env() {
             anyhow::bail!(
-                "exec: LANTERN_HARNESS_EXEC_TOKEN must be set in production \
-                 (LANTERN_ENV={}) — the Exec RPC is reachable on the guest tap \
+                "exec: PAL_HARNESS_EXEC_TOKEN must be set in production \
+                 (PAL_ENV={}) — the Exec RPC is reachable on the guest tap \
                  interface and would accept commands without authentication",
-                pal_env::var("PAL_ENV").unwrap_or_default()
+                std::env::var("PAL_ENV").unwrap_or_default()
             );
         }
         tracing::warn!(
             %addr,
-            "exec: LANTERN_HARNESS_EXEC_TOKEN unset — Exec RPC is UNAUTHENTICATED \
+            "exec: PAL_HARNESS_EXEC_TOKEN unset — Exec RPC is UNAUTHENTICATED \
              (dev path). Set in production so only the manager can run exec commands."
         );
     }
@@ -638,7 +638,7 @@ pub async fn run(manager: ManagerClient, activity: ActivityTracker) -> Result<()
     // Broker egress mode (ADR 0026): no NIC, so the manager reaches this
     // server by host-initiated vsock on the exec port. Same service, same
     // per-incarnation token interceptor — only the transport differs.
-    if crate::egress::is_broker_mode(pal_env::var("PAL_EGRESS_MODE").ok().as_deref()) {
+    if crate::egress::is_broker_mode(std::env::var("PAL_EGRESS_MODE").ok().as_deref()) {
         let port = u32::from(addr.port());
         let listener = crate::vsock::listen(port)
             .with_context(|| format!("exec: cannot listen on vsock port {port}"))?;
@@ -774,7 +774,7 @@ mod tests {
 
     #[tokio::test]
     async fn exec_spawn_failure_surfaces_internal_status() {
-        let frames = collect("/nonexistent/lantern-test-binary", &[]).await;
+        let frames = collect("/nonexistent/pal-test-binary", &[]).await;
 
         assert_eq!(
             frames.len(),
@@ -978,7 +978,7 @@ mod tests {
 
     #[tokio::test]
     async fn tty_exec_spawn_failure_surfaces_internal_status() {
-        let frames = collect_tty("/nonexistent/lantern-test-binary", &[], vec![]).await;
+        let frames = collect_tty("/nonexistent/pal-test-binary", &[], vec![]).await;
 
         assert_eq!(
             frames.len(),

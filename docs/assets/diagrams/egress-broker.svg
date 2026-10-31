@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 640" class="lx" role="img" aria-labelledby="egress-broker-title egress-broker-desc">
   <title id="egress-broker-title">Credentials are added at the host, never inside the VM</title>
-  <desc id="egress-broker-desc">Egress through the host broker (opt-in broker mode, LANTERN_EGRESS_MODE=broker, Firecracker only). In this mode the microVM has no network device. The agent workload sends its HTTP request to the harness forwarder on 127.0.0.1:3128 through the injected proxy variables. The forwarder carries it over vsock to the host egress broker running inside the runtime-manager on the data plane host. The broker checks the VM's egress allowlist. A request to a host that is not allowlisted is refused and logged as an audit event. An allowed request gets its credential injected on the host, resolved from lantern.secret references by the secret resolver (today's production resolver is the control-plane relay, ADR 0008), and is then sent to the upstream API. The credential never enters the VM. In the default mode the allowlist is enforced in-guest via an iptables-redirected CONNECT proxy instead.</desc>
+  <desc id="egress-broker-desc">Egress through the host broker (opt-in broker mode, PAL_EGRESS_MODE=broker, Firecracker only). In this mode the microVM has no network device. The agent workload sends its HTTP request to the harness forwarder on 127.0.0.1:3128 through the injected proxy variables. The forwarder carries it over vsock to the host egress broker running inside the runtime-manager on the data plane host. The broker checks the VM's egress allowlist. A request to a host that is not allowlisted is refused and logged as an audit event. An allowed request gets its credential injected on the host, resolved from pal.secret references by the secret resolver (today's production resolver is the control-plane relay, ADR 0008), and is then sent to the upstream API. The credential never enters the VM. In the default mode the allowlist is enforced in-guest via an iptables-redirected CONNECT proxy instead.</desc>
   <style class="lx-style">
     .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
     @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
@@ -39,7 +39,7 @@
 
   <rect class="canvas" width="1200" height="640" rx="16"/>
   <text class="t-title" x="40" y="52">Credentials are added at the host, never inside the VM</text>
-  <text class="t-sub" x="40" y="76">Opt-in broker mode (LANTERN_EGRESS_MODE=broker, Firecracker only). A guest request leaves only over vsock. The host broker checks the allowlist and attaches the secret on the way out.</text>
+  <text class="t-sub" x="40" y="76">Opt-in broker mode (PAL_EGRESS_MODE=broker, Firecracker only). A guest request leaves only over vsock. The host broker checks the allowlist and attaches the secret on the way out.</text>
 
   <!-- microVM -->
   <rect class="wall" x="40" y="110" width="360" height="440" rx="18"/>
@@ -95,7 +95,7 @@
 
   <text class="t-h" x="480" y="178">Secret resolver</text>
 
-  <text class="t-b mono" x="480" y="198">lantern.secret/...</text>
+  <text class="t-b mono" x="480" y="198">pal.secret/...</text>
 
   <text class="t-b" x="480" y="216">refs from the spec</text>
 

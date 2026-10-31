@@ -160,7 +160,7 @@ func TestKiosk_ExpiredSessionPurgedAcrossAllTables(t *testing.T) {
 	if err := e.es.superPool.QueryRow(ctx, `
 		INSERT INTO tenants (slug, name, tier, k8s_namespace, settings)
 		VALUES ($1, 'decoy', 'personal', $2, '{"kiosk":true,"kiosk_expires_at":"2000-01-01T00:00:00Z"}'::jsonb) RETURNING id`,
-		fmt.Sprintf("real-%d", time.Now().UnixNano()), fmt.Sprintf("lantern-t-real-%d", time.Now().UnixNano())).Scan(&decoy); err != nil {
+		fmt.Sprintf("real-%d", time.Now().UnixNano()), fmt.Sprintf("pal-t-real-%d", time.Now().UnixNano())).Scan(&decoy); err != nil {
 		t.Fatal(err)
 	}
 	defer e.es.superPool.Exec(ctx, `DELETE FROM tenants WHERE id = $1`, decoy) //nolint:errcheck

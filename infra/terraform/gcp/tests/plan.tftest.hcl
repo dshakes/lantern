@@ -19,9 +19,10 @@ mock_provider "kubernetes" {}
 mock_provider "helm" {}
 
 variables {
-  project_id  = "example-project"
-  tenant_id   = "00000000-0000-0000-0000-000000000001"
-  agent_token = "example-token"
+  pal_control_plane_endpoint = "https://cp.pal.example.com"
+  project_id                 = "example-project"
+  tenant_id                  = "00000000-0000-0000-0000-000000000001"
+  agent_token                = "example-token"
 }
 
 run "new_cluster" {

@@ -8,7 +8,7 @@
 > **Status note (2026-07):** the in-guest tool runner named below as the follow-up
 > has **since shipped** (`services/harness/src/tool_runner.rs`). For the
 > **Firecracker** backend `exec_tool` now forwards the call to the harness over a
-> JSON-over-`Exec` channel (magic command `__lantern_tool_call__`, port 50056) and
+> JSON-over-`Exec` channel (magic command `__pal_tool_call__`, port 50056) and
 > maps the harness result: `ok:true` → `TOOL_STATUS_OK` + result, `ok:false` →
 > `TOOL_STATUS_ERROR`, harness unreachable → `TOOL_STATUS_UNAVAILABLE`. Built-in
 > tools today are `shell_exec` and `http_fetch` (the latter routed through the
@@ -21,7 +21,7 @@ The workflow engine executes `tool_call` steps (`services/workflow-engine/intern
 Architectural invariant #5 requires every tool to run inside a microVM, so the
 engine must dispatch tool calls to the runtime, not run them in-process.
 
-The `lantern.v1.RuntimeManager` service exposed `Spawn / Stop / Logs / Exec /
+The `pal.v1.RuntimeManager` service exposed `Spawn / Stop / Logs / Exec /
 Stats / Snapshot` — but no clean way to invoke a *single named tool* against a
 run's workload and get a structured result back. `Exec` is a raw, bidirectional
 streaming shell channel (stdin/stdout/stderr bytes, exit codes); it is the wrong
@@ -35,7 +35,7 @@ RPC that fills the gap.
 ## Decision
 
 Add a unary `ExecTool` RPC to `RuntimeManager` in
-`packages/proto/lantern/v1/runtime.proto`:
+`packages/proto/pal/v1/runtime.proto`:
 
 ```proto
 rpc ExecTool (ExecToolRequest) returns (ExecToolResponse);
@@ -114,7 +114,7 @@ only step 3's placeholder was swapped for the real harness forward.
 (`protoc v6.33.4`, `protoc-gen-go v1.36.11`, `protoc-gen-go-grpc v1.5.1` — the
 exact versions embedded in the existing `runtime.pb.go` header). Only
 `runtime.proto` was regenerated; the diff is confined to
-`gen/go/lantern/v1/runtime.pb.go` and `runtime_grpc.pb.go`. The Rust
+`gen/go/pal/v1/runtime.pb.go` and `runtime_grpc.pb.go`. The Rust
 runtime-manager regenerates from the same `.proto` via `build.rs` (tonic-prost)
 at compile time.
 
@@ -152,7 +152,7 @@ sandbox (invariant #5), which is the runtime-manager's job, not the router's.
 
 ## References
 
-- [`packages/proto/lantern/v1/runtime.proto`](../../packages/proto/lantern/v1/runtime.proto) — `ExecTool`, `ExecToolRequest`, `ExecToolResponse`, `ToolStatus`
+- [`packages/proto/pal/v1/runtime.proto`](../../packages/proto/pal/v1/runtime.proto) — `ExecTool`, `ExecToolRequest`, `ExecToolResponse`, `ToolStatus`
 - [`services/workflow-engine/internal/engine/step_executor.go`](../../services/workflow-engine/internal/engine/step_executor.go) — `executeToolCall`
 - [`services/runtime-manager/src/service.rs`](../../services/runtime-manager/src/service.rs) — `exec_tool` handler
 - [`docs/adr/0014-control-plane-model-router-cutover.md`](0014-control-plane-model-router-cutover.md) — the model-router client-injection pattern this mirrors

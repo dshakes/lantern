@@ -13,14 +13,14 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
-// AgentService implements lanternv1.AgentServiceServer.
+// AgentService implements palv1.AgentServiceServer.
 type AgentService struct {
-	lanternv1.UnimplementedAgentServiceServer
+	palv1.UnimplementedAgentServiceServer
 	srv *server.Server
 }
 
@@ -43,10 +43,10 @@ func setRLSTenantID(ctx context.Context, tx pgx.Tx, tenantID string) error {
 
 // CreateAgent inserts a new agent row and returns the Agent proto.
 //
-// Uses TenantPool() — the RLS-enforcing pool when PAL_RLS_ENFORCE=1 (lantern_app
+// Uses TenantPool() — the RLS-enforcing pool when PAL_RLS_ENFORCE=1 (pal_app
 // role, subject to the tenant_isolation_agents policy); otherwise Pool (no change).
 // The WHERE tenant_id = $1 clause is the primary correctness guard; RLS is defence-in-depth.
-func (s *AgentService) CreateAgent(ctx context.Context, req *lanternv1.CreateAgentRequest) (*lanternv1.Agent, error) {
+func (s *AgentService) CreateAgent(ctx context.Context, req *palv1.CreateAgentRequest) (*palv1.Agent, error) {
 	tenantID, err := middleware.MustTenantID(ctx)
 	if err != nil {
 		return nil, err
@@ -64,7 +64,7 @@ func (s *AgentService) CreateAgent(ctx context.Context, req *lanternv1.CreateAge
 		return nil, status.Errorf(codes.Internal, "failed to marshal labels: %v", err)
 	}
 
-	// TenantPool: routes to lantern_app (non-superuser, RLS-enforced) when
+	// TenantPool: routes to pal_app (non-superuser, RLS-enforced) when
 	// PAL_RLS_ENFORCE=1, otherwise aliases to Pool (zero behaviour change).
 	tx, err := s.srv.TenantPool().Begin(ctx)
 	if err != nil {
@@ -104,7 +104,7 @@ func (s *AgentService) CreateAgent(ctx context.Context, req *lanternv1.CreateAge
 		zap.String("name", req.GetName()),
 	)
 
-	return &lanternv1.Agent{
+	return &palv1.Agent{
 		Id:          id,
 		TenantId:    tenantID,
 		Name:        req.GetName(),
@@ -118,7 +118,7 @@ func (s *AgentService) CreateAgent(ctx context.Context, req *lanternv1.CreateAge
 //
 // Uses TenantPool() — the RLS-enforcing pool when PAL_RLS_ENFORCE=1;
 // otherwise Pool (zero behaviour change).
-func (s *AgentService) GetAgent(ctx context.Context, req *lanternv1.GetAgentRequest) (*lanternv1.Agent, error) {
+func (s *AgentService) GetAgent(ctx context.Context, req *palv1.GetAgentRequest) (*palv1.Agent, error) {
 	tenantID, err := middleware.MustTenantID(ctx)
 	if err != nil {
 		return nil, err
@@ -128,7 +128,7 @@ func (s *AgentService) GetAgent(ctx context.Context, req *lanternv1.GetAgentRequ
 		return nil, status.Error(codes.InvalidArgument, "name is required")
 	}
 
-	// TenantPool: routes to lantern_app (non-superuser, RLS-enforced) when
+	// TenantPool: routes to pal_app (non-superuser, RLS-enforced) when
 	// PAL_RLS_ENFORCE=1, otherwise aliases to Pool (zero behaviour change).
 	tx, err := s.srv.TenantPool().Begin(ctx)
 	if err != nil {
@@ -163,7 +163,7 @@ func (s *AgentService) GetAgent(ctx context.Context, req *lanternv1.GetAgentRequ
 		return nil, status.Errorf(codes.Internal, "query failed: %v", err)
 	}
 
-	agent := &lanternv1.Agent{
+	agent := &palv1.Agent{
 		Id:        id,
 		TenantId:  tenantID,
 		Name:      req.GetName(),
@@ -196,7 +196,7 @@ func (s *AgentService) GetAgent(ctx context.Context, req *lanternv1.GetAgentRequ
 //
 // Uses TenantPool() — the RLS-enforcing pool when PAL_RLS_ENFORCE=1;
 // otherwise Pool (zero behaviour change).
-func (s *AgentService) ListAgents(ctx context.Context, req *lanternv1.ListAgentsRequest) (*lanternv1.ListAgentsResponse, error) {
+func (s *AgentService) ListAgents(ctx context.Context, req *palv1.ListAgentsRequest) (*palv1.ListAgentsResponse, error) {
 	tenantID, err := middleware.MustTenantID(ctx)
 	if err != nil {
 		return nil, err
@@ -207,7 +207,7 @@ func (s *AgentService) ListAgents(ctx context.Context, req *lanternv1.ListAgents
 		pageSize = req.GetPageSize()
 	}
 
-	// TenantPool: routes to lantern_app (non-superuser, RLS-enforced) when
+	// TenantPool: routes to pal_app (non-superuser, RLS-enforced) when
 	// PAL_RLS_ENFORCE=1, otherwise aliases to Pool (zero behaviour change).
 	tx, err := s.srv.TenantPool().Begin(ctx)
 	if err != nil {
@@ -266,7 +266,7 @@ func (s *AgentService) ListAgents(ctx context.Context, req *lanternv1.ListAgents
 	}
 	defer rows.Close()
 
-	var agents []*lanternv1.Agent
+	var agents []*palv1.Agent
 	for rows.Next() {
 		var (
 			id               string
@@ -281,7 +281,7 @@ func (s *AgentService) ListAgents(ctx context.Context, req *lanternv1.ListAgents
 			return nil, status.Errorf(codes.Internal, "scan failed: %v", err)
 		}
 
-		agent := &lanternv1.Agent{
+		agent := &palv1.Agent{
 			Id:        id,
 			TenantId:  tenantID,
 			Name:      name,
@@ -308,7 +308,7 @@ func (s *AgentService) ListAgents(ctx context.Context, req *lanternv1.ListAgents
 		return nil, status.Errorf(codes.Internal, "row iteration failed: %v", err)
 	}
 
-	resp := &lanternv1.ListAgentsResponse{}
+	resp := &palv1.ListAgentsResponse{}
 
 	// If we got more than pageSize, there's a next page.
 	if int32(len(agents)) > pageSize {
@@ -335,7 +335,7 @@ func (s *AgentService) ListAgents(ctx context.Context, req *lanternv1.ListAgents
 //
 // Uses TenantPool() — the RLS-enforcing pool when PAL_RLS_ENFORCE=1;
 // otherwise Pool (zero behaviour change).
-func (s *AgentService) DeleteAgent(ctx context.Context, req *lanternv1.DeleteAgentRequest) (*lanternv1.DeleteAgentResponse, error) {
+func (s *AgentService) DeleteAgent(ctx context.Context, req *palv1.DeleteAgentRequest) (*palv1.DeleteAgentResponse, error) {
 	tenantID, err := middleware.MustTenantID(ctx)
 	if err != nil {
 		return nil, err
@@ -345,7 +345,7 @@ func (s *AgentService) DeleteAgent(ctx context.Context, req *lanternv1.DeleteAge
 		return nil, status.Error(codes.InvalidArgument, "name is required")
 	}
 
-	// TenantPool: routes to lantern_app (non-superuser, RLS-enforced) when
+	// TenantPool: routes to pal_app (non-superuser, RLS-enforced) when
 	// PAL_RLS_ENFORCE=1, otherwise aliases to Pool (zero behaviour change).
 	tx, err := s.srv.TenantPool().Begin(ctx)
 	if err != nil {
@@ -377,30 +377,30 @@ func (s *AgentService) DeleteAgent(ctx context.Context, req *lanternv1.DeleteAge
 		zap.String("name", req.GetName()),
 	)
 
-	return &lanternv1.DeleteAgentResponse{}, nil
+	return &palv1.DeleteAgentResponse{}, nil
 }
 
 // UpdateAgent is not yet implemented for the spike.
-func (s *AgentService) UpdateAgent(ctx context.Context, req *lanternv1.UpdateAgentRequest) (*lanternv1.Agent, error) {
+func (s *AgentService) UpdateAgent(ctx context.Context, req *palv1.UpdateAgentRequest) (*palv1.Agent, error) {
 	return nil, status.Error(codes.Unimplemented, "UpdateAgent not yet implemented")
 }
 
 // CreateAgentVersion is not yet implemented for the spike.
-func (s *AgentService) CreateAgentVersion(ctx context.Context, req *lanternv1.CreateAgentVersionRequest) (*lanternv1.AgentVersion, error) {
+func (s *AgentService) CreateAgentVersion(ctx context.Context, req *palv1.CreateAgentVersionRequest) (*palv1.AgentVersion, error) {
 	return nil, status.Error(codes.Unimplemented, "CreateAgentVersion not yet implemented")
 }
 
 // GetAgentVersion is not yet implemented for the spike.
-func (s *AgentService) GetAgentVersion(ctx context.Context, req *lanternv1.GetAgentVersionRequest) (*lanternv1.AgentVersion, error) {
+func (s *AgentService) GetAgentVersion(ctx context.Context, req *palv1.GetAgentVersionRequest) (*palv1.AgentVersion, error) {
 	return nil, status.Error(codes.Unimplemented, "GetAgentVersion not yet implemented")
 }
 
 // ListAgentVersions is not yet implemented for the spike.
-func (s *AgentService) ListAgentVersions(ctx context.Context, req *lanternv1.ListAgentVersionsRequest) (*lanternv1.ListAgentVersionsResponse, error) {
+func (s *AgentService) ListAgentVersions(ctx context.Context, req *palv1.ListAgentVersionsRequest) (*palv1.ListAgentVersionsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "ListAgentVersions not yet implemented")
 }
 
 // PromoteAgentVersion is not yet implemented for the spike.
-func (s *AgentService) PromoteAgentVersion(ctx context.Context, req *lanternv1.PromoteAgentVersionRequest) (*lanternv1.Agent, error) {
+func (s *AgentService) PromoteAgentVersion(ctx context.Context, req *palv1.PromoteAgentVersionRequest) (*palv1.Agent, error) {
 	return nil, status.Error(codes.Unimplemented, "PromoteAgentVersion not yet implemented")
 }

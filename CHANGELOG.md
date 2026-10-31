@@ -11,7 +11,7 @@ This project is pre-1.0; there are no stable release branches yet.
 
 ### Changed
 
-- Product renamed from Lantern to **PAL** (the Personal Agentic Layer; ADR 0032). Docs, dashboard copy, widget and CLI help text now say PAL. Identifiers (`LANTERN_*` env vars, the `lantern` CLI, package names, `lantern.v1`, the GitHub repo URL) are unchanged; env vars also accept `PAL_*`.
+- Product renamed to **PAL** (the Personal Agentic Layer; ADR 0032).
 
 ### Added
 - **Host-asserted software measurement (ADR 0031, ACE A5)** — at every Firecracker
@@ -21,7 +21,7 @@ This project is pre-1.0; there are no stable release branches yet.
   secrets (declared-secret refs, exec token, injection specs, values of
   credential-named env keys) and minus per-VM identity (vm/run id, IPs, per-VM cert
   paths/CA, agent instance id + token, trace parent, the HashMap-ordered
-  `lantern.env.*` cmdline copy). Two VMs from the same images + spec measure
+  `pal.env.*` cmdline copy). Two VMs from the same images + spec measure
   identically. A **restore / resume / fork inherits** its source's spawn
   measurement (recorded in the snapshot metadata) instead of re-measuring, and
   re-checks it against the current references; an unmeasured (legacy) snapshot is
@@ -34,8 +34,8 @@ This project is pre-1.0; there are no stable release branches yet.
   - Included in signed run receipts as `softwareMeasurement` (additive; omitempty
     keeps existing receipts byte-identical and their signatures valid).
   - Returned in `VmHandle.software_measurement` (proto field 5).
-  Gate control: `LANTERN_MEASUREMENT_GATE` (`off` | `warn` [default] | `enforce`);
-  references: `LANTERN_REFERENCE_MEASUREMENTS` (comma-separated 64-hex). An unknown
+  Gate control: `PAL_MEASUREMENT_GATE` (`off` | `warn` [default] | `enforce`);
+  references: `PAL_REFERENCE_MEASUREMENTS` (comma-separated 64-hex). An unknown
   gate value or malformed reference refuses startup, as does `enforce` with no
   references in prod. Image hashes are streamed and cached per file identity.
   **HOST-ASSERTED only** — proves what the host recorded it launched, NOT what ran
@@ -47,25 +47,25 @@ This project is pre-1.0; there are no stable release branches yet.
   metadata; signing is a follow-up). Live check: `make lima-measurement-e2e`.
 - **Breaking (Firecracker guests): caller env is no longer sent on the kernel
   cmdline.** `spawn.json` is the only caller-env channel; the cmdline carries just
-  the manager-owned `LANTERN_ENV` / `LANTERN_MANAGER_ADDR` / `LANTERN_WORKLOAD_UID`
+  the manager-owned `PAL_ENV` / `PAL_MANAGER_ADDR` / `PAL_WORKLOAD_UID`
   (values whitespace-sanitized). The guest echoes its cmdline to the console the
   manager logs, so caller values there (an instance token, a `DATABASE_URL`
   password) leaked into logs. Harness builds older than `spawn.json` support are no
-  longer supported for caller env; `lantern.env.RUST_LOG` from a caller no longer
+  longer supported for caller env; `pal.env.RUST_LOG` from a caller no longer
   reaches the harness.
 - **Egress DLP (ADR 0030)** — per-tenant data-loss-prevention policy applied by the egress broker to TLS-terminated and plain-HTTP egress. Detectors: Luhn-validated card numbers, secret-key prefixes (AWS/GitHub/Slack/PEM), email (threshold-based), phone (threshold-based), custom regex. Modes: `off | audit | block`. Fails closed: unknown detector/mode or bad regex fails the spawn (regex also 400 at write), a block rule on a node without a broker refuses the spawn, ambiguous body framing (CL+TE, conflicting CL, bad chunks) is a 400, and in block mode a body that cannot be fully inspected up to the cap is a 403. Chunked bodies are de-chunked before scanning; `Expect: 100-continue` is answered by the broker. The policy survives pause/resume/fork; DLP VMs skip the warm pool. Not inspected (documented): opaque CONNECT tunnels, bytes past `max_inspect_bytes` (64 KiB, ≤1 MiB), keep-alive follow-on requests. Audit action `dlp` carries rule id, detector, host, byte offset/count, decision — never the matched value (invariant #10). Policy stored in `dlp_policies` (RLS-enforced, migration 0028). REST CRUD at `GET/PUT /v1/egress/dlp-policy` + `POST/DELETE /v1/egress/dlp-policy/rules`. Compiled into the broker at VM spawn via `AgentSpec.dlp_policy` (proto field 19). e2e: `broker-e2e.sh` DLP block cases (card number, custom_regex).
-- **Prod enforces API-key scopes** — `values-prod.yaml` (and staging) set `LANTERN_AUTHZ_ENFORCE=1`; a first-class `controlPlane.env.LANTERN_AUTHZ_ENFORCE` chart value, a boot log line stating the mode, a `ControlPlane403RateElevated` alert, a chart render test (`infra/helm/lantern/tests/authz-enforce.sh`, run in CI), and the soak/rollback/re-scoping steps in `docs/runbooks/ga-staged-rollout.md`. JWT sessions and unscoped legacy keys are unaffected.
+- **Prod enforces API-key scopes** — `values-prod.yaml` (and staging) set `PAL_AUTHZ_ENFORCE=1`; a first-class `controlPlane.env.PAL_AUTHZ_ENFORCE` chart value, a boot log line stating the mode, a `ControlPlane403RateElevated` alert, a chart render test (`infra/helm/pal/tests/authz-enforce.sh`, run in CI), and the soak/rollback/re-scoping steps in `docs/runbooks/ga-staged-rollout.md`. JWT sessions and unscoped legacy keys are unaffected.
 - Docs site: Cmd/Ctrl-K search over a build-time index (no external service), per-page titles/descriptions/Open Graph tags,
   `sitemap.xml` + `robots.txt`, a top bar (landing link, search, GitHub, theme) and an "Edit this page on GitHub" link.
-- **CI: fixture-tier e2e lane** — `.github/workflows/sdlc-e2e.yml` (jobs `examples`, `browser`, `deploy-cli`) runs the webhook-example suites, Playwright and the `lantern deploy` e2e on every PR and master push with no provider key; skip = fail. Docs truth pass: `e2e/README.md` test tiers, `docs/GA-READINESS.md`, `docs/LAUNCH-CHECKLIST.md` re-verified against code.
-- **Kiosk demo mode** (ADR 0029, #342) — `make demo` / `lantern demo` start the stack with Docker only and no API
+- **CI: fixture-tier e2e lane** — `.github/workflows/sdlc-e2e.yml` (jobs `examples`, `browser`, `deploy-cli`) runs the webhook-example suites, Playwright and the `pal deploy` e2e on every PR and master push with no provider key; skip = fail. Docs truth pass: `e2e/README.md` test tiers, `docs/GA-READINESS.md`, `docs/LAUNCH-CHECKLIST.md` re-verified against code.
+- **Kiosk demo mode** (ADR 0029, #342) — `make demo` / `pal demo` start the stack with Docker only and no API
   key: each visitor gets an ephemeral, auto-deleted tenant (30 minutes) with sample agents, answers come from the
-  `llm-replay` fixture server, RLS and scope enforcement are on. `lantern demo --down` / `make demo-down` delete
+  `llm-replay` fixture server, RLS and scope enforcement are on. `pal demo --down` / `make demo-down` delete
   all demo data. Docs: `/demo`.
 - **Playwright dashboard tier** (#343) — headless-Chromium specs for auth, onboarding, settings and theme against a
   private throwaway stack (own Postgres DB, Redis index, log mailer, fixture LLM). Run `npm run test:e2e` from
   `apps/web` (`apps/web/e2e/README.md`). Docs: `/testing`.
-- Docs: `lantern demo` and `lantern hooks` in the CLI reference.
+- Docs: `pal demo` and `pal hooks` in the CLI reference.
 - **Data analyst sandbox example (X5)** — `examples/data-analyst` (pandas image, sandbox
   spec, explainer agent) and `e2e/examples/data_analyst_test.go`: CSV in, exec analysis, JSON +
   PNG out, egress denied, fixture-LLM explanation. Docker tier runs in CI; the files API and
@@ -89,7 +89,7 @@ This project is pre-1.0; there are no stable release branches yet.
 - PagerDuty `add_note` connector action; `POST /v1/runs/{id}/takeover/{id}/deny` (approval node fails the step).
 
 ### Fixed
-- **Fork/restore no longer byte-copies the VM disk on reflink filesystems.** Since disk-consistent snapshots, every fork and restore staged the disk with a full copy (O(n) in disk size). The manager now clones it copy-on-write (`FICLONE`) on XFS/btrfs, falls back to a full copy with a `disk_staging="full_copy"` warning on ext4/tmpfs, and can be made strict with `LANTERN_REQUIRE_REFLINK=1`.
+- **Fork/restore no longer byte-copies the VM disk on reflink filesystems.** Since disk-consistent snapshots, every fork and restore staged the disk with a full copy (O(n) in disk size). The manager now clones it copy-on-write (`FICLONE`) on XFS/btrfs, falls back to a full copy with a `disk_staging="full_copy"` warning on ext4/tmpfs, and can be made strict with `PAL_REQUIRE_REFLINK=1`.
 - **Receipt verification now detects an edited payload.** With a stored receipt, `POST /v1/runs/receipts/verify` compared only the signature string, so a receipt whose `costUsd`/`status` had been changed but that carried the original signature verified as `valid: true`. It now also requires the payload to match the issued one (canonical compare), which keeps receipts valid across key rotation.
 - Workflow `connector` nodes could not call Sentry or PagerDuty ("dispatch not yet wired").
 - A workflow whose JSON held a backslash (e.g. an escaped quote in a prompt) failed to load and the agent silently ran as a plain LLM call (`::text::bytea`).
@@ -100,15 +100,15 @@ This project is pre-1.0; there are no stable release branches yet.
 
 - Self-service onboarding polish (W2-S): a six-template starter gallery in dashboard onboarding
   (served by `GET /v1/agents/templates`), a verify-email fix path for `403 email_unverified` on run
-  creation, free-tier caps (`LANTERN_FREE_TIER_*`) applied to every new tenant on password and Google
-  sign-up, and the `lantern.onboarding.step.total` counter.
-- **`lantern deploy` is real** (W2-D) — reads `agent.yaml`, creates the agent or
+  creation, free-tier caps (`PAL_FREE_TIER_*`) applied to every new tenant on password and Google
+  sign-up, and the `pal.onboarding.step.total` counter.
+- **`pal deploy` is real** (W2-D) — reads `agent.yaml`, creates the agent or
   updates its prompt/model (`PATCH /v1/agents/{name}`), saves an optional
   `workflow` (`PUT .../workflow`), then `POST /v1/agents/{name}/deploy`. `--json`
   prints the API response, `--dry-run` makes no mutating call. Non-2xx maps to
   exit codes 3 (auth) / 4 (402) / 5 (404) / 6 (5xx). Replaces the simulated
   output. New e2e: `e2e/deploy`. Docs: `/cli#deploy`.
-- **Fixture LLM tier** — `LANTERN_LLM_BASEURL_{OPENAI,ANTHROPIC}` re-points every
+- **Fixture LLM tier** — `PAL_LLM_BASEURL_{OPENAI,ANTHROPIC}` re-points every
   provider call (completions, streaming, tool loop, web_search) at
   `cmd/llm-replay`, a deterministic OpenAI/Anthropic wire-format server with
   scriptable replies and tool calls and realistic token usage, so CI and kiosk
@@ -117,17 +117,17 @@ This project is pre-1.0; there are no stable release branches yet.
   agent; GitHub, Sentry, PagerDuty or any HMAC-SHA256 sender starts a run. The
   signature is the only credential; duplicate deliveries return
   `200 {"duplicate":true}` and start no run. Managed over REST, the TS/Python/Go
-  SDKs, `lantern hooks` and the dashboard (`/agents/[name]/triggers`). Docs:
+  SDKs, `pal hooks` and the dashboard (`/agents/[name]/triggers`). Docs:
   `/triggers`.
-- **Account lifecycle** (ADR 0027, #318) — `LANTERN_SIGNUP_MODE`
+- **Account lifecycle** (ADR 0027, #318) — `PAL_SIGNUP_MODE`
   (`open`/`invite`/`closed`, closed by default in prod), email verification,
   password reset, HMAC invite codes, Turnstile captcha, Redis rate limits on the
   pre-auth routes, owner-only data export (`GET /v1/tenants/{id}/export`) and
-  workspace deletion from Settings. Pluggable mailer (`LANTERN_MAILER` =
+  workspace deletion from Settings. Pluggable mailer (`PAL_MAILER` =
   `log`/`smtp`/`http`). Docs: `/accounts`.
 - **Connector actions** (#316) — Slack `reply_thread`, GitHub `comment_pr`,
   Sentry `get_issue`, Google Calendar `create_event`, and a PagerDuty connector.
-  Recorded test mode: `LANTERN_CONNECTOR_BASEURL_*` points a connector at the
+  Recorded test mode: `PAL_CONNECTOR_BASEURL_*` points a connector at the
   `connector-replay` fixture server; refused in production.
 - **End-to-end kit** (#317) — `make test-e2e` against a live stack with a spend
   policy enforced in code (reserved `e2e-*` agents, hard-fail budget per agent,
@@ -148,17 +148,17 @@ This project is pre-1.0; there are no stable release branches yet.
 - `scripts/db-restore-drill.sh` and `scripts/check-app-grants.sh`; a kind + Calico `helm-install` CI job.
 
 ### Fixed
-- `lantern test` now works against a real API: `POST /v1/runs` answers 201 and runs asynchronously, but the CLI required
+- `pal test` now works against a real API: `POST /v1/runs` answers 201 and runs asynchronously, but the CLI required
   200 and read the output immediately. It now polls `GET /v1/runs/{id}` to a terminal status (`--timeout`, default 2m per
   case); a failed run or a timeout scores as a failed case with its error. `--rehearse` had the same bug and is fixed too.
 - New sign-ups now land on `/onboarding`: the authenticated-redirect effect raced the explicit redirect and sent them
   to `/agents`.
 - Password reset and the other `/auth/*` recovery pages work for logged-out visitors: a 401 from the global
   model-context fetch no longer bounces them off the page.
-- Docs: install steps no longer point at registry packages that do not exist (`@lantern/sdk` is not on npm; the
-  PyPI name `lantern-sdk` belongs to an unrelated project), broken `dshakes.github.io/lantern/<page>/` README links
+- Docs: install steps no longer point at registry packages that do not exist (`@pal/sdk` is not on npm; the
+  PyPI name `pal-sdk` belongs to an unrelated project), broken `dshakes.github.io/pal/<page>/` README links
   now include `/docs/`, and `make dev-infra` is documented as Postgres and Redis only (no MinIO).
-- `@lantern/sdk` built output threw `module is not defined` on import under Node ESM (the runner's
+- `@pal/sdk` built output threw `module is not defined` on import under Node ESM (the runner's
   `require.main === module` check); it now checks `process.argv` only.
 - Workflow `connector` nodes could not call Sentry or PagerDuty ("dispatch not yet wired").
 - A workflow whose JSON held a backslash (e.g. an escaped quote in a prompt) failed to load and the agent silently ran as a plain LLM call (`::text::bytea`).
@@ -194,8 +194,8 @@ This project is pre-1.0; there are no stable release branches yet.
 - `/v1/completions` honours the request's `model` on its failover paths.
 - Helm: the default in-cluster Postgres crash-looped (Bitnami chart on the pgvector image) and the Bitnami
   MinIO images were no longer pullable, so a default `helm install` did not come up.
-- `values-prod.yaml` and `values-staging.yaml` rendered unpullable image references (`/lantern/lantern-gateway:tag`);
-  they now use the published `ghcr.io/dshakes/lantern/<name>` images.
+- `values-prod.yaml` and `values-staging.yaml` rendered unpullable image references (`/pal/pal-gateway:tag`);
+  they now use the published `ghcr.io/dshakes/pal/<name>` images.
 - **Balanced default picks Sonnet** (#326) — `auto`/`balanced` routing picked
   Opus because price was only a capped bonus; price is now a real penalty, so the
   default is Sonnet (GPT-4o when only OpenAI is keyed).
@@ -218,7 +218,7 @@ This project is pre-1.0; there are no stable release branches yet.
   the run, like ai-steps.
 - **Fast restore** (#325) — after resume or fork the runtime-manager holds the
   first exec until the restored harness has re-identified and heartbeated
-  (`LANTERN_HARNESS_READY_TIMEOUT_MS`, default 5 s) instead of the caller
+  (`PAL_HARNESS_READY_TIMEOUT_MS`, default 5 s) instead of the caller
   retrying; first exec after restore p50 2.9 s on nested-virt Lima (was 4.2 s).
 - **Workflow tool nodes execute** (#319) — `tool` nodes dispatch to the sandbox
   runtime or the built-in `web_search` and fail loudly when the runtime is not
@@ -238,25 +238,25 @@ suspend themselves, copy-on-write forks, and the full lifecycle tested on real
 KVM.
 
 ### Added
-- **Host egress broker** (opt-in, `LANTERN_EGRESS_MODE=broker`, Firecracker;
+- **Host egress broker** (opt-in, `PAL_EGRESS_MODE=broker`, Firecracker;
   ADR 0026, #299) — broker-mode VMs get no network device; egress and the
   harness control channel run over vsock to a per-VM broker on the host, which
-  enforces the allowlist and injects credentials from `lantern.secret/...` refs
+  enforces the allowlist and injects credentials from `pal.secret/...` refs
   (`egress[].inject`, exact hostnames only) so the secret never enters the VM.
   HTTPS is terminated only for injected hosts, with a per-VM CA scoped to them.
   Validated live on KVM (`infra/firecracker/broker-e2e.sh`).
 - **Idle auto-suspend + transparent auto-resume** (#296) — `idleTimeoutSecs` on
-  schedule / `lantern run --idle-timeout`; idle VMs are snapshotted and stopped
+  schedule / `pal run --idle-timeout`; idle VMs are snapshotted and stopped
   through the crash-safe pause path (quota slot freed) and resumed on the next
   exec or file request (REST, CLI or SDK).
 - **Shared-memory copy-on-write forks** (#295) — forks hard-link one read-only
   snapshot memory file (`MAP_PRIVATE`); fork cap configurable
-  (`LANTERN_MAX_FORK_COUNT`, default 100, ceiling 1000).
+  (`PAL_MAX_FORK_COUNT`, default 100, ceiling 1000).
 - **Sandbox file API** (#294) — list/read/write files under `/workspace` via
-  REST, TS/Python/Go SDKs and `lantern vm ls|cat|put`.
+  REST, TS/Python/Go SDKs and `pal vm ls|cat|put`.
 - **Agentic onboarding** (#297) — conversational `/onboarding` flow (LLM-designed
   agent spec, real provider check, streamed first run, sandbox try-out,
-  resumable) and interactive `lantern onboard`; `lantern doctor` checks the
+  resumable) and interactive `pal onboard`; `pal doctor` checks the
   sandbox runtime.
 - **Real-KVM lifecycle e2e** (#298) — snapshot → restore → fork ×3 (jailed, with
   an inode check proving shared memory) in Lima and GitHub's KVM runners, with
@@ -283,14 +283,14 @@ KVM.
   (RUSTSEC-2026-0395/0396/0400); h2/quinn-proto/rustls/webpki/zod bumps.
 
 ### Earlier unreleased work
-- **Interactive TTY exec** — `lantern vm exec <vm> -it -- <cmd>` allocates a real
+- **Interactive TTY exec** — `pal vm exec <vm> -it -- <cmd>` allocates a real
   PTY in the guest (harness `openpty` + controlling terminal + winsize) and
   streams it bidirectionally; the CLI enters raw mode (no-op on non-terminal
   stdin). Docker backend sets `Tty: true`. Non-tty exec is byte-identical.
   `ExecRequest` gains `tty`/`term_rows`/`term_cols`/`term`.
 - **Firecracker guest exec** — the in-guest harness now serves its first RPC
   (`RuntimeHarness.Exec`); the manager records each VM's guest address from the
-  heartbeat peer and forwards `lantern vm exec` into firecracker-class VMs over
+  heartbeat peer and forwards `pal vm exec` into firecracker-class VMs over
   that channel (`services/harness/src/exec.rs`, `runtime-manager` service.rs).
 - **Firecracker jailer wrapping** — opt-in via `FIRECRACKER_JAILER_PATH`
   (chroot + drop to non-root `FIRECRACKER_JAILER_UID`/`GID`, default 123:100;
@@ -313,7 +313,7 @@ KVM.
   runtime-manager and scheduler containers.
 - Runtime handler tests in the control-plane covering the `/v1/runtime/*`
   endpoint surface.
-- `examples/headless-agents/` demo images baked with `lantern-harness` as PID 1
+- `examples/headless-agents/` demo images baked with `pal-harness` as PID 1
   so demos work without a separately-deployed harness image.
 - `services/runtime-manager/README.md` and `packages/sdk-python/README.md` (new).
 
@@ -329,14 +329,14 @@ KVM.
 - **Exec + Stats for docker and kata**: both gRPC methods are now backed for the
   Docker and Kata backends.
 - **SnapshotStore** (`src/snapshot_store.rs`): filesystem-backed snapshot
-  persistence under `SNAPSHOT_DIR` (default `/var/lib/lantern/snapshots`) with
+  persistence under `SNAPSHOT_DIR` (default `/var/lib/pal/snapshots`) with
   ADR 0007 Tier-2 retention (keep last 3 per `(agent_version_id, vm_id)`, delete
   after 7 days). SHA-256 computed over sorted artifact bytes.
 - **RelaySecretResolver** (`src/secret_resolver.rs`): production secret resolver
   calling `POST /v1/runtime/secrets/resolve` on the control-plane (ADR 0008).
-  Activated when both `LANTERN_CONTROL_PLANE_URL` and `LANTERN_RUNTIME_SECRET_TOKEN`
+  Activated when both `PAL_CONTROL_PLANE_URL` and `PAL_RUNTIME_SECRET_TOKEN`
   are set. Fail-closed: unset env → `EnvSecretResolver` (dev/CI default).
-- **`RuntimeManager.Snapshot` RPC** added to `packages/proto/lantern/v1/runtime.proto`
+- **`RuntimeManager.Snapshot` RPC** added to `packages/proto/pal/v1/runtime.proto`
   and hand-stub Go bindings in `gen/go/`.
 
 ### harness
@@ -361,7 +361,7 @@ KVM.
 ### control-plane
 - **`POST /v1/runtime/secrets/resolve`** (`internal/handlers/runtime_secrets.go`):
   service-to-service endpoint for the runtime-manager's `RelaySecretResolver`.
-  Authenticates via `X-Lantern-Runtime-Token` / `LANTERN_RUNTIME_SECRET_TOKEN`;
+  Authenticates via `X-Pal-Runtime-Token` / `PAL_RUNTIME_SECRET_TOKEN`;
   returns 403 when the token is unset (fail-closed). See ADR 0008.
 - **`docs/adr/0008-runtime-secret-relay.md`**: new ADR documenting the relay
   endpoint design and security properties.
@@ -483,10 +483,10 @@ fail-closed pending Linux/KVM integration CI.
 
 ### Module 5 — Developer Experience
 
-- TypeScript SDK (`@lantern/sdk`): HTTP client, in-process runtime, connectors.
-- Python SDK (`lantern-sdk` 0.1.0): HTTP client + agent/step/tool decorator layer.
+- TypeScript SDK (`@pal/sdk`): HTTP client, in-process runtime, connectors.
+- Python SDK (`pal-sdk` 0.1.0): HTTP client + agent/step/tool decorator layer.
 - Go SDK (stub).
-- `lantern` CLI (Go/Cobra): `dev`, `init`, `run`, `agents`, `runs`, `test`,
+- `pal` CLI (Go/Cobra): `dev`, `init`, `run`, `agents`, `runs`, `test`,
   `deploy`, `logs`, `login`.
 - Visual workflow editor that saves and executes graphs.
 - MCP server registry + per-agent attachments.
@@ -496,12 +496,12 @@ fail-closed pending Linux/KVM integration CI.
 
 ### Infrastructure
 
-- `make dev` (full Docker Compose stack), `lantern dev` (hot-reload daily
+- `make dev` (full Docker Compose stack), `pal dev` (hot-reload daily
   driver), dev credentials seeded on first boot.
 - Helm chart (`infra/helm/`), Terraform stubs (`infra/terraform/`).
 - Four headless-agent demo examples (`examples/headless-agents/01–04`).
 
 ---
 
-[Unreleased]: https://github.com/dshakes/lantern/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/dshakes/lantern/releases/tag/v0.1.0
+[Unreleased]: https://github.com/dshakes/pal/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/dshakes/pal/releases/tag/v0.1.0

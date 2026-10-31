@@ -117,7 +117,7 @@ func isHealthCheck(method string) bool {
 // spoofable trust source. The service enforces tenant isolation internally via
 // JWT claims.
 func isDataPlaneService(method string) bool {
-	return strings.HasPrefix(method, "/lantern.v1.DataPlaneService/")
+	return strings.HasPrefix(method, "/pal.v1.DataPlaneService/")
 }
 
 // tenantStream wraps a grpc.ServerStream to override Context().

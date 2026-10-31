@@ -27,7 +27,7 @@ async function signedIn(page: Page) {
 }
 
 async function addDummyProvider(page: Page) {
-  // llm-replay stands in for the provider (LANTERN_LLM_BASEURL_OPENAI), so a
+  // llm-replay stands in for the provider (PAL_LLM_BASEURL_OPENAI), so a
   // dummy key routes every control-plane completion to the fixture rules.
   const status = await page.evaluate(async (api) => {
     const token = localStorage.getItem("pal_token");

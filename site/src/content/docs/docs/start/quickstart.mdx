@@ -30,7 +30,7 @@ To look around with no key, use [Try it: the demo](/docs/start/demo/).
 
 ## In the dashboard
 
-Open `http://localhost:3001/onboarding` and sign in with the seeded dev account (`admin@lantern.dev` / `lantern`; the domain is a legacy name). A conversation sits on the right and a progress rail on the left.
+Open `http://localhost:3001/onboarding` and sign in with the seeded dev account (`admin@pal.local` / `pal`). A conversation sits on the right and a progress rail on the left.
 
 Progress is stored on the server, so a reload or another browser resumes where you left off. **Start over** clears it. When a step fails, the page names the cause and offers one fix:
 
@@ -60,7 +60,7 @@ pal onboard --yes \
   --description "Summarize support tickets into one-line triage notes"
 ```
 
-Other `pal` commands reuse the credentials `pal onboard` saves. To sign in separately: `pal login --email admin@lantern.dev --password lantern`.
+Other `pal` commands reuse the credentials `pal onboard` saves. To sign in separately: `pal login --email admin@pal.local --password pal`.
 
 ## The same flow over REST
 
@@ -69,7 +69,7 @@ Both paths use public endpoints you can script.
 ```bash
 export PAL_TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"admin@lantern.dev","password":"lantern"}' | jq -r .token)
+  -d '{"email":"admin@pal.local","password":"pal"}' | jq -r .token)
 H="Authorization: Bearer $PAL_TOKEN"; J="Content-Type: application/json"
 
 # 1. Provider key, then a real test call

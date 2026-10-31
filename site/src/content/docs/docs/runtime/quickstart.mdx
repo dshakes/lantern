@@ -29,14 +29,14 @@ Docker on the host is enough for the `trusted` and `standard` classes. Export an
 An `agent.yaml` declares the image, the isolation class, limits and any egress or secrets. This is `examples/headless-agents/01-hello/agent.yaml`: a first-party script that writes to stdout, so it uses `trusted` and no network.
 
 ```yaml
-apiVersion: lantern.dev/v1
+apiVersion: pal.dev/v1
 kind: AgentSpec
 metadata:
   name: hello
   labels:
     owner: pal-team
 spec:
-  image_digest: lantern/demos/hello@sha256:0000000000000000000000000000000000000000000000000000000000000001
+  image_digest: pal/demos/hello@sha256:0000000000000000000000000000000000000000000000000000000000000001
   isolation: trusted        # first-party, no package loading
   limits:
     vcpu: "100m"            # 0.1 vCPU
@@ -49,7 +49,7 @@ spec:
   idempotent: true
 ```
 
-The image is pinned by digest, not a tag, so the runtime runs exactly the bytes you named. `lantern.dev/v1` and the `lantern/demos/` image name are identifiers the schema and the example still use.
+The image is pinned by digest, not a tag, so the runtime runs exactly the bytes you named.
 
 ## 2. Pick the isolation class
 

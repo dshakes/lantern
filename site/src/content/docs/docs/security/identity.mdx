@@ -31,7 +31,7 @@ With the Ed25519 seed set, the public key is published, with no auth, at:
 GET /.well-known/pal-agent-identity
 ```
 
-The older `/.well-known/lantern-agent-identity` path also answers. Without the seed the endpoint reports only `HS256` and never emits the secret.
+Without the seed the endpoint reports only `HS256` and never emits the secret.
 
 <Aside type="caution">
 The identity is a token signed by the control plane's key, not a keypair held inside the VM. Set the Ed25519 seed in any real deployment, or a verifier has no public key to check against.
@@ -44,14 +44,14 @@ In a spec you reference a secret, you do not embed it. The raw value never appea
 ```yaml
 secrets:
   - env_name: USER_AGENT
-    secret_uri: lantern.secret://__tenant__/key/scraper-user-agent
+    secret_uri: pal.secret://__tenant__/key/scraper-user-agent
 ```
 
-The relay resolves refs of the form `pal.secret/llm/<provider>`, `pal.secret/connector/<install_id>/<config_key>` and `pal.secret/connector/<install_id>/oauth`. The older `lantern.secret/` prefix is still accepted, because refs are stored in user data. An unknown ref and a ref that belongs to another tenant return the same `not found`, so the endpoint is not an oracle for what exists.
+The relay resolves refs of the form `pal.secret/llm/<provider>`, `pal.secret/connector/<install_id>/<config_key>` and `pal.secret/connector/<install_id>/oauth`. An unknown ref and a ref that belongs to another tenant return the same `not found`, so the endpoint is not an oracle for what exists.
 
 ## Vending
 
-The workload does not ship with secrets. It requests them at runtime from the harness's socket, `/run/lantern/secrets.sock`. The harness authenticates every peer with `SO_PEERCRED` and vends only to the workload uid the manager injects as `PAL_WORKLOAD_UID` (and to its own uid). Vended secrets are cached with a 300-second TTL. An unauthorized attempt emits a `secret_access_denied` audit event. If `PAL_WORKLOAD_UID` is unset, the harness warns once and allows the request, which is the dev path. In production the manager must inject it, and the harness refuses to start without a workload identity.
+The workload does not ship with secrets. It requests them at runtime from the harness's socket, `/run/pal/secrets.sock`. The harness authenticates every peer with `SO_PEERCRED` and vends only to the workload uid the manager injects as `PAL_WORKLOAD_UID` (and to its own uid). Vended secrets are cached with a 300-second TTL. An unauthorized attempt emits a `secret_access_denied` audit event. If `PAL_WORKLOAD_UID` is unset, the harness warns once and allows the request, which is the dev path. In production the manager must inject it, and the harness refuses to start without a workload identity.
 
 The harness asks the manager, and the manager asks the control plane over `POST /v1/runtime/secrets/resolve`:
 

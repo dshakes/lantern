@@ -52,9 +52,9 @@ already attaches to every Firecracker VM (`certs.img`, mode 0600 inside):
   trusts would defeat the check.
 - JSON is the transport, so values arrive byte-exact. `version` lets the
   schema evolve: the harness rejects versions it does not know.
-- The kernel cmdline (`lantern.env.*`, `lantern.secret.*`) is **kept** for
+- The kernel cmdline (`pal.env.*`, `pal.secret.*`) is **kept** for
   backward compatibility with harness builds that predate the file, and the
-  manager now also emits `lantern.env.PAL_WORKLOAD_UID`. When the harness
+  manager now also emits `pal.env.PAL_WORKLOAD_UID`. When the harness
   finds `spawn.json`, it uses the file and ignores the cmdline env.
 
 ### 2. Manager per-call authz
@@ -62,11 +62,11 @@ already attaches to every Firecracker VM (`certs.img`, mode 0600 inside):
 A tonic interceptor on the `RuntimeManager` service:
 
 - **VM certs are refused.** Per-VM certs now carry a marker
-  (`OU=lantern-vm`). A peer that presents one gets `PERMISSION_DENIED` on every
+  (`OU=pal-vm`). A peer that presents one gets `PERMISSION_DENIED` on every
   `RuntimeManager` method, even if it also has the token. Guests may reach only
   `RuntimeHarness`. Those methods keep their existing per-message binding (cert
   CN/SAN must equal the request's `vm_id`; Heartbeat/VendSecret/Report).
-- **A service token is required.** Callers must send `x-lantern-service-token`
+- **A service token is required.** Callers must send `x-pal-service-token`
   equal to `PAL_GRPC_SERVICE_TOKEN`, compared in constant time. This is the
   same token and header the control-plane, workflow-engine and scheduler use
   (invariant #7).
@@ -135,7 +135,7 @@ by the UUID missed after the rekey.
 
 **Decision.** `Spawn` copies `SpawnRequest.handle.vm_id` into the internal
 `ScheduleRequest.vm_id`. Firecracker boots under that id, so the cert CN/SAN,
-the `lantern.vm_id` boot-arg, `spawn.json.vm_id`, the `Handle.id` and the
+the `pal.vm_id` boot-arg, `spawn.json.vm_id`, the `Handle.id` and the
 registry key are all the same value. The id is validated before it names host
 paths: 1-64 chars of `[A-Za-z0-9-]` with at least 12 hex digits. The
 scheduler's `vm-<uuid>` passes. The TAP name is `fc-` + the first 8 **hex
@@ -178,7 +178,7 @@ and the cert drive. Resuming it as-is would run N forks as one VM.
    - clears the secret cache and adopts the new declared secrets and egress
      rules.
    - re-addresses eth0 (SIOCSIFADDR/NETMASK, default route) and re-pins
-     `manager.lantern.internal` in `/etc/hosts`.
+     `manager.pal.internal` in `/etc/hosts`.
    - swaps the shared `vm_id` and bumps an identity generation, which tears
      down the Heartbeat and Report streams so they reconnect under the new
      cert.
@@ -215,16 +215,16 @@ could never authenticate.
 ### Harness configuration is manager-owned
 
 Caller env reaches the harness's own process environment (spawn.json `env`,
-`lantern.env.*` boot-args, container env). Before this change a caller could
+`pal.env.*` boot-args, container env). Before this change a caller could
 therefore set harness config, for example `PAL_ENV=dev` to turn off every
 prod fail-closed guard, or `PAL_EGRESS_FAIL_CLOSED` / `PAL_NO_PROXY`.
 
 - **Manager** (`schedule` and `restore`, the single choke point for every
-  backend): drops each caller `LANTERN_*` key except `CALLER_LANTERN_KEYS`
+  backend): drops each caller `PAL_*` key except `CALLER_PAL_KEYS`
   (`PAL_AGENT_INSTANCE_ID`, `PAL_AGENT_INSTANCE_TOKEN`,
   `PAL_TRACE_PARENT`, `PAL_RESUME`). It logs the dropped names, never
   values, then stamps its own `PAL_ENV`, which it also writes as the typed
-  `spawn.json` field `lantern_env`. The order is sanitize first, then inject.
+  `spawn.json` field `pal_env`. The order is sanitize first, then inject.
   After sanitizing, the manager also stamps the workload identity from the
   request's authenticated typed fields: `PAL_TENANT_ID` from `tenant_id`,
   and `PAL_AGENT_VERSION_ID` from `agent_version_id` (schedule only;
@@ -232,16 +232,16 @@ prod fail-closed guard, or `PAL_EGRESS_FAIL_CLOSED` / `PAL_NO_PROXY`.
   the real one is never stripped. Anything the manager adds after the choke
   point (trace parent, typed spawn.json fields) is likewise added after the
   sanitizer runs.
-- **Harness**: ignores `LANTERN_*` keys in the `spawn.json` `env` map unless
-  they are allowlisted (`CALLER_LANTERN_KEYS` plus the manager-stamped identity
+- **Harness**: ignores `PAL_*` keys in the `spawn.json` `env` map unless
+  they are allowlisted (`CALLER_PAL_KEYS` plus the manager-stamped identity
   keys `PAL_TENANT_ID` / `PAL_AGENT_VERSION_ID`). `PAL_ENV` comes
-  from the typed field. From `lantern.env.*` boot-args it accepts only the
+  from the typed field. From `pal.env.*` boot-args it accepts only the
   manager's own keys (`PAL_MANAGER_ADDR`, `PAL_WORKLOAD_UID`,
   `PAL_ENV`) plus that same allowlist. The two identity keys are also on
   the supervisor's workload-visible list, because the workload SDK reads
   `PAL_TENANT_ID`.
 - Residual risk: an older manager that does not filter can still pass a caller
-  `lantern.env.PAL_ENV` through boot-args. Upgrade the manager.
+  `pal.env.PAL_ENV` through boot-args. Upgrade the manager.
 
 ### Bare-mode fork of a running source fails closed
 
@@ -266,7 +266,7 @@ under the registry tenant of the snapshotted VM, and restore is
 ownership-checked against `AgentSpec.tenant_id` (§4). `SnapshotResponse.sha256`
 is currently empty. Snapshot now reads the artifacts from the path the backend
 reports (`fc://…`, chroot-expanded for jailed VMs). Before this change, the
-service read the bare `/run/lantern/snapshots/<id>` path, so every jailed pause
+service read the bare `/run/pal/snapshots/<id>` path, so every jailed pause
 failed.
 
 ### Residual risks (need a real KVM host to close)

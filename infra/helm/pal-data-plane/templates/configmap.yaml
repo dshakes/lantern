@@ -9,7 +9,7 @@ data:
   S3_ENDPOINT: {{ include "pal-dp.s3Endpoint" . | quote }}
   S3_BUCKET: {{ include "pal-dp.s3Bucket" . | quote }}
   LOG_LEVEL: {{ .Values.global.logLevel | quote }}
-  CONTROL_PLANE_ENDPOINT: {{ .Values.controlPlane.endpoint | quote }}
+  CONTROL_PLANE_ENDPOINT: {{ required "controlPlane.endpoint is required: your control plane URL" .Values.controlPlane.endpoint | quote }}
   TENANT_ID: {{ .Values.controlPlane.tenantId | quote }}
   {{- if .Values.minio.enabled }}
   AWS_ACCESS_KEY_ID: {{ .Values.minio.auth.rootUser | quote }}

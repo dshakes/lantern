@@ -13,7 +13,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"google.golang.org/grpc/metadata"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
 )
 
 func TestHTTPSpanName_TemplatesIDs(t *testing.T) {
@@ -76,7 +76,7 @@ func TestEnrichGRPCSpan(t *testing.T) {
 	rec := tracetest.NewSpanRecorder()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
 
-	ctx, span := tp.Tracer("test").Start(context.Background(), "/lantern.v1.RunService/GetRun")
+	ctx, span := tp.Tracer("test").Start(context.Background(), "/pal.v1.RunService/GetRun")
 	ctx = middleware.InjectTenantID(ctx, "tnt-grpc")
 	ctx = metadata.NewIncomingContext(ctx, metadata.Pairs(
 		"run_id", "run-grpc-1",

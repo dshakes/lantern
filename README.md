@@ -83,32 +83,32 @@ make demo-down    # stop and delete all demo data
 
 ## Run your own agent
 
-Needs Docker, Go 1.25+ for the CLI, and an OpenAI or Anthropic key. The CLI, packages and `LANTERN_*` env vars still carry the old name while the rename lands; the commands below are the real ones today.
+Needs Docker, Go 1.25+ for the CLI, and an OpenAI or Anthropic key.
 
 ```bash
 make dev                                         # Postgres, Redis, MinIO, control plane, console
-( cd packages/cli && go install ./cmd/lantern )  # the CLI
-lantern doctor                                   # health, auth, model provider, a live run
-lantern onboard                                  # describe an agent in one line, get a running agent
+( cd packages/cli && go install ./cmd/pal )  # the CLI
+pal doctor                                   # health, auth, model provider, a live run
+pal onboard                                  # describe an agent in one line, get a running agent
 ```
 
-Console: http://localhost:3001, sign in as `admin@lantern.dev` / `lantern` (local dev only). Sandboxes, the egress broker and real Firecracker on a Mac: [Runtime quickstart](https://dshakes.github.io/pal/docs/runtime/quickstart/).
+Console: http://localhost:3001, sign in as `admin@pal.local` / `pal` (local dev only). Sandboxes, the egress broker and real Firecracker on a Mac: [Runtime quickstart](https://dshakes.github.io/pal/docs/runtime/quickstart/).
 
 ## Use it from code
 
-The SDKs are not on a registry yet; install from a checkout (`npm install /path/to/lantern/packages/sdk-ts`, or `pip install /path/to/lantern/packages/sdk-python`).
+The SDKs are not on a registry yet; install from a checkout (`npm install /path/to/pal/packages/sdk-ts`, or `pip install /path/to/pal/packages/sdk-python`).
 
 ```ts
-import { LanternClient } from "@lantern/sdk";
+import { PalClient } from "@pal/sdk";
 
-const pal = new LanternClient({ baseUrl: "http://localhost:8080", apiKey: process.env.LANTERN_API_KEY });
+const pal = new PalClient({ baseUrl: "http://localhost:8080", apiKey: process.env.PAL_API_KEY });
 
 await pal.agents.create({ name: "triage", description: "Classifies support emails" });
 await pal.budgets.upsert("triage", { maxCostUsdPerDay: 25, hardFail: true });
 const run = await pal.runs.create({ agent: "triage", input: { email: "..." } }); // 402 if over the daily cap
 ```
 
-Pass `baseUrl` (or set `LANTERN_API_URL`): the client's default is not your self-hosted stack. Python and Go SDKs cover the same management surface.
+Pass `baseUrl` (or set `PAL_API_URL`): the client's default is not your self-hosted stack. Python and Go SDKs cover the same management surface.
 
 ## What's in the repo
 
@@ -130,4 +130,4 @@ Pass `baseUrl` (or set `LANTERN_API_URL`): the client's default is not your self
 
 ---
 
-<sub>We started as Lantern: a flame you could carry because glass kept it contained. As the product became a companion, we kept the light and dropped the lamp. The flame became a dot, a single moment of attention. पल means "a moment." A pal is someone who shows up in it.</sub>
+<sub>We started as PAL: a flame you could carry because glass kept it contained. As the product became a companion, we kept the light and dropped the lamp. The flame became a dot, a single moment of attention. पल means "a moment." A pal is someone who shows up in it.</sub>

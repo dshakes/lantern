@@ -12,10 +12,10 @@ burning at 14.4x (1h/5m) or 6x (6h/30m), i.e. 2% to 5% of the 28-day budget is g
 
 ## What the SLI measures
 
-`lantern_model_router_requests_total{method,outcome}` on model-router `:9465`. Bad = `outcome="error"`:
+`pal_model_router_requests_total{method,outcome}` on model-router `:9465`. Bad = `outcome="error"`:
 gRPC `Internal`, `Unavailable`, `DeadlineExceeded`, `Unknown`, `ResourceExhausted`, `DataLoss` (all providers
 failed, rate-limited, timed out). `client` outcomes (invalid argument, auth) are excluded. Only active when
-the control-plane routes through the router (`LANTERN_USE_MODEL_ROUTER`), otherwise direct provider calls
+the control-plane routes through the router (`PAL_USE_MODEL_ROUTER`), otherwise direct provider calls
 bypass this SLI. Latency is exported (`..._request_duration_seconds`) but not an SLO: it is provider-bound.
 
 ## Triage
@@ -30,7 +30,7 @@ bypass this SLI. Latency is exported (`..._request_duration_seconds`) but not an
 ## Remediation
 
 Control-plane falls back to the direct provider path automatically when the router errors, so user impact may
-be lower than the burn suggests. If the router itself is at fault, set `LANTERN_USE_MODEL_ROUTER` off
+be lower than the burn suggests. If the router itself is at fault, set `PAL_USE_MODEL_ROUTER` off
 ([ga-staged-rollout.md](ga-staged-rollout.md)) while you fix it.
 
 ## Escalate

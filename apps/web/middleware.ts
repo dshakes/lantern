@@ -3,11 +3,11 @@ import type { NextRequest } from "next/server";
 
 const PUBLIC_PATHS = ["/login", "/onboarding", "/api", "/auth", "/kiosk"];
 
-// The control-plane base URL. Server-side env (LANTERN_API_URL) wins; the
+// The control-plane base URL. Server-side env (PAL_API_URL) wins; the
 // public URL is the next.config rewrite target. Falls back to local dev.
 function controlPlaneBaseUrl(): string {
   return (
-    (process.env.PAL_API_URL ?? process.env.LANTERN_API_URL) ??
+    process.env.PAL_API_URL ??
     process.env.NEXT_PUBLIC_API_URL ??
     "http://localhost:8080"
   );
@@ -21,7 +21,6 @@ function redirectToLogin(request: NextRequest): NextResponse {
   loginUrl.searchParams.set("from", pathname);
   const res = NextResponse.redirect(loginUrl);
   res.cookies.delete("pal_token");
-  res.cookies.delete("lantern_token"); // legacy (pre-PAL-rename)
   return res;
 }
 
@@ -32,7 +31,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const token = request.cookies.get("pal_token")?.value ?? request.cookies.get("lantern_token")?.value; // legacy accepted
+  const token = request.cookies.get("pal_token")?.value;
 
   // Presence is necessary but NOT sufficient — a non-empty cookie used to be
   // enough to authenticate, which let a garbage value (or a client-minted

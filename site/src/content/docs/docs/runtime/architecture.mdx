@@ -91,7 +91,7 @@ One per node, listening on `:50054`. Callers cross the authz interceptor; guests
 
 | Part | Role and boundary |
 | --- | --- |
-| Authz interceptor (`authz.rs`) | Per-call authorization for `RuntimeManager` (ADR 0025). The TLS handshake cannot tell a guest from the scheduler, because every per-VM certificate is signed by the trusted CA. A peer presenting a VM certificate (`OU=pal-vm`, or the older `OU=lantern-vm`) is refused; everyone else needs the service token (constant-time compare). Token unset: production refuses to start, dev warns and allows. |
+| Authz interceptor (`authz.rs`) | Per-call authorization for `RuntimeManager` (ADR 0025). The TLS handshake cannot tell a guest from the scheduler, because every per-VM certificate is signed by the trusted CA. A peer presenting a VM certificate (`OU=pal-vm`) is refused; everyone else needs the service token (constant-time compare). Token unset: production refuses to start, dev warns and allows. |
 | `RuntimeManager` service | `Spawn` (fresh or `restore_snapshot_id`), `Stop`, `Logs`, `Exec` (bidi stream), `ExecTool`, `Stats`, `Snapshot`. `ExecTool` resolves the VM by `vm_id` or `run_id`. Tool output buffered in manager memory is capped at 1 MiB; tool timeout defaults to 30 s, capped at 900 s. |
 | `RuntimeHarness` service | What guests call: a 5 s heartbeat stream (also how the manager learns the guest's dial-back address), secret vending and the report stream. Each method binds the certificate CN or SAN to the request's `vm_id`, pinned to this incarnation's certificate. `VendSecret` resolves only URIs declared in the VM's own spawn record. |
 | Handle registry | Every live sandbox on the node: tenant, backend, declared secrets, certificate pin and exec token. The source of truth for ownership checks. |
@@ -100,7 +100,7 @@ One per node, listening on `:50054`. Callers cross the authz interceptor; guests
 | Snapshot store | `vmstate` and `mem` files under `SNAPSHOT_DIR`, mirrored to S3 when configured. `mem` is made read-only so forks can hard-link it. S3 failures are warn-logged, never fatal. |
 | Reaper | Polls backend liveness and deregisters workloads that exited, so finished VMs stop counting against quota. It reaps only on an affirmative "not running"; an error keeps the handle. |
 | Scheduler heartbeat | Posts node capacity and warm-pool inventory to the scheduler's REST gateway (`:8085`) every 30 s. |
-| Secret resolver | Resolves `pal.secret/...` URIs (the older `lantern.secret/...` form still works) at request time through the control-plane relay (`POST /v1/runtime/secrets/resolve`), or from env in dev. The relay authenticates with the `X-Pal-Runtime-Token` header; the control plane fails closed without the token. |
+| Secret resolver | Resolves `pal.secret/...` URIs at request time through the control-plane relay (`POST /v1/runtime/secrets/resolve`), or from env in dev. The relay authenticates with the `X-Pal-Runtime-Token` header; the control plane fails closed without the token. |
 | Report forwarder | Forwards each harness report (logs, OTLP traces, metrics, audit events) to `POST /v1/runtime/report`. A forward failure never crashes the workload; failed audit forwards log at ERROR. |
 | Egress broker (broker mode) | Per-VM listener on the Firecracker vsock socket for guest port 3128: allowlist, upstream dial from the host, credential injection. At most 128 concurrent connections per VM; 10 s limits on head read, TLS, DNS and connect; 300 s idle close. Production refuses broker mode without the relay resolver. |
 
@@ -110,15 +110,15 @@ The harness starts as PID 1 and is the last trust boundary around the workload. 
 
 | Part | Role and boundary |
 | --- | --- |
-| Init and boot env | Mounts `/run/lantern`, sets rlimits, reads `spawn.json` (workload command, env, egress rules, workload uid and gid) from the read-only cert drive. Unknown `spawn.json` versions are rejected. In production it refuses to start without a workload uid. |
-| Supervisor | Spawns the workload as the workload uid, tails stdio, restarts on crash, injects the proxy env. Every `PAL_*` key (and its `LANTERN_*` alias) is withheld from the child except a short allowlist of non-secret identifiers. |
+| Init and boot env | Mounts `/run/pal`, sets rlimits, reads `spawn.json` (workload command, env, egress rules, workload uid and gid) from the read-only cert drive. Unknown `spawn.json` versions are rejected. In production it refuses to start without a workload uid. |
+| Supervisor | Spawns the workload as the workload uid, tails stdio, restarts on crash, injects the proxy env. Every `PAL_*` key is withheld from the child except a short allowlist of non-secret identifiers. |
 | Signals and reaper | PID 1 duties: reaps orphaned zombies, drains on `SIGTERM`, prepares for snapshots on `SIGUSR1`. |
 | Heartbeat | Bidi stream to the manager every 5 s with resource usage, `has_active_exec` and `last_activity_unix_ms`; the scheduler's idle sweeper reads the last two. mTLS with this incarnation's certificate. |
 | Activity tracker | Atomic count of running workload and exec children, plus when the last one exited. Idle means no child alive. |
 | Report stream | Client-streaming `RuntimeHarness.Report` to the manager, with reconnect. Security audits (`secret_vend`, egress deny, `secret_access_denied`, `egress_preflight`) are logged locally first and never dropped on a full buffer. |
-| Exec server | `:50056`, bearer token. Serves one-shot or TTY commands and the `__lantern_tool_call__` envelope for tool calls. Rejects calls without this incarnation's token, so a token frozen into a snapshot is refused after restore. |
+| Exec server | `:50056`, bearer token. Serves one-shot or TTY commands and the `__pal_tool_call__` envelope for tool calls. Rejects calls without this incarnation's token, so a token frozen into a snapshot is refused after restore. |
 | Tool runner | Five tools: `shell_exec`, `http_fetch` (through the egress proxy), `read_file`, `write_file`, `list_dir`. File tools are confined to `/workspace` via `openat2` `RESOLVE_BENEATH`, under the workload's fsuid. Every captured output is capped at 1 MiB and marked truncated. |
-| Secrets socket | `/run/lantern/secrets.sock`. Vends short-lived secrets fetched from the manager's `VendSecret`. The peer uid comes from the kernel (`SO_PEERCRED`) and must be the workload uid; denials emit `secret_access_denied`. |
+| Secrets socket | `/run/pal/secrets.sock`. Vends short-lived secrets fetched from the manager's `VendSecret`. The peer uid comes from the kernel (`SO_PEERCRED`) and must be the workload uid; denials emit `secret_access_denied`. |
 | Egress proxy (guest mode) | `127.0.0.1:3128`, an in-guest CONNECT allowlist proxy. It enforces only with the image's iptables REDIRECT rule, which the harness checks at boot. In production, declared rules with no REDIRECT mean the workload is not started. |
 | Egress forwarder (broker mode) | `127.0.0.1:3128`. Bridges each proxy connection byte for byte to vsock CID 2, port 3128. Nothing in the guest enforces anything; the VM has no network device and the host broker decides. |
 | Re-identify | A restored guest wakes up believing it is the source VM. This mints the new incarnation's `vm_id`, certificate and agent identity before anything else runs. |
@@ -127,7 +127,7 @@ The harness starts as PID 1 and is the last trust boundary around the workload. 
 
 The workflow engine asks the runtime manager, which hands a JSON envelope to the harness. The happy path is on [Request lifecycle](/docs/architecture/request-lifecycle/). The details that matter here:
 
-- The manager sends `Exec __lantern_tool_call__` with `{ tool, args, idempotency_key, timeout_sec }` in `argv[0]`, plus this incarnation's bearer token. On broker VMs the same gRPC rides host-initiated vsock.
+- The manager sends `Exec __pal_tool_call__` with `{ tool, args, idempotency_key, timeout_sec }` in `argv[0]`, plus this incarnation's bearer token. On broker VMs the same gRPC rides host-initiated vsock.
 - The exec server intercepts the sentinel before its generic exec audit, so arguments are never logged. The manager audits the tool name, duration and status, never the arguments.
 - `shell_exec` runs `/bin/sh -c` as the workload uid. `read_file` uses `openat2` with `RESOLVE_BENEATH`, so no `..` or symlink escape.
 - The runner writes `{ ok: true, result }` to stdout before the done frame. The status is typed; there is no string matching.
@@ -136,7 +136,7 @@ The workflow engine asks the runtime manager, which hands a JSON envelope to the
 | --- | --- |
 | Tool ran and failed, or the name is unknown (for example `read_file` outside `/workspace`) | The runner returns `{ ok: false, error }`; the manager returns `TOOL_STATUS_ERROR` and the step fails with the manager's detail. |
 | VM is not Firecracker, or has not heartbeated yet | `TOOL_STATUS_UNAVAILABLE`. Never a made-up success; the engine fails the step wrapping `ErrRuntimeManagerUnavailable`. |
-| VM belongs to another tenant | The mismatch is audited under `lantern_audit` as `exec_tool DENIED` and the manager returns `NOT_FOUND`, the same answer as a VM that does not exist (ADR 0025). |
+| VM belongs to another tenant | The mismatch is audited under `pal_audit` as `exec_tool DENIED` and the manager returns `NOT_FOUND`, the same answer as a VM that does not exist (ADR 0025). |
 
 ## Egress in broker mode
 

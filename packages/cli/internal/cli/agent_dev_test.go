@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dshakes/lantern/packages/cli/internal"
+	"github.com/dshakes/pal/packages/cli/internal"
 )
 
 // ── isWatchedFile ────────────────────────────────────────────────────────────

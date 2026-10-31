@@ -31,7 +31,7 @@ The control plane never runs user code. Specs, identity and trace context go dow
 
 Check it worked: the plane's heartbeat keeps arriving (every 30 s) and the `data_planes.last_heartbeat` column advances. If it does not, start with the [data plane disconnected runbook](repo:/blob/master/docs/runbooks/data-plane-disconnected.md).
 
-The tunnel RPCs are defined in `packages/proto/lantern/v1/dataplane.proto` and served on the control plane's `:50051` listener.
+The tunnel RPCs are defined in `packages/proto/pal/v1/dataplane.proto` and served on the control plane's `:50051` listener.
 
 | RPC | Direction | Purpose |
 | --- | --- | --- |
@@ -83,7 +83,7 @@ PAL needs Postgres with `pgvector`, an S3-compatible object store and Redis. The
 
 | Store | Dev, kind, evaluation (default) | Production (`values-prod.yaml`) |
 | --- | --- | --- |
-| Postgres | `postgresql.enabled=true`: one `pgvector/pgvector` StatefulSet on a PVC; password is `secrets.postgresPassword` | `postgresql.enabled=false` and `externalDatabase.host` (plus `port`, `sslmode`). User and database names still come from `postgresql.auth`. Provision `pgvector` and the `lantern_app` role yourself. |
+| Postgres | `postgresql.enabled=true`: one `pgvector/pgvector` StatefulSet on a PVC; password is `secrets.postgresPassword` | `postgresql.enabled=false` and `externalDatabase.host` (plus `port`, `sslmode`). User and database names still come from `postgresql.auth`. Provision `pgvector` and the `pal_app` role yourself. |
 | Object store | `minio.enabled=true`: one SeaweedFS StatefulSet on a PVC; one identity from `minio.auth.rootUser` and `secrets.minioPassword`; a post-install Job creates `minio.defaultBuckets` | `minio.enabled=false` and `externalS3.endpoint`, `accessKeyId`, `bucket`, `region` (must match the bucket's region); the secret key is `secrets.minioPassword` |
 | Redis | Bitnami subchart (`redis.enabled`) | Same subchart for now |
 
@@ -98,8 +98,8 @@ They are single replicas with no replication, point-in-time recovery or lifecycl
 `pal infra install --cloud aws|gcp|azure` generates Terraform for a data-plane cluster. It only writes files; it does not apply them. `--tenant-id` is required. Other flags include `--region`, `--cluster-name`, `--existing-cluster`, `--instance-type`, `--node-count` and `--output-dir`. The modules live in `infra/terraform/` and are not published to the Terraform Registry.
 
 ```bash
-pal infra install --cloud aws --region us-east-1 --tenant-id <tenant-id>   # writes lantern-data-plane-aws/
-cd lantern-data-plane-aws
+pal infra install --cloud aws --region us-east-1 --tenant-id <tenant-id>   # writes pal-data-plane-aws/
+cd pal-data-plane-aws
 terraform init
 terraform plan     # review before applying
 terraform apply
@@ -113,7 +113,7 @@ Targets are an RPO of 1 minute for Postgres and 15 minutes for S3 bundles, and a
 
 ## Tenant isolation and monitoring
 
-Each tenant gets its own Kubernetes namespace, `lantern-t-<tenant_id>`, for network isolation, per-tenant resource quotas, and separate service accounts and secrets.
+Each tenant gets its own Kubernetes namespace, `pal-t-<tenant_id>`, for network isolation, per-tenant resource quotas, and separate service accounts and secrets.
 
 Services emit OTel traces to any backend. The control plane also serves unauthenticated Prometheus metrics on its own listener, `:9464/metrics` (`PAL_METRICS_ADDR`), so scrape it only from inside the cluster. Alert rules and wiring are in [Operations](/docs/operate/operations/#metrics) and [Observability](/docs/observability/).
 

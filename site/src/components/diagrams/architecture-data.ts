@@ -61,7 +61,7 @@ const RM = "services/runtime-manager/src";
 const HN = "services/harness/src";
 const RS = "services/runtime-scheduler";
 const WE = "services/workflow-engine";
-const PROTO = "packages/proto/lantern/v1";
+const PROTO = "packages/proto/pal/v1";
 
 // ---------------------------------------------------------------------------
 // System view
@@ -112,7 +112,7 @@ const systemNodes: ArchNode[] = [
     box: { x: 40, y: 150, w: 170, h: 64 }, plane: "cp",
     lang: "Rust (Axum)", ports: ":8443 (TLS)",
     role: "Edge ingress. Terminates TLS, validates API keys by asking the control plane (cached 60 s by key hash), and calls the control plane over gRPC.",
-    boundary: "Public edge. Sends x-lantern-service-token on its gRPC calls; refuses API-key auth when introspection is not configured.",
+    boundary: "Public edge. Sends x-pal-service-token on its gRPC calls; refuses API-key auth when introspection is not configured.",
     invariants: ["Without PAL_TLS_CERT/KEY it serves plaintext and warns: never in production."],
     src: [M("services/gateway/src/config.rs"), M("services/gateway/src/config.rs"), M("services/gateway/src/introspect.rs"), M("services/gateway/src/tls.rs")],
   },
@@ -121,7 +121,7 @@ const systemNodes: ArchNode[] = [
     box: { x: 290, y: 146, w: 260, h: 72 }, plane: "cp", gate: "service token",
     lang: "Go", ports: ":8080 HTTP (REST + SSE) · :50051 gRPC",
     role: "Owns agents, runs, budgets and tenants. Gates every run (auth, budget, isolation), runs shared-tier agents inline, and journals every step to Postgres.",
-    boundary: "Trust boundary on :50051: only callers presenting x-lantern-service-token may set a tenant_id. Refuses to start in prod without the token.",
+    boundary: "Trust boundary on :50051: only callers presenting x-pal-service-token may set a tenant_id. Refuses to start in prod without the token.",
     invariants: [
       "Hard-fail budgets block a run with HTTP 402 before any compute or tokens are spent.",
       "Every tenant-scoped query runs through WithTenant so Postgres RLS can enforce it.",
@@ -213,7 +213,7 @@ const systemNodes: ArchNode[] = [
     box: { x: 290, y: 470, w: 260, h: 72 }, plane: "dp", gate: "token, no VM certs", zoom: "manager",
     lang: "Rust (tonic)", ports: ":50054 gRPC (mTLS)",
     role: "The only thing that touches microVMs: spawn, stop, snapshot/restore, exec, ExecTool. Serves RuntimeHarness for the guests on its node.",
-    boundary: "Refuses any peer presenting a per-VM cert (OU=lantern-vm) on RuntimeManager methods and requires the service token from everyone else.",
+    boundary: "Refuses any peer presenting a per-VM cert (OU=pal-vm) on RuntimeManager methods and requires the service token from everyone else.",
     invariants: [
       "A VM owned by another tenant is indistinguishable from an absent one (NOT_FOUND).",
       "Untrusted code runs in Firecracker or Kata, never a bare pod.",
@@ -323,14 +323,14 @@ const managerNodes: ArchNode[] = [
     id: "m-callers", title: "gRPC callers", sub: "scheduler · engine · CP", tone: "plain", external: true,
     box: { x: 20, y: 90, w: 170, h: 60 },
     lang: "Go", role: "Callers of RuntimeManager: the scheduler (Spawn/Stop/Snapshot), the workflow engine (ExecTool) and the control plane (Exec, ExecTool for the file API).",
-    boundary: "Must present x-lantern-service-token.", invariants: [],
+    boundary: "Must present x-pal-service-token.", invariants: [],
     src: [M(`${RS}/internal/dialer/manager.go`, 128), M(`${WE}/internal/engine/step_executor.go`)],
   },
   {
     id: "m-authz", title: "Authz interceptor", sub: "authz.rs", tone: "host",
     box: { x: 230, y: 90, w: 190, h: 60 }, gate: "token, no VM certs",
     lang: "Rust", role: "Per-call authorization for RuntimeManager (ADR 0025). The TLS handshake alone cannot tell a guest from the scheduler, because every per-VM cert is signed by the trusted CA.",
-    boundary: "A peer presenting OU=lantern-vm is refused outright; everyone else needs the service token (constant-time compare).",
+    boundary: "A peer presenting OU=pal-vm is refused outright; everyone else needs the service token (constant-time compare).",
     invariants: ["Token unset: prod refuses to start, dev warns and allows."],
     src: [M(`${RM}/authz.rs`), M(`${RM}/authz.rs`)],
   },
@@ -401,8 +401,8 @@ const managerNodes: ArchNode[] = [
   {
     id: "m-secrets", title: "Secret resolver", sub: "relay or env", tone: "plain",
     box: { x: 720, y: 330, w: 170, h: 60 },
-    lang: "Rust", role: "Resolves lantern.secret/… URIs at request time through the control-plane relay (POST /v1/runtime/secrets/resolve), or env in dev.",
-    boundary: "The relay authenticates with X-Lantern-Runtime-Token; the control plane fails closed without it.",
+    lang: "Rust", role: "Resolves pal.secret/… URIs at request time through the control-plane relay (POST /v1/runtime/secrets/resolve), or env in dev.",
+    boundary: "The relay authenticates with X-Pal-Runtime-Token; the control plane fails closed without it.",
     invariants: ["Secrets never appear in logs, traces or run state."],
     src: [M(`${RM}/secret_resolver.rs`, 1), M(`${CP}/cmd/server/main.go`)],
     docs: { href: "/runtime/identity", label: "Identity & secrets" },
@@ -490,7 +490,7 @@ const harnessNodes: ArchNode[] = [
   {
     id: "h-boot", title: "Init + boot env", sub: "spawn.json", tone: "host",
     box: { x: 240, y: 90, w: 200, h: 60 },
-    lang: "Rust", role: "Mounts /run/lantern, sets rlimits, reads spawn.json (workload command, env, egress rules, workload uid/gid) from the read-only cert drive.",
+    lang: "Rust", role: "Mounts /run/pal, sets rlimits, reads spawn.json (workload command, env, egress rules, workload uid/gid) from the read-only cert drive.",
     boundary: "Unknown spawn.json versions are rejected; in prod the harness refuses to start without a workload uid.",
     invariants: [], src: [M(`${HN}/bootenv.rs`), M(`${HN}/init.rs`), M(`${RM}/backends/firecracker.rs`)],
   },
@@ -533,7 +533,7 @@ const harnessNodes: ArchNode[] = [
     id: "h-exec", title: "Exec server", sub: ":50056 · Bearer token", tone: "host",
     box: { x: 240, y: 310, w: 200, h: 60 }, gate: "exec token",
     lang: "Rust (tonic)", ports: ":50056 (guest)",
-    role: "Serves RuntimeHarness.Exec: one-shot or TTY commands, and the __lantern_tool_call__ envelope for tool calls.",
+    role: "Serves RuntimeHarness.Exec: one-shot or TTY commands, and the __pal_tool_call__ envelope for tool calls.",
     boundary: "Rejects calls without this incarnation's bearer token, so a token frozen into a snapshot is refused after restore.",
     invariants: [], src: [M(`${HN}/exec.rs`), M(`${HN}/exec.rs`)],
   },
@@ -546,7 +546,7 @@ const harnessNodes: ArchNode[] = [
     src: [M(`${HN}/tool_runner.rs`), M(`${HN}/tool_runner.rs`), M(`${HN}/tool_runner.rs`), M(`${HN}/tool_runner.rs`)],
   },
   {
-    id: "h-secrets", title: "Secrets socket", sub: "/run/lantern/secrets.sock", tone: "host",
+    id: "h-secrets", title: "Secrets socket", sub: "/run/pal/secrets.sock", tone: "host",
     box: { x: 720, y: 420, w: 200, h: 60 }, gate: "SO_PEERCRED",
     lang: "Rust", role: "Vends short-TTL secret values to the workload over a Unix socket, fetched from the manager's VendSecret.",
     boundary: "Peer uid comes from the kernel (SO_PEERCRED) and must be the workload uid; denials emit secret_access_denied.",

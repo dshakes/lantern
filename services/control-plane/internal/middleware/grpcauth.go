@@ -17,42 +17,20 @@ import (
 // control-plane gRPC server.
 const ServiceTokenMetadataKey = "x-pal-service-token"
 
-// LegacyServiceTokenMetadataKey is the pre-PAL name of the same header (ADR
-// 0032). Servers accept both names; callers send both until every peer reads
-// the PAL name.
-const LegacyServiceTokenMetadataKey = "x-lantern-service-token"
+// ServiceTokenFromHeader reads the service token from an HTTP request header.
+func ServiceTokenFromHeader(h http.Header) string { return h.Get(ServiceTokenMetadataKey) }
 
-// presentedServiceToken returns the first non-empty token under the PAL name,
-// then the legacy name. Exactly one value is ever compared, so accepting two
-// names does not give a caller a second guess per request.
-func presentedServiceToken(get func(string) string) string {
-	for _, k := range [...]string{ServiceTokenMetadataKey, LegacyServiceTokenMetadataKey} {
-		if v := get(k); v != "" {
-			return v
-		}
+// ServiceTokenFromMetadata reads the service token from gRPC metadata.
+func ServiceTokenFromMetadata(md metadata.MD) string {
+	if v := md.Get(ServiceTokenMetadataKey); len(v) > 0 {
+		return v[0]
 	}
 	return ""
 }
 
-// ServiceTokenFromHeader reads the service token from an HTTP request header
-// under either name.
-func ServiceTokenFromHeader(h http.Header) string { return presentedServiceToken(h.Get) }
-
-// ServiceTokenFromMetadata reads the service token from gRPC metadata under
-// either name.
-func ServiceTokenFromMetadata(md metadata.MD) string {
-	return presentedServiceToken(func(k string) string {
-		if v := md.Get(k); len(v) > 0 {
-			return v[0]
-		}
-		return ""
-	})
-}
-
-// OutgoingServiceTokenMetadata is the metadata a caller attaches: the token
-// under both names, so a peer that has not upgraded still authenticates it.
+// OutgoingServiceTokenMetadata is the metadata a caller attaches.
 func OutgoingServiceTokenMetadata(token string) map[string]string {
-	return map[string]string{ServiceTokenMetadataKey: token, LegacyServiceTokenMetadataKey: token}
+	return map[string]string{ServiceTokenMetadataKey: token}
 }
 
 // serviceTokenValid reports whether presented matches expected using a

@@ -35,7 +35,7 @@ on:
       - "services/runtime-manager/**"
       - "services/harness/**"
       - "infra/firecracker/**"
-      - "packages/proto/lantern/v1/runtime.proto"
+      - "packages/proto/pal/v1/runtime.proto"
       - ".github/workflows/microvm-integration.yml"
   workflow_dispatch:           # allow manual runs against a KVM runner
     inputs:
@@ -221,7 +221,7 @@ jobs:
           # cargo reachable from root's PATH.
           cargo build --release --target x86_64-unknown-linux-musl \
             --manifest-path services/harness/Cargo.toml
-          HARNESS_BIN="$PWD/services/harness/target/x86_64-unknown-linux-musl/release/lantern-harness"
+          HARNESS_BIN="$PWD/services/harness/target/x86_64-unknown-linux-musl/release/pal-harness"
           [ -x "$HARNESS_BIN" ] || { echo "::error::harness build produced no binary at $HARNESS_BIN"; exit 1; }
 
           # rootfs build needs loop-mount (root); run under sudo, preserve env.
@@ -245,7 +245,7 @@ jobs:
           # PATH. Build it here as the runner user and pass it in via the
           # script's MANAGER_BIN hook, so nothing under sudo needs cargo.
           cargo build --release --manifest-path services/runtime-manager/Cargo.toml
-          MANAGER_BIN="$PWD/services/runtime-manager/target/release/lantern-runtime-manager"
+          MANAGER_BIN="$PWD/services/runtime-manager/target/release/pal-runtime-manager"
           [ -x "$MANAGER_BIN" ] || { echo "::error::no runtime-manager binary at $MANAGER_BIN"; exit 1; }
 
           # Expose jailer path for the fork lifecycle test (conditional in the
@@ -263,8 +263,8 @@ jobs:
           if [ -n "${JAILER_BIN}" ]; then
             sudo mkdir -p /srv/jailer
             sudo chmod 755 /srv/jailer
-            sudo mkdir -p /var/lib/lantern/snapshots
-            sudo chmod 755 /var/lib/lantern/snapshots
+            sudo mkdir -p /var/lib/pal/snapshots
+            sudo chmod 755 /var/lib/pal/snapshots
           fi
 
           # Firecracker + loop devices + TAP setup need root.

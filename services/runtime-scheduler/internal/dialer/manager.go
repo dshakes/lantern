@@ -21,8 +21,8 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/packages/grpctls"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/packages/grpctls"
 )
 
 // IsProd reports whether the scheduler is running in a production-like
@@ -100,8 +100,7 @@ func (c serviceTokenCreds) GetRequestMetadata(context.Context, ...string) (map[s
 	if c.token == "" {
 		return nil, nil
 	}
-	// Both names (ADR 0032): a manager that predates the PAL header still authenticates.
-	return map[string]string{"x-pal-service-token": c.token, "x-lantern-service-token": c.token}, nil
+	return map[string]string{"x-pal-service-token": c.token}, nil
 }
 
 // RequireTransportSecurity is false so the token also rides dev plaintext links.
@@ -113,13 +112,13 @@ const defaultManagerPort = "50054"
 
 // ManagerDialer is the interface the scheduler uses to talk to a node.
 type ManagerDialer interface {
-	Spawn(ctx context.Context, nodeAddr string, req *lanternv1.SpawnRequest) (*lanternv1.SpawnResponse, error)
-	Stop(ctx context.Context, nodeAddr string, req *lanternv1.StopRequest) (*lanternv1.StopResponse, error)
+	Spawn(ctx context.Context, nodeAddr string, req *palv1.SpawnRequest) (*palv1.SpawnResponse, error)
+	Stop(ctx context.Context, nodeAddr string, req *palv1.StopRequest) (*palv1.StopResponse, error)
 	// Snapshot forwards a snapshot request to the node. The node's runtime-manager
 	// may not yet implement this RPC (it will return Unimplemented); callers must
 	// handle a non-nil error gracefully. On success the returned SnapshotResponse
 	// carries the id, sha256, and bytes from the manager.
-	Snapshot(ctx context.Context, nodeAddr string, req *lanternv1.SnapshotRequest) (*lanternv1.SnapshotResponse, error)
+	Snapshot(ctx context.Context, nodeAddr string, req *palv1.SnapshotRequest) (*palv1.SnapshotResponse, error)
 	Close()
 }
 
@@ -141,7 +140,7 @@ func NewLogOnlyDialer(logger *zap.Logger) *LogOnlyDialer {
 	return &LogOnlyDialer{logger: logger.Named("manager_dialer")}
 }
 
-func (d *LogOnlyDialer) Spawn(_ context.Context, nodeAddr string, req *lanternv1.SpawnRequest) (*lanternv1.SpawnResponse, error) {
+func (d *LogOnlyDialer) Spawn(_ context.Context, nodeAddr string, req *palv1.SpawnRequest) (*palv1.SpawnResponse, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.logger.Info("spawn intent (stub)",
@@ -151,19 +150,19 @@ func (d *LogOnlyDialer) Spawn(_ context.Context, nodeAddr string, req *lanternv1
 		zap.String("tenant_id", specTenant(req.Spec)),
 		zap.String("run_id", specRunID(req.Spec)),
 	)
-	return &lanternv1.SpawnResponse{Handle: req.Handle}, nil
+	return &palv1.SpawnResponse{Handle: req.Handle}, nil
 }
 
-func (d *LogOnlyDialer) Stop(_ context.Context, nodeAddr string, req *lanternv1.StopRequest) (*lanternv1.StopResponse, error) {
+func (d *LogOnlyDialer) Stop(_ context.Context, nodeAddr string, req *palv1.StopRequest) (*palv1.StopResponse, error) {
 	d.logger.Info("stop intent (stub)",
 		zap.String("node_addr", nodeAddr),
 		zap.String("vm_id", req.VmId),
 		zap.String("reason", req.Reason),
 	)
-	return &lanternv1.StopResponse{Ok: true, Detail: "stub dialer"}, nil
+	return &palv1.StopResponse{Ok: true, Detail: "stub dialer"}, nil
 }
 
-func (d *LogOnlyDialer) Snapshot(_ context.Context, nodeAddr string, req *lanternv1.SnapshotRequest) (*lanternv1.SnapshotResponse, error) {
+func (d *LogOnlyDialer) Snapshot(_ context.Context, nodeAddr string, req *palv1.SnapshotRequest) (*palv1.SnapshotResponse, error) {
 	d.logger.Info("snapshot intent (stub)",
 		zap.String("node_addr", nodeAddr),
 		zap.String("vm_id", req.VmId),
@@ -175,7 +174,7 @@ func (d *LogOnlyDialer) Snapshot(_ context.Context, nodeAddr string, req *lanter
 	if snapID == "" {
 		snapID = "snap-stub-" + req.VmId
 	}
-	return &lanternv1.SnapshotResponse{
+	return &palv1.SnapshotResponse{
 		SnapshotId: snapID,
 		Bytes:      0,
 		Sha256:     "",
@@ -193,7 +192,7 @@ func (d *LogOnlyDialer) Close() {}
 // lazily (first call per node) and reused for all subsequent RPCs.
 //
 // Per-node address resolution rules, in order:
-//  1. If env LANTERN_NODE_ADDR_<NODE-UPPERCASED> is set, use that.
+//  1. If env PAL_NODE_ADDR_<NODE-UPPERCASED> is set, use that.
 //  2. If nodeAddr is "node-local", "node-stub", or empty, fall back to
 //     env PAL_DEFAULT_MANAGER_ADDR.
 //  3. If nodeAddr already contains a ':' (has a port), use as-is.
@@ -310,16 +309,16 @@ func (d *GRPCDialer) connFor(nodeAddr string) (*grpc.ClientConn, error) {
 }
 
 // clientFor returns a RuntimeManagerClient for the given node address.
-func (d *GRPCDialer) clientFor(nodeAddr string) (lanternv1.RuntimeManagerClient, error) {
+func (d *GRPCDialer) clientFor(nodeAddr string) (palv1.RuntimeManagerClient, error) {
 	conn, err := d.connFor(nodeAddr)
 	if err != nil {
 		return nil, err
 	}
-	return lanternv1.NewRuntimeManagerClient(conn), nil
+	return palv1.NewRuntimeManagerClient(conn), nil
 }
 
 // Spawn forwards to the runtime-manager at nodeAddr.
-func (d *GRPCDialer) Spawn(ctx context.Context, nodeAddr string, req *lanternv1.SpawnRequest) (*lanternv1.SpawnResponse, error) {
+func (d *GRPCDialer) Spawn(ctx context.Context, nodeAddr string, req *palv1.SpawnRequest) (*palv1.SpawnResponse, error) {
 	client, err := d.clientFor(nodeAddr)
 	if err != nil {
 		return nil, err
@@ -334,7 +333,7 @@ func (d *GRPCDialer) Spawn(ctx context.Context, nodeAddr string, req *lanternv1.
 }
 
 // Stop forwards to the runtime-manager at nodeAddr.
-func (d *GRPCDialer) Stop(ctx context.Context, nodeAddr string, req *lanternv1.StopRequest) (*lanternv1.StopResponse, error) {
+func (d *GRPCDialer) Stop(ctx context.Context, nodeAddr string, req *palv1.StopRequest) (*palv1.StopResponse, error) {
 	client, err := d.clientFor(nodeAddr)
 	if err != nil {
 		return nil, err
@@ -349,8 +348,8 @@ func (d *GRPCDialer) Stop(ctx context.Context, nodeAddr string, req *lanternv1.S
 
 // Snapshot forwards the snapshot request to the runtime-manager at nodeAddr.
 // The manager exposes Snapshot on the RuntimeManager service
-// (/lantern.v1.RuntimeManager/Snapshot).
-func (d *GRPCDialer) Snapshot(ctx context.Context, nodeAddr string, req *lanternv1.SnapshotRequest) (*lanternv1.SnapshotResponse, error) {
+// (/pal.v1.RuntimeManager/Snapshot).
+func (d *GRPCDialer) Snapshot(ctx context.Context, nodeAddr string, req *palv1.SnapshotRequest) (*palv1.SnapshotResponse, error) {
 	client, err := d.clientFor(nodeAddr)
 	if err != nil {
 		return nil, err
@@ -393,28 +392,28 @@ func (d *GRPCDialer) Close() {
 // Nil-safe accessors used while the generated stubs don't include the
 // usual `func (x *T) GetField() ...` helpers from protoc-gen-go. Once
 // `make proto` lands, these can collapse to spec.GetX() etc.
-func vmHandleID(h *lanternv1.VmHandle) string {
+func vmHandleID(h *palv1.VmHandle) string {
 	if h == nil {
 		return ""
 	}
 	return h.VmId
 }
 
-func specImage(s *lanternv1.AgentSpec) string {
+func specImage(s *palv1.AgentSpec) string {
 	if s == nil {
 		return ""
 	}
 	return s.ImageDigest
 }
 
-func specTenant(s *lanternv1.AgentSpec) string {
+func specTenant(s *palv1.AgentSpec) string {
 	if s == nil {
 		return ""
 	}
 	return s.TenantId
 }
 
-func specRunID(s *lanternv1.AgentSpec) string {
+func specRunID(s *palv1.AgentSpec) string {
 	if s == nil {
 		return ""
 	}

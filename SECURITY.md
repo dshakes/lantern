@@ -20,8 +20,8 @@ there are no long-term support branches yet.
 
 ## Scope & hardening notes
 
-- **Dev credentials are dev-only.** The seeded `admin@lantern.dev` / `lantern`
-  login, the `lantern-dev-jwt-secret-do-not-use-in-production` JWT secret, and
+- **Dev credentials are dev-only.** The seeded `admin@pal.local` / `pal`
+  login, the `pal-dev-jwt-secret-do-not-use-in-production` JWT secret, and
   the local Postgres/MinIO credentials in `docs`/compose are for local
   development. **Production deployments must override** `JWT_SECRET`,
   `PAL_CREDENTIAL_KEY`, database/object-store credentials, and disable or
@@ -35,7 +35,7 @@ there are no long-term support branches yet.
   `agents`/`runs`. **In production, run the app as a non-owner DB role** so RLS
   is not bypassed by the table owner — apply
   [`infra/db/least-privilege.sql`](infra/db/least-privilege.sql) and point
-  `DATABASE_URL` at `lantern_app`, running schema migrations separately as the
+  `DATABASE_URL` at `pal_app`, running schema migrations separately as the
   owner. Report any path that can read or write across tenants.
 - **The macOS personal-assistant bridges** are owner-only: inbound from
   non-owner contacts never reaches the personal-docs or agentic-action

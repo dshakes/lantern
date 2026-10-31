@@ -391,7 +391,7 @@ test("presenceFromSignals: arriving home (newer location) clears a recent drivin
 });
 
 test("presenceFromSignals: Parked/Available (newer focus) clears driving → free", () => {
-  // drove 10m ago, then tapped Lantern-Parked (focus:Available) 1m ago.
+  // drove 10m ago, then tapped PAL-Parked (focus:Available) 1m ago.
   const p = presenceFromSignals(
     [sig("device", 10, { detail: "driving" }), sig("focus", 1, { detail: "Available" })],
     { nowMs: NOW },
@@ -476,7 +476,7 @@ test("latestKnownLocation: returns the real place within window; null when stale
     ),
     null,
   );
-  // Existing Lantern-Status-Available shortcut on CarPlay-Disconnect: a newer
+  // Existing PAL-Status-Available shortcut on CarPlay-Disconnect: a newer
   // focus:Available ENDS driving (parked) → not on the road; no place → unknown.
   assert.equal(
     latestKnownLocation(

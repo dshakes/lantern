@@ -1,14 +1,14 @@
-// build.rs — proto compilation hook for lantern-harness.
+// build.rs — proto compilation hook for pal-harness.
 //
 // Generates the RuntimeHarnessClient stub (used by `manager_client.rs` to
 // call the manager) AND the RuntimeHarness server stub: the in-guest exec
 // server (`src/exec.rs`) serves `RuntimeHarness.Exec` so the manager can
-// dial back into the guest for `lantern vm exec`. Output goes to
-// `$OUT_DIR/lantern.v1.rs` and is pulled in via `tonic::include_proto!`
+// dial back into the guest for `pal vm exec`. Output goes to
+// `$OUT_DIR/pal.v1.rs` and is pulled in via `tonic::include_proto!`
 // inside `src/proto.rs`.
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let proto = "../../packages/proto/lantern/v1/runtime.proto";
+    let proto = "../../packages/proto/pal/v1/runtime.proto";
     tonic_build::configure()
         .build_client(true)
         .build_server(true)

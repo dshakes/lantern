@@ -4,7 +4,7 @@
 # WHY THIS FILE EXISTS
 # --------------------
 # The same wiring values lived in two places: the `make run-*` targets and the
-# dev.lantern.*.plist LaunchAgents. They agreed only by luck. When they drift,
+# dev.pal.*.plist LaunchAgents. They agreed only by luck. When they drift,
 # the failure is silent and expensive — the runtime-manager plist was missing
 # SCHEDULER_URL entirely, so under launchd the node never self-registered, the
 # scheduler marked it draining, and every placement failed FailedPrecondition
@@ -31,7 +31,7 @@
 
 # --- runtime-scheduler ---------------------------------------------------
 # gRPC placement API, and the REST gateway the manager heartbeats into.
-: "${LANTERN_SCHEDULER_GRPC_ADDR:=localhost:50055}"
+: "${PAL_SCHEDULER_GRPC_ADDR:=localhost:50055}"
 : "${SCHEDULER_HTTP_ADDR:=:8085}"
 
 # --- runtime-manager -----------------------------------------------------
@@ -46,16 +46,16 @@
 : "${NODE_ZONE:=local-a}"
 
 # The address the scheduler dials to reach this node's manager.
-: "${LANTERN_DEFAULT_MANAGER_ADDR:=localhost:50054}"
+: "${PAL_DEFAULT_MANAGER_ADDR:=localhost:50054}"
 
 # --- shared --------------------------------------------------------------
 # LOCAL DEV ONLY. This is the same well-known value the control-plane already
 # falls back to, so setting it here changes nothing — it just means the
 # scheduler and API agree without the Makefile restating it. It is NOT a way
 # to run in production: handlers.GetJWTSecret() treats this exact string as
-# unset when LANTERN_ENV is prod, and runStartupGuards then refuses to boot.
-: "${JWT_SECRET:=lantern-dev-jwt-secret-do-not-use-in-production}"
+# unset when PAL_ENV is prod, and runStartupGuards then refuses to boot.
+: "${JWT_SECRET:=pal-dev-jwt-secret-do-not-use-in-production}"
 
-export LANTERN_SCHEDULER_GRPC_ADDR SCHEDULER_HTTP_ADDR \
+export PAL_SCHEDULER_GRPC_ADDR SCHEDULER_HTTP_ADDR \
        SCHEDULER_URL NODE_NAME NODE_ADVERTISE_ADDR NODE_REGION NODE_ZONE \
-       LANTERN_DEFAULT_MANAGER_ADDR JWT_SECRET
+       PAL_DEFAULT_MANAGER_ADDR JWT_SECRET

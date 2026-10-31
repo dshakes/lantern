@@ -9,7 +9,7 @@ import type { Src } from "./types";
 // call, and what it guarantees.
 
 const M = (p: string, l?: number): Src => ({ p, l });
-const PROTO = "packages/proto/lantern/v1/runtime.proto";
+const PROTO = "packages/proto/pal/v1/runtime.proto";
 const LC = "services/runtime-scheduler/internal/handlers/lifecycle.go";
 const RL = "services/control-plane/internal/handlers/runtime_lifecycle.go";
 const RT = "services/control-plane/internal/handlers/runtime.go";

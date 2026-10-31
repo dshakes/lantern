@@ -116,7 +116,7 @@ A database error while reading a budget is not "no budget configured" (that allo
 
 ```bash
 TOKEN=$(curl -s localhost:8080/auth/login -H 'Content-Type: application/json' \
-  -d '{"email":"admin@lantern.dev","password":"lantern"}' | jq -r .token)   # dev seed user
+  -d '{"email":"admin@pal.local","password":"pal"}' | jq -r .token)   # dev seed user
 
 # Cap an agent at 1 run per day, hard-fail
 curl -s -X PUT localhost:8080/v1/agents/demo/budget \
@@ -169,7 +169,7 @@ When it would exceed (HTTP 402 if `hardFail`), `wouldExceedBudget` is true and `
 
 ## Metrics
 
-Each counter is emitted under a `pal.` name and, for compatibility, a `lantern.` name with the same attributes under a matching prefix.
+Each counter is emitted under its `pal.` name.
 
 | Metric | Attributes | Meaning |
 | --- | --- | --- |

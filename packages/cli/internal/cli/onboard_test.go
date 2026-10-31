@@ -26,7 +26,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dshakes/lantern/packages/cli/internal"
+	"github.com/dshakes/pal/packages/cli/internal"
 )
 
 // ── mock endpoint helpers ────────────────────────────────────────────────────
@@ -354,7 +354,7 @@ func TestOnboard_StringReader(t *testing.T) {
 	}
 }
 
-// registerGuideSucceeded wires the lantern-guide template + agent + run endpoints
+// registerGuideSucceeded wires the pal-guide template + agent + run endpoints
 // for a successful guide explanation. Call after registerOnboardRunSucceeded so
 // the /v1/runs handler dispatches both the quickstart run and the guide run.
 func registerGuideSucceeded(mux *http.ServeMux) {
@@ -366,9 +366,9 @@ func registerGuideSucceeded(mux *http.ServeMux) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"agent":{"id":"guide1","name":"` + guideAgentName + `"},"templateId":"lantern-guide"}`))
+		_, _ = w.Write([]byte(`{"agent":{"id":"guide1","name":"` + guideAgentName + `"},"templateId":"pal-guide"}`))
 	})
-	// GET /v1/agents/lantern-guide — returned when agent already exists.
+	// GET /v1/agents/pal-guide — returned when agent already exists.
 	mux.HandleFunc("/v1/agents/"+guideAgentName, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -394,7 +394,7 @@ func registerGuideFailing(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/agents/from-template", func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
 	})
-	// GET /v1/agents/lantern-guide returns 404 — GetAgent fails.
+	// GET /v1/agents/pal-guide returns 404 — GetAgent fails.
 	mux.HandleFunc("/v1/agents/"+guideAgentName, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
@@ -475,8 +475,8 @@ func TestOnboard_GuideStep_Fails_OnboardStillSucceeds(t *testing.T) {
 	// We need to intercept /v1/agents POST without breaking the quickstart
 	// agent GET (which is at /v1/agents/quickstart-assistant specifically).
 	// The guide falls through to CreateAgentWithSystemPrompt only after
-	// GetAgent(/v1/agents/lantern-guide) returns 404. registerGuideFailing
-	// sets GET /v1/agents/lantern-guide → 404. POST /v1/agents is handled
+	// GetAgent(/v1/agents/pal-guide) returns 404. registerGuideFailing
+	// sets GET /v1/agents/pal-guide → 404. POST /v1/agents is handled
 	// by registerOnboardAgent(exists=true) which handles /v1/agents (no name
 	// suffix); in that handler, POST creates and returns 201. So in this
 	// scenario the CreateAgentWithSystemPrompt call SUCCEEDS, which means
@@ -494,7 +494,7 @@ func TestOnboard_GuideStep_Fails_OnboardStillSucceeds(t *testing.T) {
 	// step fails at the run poll stage, onboard still returns nil.
 
 	// Override /v1/agents/from-template to return 500 so ApplyTemplate fails.
-	// Then override /v1/agents/lantern-guide GET to return 404 so GetAgent fails.
+	// Then override /v1/agents/pal-guide GET to return 404 so GetAgent fails.
 	// Then let POST /v1/agents succeed so CreateAgentWithSystemPrompt succeeds.
 	// Then let POST /v1/runs succeed but return a run ID whose GET returns failed status.
 	failRunCount := 0

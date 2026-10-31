@@ -77,9 +77,9 @@ For an orphaned `microvm` run (no live VM, lock expired) the sweep calls `resume
 1. If a live (non-terminal) VM exists for the run, skip. The VM manages itself.
 2. Count the `runtime_vms` rows for the run. Total VMs ever spawned equals resume attempts.
 3. At 3 or more attempts (`maxMicroVMResumeAttempts`, a constant), mark the run `failed` with `{code: microvm_resume_exhausted, attempts}`.
-4. Otherwise re-schedule a new VM with `LANTERN_RESUME=1` in its environment.
+4. Otherwise re-schedule a new VM with `PAL_RESUME=1` in its environment.
 
-`LANTERN_RESUME=1` (the code still emits the old name) signals a re-drive. Skipping completed work is the workload's responsibility; no SDK helper reads it yet. The scheduler is highly available through leader election, and VMs lost with a node are reconciled to `terminated`.
+`PAL_RESUME=1` signals a re-drive. Skipping completed work is the workload's responsibility; no SDK helper reads it yet. The scheduler is highly available through leader election, and VMs lost with a node are reconciled to `terminated`.
 
 ## Inspecting and recovering a run
 
