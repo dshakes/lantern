@@ -235,6 +235,11 @@ plutil -replace EnvironmentVariables.NEXT_PUBLIC_API_URL -string http://100.64.0
 chmod 600 "$LA"/*.plist
 for f in "$LA"/dev.pal.*.plist; do launchctl_s bootstrap "gui/$(id -u)" "$f"; done
 cd "$SB" || exit 1
+# residue gate: a live-only key still pointing at the OLD database must stop the plan
+plutil -insert EnvironmentVariables.LEGACY_DB_URL -string "postgres://$OU:lantern@localhost:5432/$OD" "$LA/dev.pal.api.plist"
+RELEASE_REF="$REL" "$CUT" plan > "$SB/plan-residue.out" 2>&1; rc=$?
+plutil -remove EnvironmentVariables.LEGACY_DB_URL "$LA/dev.pal.api.plist"
+check "residue gate: plan fails on a live-only value that still names the old DB (key reported, value not)" bash -c "[ $rc != 0 ] && grep -q 'dev.pal.api.plist:LEGACY_DB_URL' '$SB/plan-residue.out' && ! grep -q ':lantern@localhost' '$SB/plan-residue.out'"
 snap() { "$CUT" snapshot "$1" old >/dev/null 2>&1; }
 same() { diff -u "$1" "$2" > "$SB/last.diff"; }
 snap "$SB/S0"
