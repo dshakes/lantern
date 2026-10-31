@@ -75,7 +75,11 @@ journaled() { [[ -f "$1/journal" ]] && grep -q "^$2$" "$1/journal"; }
 # ------------------------------------------------------------------ guards
 real_home() { dscl . -read "/Users/$(id -un)" NFSHomeDirectory 2>/dev/null | awk '{print $2}'; }
 
+GUARDED=0
 guard_mode() {
+  # once per process: rollback (also called from a failed apply) must never die on a re-check
+  [[ "$GUARDED" == 1 ]] && return 0
+  GUARDED=1
   local rh; rh="$(real_home)"
   if [[ "$SANDBOX" == 1 ]]; then
     case "$HOME" in /private/tmp/*|/tmp/*|/private/var/folders/*) ;; *) die "sandbox: HOME=$HOME is not a throwaway dir";; esac
@@ -90,7 +94,8 @@ guard_mode() {
       [[ "$t" == *test* ]] || die "sandbox: DB name '$t' must contain 'test' (refusing to touch real objects)"
     done
     [[ "$REPO_DIR" == "$HOME"/* ]] || die "sandbox: REPO_DIR must live under the sandbox HOME"
-    if [[ "$OLD_BUCKET_PREFIX" != "$NEW_BUCKET_PREFIX" || -n "${MINIO_NEW_USER:-}${STUB_MINIO_CONTAINER:-}" ]]; then
+    # MinIO steps run on a bucket rename or a credential change; then the container must be a throwaway
+    if [[ "$OLD_BUCKET_PREFIX" != "$NEW_BUCKET_PREFIX" || -n "${STUB_MINIO_CONTAINER:-}" ]]; then
       [[ "$MINIO_CONTAINER" == *test* ]] || die "sandbox: MINIO_CONTAINER '$MINIO_CONTAINER' must contain 'test' (refusing to touch the real MinIO)"
     fi
   else
@@ -424,6 +429,7 @@ minio_preflight() {  # minio_preflight OLD_HEAD
   resolve_minio_creds "$1" "$REL_SHA"
   minio_creds_change || buckets_rename || return 0
   hdr "MinIO ($MINIO_CONTAINER)"
+  if [[ "$SANDBOX" == 1 && "$MINIO_CONTAINER" != *test* ]]; then bad "sandbox: MinIO steps would touch '$MINIO_CONTAINER' (not a throwaway *test* container)"; return; fi
   if [[ "$(docker inspect -f '{{.State.Running}}' "$MINIO_CONTAINER" 2>/dev/null)" != true ]]; then bad "MinIO container $MINIO_CONTAINER is not running"; return; fi
   [[ -n "$MINIO_OLD_USER" && -n "$MINIO_OLD_PASS" ]] || { bad "cannot read MINIO_ROOT_USER/PASSWORD from $COMPOSE_FILE at ${1:0:9}"; return; }
   minio_login "$MINIO_OLD_USER" "$MINIO_OLD_PASS" && ok "MinIO accepts the current root credentials (from the running checkout's compose)" || { bad "MinIO rejects the current root credentials"; return; }
