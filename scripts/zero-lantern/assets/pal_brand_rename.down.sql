@@ -1,4 +1,6 @@
--- Reverses pal_brand_rename.up.sql (ADR 0032). The value rewrite (envelope
+-- Reverses the role and namespace renames of pal_brand_rename.up.sql (ADR
+-- 0032). This does NOT make the database readable by pre-rename code: roll
+-- back by restoring the pre-cutover backup. The value rewrite (envelope
 -- marker, secret refs, env keys) is not reversed: the PAL-era code is the only
 -- reader of those rows, and a blind reverse replace could touch values written
 -- after the rename.
