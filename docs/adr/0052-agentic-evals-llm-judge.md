@@ -55,7 +55,11 @@ Arg matchers (mocks `match`, trajectory `args`): literal (JSON-equal) or
 `{"$any":true}` / `{"$contains":"x"}` / `{"$regex":"…"}`.
 
 Scoring: a sample passes iff every non-skipped assertion passes; its score is
-their mean (judge scores are fractional). A case passes only if **every** sample
+the mean of the absolute assertions (judge scores are fractional). `pairwise`
+gates pass/fail but is excluded from the score: it is relative to the baseline
+and absent from the baseline run itself, so a tie (0.5) would otherwise score an
+equally good run below its baseline and trip the aggregate gate (found in the
+real-model run). A case passes only if **every** sample
 passes (pass^k); its score is the sample mean, with sample stddev and pass rate
 reported; 0 < pass rate < 1 marks it **flaky**. Run score = weight-averaged case
 score.
@@ -88,6 +92,10 @@ as `generate-spec` and `assist/explain`.
 
 ### 3. LLM-as-judge
 
+The judge also sees the agent's own system prompt (owner-authored, outside the
+untrusted fences) so it grades against what the agent was told to do; the
+faithfulness judge does not (it grades claims against evidence only).
+
 Kinds: `judge` (rubric + optional reference, integer 1–5 normalised to 0..1),
 `faithfulness` (claims vs the tool results the agent got), `pairwise`
 (candidate vs the baseline run's output for the same case, judged twice with
@@ -103,7 +111,10 @@ Calls go through `callLLMWithFailover` (and so the model-router seam when
 
 **Maker ≠ checker.** The judge call carries `withExcludedModels(<model that
 produced the output>)`; `callLLMWithFailover` drops that model from its chain
-before routing. If nothing distinct remains the judge returns
+before routing; when the dropped model was a strong tier, peers are tried
+before cheap tiers (a weaker checker than maker is a poor judge — the real-model
+run showed sonnet-under-test otherwise falling to haiku instead of gpt-4o). If
+nothing distinct remains the judge returns
 `errNoDistinctModel` and the assertion fails closed — a model never grades
 itself. A tenant with one provider still gets a different tier (e.g. sonnet
 under test, opus or haiku judging); a second provider gives full separation.

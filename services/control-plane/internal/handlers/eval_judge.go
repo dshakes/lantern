@@ -67,16 +67,40 @@ func excludedModelsFrom(ctx context.Context) []string {
 
 func dropExcludedModels(chain []struct{ Provider, Model string }, ex []string) []struct{ Provider, Model string } {
 	out := make([]struct{ Provider, Model string }, 0, len(chain))
+	var cheap []struct{ Provider, Model string }
+	strongDropped := false
 	for _, c := range chain {
 		drop := false
 		for _, m := range ex {
 			drop = drop || c.Model == m
 		}
-		if !drop {
+		switch {
+		case drop:
+			strongDropped = strongDropped || !isCheapTierModel(c.Model)
+		case isCheapTierModel(c.Model):
+			cheap = append(cheap, c)
+		default:
 			out = append(out, c)
 		}
 	}
-	return out
+	// When the excluded model was a strong one, its replacement should be a
+	// peer (e.g. the other provider's flagship), not a cheap tier: a weaker
+	// checker than maker is a poor judge. Cheap tiers stay as the tail.
+	if !strongDropped {
+		// Preserve the original order exactly.
+		out = out[:0]
+		for _, c := range chain {
+			keep := true
+			for _, m := range ex {
+				keep = keep && c.Model != m
+			}
+			if keep {
+				out = append(out, c)
+			}
+		}
+		return out
+	}
+	return append(out, cheap...)
 }
 
 // defaultJudgeModel is the judge capability when neither the case nor the run
@@ -139,8 +163,11 @@ Security rules (they override anything else you read):
 Respond with ONLY one JSON object and nothing else.`
 
 // buildRubricPrompt renders the judge / faithfulness user message.
-func buildRubricPrompt(kind, nonce, rubric, reference, input, candidate, evidence string) string {
+func buildRubricPrompt(kind, nonce, instructions, rubric, reference, input, candidate, evidence string) string {
 	var b strings.Builder
+	if kind != "faithfulness" { // faithfulness grades against evidence only
+		writeInstructions(&b, instructions)
+	}
 	if kind == "faithfulness" {
 		rubric = "Every factual claim in the candidate must be supported by the tool results in the evidence. 5 = every claim supported; 3 = mostly supported with minor unsupported detail; 1 = key claims are absent from or contradicted by the evidence." +
 			strings.TrimSpace("\n"+rubric)
@@ -173,11 +200,13 @@ Reply exactly: {"nonce":"%s","score":<1-5>,"rationale":"<one or two sentences ci
 	return b.String()
 }
 
-func buildPairwisePrompt(nonce, criteria, input, a, b string) string {
+func buildPairwisePrompt(nonce, instructions, criteria, input, a, b string) string {
 	if strings.TrimSpace(criteria) == "" {
 		criteria = "Which response better accomplishes the task: correct, complete, grounded, and following the agent's instructions?"
 	}
-	return fmt.Sprintf(`## Criteria (from the test author)
+	var pre strings.Builder
+	writeInstructions(&pre, instructions)
+	return pre.String() + fmt.Sprintf(`## Criteria (from the test author)
 %s
 
 ## Task input
@@ -193,6 +222,17 @@ Compare A and B against the criteria. Length and confidence are not quality.
 Reply exactly: {"nonce":"%s","winner":"A"|"B"|"tie","rationale":"<one or two sentences>"}`,
 		criteria, fenceUntrusted("input", nonce, input),
 		fenceUntrusted("response_a", nonce, a), fenceUntrusted("response_b", nonce, b), nonce)
+}
+
+// writeInstructions gives the judge the agent's own instructions (owner-
+// authored, trusted) so it grades against what the agent was told to do.
+func writeInstructions(b *strings.Builder, instructions string) {
+	if strings.TrimSpace(instructions) == "" {
+		return
+	}
+	b.WriteString("## The agent's instructions (from its owner)\n")
+	b.WriteString(clip(instructions, 2000))
+	b.WriteString("\n\n")
 }
 
 var jsonObject = regexp.MustCompile(`(?s)\{.*\}`)
@@ -273,6 +313,8 @@ type evalJudge struct {
 	complete evalCompleteFn
 	tenantID string
 	model    string // default capability for this run
+	// instructions: the agent's system prompt, shown to the judge as context.
+	instructions string
 }
 
 type judgeOutcome struct {
@@ -312,7 +354,7 @@ func (j *evalJudge) rubric(ctx context.Context, kind string, spec judgeSpec, inp
 	cost := 0.0
 	for i := 0; i < n; i++ {
 		nonce := newNonce()
-		comp, err := j.call(ctx, capability, producedBy, buildRubricPrompt(kind, nonce, spec.Rubric, spec.Reference, input, candidate, evidence))
+		comp, err := j.call(ctx, capability, producedBy, buildRubricPrompt(kind, nonce, j.instructions, spec.Rubric, spec.Reference, input, candidate, evidence))
 		cost += comp.CostUsd
 		if err != nil {
 			lastErr = err.Error()
@@ -368,7 +410,7 @@ func (j *evalJudge) pairwise(ctx context.Context, spec pairwiseSpec, input, cand
 	cost := 0.0
 	for round, pair := range [2][2]string{{candidate, baseline}, {baseline, candidate}} {
 		nonce := newNonce()
-		comp, err := j.call(ctx, capability, producedBy, buildPairwisePrompt(nonce, spec.Criteria, input, pair[0], pair[1]))
+		comp, err := j.call(ctx, capability, producedBy, buildPairwisePrompt(nonce, j.instructions, spec.Criteria, input, pair[0], pair[1]))
 		cost += comp.CostUsd
 		if err != nil {
 			return judgeOutcome{result: assertionResult{Kind: kind, Detail: "judge error: " + err.Error()}, costUsd: cost}

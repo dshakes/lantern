@@ -413,20 +413,34 @@ func callNames(calls []evalToolCall) string {
 // ---------- aggregation + variance ----------
 
 // sampleVerdict folds one sample's assertions: passed iff every non-skipped
-// assertion passed; score is their mean. With no gradable assertion the legacy
+// assertion passed; score is the mean of the absolute (non-pairwise) ones. With no gradable assertion the legacy
 // rule applies: pass on non-empty output.
 func sampleVerdict(as []assertionResult, output string, execErr string) (bool, float64) {
 	if execErr != "" {
 		return false, 0
 	}
-	n, sum, ok := 0, 0.0, true
+	n, sum, ok, gated := 0, 0.0, true, 0
 	for _, a := range as {
 		if a.Skipped {
 			continue
 		}
+		gated++
+		ok = ok && a.Passed
+		// Pairwise is relative to the baseline (and absent from the baseline
+		// run itself), so it gates pass/fail but stays out of the score —
+		// otherwise an equally good run (a tie, 0.5) scores below the
+		// baseline it is being compared with and trips the aggregate gate.
+		if a.Kind == "pairwise" {
+			continue
+		}
 		n++
 		sum += a.Score
-		ok = ok && a.Passed
+	}
+	if gated > 0 && n == 0 {
+		if ok {
+			return true, 1
+		}
+		return false, 0
 	}
 	if n == 0 {
 		if strings.TrimSpace(output) != "" {

@@ -536,7 +536,7 @@ type suiteExecution struct {
 func (h *EvalHandler) executeSuite(ctx context.Context, tenantID string, agent *evalAgent, cases []evalCase, specs []*evalAssertSpec, req runSuiteRequest, baseline *evalBaseline) suiteExecution {
 	start := time.Now()
 	baseTools, _ := toolsForTenant(ctx, h.srv.Pool, tenantID)
-	judge := &evalJudge{complete: h.complete, tenantID: tenantID, model: firstNonEmpty(req.JudgeModel, defaultJudgeModel())}
+	judge := &evalJudge{complete: h.complete, tenantID: tenantID, model: firstNonEmpty(req.JudgeModel, defaultJudgeModel()), instructions: agent.SystemPrompt}
 	evalKey := uuid.NewString()
 
 	baseOut := map[string]string{}
