@@ -356,6 +356,43 @@ scheduler, scheduler/manager reachability, KVM/Firecracker).
 | `DELETE` | `/v1/onboarding`          | Start over                                                          |
 | `POST`   | `/v1/onboarding/explain`  | Onboarding agent's ≤3-sentence read of a run (LLM; `runs:execute`)  |
 
+### Onboarding agent (conversation, both products — ADR 0051)
+
+`/onboarding`, `/pal/onboarding`, `pal onboard` and `pal setup` are now a
+conversation with one server-side onboarding agent
+(`internal/handlers/onboarding_agent.go`); the step wizards above moved to
+`wizard.tsx` and are the labelled fallback (**Step by step**, `?mode=steps`,
+`--steps`, or automatically on `mode:"fallback"` when the model call fails). The
+loop: one `CompleteInternalWithUsage` call per step (capability `auto`,
+model-router seam), JSON `{say, tool}`, ≤4 calls per turn. Guard rails:
+`allowedOnboardingTools` (pure, gated from read-back facts — refused calls are
+recorded and narrated), side-effecting tools need a user message in the turn,
+each server tool runs once per turn, and server tools are in-process calls into
+the REAL mux with the caller's credentials (`SetDispatcher(httpMux)`), so every
+target's own auth/scope/validation applies; progress is written only via
+`PUT /v1/onboarding` / `PUT /v1/pal/onboarding`. Client-only tools (secure key
+form, consent click, live bridge checks, WhatsApp QR, voice sampling,
+trust/profile confirmations, first Brief) come back as `actions`; the client
+reports `results` next turn — narration, never facts. There is no tool that
+records consent. A key pasted into chat is saved + tested via the settings
+endpoints and replaced before storage; everything persisted passes
+`redactSecrets`. No key yet / key just failed → scripted turn offering the key
+form. Transcript: `tenants.settings->'onboardingChat'->'<product>'` (typed,
+capped at 80; pending action re-offered on reload; resume recaps replace each
+other). Client logic: `apps/web/app/onboarding/agent-chat-logic.ts` (unit-tested);
+CLI: `packages/cli/internal/cli/onboard_agent.go` (TTY default; `--yes`/non-TTY
+never converse, never grant consent).
+
+| Method   | Path                              | Description                                                                 |
+| -------- | --------------------------------- | --------------------------------------------------------------------------- |
+| `GET`    | `/v1/onboarding/agent?product=`   | Transcript + read-back facts + pending client action (`read`)               |
+| `POST`   | `/v1/onboarding/agent/turn`       | `{product, message?, event?: start\|resume, results?}` → `{mode, reply, actions, toolCalls, facts, messages}` (`runs:execute`) |
+| `DELETE` | `/v1/onboarding/agent?product=`   | Clear the conversation (`settings:write`)                                   |
+
+First sign-in lands on `/welcome` (#396): the Runtime path opens `/onboarding`
+(the conversation); the pal path opens `/pal/onboarding` (the conversation) when
+`NEXT_PUBLIC_PAL_ONBOARDING=1`, else `/personal/setup`.
+
 ### Assist (dashboard "explain this")
 
 | Method | Path                 | Description |

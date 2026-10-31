@@ -42,6 +42,11 @@ import type {
   VoicePreview as PalVoicePreview,
   VoiceProfile as PalVoiceProfile,
 } from "@/app/pal/onboarding/pal-onboarding-logic";
+import type {
+  ChatProduct,
+  ToolResult as AgentToolResult,
+  TurnResponse as AgentTurnResponse,
+} from "@/app/onboarding/agent-chat-logic";
 
 export interface CreateAgentInput {
   name: string;
@@ -1468,6 +1473,27 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
     why?: string;
   }> {
     return this.request("/v1/pal/onboarding/trust/suggest", { method: "POST", body: JSON.stringify({ text }) });
+  }
+
+  // ---- the onboarding agent conversation (ADR 0051) -------------------------
+
+  /** Transcript + read-back facts + any action still waiting on this client. */
+  async getOnboardingAgent(product: ChatProduct): Promise<AgentTurnResponse> {
+    return this.request(`/v1/onboarding/agent?product=${product}`);
+  }
+
+  /** One turn: the user's words and/or results of client-run actions. */
+  async onboardingAgentTurn(body: {
+    product: ChatProduct;
+    message?: string;
+    event?: "start" | "resume";
+    results?: AgentToolResult[];
+  }): Promise<AgentTurnResponse> {
+    return this.request("/v1/onboarding/agent/turn", { method: "POST", body: JSON.stringify(body) });
+  }
+
+  async resetOnboardingAgent(product: ChatProduct): Promise<void> {
+    await this.request(`/v1/onboarding/agent?product=${product}`, { method: "DELETE" });
   }
 
   /** The onboarding agent's plain-language read of a run (LLM; may throw). */

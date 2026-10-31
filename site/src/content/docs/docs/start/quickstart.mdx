@@ -22,15 +22,19 @@ To look around with no key, use [Try it: the demo](/docs/start/demo/).
 
 ## What happens, in order
 
-1. **Describe the goal.** Free text, or one of six starters (support desk, PR triage, incident responder, daily digest, data analyst, Telegram assistant). A starter names the connectors it needs and skips the design call.
-2. **Review the design.** The onboarding agent proposes a name, instructions, steps, a capability model (`auto`, never a vendor name) and a first task, and says why. You edit anything, then approve. If the design call fails, you can fall back to a one-step design, labelled as such.
-3. **Check the model key.** PAL makes a real test call. A rejected key stops here with the provider's actual error.
-4. **Create and run.** The first run streams live, step by step, then shows the output.
-5. **Optional: run in a sandbox.** PAL starts a microVM, runs one command and shuts it down. Without a runtime scheduler it reports **Sandbox unavailable** and nothing runs; `pal doctor` names the missing piece.
+It is a conversation: say what you want in your own words, and the onboarding agent asks follow-ups, picks the next step and does it with real calls.
+
+1. **Model key.** With no key yet, the agent's first job is to get one: a secure form saves it and makes a real test call. A rejected key stops here with the provider's actual error. The key never appears in the conversation; one pasted into the chat by mistake is saved, tested and removed before anything is stored.
+2. **Describe the goal**, for example *"Turn my rough meeting notes into a short summary with action items."*
+3. **Review the design.** The agent proposes a name, instructions, a capability model (`auto`, never a vendor name) and a first task. Ask for changes in plain words (the name stays), or approve.
+4. **Create and run.** On your go-ahead it creates the agent (never over an existing agent's name), reads it back, runs it once and shows the real output, or the real error and what to do about it.
+5. **Next steps.** It suggests a channel, a budget or an eval suite.
+
+The agent can only call the tools the current step allows; anything else is refused and said so in the chat. It never reports success a call did not return. If it can't reach the model, the page switches to the **step-by-step** setup and says why. **Step by step** in the header opens it any time with the same saved progress; starters (support desk, PR triage, incident responder, daily digest, data analyst, Telegram assistant), spec editing and the optional sandbox run live there.
 
 ## In the dashboard
 
-Open `http://localhost:3001/onboarding` and sign in with the seeded dev account (`admin@pal.local` / `pal`). A conversation sits on the right and a progress rail on the left.
+Open `http://localhost:3001/onboarding` and sign in with the seeded dev account (`admin@pal.local` / `pal`). It is a conversation with a progress rail beside it (a one-line summary on a phone).
 
 Progress is stored on the server, so a reload or another browser resumes where you left off. **Start over** clears it. When a step fails, the page names the cause and offers one fix:
 
@@ -52,7 +56,7 @@ Where verification is required ([Accounts and teams](/docs/build/accounts/)), cr
 pal onboard
 ```
 
-It checks health, signs in, test-calls your key (asking for one if needed), asks *What do you want your agent to do?*, shows the proposed agent, creates it on confirm and streams the first run. `--yes` never prompts and fails at the first broken step, which suits CI:
+On a terminal this is the same conversation as the dashboard: type in your own words; keys go into a hidden prompt, never the chat. `--steps` keeps the step-by-step wizard (health, sign-in, key test, goal, proposal, create, streamed first run), which also takes over if the agent can't reach the model. `--yes` never prompts and fails at the first broken step, which suits CI:
 
 ```bash
 pal onboard --yes \
@@ -64,7 +68,7 @@ Other `pal` commands reuse the credentials `pal onboard` saves. To sign in separ
 
 ## The same flow over REST
 
-Both paths use public endpoints you can script.
+The conversation itself is `POST /v1/onboarding/agent/turn` (`{product: "runtime"|"pal", message?, event?, results?}`); every tool the agent calls is one of the endpoints below, all public and scriptable:
 
 ```bash
 export PAL_TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
