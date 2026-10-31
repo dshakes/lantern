@@ -121,7 +121,12 @@ mkdir -p "$SB/remote" && git init -q --bare "$SB/remote/pal.git" && ln -s pal.gi
 git init -q -b master "$REPO_DIR"; cd "$REPO_DIR" || exit 1
 git config user.email sandbox@example.test; git config user.name sandbox
 mkdir -p scripts/launchd infra/docker packages/bridge-core/src services/control-plane/cmd/server services/whatsapp-bridge/src services/imessage-bridge/src apps/web
-for s in api dashboard whatsapp-bridge imessage-bridge infra; do cp "$REPO_SRC/scripts/launchd/dev.lantern.$s.plist" scripts/launchd/; done
+# the repo now ships only dev.pal.* templates: synthesize the pre-rename ones from them
+for s in api dashboard whatsapp-bridge imessage-bridge infra; do
+  if [[ -f "$REPO_SRC/scripts/launchd/dev.lantern.$s.plist" ]]; then cp "$REPO_SRC/scripts/launchd/dev.lantern.$s.plist" scripts/launchd/
+  else sed -e 's/dev\.pal\./dev.lantern./g' -e 's#Logs/PAL#Logs/Lantern#g' -e 's/PAL_/LANTERN_/g' \
+         "$REPO_SRC/scripts/launchd/dev.pal.$s.plist" > "scripts/launchd/dev.lantern.$s.plist"; fi
+done
 cp "$REPO_SRC/infra/docker/docker-compose.yml" infra/docker/
 plutil -replace EnvironmentVariables.DATABASE_URL -string 'postgres://lantern_test:oldpw-test@localhost:5432/cutover_test?sslmode=disable' scripts/launchd/dev.lantern.api.plist
 # live: the dashboard resolves an x64 node (Rosetta) from its plist PATH; the bridges use the newest nvm node
