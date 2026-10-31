@@ -105,6 +105,10 @@ type PalClaims struct {
 	// Scopes is populated for API key auth only (Role=="service").
 	// Empty means "all scopes allowed" (unrestricted key).
 	Scopes []string `json:"scopes,omitempty"`
+	// Typ is set on every NON-session token the platform mints (agent-instance,
+	// agent, dataplane-session). A user session never carries it, so
+	// ValidateToken rejects any token that does (ADR 0052 §7).
+	Typ string `json:"typ,omitempty"`
 }
 
 // ---------- handlers ----------
@@ -1001,6 +1005,11 @@ func (h *AuthHandler) ValidateToken(tokenStr string) (*PalClaims, error) {
 	claims, ok := token.Claims.(*PalClaims)
 	if !ok || !token.Valid {
 		return nil, fmt.Errorf("invalid token claims")
+	}
+	// Token confusion guard: agent-instance / agent / dataplane tokens can be
+	// HMAC-signed with the same secret in dev; none of them is a user session.
+	if claims.Typ != "" || claims.Issuer == "pal-agent" {
+		return nil, fmt.Errorf("not a session token")
 	}
 
 	return claims, nil

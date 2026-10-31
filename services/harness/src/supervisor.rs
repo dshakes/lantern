@@ -98,7 +98,7 @@ pub fn apply_workload_identity(cmd: &mut Command, id: Option<WorkloadIdentity>) 
 
 /// `PAL_*` keys a workload child may see: identity/locator values the
 /// workload SDK reads, none of them secret.
-const WORKLOAD_VISIBLE_PAL_KEYS: [&str; 14] = [
+const WORKLOAD_VISIBLE_PAL_KEYS: [&str; 16] = [
     // Crash re-drive marker: the agent skips steps already in the journal (09-agent-runtime.md).
     "PAL_RESUME",
     "PAL_VM_ID",
@@ -106,6 +106,9 @@ const WORKLOAD_VISIBLE_PAL_KEYS: [&str; 14] = [
     // Manager-stamped from the authenticated spawn (the SDK reads the tenant).
     "PAL_TENANT_ID",
     "PAL_AGENT_VERSION_ID",
+    // The agent principal this VM runs as (ADR 0052) — locators, not credentials.
+    "PAL_AGENT_ID",
+    "PAL_AGENT_SPIFFE_ID",
     "PAL_ENV",
     "PAL_SECRETS_SOCKET",
     "PAL_OTLP_SOCKET",
@@ -563,6 +566,8 @@ mod tests {
             "PAL_VM_ID",
             "PAL_TENANT_ID",
             "PAL_AGENT_VERSION_ID",
+            "PAL_AGENT_ID",
+            "PAL_AGENT_SPIFFE_ID",
         ] {
             assert!(workload_may_see(k), "{k} must reach the workload");
         }

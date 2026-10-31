@@ -29,6 +29,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/dshakes/pal/packages/agentpolicy"
 	"io"
 	"net"
 	"net/http"
@@ -945,6 +946,14 @@ func (h *RuntimeHandler) scheduleAgentSpec(ctx context.Context, tenantID, princi
 		return "", "", "", "", time.Time{}, fmt.Errorf("load DLP policy: %w", err)
 	}
 
+	// Agent binding (ADR 0052): a VM that runs AS an agent may only get the
+	// egress and secrets that agent's policy allows. Checked before anything is
+	// spawned; a denial is a typed *AgentPolicyDeniedError (HTTP 403).
+	agent, err := h.authorizeScheduleForAgent(ctx, tenantID, spec)
+	if err != nil {
+		return "", "", "", "", time.Time{}, err
+	}
+
 	// Mint per-VM identity. Fail closed: an agent that cannot be identified must not be scheduled.
 	// The instance id is derived from the idempotency key: when a retry is
 	// deduped by the scheduler it returns the VM that booted with the FIRST
@@ -997,6 +1006,13 @@ func (h *RuntimeHandler) scheduleAgentSpec(ctx context.Context, tenantID, princi
 		env[k] = v
 	}
 	stampAgentIdentity(env, instanceID, instanceToken)
+	if agent != nil {
+		// Non-secret identity locators for the harness/manager (and the
+		// workload). The bearer credential stays the instance token above.
+		env["PAL_AGENT_ID"] = agent.AgentID
+		env["PAL_AGENT_SPIFFE_ID"] = agent.SpiffeID
+		specMap["agent_id"] = agent.AgentID
+	}
 	specMap["env"] = env
 
 	// Attach DLP policy (ADR 0030), loaded above.
@@ -1037,14 +1053,18 @@ func (h *RuntimeHandler) scheduleAgentSpec(ctx context.Context, tenantID, princi
 		}
 	}
 
+	var agentIDArg any
+	if agent != nil {
+		agentIDArg = agent.AgentID
+	}
 	created = time.Now().UTC()
 	if wErr := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		_, e := tx.Exec(ctx, `
 			INSERT INTO runtime_vms
-			  (vm_id, tenant_id, agent_version_id, run_id, node, az, isolation_class, state, spec, agent_instance_id, confidential, idle_timeout_secs, created_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8::jsonb, $9, $10, $11, $12)
+			  (vm_id, tenant_id, agent_version_id, run_id, node, az, isolation_class, state, spec, agent_instance_id, confidential, idle_timeout_secs, created_at, agent_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8::jsonb, $9, $10, $11, $12, $13)
 			ON CONFLICT (vm_id) DO NOTHING
-		`, vmID, tenantID, agentVerArg, runIDArg, node, az, spec.Isolation, specJSON, instanceID, spec.Confidential, spec.IdleTimeoutSecs, created)
+		`, vmID, tenantID, agentVerArg, runIDArg, node, az, spec.Isolation, specJSON, instanceID, spec.Confidential, spec.IdleTimeoutSecs, created, agentIDArg)
 		return e
 	}); wErr != nil {
 		h.logger().Error("scheduleAgentSpec: insert runtime_vms failed", zap.Error(wErr))
@@ -1572,7 +1592,10 @@ type agentSpecDTO struct {
 	Idempotent        bool              `json:"idempotent,omitempty"`
 	RestoreSnapshotID string            `json:"restoreSnapshotId,omitempty"`
 	AgentVersionID    string            `json:"agentVersionId,omitempty"`
-	RunID             string            `json:"runId,omitempty"`
+	// AgentName binds the VM to that agent's identity + policy (ADR 0052);
+	// agentVersionId binds it to the agent owning that version.
+	AgentName string `json:"agentName,omitempty"`
+	RunID     string `json:"runId,omitempty"`
 	// Container entrypoint override + extra args. Both honored by the
 	// runtime-manager docker backend.
 	Command []string          `json:"command,omitempty"`
@@ -1885,6 +1908,9 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 		h.logger().Error("scheduleAgentSpec failed", zap.Error(err))
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "scheduling failed")
+		if writeAgentPolicyDenied(w, err) {
+			return
+		}
 		if strings.Contains(err.Error(), "mint agent identity") {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not mint agent identity"})
 		} else {
@@ -2897,4 +2923,71 @@ func runScheduleKey(runID string, manifest map[string]any) string {
 		attempt = int(v)
 	}
 	return fmt.Sprintf("run:%s:%d", runID, attempt)
+}
+
+// authorizeScheduleForAgent resolves the agent a schedule runs as (agentName,
+// else the owner of agentVersionId) and authorizes every egress rule, the
+// network mode, and every secret / injected-credential ref against that
+// agent's policy. Returns (nil, nil) for a schedule not bound to an agent.
+func (h *RuntimeHandler) authorizeScheduleForAgent(ctx context.Context, tenantID string, spec agentSpecDTO) (*AgentPrincipal, error) {
+	z := currentAgentAuthz()
+	if z == nil || (spec.AgentName == "" && spec.AgentVersionID == "") {
+		return nil, nil
+	}
+	var a agentRef
+	err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		if spec.AgentName != "" {
+			return tx.QueryRow(ctx, `SELECT id::text, name, tenant_id::text, COALESCE(current_version_id::text, ''), created_at
+				FROM agents WHERE tenant_id = $1 AND name = $2 AND archived_at IS NULL`, tenantID, spec.AgentName).
+				Scan(&a.ID, &a.Name, &a.TenantID, &a.VersionID, &a.CreatedAt)
+		}
+		return tx.QueryRow(ctx, `SELECT a.id::text, a.name, a.tenant_id::text, v.id::text, a.created_at
+			FROM agent_versions v JOIN agents a ON a.id = v.agent_id
+			WHERE v.id::text = $1 AND a.tenant_id = $2`, spec.AgentVersionID, tenantID).
+			Scan(&a.ID, &a.Name, &a.TenantID, &a.VersionID, &a.CreatedAt)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		if spec.AgentName != "" {
+			return nil, &AgentPolicyDeniedError{Kind: "agent", Target: spec.AgentName, Reason: "no such agent in this tenant"}
+		}
+		return nil, nil // unknown version: not agent-bound (pre-existing behaviour)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("resolve schedule agent: %w", err)
+	}
+	_, p, err := z.establishFor(ctx, a, spec.RunID, AudienceRuntime)
+	if err != nil {
+		return nil, err
+	}
+	actions := scheduleActions(spec)
+	for _, act := range actions {
+		if err := p.Authorize(ctx, act, "runtime.schedule"); err != nil {
+			return nil, err
+		}
+	}
+	return p, nil
+}
+
+// scheduleActions lists what a VM spec would let the workload reach.
+func scheduleActions(spec agentSpecDTO) []agentpolicy.Action {
+	var out []agentpolicy.Action
+	if strings.EqualFold(spec.Network, "open") {
+		out = append(out, agentpolicy.Action{Kind: agentpolicy.KindEgress, Target: "*"})
+	}
+	for _, r := range spec.EgressRules {
+		if pat, _ := r["pattern"].(string); pat != "" {
+			out = append(out, agentpolicy.Action{Kind: agentpolicy.KindEgress, Target: pat})
+		}
+		for _, m := range mapSlice(r["inject"]) {
+			if ref, _ := firstOf(m, "secretRef", "secret_ref", "secretUri", "secret_uri").(string); ref != "" {
+				out = append(out, agentpolicy.Action{Kind: agentpolicy.KindSecret, Target: ref})
+			}
+		}
+	}
+	for _, sr := range spec.Secrets {
+		if ref, _ := firstOf(sr, "secret_uri", "secretUri").(string); ref != "" {
+			out = append(out, agentpolicy.Action{Kind: agentpolicy.KindSecret, Target: ref})
+		}
+	}
+	return out
 }
