@@ -25,7 +25,7 @@ The control plane never runs user code. Specs, identity and trace context go dow
 ### Hybrid, step by step
 
 1. Deploy the `pal-data-plane` chart into the workload cluster ([Helm](#helm)).
-2. Register it with `POST /v1/data-planes` or **Settings > Data Planes**. This mints a one-time 32-byte bootstrap token. Store it immediately.
+2. Register it with `POST /v1/data-planes` or **Deployments > Register data plane**. This mints a one-time 32-byte bootstrap token. Store it immediately.
 3. The data plane dials **out** to the control plane's `:50051`, sends the bootstrap token in the `Register` RPC, and receives a session JWT (1 h TTL, rotated through `RefreshToken`).
 4. The data plane opens a persistent `RunStream` bidirectional RPC. The control plane pushes run assignments; the agent reports status and completion. Only run metadata crosses the boundary.
 

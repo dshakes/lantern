@@ -17,10 +17,12 @@ Every run produces one **OpenTelemetry trace**: a timeline of each step with its
 Export is gated by environment. Set an endpoint and traces flow; leave both unset and tracing is a no-op with no overhead.
 
 ```bash
-OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318   # control plane and gateway export OTLP/HTTP
 # or
 PAL_OTEL_ENABLED=1   # uses the default localhost endpoint
 ```
+
+The model router and runtime manager export OTLP/gRPC, so point them at the collector's gRPC port (4317). Service names are `lantern.control-plane`, `lantern-gateway`, `lantern-model-router` and `lantern-runtime-manager`.
 
 W3C `traceparent` is always honoured, even with no exporter: inbound trace context is forwarded correctly either way.
 
@@ -120,7 +122,7 @@ The model router and runtime manager expose Prometheus metrics only when `PAL_ME
 One run is one query in your trace backend:
 
 ```text
-# Jaeger:    service=<control-plane service name> pal.run_id=<run_id>
+# Jaeger:    service=lantern.control-plane pal.run_id=<run_id>
 # Tempo:     { span.pal.run_id = "<run_id>" }
 # Honeycomb: WHERE pal.run_id = "<run_id>"
 ```

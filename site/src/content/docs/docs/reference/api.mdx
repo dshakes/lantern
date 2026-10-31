@@ -17,7 +17,7 @@ Pass your API key in the `Authorization` header on every request:
 Authorization: Bearer hlx_live_your_api_key_here
 ```
 
-Create keys under **Settings > API Keys**. Keys start with `hlx_live_` and carry scopes (`read`, `write`, `admin`, or fine-grained ones such as `agents:write` and `runs:execute`). Every route is annotated with the scope it needs (for example `GET /v1/runs` needs `runs:read`, `POST /v1/runs` needs `runs:execute`). Scope enforcement is on by default in production (`PAL_ENV=production|staging`) and off in dev. Set `PAL_AUTHZ_ENFORCE=0` to opt out (logged as a warning) or `=1` to force it on in dev; a key missing the required scope then gets `403`. Row-level security is on in production whenever `PAL_APP_DB_PASSWORD` is set; without it the control plane refuses to start unless you set `PAL_RLS_ENFORCE=0`.
+Create keys under **Settings > API keys**. Keys start with `hlx_live_` and carry scopes (`read`, `write`, `admin`, or fine-grained ones such as `agents:write` and `runs:execute`). Every route is annotated with the scope it needs (for example `GET /v1/runs` needs `runs:read`, `POST /v1/runs` needs `runs:execute`). Scope enforcement is on by default in production (`PAL_ENV=production|staging`) and off in dev. Set `PAL_AUTHZ_ENFORCE=0` to opt out (logged as a warning) or `=1` to force it on in dev; a key missing the required scope then gets `403`. Row-level security is on in production whenever `PAL_APP_DB_PASSWORD` is set; without it the control plane refuses to start unless you set `PAL_RLS_ENFORCE=0`.
 
 <Aside type="note" title="Self-hosted base URL">
 By default the control plane binds to `http://localhost:8080`. There is no managed cloud endpoint: you deploy the control plane yourself.
@@ -408,7 +408,7 @@ Everything else registered in `services/control-plane/cmd/server/main.go`, with 
 | Agent onboarding | `GET/PUT/DELETE /v1/onboarding`, `POST /v1/onboarding/explain` | [Your first agent](/docs/start/quickstart/) |
 | pal setup | `GET/PUT/DELETE /v1/pal/onboarding`, `GET /v1/pal/onboarding/profile`, `POST /v1/pal/onboarding/{guide,voice,profile/extract,trust/suggest}`. Reads need `read`, state writes `settings:write`, the four POSTs (they call an LLM) `runs:execute` | [Connect your channels](/docs/pal/surfaces/) |
 | Domain records | `/v1/domain-records` (+ `{id}`), `GET /v1/domains/{domain}/digest`, `POST /v1/assist/explain` | [pal internals](/docs/architecture/pal/) |
-| Internal | `POST /internal/auth/introspect-key` (gateway, `x-lantern-service-token`) | [Security boundaries](/docs/architecture/security-boundaries/) |
+| Internal | `POST /internal/auth/introspect-key` (gateway, `x-pal-service-token`) | [Security boundaries](/docs/architecture/security-boundaries/) |
 
 The bridges also use endpoints that serve the personal agent only: `/v1/life-events`, `/v1/commitments`, `/v1/errands`, `/v1/whatsapp/{drafts,facts,vips}`, `/v1/jarvis/*`, `/v1/signals` (a device token, JWT or API key; or the legacy shared token), `/v1/shortcuts/*`, `/v1/news`, `/v1/vision/ocr`, `/v1/audio/transcriptions`, `/v1/browser/*`. They are single-owner and not a stable public surface.
 

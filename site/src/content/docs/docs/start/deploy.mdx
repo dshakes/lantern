@@ -69,11 +69,11 @@ Generate a data plane for EKS, GKE or AKS. Agents then execute in that cloud whi
 
 ```bash
 pal infra install --cloud aws --region us-east-1 --node-count 3 --firecracker   # writes ./lantern-data-plane-aws
-export TF_VAR_agent_token="<one-time token from Settings, Data planes>"
+export TF_VAR_agent_token="<one-time token from Deployments, Register data plane>"
 cd lantern-data-plane-aws && terraform init && terraform plan && terraform apply
 ```
 
-The data plane dials **out** to the control plane (`:50051`) with a one-time bootstrap token, so you open no inbound ports. Register it under **Settings, Data planes** or with `POST /v1/data-planes`. `pal infra status` is a placeholder today; check the data-plane-agent pod logs instead.
+The data plane dials **out** to the control plane (`:50051`) with a one-time bootstrap token, so you open no inbound ports. Register it under **Deployments, Register data plane** or with `POST /v1/data-planes`. `pal infra status` is a placeholder today; check the data-plane-agent pod logs instead.
 
 </TabItem>
 </Tabs>

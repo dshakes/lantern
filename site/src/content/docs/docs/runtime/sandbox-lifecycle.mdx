@@ -21,7 +21,7 @@ A sandbox microVM does not have to stay running. **Pause** snapshots its memory 
 
 ## Idle suspend
 
-Set `idleTimeoutSecs` on the schedule request (`--idle-timeout N` on the CLI; `0` or unset means never). When a sandbox sees no exec, tool call or file request for that long, it is snapshotted and its compute and quota slot are released. The scheduler sweeps every 10 s on activity reported with the 30 s node heartbeat, so suspension can trail the timeout by up to about 40 s.
+Set `idleTimeoutSecs` on the schedule request (`--idle-timeout N` on the CLI; `0` or unset means never). When a sandbox sees no exec, tool call or file request for that long, it is snapshotted and its compute and quota slot are released. The scheduler sweeps every 10 s (`DefaultIdleSweepInterval` in `services/runtime-scheduler/internal/handlers/idle_sweeper.go`) on activity the runtime manager reports with its 30 s node heartbeat (`INTERVAL` in `services/runtime-manager/src/scheduler_heartbeat.rs`), so suspension can trail the timeout by up to about 40 s.
 
 The next exec or file request (REST, CLI or SDK) resumes the VM transparently. The caller sees a slower first response while the restored guest re-identifies and reconnects, not an error. In the committed benchmark ([`docs/benchmarks/runtime-latency.md`](repo:/blob/master/docs/benchmarks/runtime-latency.md), nested virtualization on a laptop) a restored VM answered its first exec after 2,491 ms (p50). A VM paused by an operator (`POST /pause`) is never auto-resumed: exec answers 409.
 
@@ -59,17 +59,18 @@ An S3 upload failure is logged and does not fail the snapshot; the local copy is
 
 Each snapshot stores `mem` plus a full copy of the disk, and every restore or fork copies the disk again. The copy reflinks on XFS or btrfs and byte-copies elsewhere (see [Operations](/docs/operate/operations/#node-filesystem-for-snapshots-and-forks)). On the jailed path forks share the memory file through a hard link, so only the disk is copied per fork.
 
-These numbers come from [`docs/benchmarks/runtime-latency.md`](repo:/blob/master/docs/benchmarks/runtime-latency.md) (run 2026-10-27): a Lima nested-virtualization guest on an Apple M4 Max, 1 vCPU, 128 MiB VM, jailed. They are preliminary dev-laptop figures, not production numbers.
+These numbers come from [`docs/benchmarks/runtime-latency.md`](repo:/blob/master/docs/benchmarks/runtime-latency.md) (run 2026-10-29, 20 iterations): a Lima nested-virtualization guest on an Apple M4 Max, 1 vCPU, 128 MiB VM, jailed. Figures are p50. They are preliminary dev-laptop figures, not production numbers.
 
 | Step | Indicative |
 | --- | --- |
-| Memory snapshot (128 MiB, measured before disk capture) | 634 ms |
-| Restore (Spawn RPC) | 138 ms |
-| Fork spawn | 131 / 145 / 160 ms |
-| First exec after restore (p50 of 5 runs) | 2,857 ms |
-| Stop | about 200 ms |
+| Snapshot RPC (pause guest, write memory and disk, resume) | 702 ms |
+| Restore (Spawn RPC) | 131 ms |
+| Fork spawn (N=1) | 151 ms |
+| First exec after restore | 2,491 ms |
+| First exec after fork (N=1) | 2,722 ms |
+| Stop | 198 ms |
 
-The snapshot row predates disk capture, so add the `rootfs` copy to it. After a restore the manager holds the first exec until the restored harness has re-identified and sent a heartbeat (`PAL_HARNESS_READY_TIMEOUT_MS`, default 5 s), so a caller makes one call instead of retrying. Bare-metal KVM has not been measured.
+After a restore the manager holds the first exec until the restored harness has re-identified and sent a heartbeat (`PAL_HARNESS_READY_TIMEOUT_MS`, default 5 s), so a caller makes one call instead of retrying. Bare-metal KVM has not been measured.
 
 ## REST
 
