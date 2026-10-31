@@ -37,6 +37,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/dshakes/pal/services/control-plane/internal/obs"
 )
 
 // ErrRunParked is returned by Deps.WaitForApproval (and propagated from
@@ -617,6 +619,9 @@ func executeNode(ctx context.Context, runID string, deps Deps, emit emitFn, node
 			return nil, fmt.Errorf("tool node requires a tool name")
 		}
 		params := parseParams(node.Data["parameters"], vars)
+		// Trace tree (ADR 0056): record the call's arguments, redacted at write
+		// time so a secret in a rendered template never lands in the journal.
+		emit("tool_call", node.ID, map[string]any{"tool": tool, "args": obs.Redact(params)})
 		return deps.CallTool(ctx, tool, params)
 
 	case "connector":
@@ -626,6 +631,7 @@ func executeNode(ctx context.Context, runID string, deps Deps, emit emitFn, node
 			return nil, fmt.Errorf("connector node requires connector + action")
 		}
 		params := parseParams(node.Data["inputMapping"], vars)
+		emit("tool_call", node.ID, map[string]any{"tool": connectorID + "." + action, "args": obs.Redact(params)})
 		return deps.CallConnector(ctx, connectorID, action, params)
 
 	case "condition":

@@ -18,6 +18,7 @@ import {
   Play,
   Settings as SettingsIcon,
   ShieldCheck,
+  Activity,
 } from "lucide-react";
 import Link from "next/link";
 import { Tabs } from "@/components/tabs";
@@ -30,6 +31,7 @@ export function AgentTabsBar({ name }: { name: string }) {
     { id: "overview", label: "Overview", icon: FileText, href: base },
     { id: "channels", label: "Channels", icon: MessageSquare, href: `${base}/channels` },
     { id: "editor", label: "Workflow", icon: GitBranch, href: `${base}/editor` },
+    { id: "reliability", label: "Reliability", icon: Activity, href: `${base}/reliability` },
     // The next four point at the existing top-level pages with an agent
     // filter. We'll fold these into per-agent sub-routes in a follow-up.
     { id: "runs", label: "Runs", icon: Play, href: `/runs?agent=${encodeURIComponent(name)}` },

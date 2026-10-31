@@ -75,6 +75,7 @@ export const NAV: Record<WorkspaceMode, NavSection[]> = {
         { href: "/overview", label: "Overview", icon: "gauge" },
         { href: "/agents", label: "Agents", icon: "bot" },
         { href: "/runs", label: "Runs", icon: "play", match: ["/inbox"] },
+        { href: "/incidents", label: "Incidents", icon: "activity" },
         { href: "/runtime", label: "Sandboxes", icon: "server" },
       ],
     },
@@ -107,7 +108,7 @@ export const MOBILE_PRIMARY: Record<WorkspaceMode, NavItem[]> = {
 
 const PAL_PREFIXES = ["/brief", "/personal", "/automations", "/voice", "/pal"];
 const RUNTIME_PREFIXES = [
-  "/overview", "/agents", "/runs", "/inbox", "/runtime", "/deployments", "/eval-suites",
+  "/overview", "/agents", "/runs", "/incidents", "/inbox", "/runtime", "/deployments", "/eval-suites",
   "/evaluations", "/experiments", "/budgets", "/connectors", "/surfaces", "/embed", "/marketplace",
 ];
 
