@@ -80,8 +80,13 @@ hand-edited gate.
   `PAL_API_URL`. No third-party default hosts.
 - `PAL_API_KEY` is read from the environment only; never echoed to logs, reports
   or findings. The workflow requests `contents: read`, `pull-requests: write`.
-- Actions are referenced by major tag (`@v4`/`@v5`/`@v7`), not SHA: pin them in
-  your repo if your threat model requires it.
+- Actions are pinned by commit SHA (tag in a comment). The CLI is installed from the
+  signed GitHub release (ADR 0044) at an explicit `PAL_CLI_VERSION` (no `latest`):
+  sha256 checked against `SHA256SUMS`, which is verified against its cosign bundle
+  (workflow identity `release.yml`) when cosign is present (the generated workflow
+  installs it); any mismatch aborts. `go install pkg@version` is deliberately not
+  used: `packages/cli/go.mod` has a `replace` directive, which `go install` rejects.
+  `PAL_CLI_PATH` points at a prebuilt binary and skips the download.
 - Policy lint is a static check of the manifest. It does not replace runtime
   enforcement (egress allowlist at the harness, ADR 0006/0026; secret vending).
   The manifest-level `egress:` key is read by this gate; the schedule spec is what
@@ -95,4 +100,3 @@ hand-edited gate.
   contract into the onboarding agent's server tool list (it only has REST tools
   today). The CLI is the executor of the contract for now.
 - `pal test --against=last-green` and the injection-eval suite named in the plan.
-- A pinned release channel for `go install` (`PAL_CLI_VERSION` defaults to `latest`).

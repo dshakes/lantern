@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -201,9 +202,25 @@ func TestRenderCIFiles(t *testing.T) {
 			}
 		}
 		// no baked-in hosts: the API address comes only from the repo's own variable
-		for _, bad := range []string{"pal." + "run", "pal." + "dev", "lan" + "tern", "sk-", "http://", "https://"} {
+		for _, bad := range []string{"pal." + "run", "pal." + "dev", "lan" + "tern", "sk-", "http://", "go install", "@latest", "setup-go"} {
 			if strings.Contains(c, bad) {
 				t.Errorf("%s contains %q", a[i].Path, bad)
+			}
+		}
+		// `go install pkg@version` fails for modules with replace directives (packages/cli has one)
+		if regexp.MustCompile(`go\s+install\s+\S*@`).MatchString(c) {
+			t.Errorf("%s must never `go install pkg@version`", a[i].Path)
+		}
+		// the only hosts allowed: the GitHub release host (signed CLI, ADR 0044) and its OIDC issuer
+		for _, u := range regexp.MustCompile(`https://[^/\s"]+`).FindAllString(c, -1) {
+			if u != "https://github.com" && u != "https://token.actions.githubusercontent.com" && u != `https://github\.com` {
+				t.Errorf("%s references unexpected host %s", a[i].Path, u)
+			}
+		}
+		// every action is pinned by commit SHA
+		for _, m := range regexp.MustCompile(`uses:\s*(\S+)`).FindAllStringSubmatch(c, -1) {
+			if !regexp.MustCompile(`@[0-9a-f]{40}$`).MatchString(m[1]) {
+				t.Errorf("%s: action %s is not pinned by commit SHA", a[i].Path, m[1])
 			}
 		}
 	}

@@ -76,7 +76,7 @@ curl -fs -X POST "$api/v1/eval-suites" "${auth[@]}" -d '{
    {"name":"standard-delivery","input":"How many days does standard delivery take?","assert":{"contains":"3-5 business days"}},
    {"name":"track-order","input":"Where can I track my parcel?","assert":{"contains":"Orders page"}}]}' >/dev/null
 
-export PATH="$tmp/bin:$PATH" PAL_API_URL="$api" PAL_API_KEY="$tok" PAL_CI_STAGING_ACK=1
+export PATH="$tmp/bin:$PATH" PAL_API_URL="$api" PAL_API_KEY="$tok" PAL_CI_STAGING_ACK=1 PAL_CLI_PATH="$tmp/bin/pal"  # prebuilt binary; the release-download path is covered by unit tests with a shimmed curl
 pal ci init --suite ci
 [ -x .pal/ci.sh ] && [ -f .github/workflows/pal-agent-ci.yml ] || fail "init did not write the files"
 pal ci init --check >/dev/null || fail "--check failed on fresh files"
