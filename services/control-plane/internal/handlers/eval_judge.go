@@ -400,6 +400,11 @@ func (j *evalJudge) pairwise(ctx context.Context, spec pairwiseSpec, input, cand
 		r.InjectionSuspected = true
 		return judgeOutcome{result: r}
 	}
+	if graderDirected(baseline) { // the baseline is model output too
+		r := fail(kind, "baseline output contains text addressed to the grader; re-pin a clean baseline")
+		r.InjectionSuspected = true
+		return judgeOutcome{result: r}
+	}
 	threshold := spec.Threshold
 	if threshold == 0 {
 		threshold = defaultPairwisePass

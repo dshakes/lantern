@@ -317,6 +317,26 @@ func TestEvalRunSuite_RejectsAndLimits(t *testing.T) {
 	}
 }
 
+// TestSetBaseline_RejectsForeignRun: pinning another tenant's run would make
+// the baseline resolve to nothing and silently disable the regression gate.
+func TestSetBaseline_RejectsForeignRun(t *testing.T) {
+	a := newEvalFixture(t)
+	a.seedAgent("store-bot", "")
+	a.agentReply["hi"] = "hello"
+	suite := a.upsertSuite("store-bot", []map[string]any{{"name": "g", "input": "hi"}})
+	_, out := a.do(a.h.RunSuite, http.MethodPost, "/v1/eval-suites/"+suite+"/run", map[string]any{}, map[string]string{"id": suite})
+	runID := out["id"].(string)
+
+	b := newEvalFixture(t)
+	b.seedAgent("store-bot", "")
+	if code, _ := b.do(b.h.SetBaseline, http.MethodPost, "/v1/eval-baselines", map[string]any{"agentName": "store-bot", "branch": "main", "evalRunId": runID}, nil); code != http.StatusNotFound {
+		t.Fatalf("foreign run pinned: %d", code)
+	}
+	if code, _ := a.do(a.h.SetBaseline, http.MethodPost, "/v1/eval-baselines", map[string]any{"agentName": "store-bot", "branch": "main", "evalRunId": runID}, nil); code != http.StatusOK {
+		t.Fatalf("own run not pinnable: %d", code)
+	}
+}
+
 func TestEvalGenerate_GroundedDraftNeverSaved(t *testing.T) {
 	f := newEvalFixture(t)
 	agentID := f.seedAgent("store-bot", "")

@@ -11,6 +11,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -580,6 +581,14 @@ func (h *EvalHandler) SetBaseline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		// The FK to eval_runs is not tenant-scoped: pinning another tenant's
+		// run would make the baseline resolve to nothing and silently turn the
+		// regression gate off. Only the caller's own run (and agent) may be pinned.
+		var own int
+		if e := tx.QueryRow(ctx, `SELECT 1 FROM eval_runs WHERE id = $1 AND tenant_id = $2 AND agent_name = $3`,
+			body.EvalRunID, tenantID, body.AgentName).Scan(&own); e != nil {
+			return errEvalRunNotOwned
+		}
 		_, e := tx.Exec(ctx, `
 			INSERT INTO eval_baselines (tenant_id, agent_name, branch, eval_run_id)
 			VALUES ($1,$2,$3,$4)
@@ -589,6 +598,10 @@ func (h *EvalHandler) SetBaseline(w http.ResponseWriter, r *http.Request) {
 		`, tenantID, body.AgentName, body.Branch, body.EvalRunID)
 		return e
 	})
+	if errors.Is(err, errEvalRunNotOwned) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "eval run not found for this agent"})
+		return
+	}
 	if err != nil {
 		h.logger().Error("set baseline failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed"})
@@ -633,6 +646,8 @@ func (h *EvalHandler) GetBaseline(w http.ResponseWriter, r *http.Request) {
 		"setAt":     setAt,
 	})
 }
+
+var errEvalRunNotOwned = errors.New("eval run not owned")
 
 // compareToBaseline returns the baseline score (if any) and whether the given
 // score represents a regression. Regression = score is > 1% worse than baseline.

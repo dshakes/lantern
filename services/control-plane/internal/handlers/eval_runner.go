@@ -570,6 +570,8 @@ func (h *EvalHandler) executeSuite(ctx context.Context, tenantID string, agent *
 	var wg sync.WaitGroup
 	for _, u := range units {
 		mu.Lock()
+		// ponytail: soft ceiling — samples already in flight (≤ evalConcurrency-1)
+		// still finish, so spend can exceed the cap by a few samples' cost.
 		over := spent >= req.MaxCostUsd
 		if over && stopped == "" {
 			stopped = fmt.Sprintf("cost ceiling $%.2f reached; remaining samples not executed", req.MaxCostUsd)
