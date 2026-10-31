@@ -1079,6 +1079,12 @@ func (h *OnboardingAgentHandler) toolCreate(t *turnCtx, nameOverride string) {
 		}
 		spec.Name = n
 	}
+	// POST /v1/agents upserts: creating over an existing name would silently
+	// replace that agent's instructions. Onboarding only ever creates new ones.
+	if code, _ := h.call(t.r, http.MethodGet, "/v1/agents/"+spec.Name, nil); code == http.StatusOK {
+		t.record("create_agent", false, false, fmt.Sprintf("an agent named %q already exists in this workspace — nothing was changed; offer a different name", spec.Name), nil)
+		return
+	}
 	model := spec.Model
 	if model == "" {
 		model = "auto"

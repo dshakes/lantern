@@ -772,3 +772,25 @@ func TestOnboardingAgent_RedesignKeepsTheName(t *testing.T) {
 		t.Errorf("redesign goal not saved: %q", ah.api.runtimeDoc.Goal)
 	}
 }
+
+// POST /v1/agents upserts, so create_agent must refuse an existing name rather
+// than overwrite that agent (found in the real-model walkthrough).
+func TestOnboardingAgent_CreateNeverOverwritesAnExistingAgent(t *testing.T) {
+	ah := newAgentHarness(t,
+		`{"say":"Creating it.","tool":{"name":"create_agent","args":{"name":"taken-name"}}}`,
+		`{"say":"That name is taken.","tool":null}`,
+	)
+	ah.api.agents["taken-name"] = true
+	ah.api.runtimeDoc = onboardingState{Goal: "g", Spec: &onboardingSpec{Name: "standup-summarizer", Description: "d", SystemPrompt: "p", Model: "auto"}}
+	out := ah.turn(t, map[string]any{"product": "runtime", "message": "create it and call it taken-name"})
+	c := findCall(out.ToolCalls, "create_agent")
+	if c == nil || c.OK || !strings.Contains(c.Summary, "already exists") {
+		t.Fatalf("create over an existing name: %+v", out.ToolCalls)
+	}
+	if n := ah.api.count("POST /v1/agents"); n != 0 {
+		t.Fatalf("POST /v1/agents called %d times for an existing name — it would overwrite that agent", n)
+	}
+	if ah.api.runtimeDoc.AgentCreated {
+		t.Fatal("progress claims the agent was created")
+	}
+}
