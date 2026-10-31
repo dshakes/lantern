@@ -584,3 +584,47 @@ func TestRLSAgentPolicy_LegacyClassificationOfHiddenAgents(t *testing.T) {
 		t.Fatalf("materialized mode %q", mode)
 	}
 }
+
+func TestRLSAgentPolicyPropose_FromDefinitionUnderRLS(t *testing.T) {
+	a := newAuthzEnv(t)
+	tenant := seedEnforcedTenant(t, a.e, "al-"+uuid.NewString()[:8])
+	ag := a.seedAgent(t, tenant, "flow")
+	sp := a.e.superPool
+	wf := `{"nodes":[{"id":"n1","type":"connector","data":{"connector":"github","action":"list_prs"}},
+		{"id":"n2","type":"tool","data":{"tool":"read_file"}},{"id":"n3","type":"subagent","data":{"agentName":"helper"}}],"edges":[]}`
+	if _, err := sp.Exec(context.Background(), `UPDATE agents SET workflow=$2 WHERE id=$1`, ag.ID, wf); err != nil {
+		t.Fatal(err)
+	}
+	slug := "fs-" + uuid.NewString()[:6]
+	var mcpID string
+	if err := sp.QueryRow(context.Background(), `INSERT INTO mcp_servers (slug, name, description) VALUES ($1,$1,'test') RETURNING id::text`, slug).Scan(&mcpID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = sp.Exec(context.Background(), `DELETE FROM mcp_servers WHERE id=$1`, mcpID) })
+	if _, err := sp.Exec(context.Background(), `INSERT INTO agent_mcp_attachments (tenant_id, agent_name, mcp_server_id) VALUES ($1,'flow',$2)`, tenant, mcpID); err != nil {
+		t.Fatal(err)
+	}
+	rr := a.do(t, a.api.ProposePolicy, "POST", "/x", a.ownerToken(t, tenant, "owner"), nil, map[string]string{"name": "flow"}, nil)
+	if rr.Code != 200 {
+		t.Fatalf("propose: %d %s", rr.Code, rr.Body)
+	}
+	var pr proposalResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &pr)
+	p := pr.Proposal
+	if p.Mode != agentpolicy.ModeEnforce || len(p.Connectors["github"]) != 1 || p.Connectors["github"][0] != "list_prs" ||
+		len(p.Tools) != 1 || p.Tools[0] != "read_file" || len(p.A2ATargets) != 1 || len(p.MCPServers) != 1 || p.MCPServers[0] != slug {
+		t.Fatalf("proposal not least-privilege from definition: %+v", p)
+	}
+	// Proposals never persist: the stored policy is still default-deny.
+	rr = a.do(t, a.api.GetPolicy, "GET", "/x", a.ownerToken(t, tenant, "owner"), nil, map[string]string{"name": "flow"}, nil)
+	if !strings.Contains(rr.Body.String(), `"tools":[]`) {
+		t.Fatalf("propose must not persist: %s", rr.Body)
+	}
+	// Confirm with PUT (proposal carries the current version) and verify by read-back.
+	rr = a.do(t, a.api.PutPolicy, "PUT", "/x", a.ownerToken(t, tenant, "owner"), p, map[string]string{"name": "flow"}, nil)
+	var after policyResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &after)
+	if rr.Code != 200 || !agentpolicy.Equal(after.Policy, p) {
+		t.Fatalf("apply+read-back mismatch: %d %s", rr.Code, rr.Body)
+	}
+}

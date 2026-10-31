@@ -266,7 +266,8 @@ func (h *AgentIdentityHandler) ProposePolicy(w http.ResponseWriter, r *http.Requ
 			FROM agents WHERE id = $1`, a.ID).Scan(&description, &systemPrompt, &labels, &wf); err != nil {
 			return err
 		}
-		rows, err := tx.Query(ctx, `SELECT mcp_slug FROM agent_mcp_attachments WHERE tenant_id = $1 AND agent_name = $2`, a.TenantID, a.Name)
+		rows, err := tx.Query(ctx, `SELECT s.slug FROM agent_mcp_attachments m JOIN mcp_servers s ON s.id = m.mcp_server_id
+			WHERE m.tenant_id = $1 AND m.agent_name = $2 ORDER BY s.slug`, a.TenantID, a.Name)
 		if err != nil {
 			return err
 		}
