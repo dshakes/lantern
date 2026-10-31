@@ -1034,7 +1034,7 @@ func (h *OnboardingAgentHandler) runServerTool(t *turnCtx, name string, rawArgs 
 			return
 		}
 		t.offer(onbAction{Tool: "confirm_profile", Args: onbActionArgs{Items: out.Items}})
-		t.record(name, true, false, fmt.Sprintf("%d item(s) to confirm", len(out.Items)), out.Items)
+		t.record(name, true, false, fmt.Sprintf("%d item(s) shown for the owner to confirm — nothing is saved until they do", len(out.Items)), out.Items)
 	case "finish_profile":
 		st := *t.facts.Pal
 		items := []palProfileItem{}
