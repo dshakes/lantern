@@ -98,7 +98,7 @@ apg lantern <<'SQL' || exit 1
 ALTER ROLE lantern_app PASSWORD 'apppw-test';
 INSERT INTO agents (id, tenant_id, name) VALUES ('11111111-1111-1111-1111-111111111111', '00000000-0000-0000-0000-000000000001', 'e2e-agent');
 INSERT INTO agent_versions (agent_id, version, digest, bundle_uri, manifest)
-  SELECT '11111111-1111-1111-1111-111111111111', v, 'sha256:' || v, u, '{}'::jsonb
+  SELECT '11111111-1111-1111-1111-111111111111', v, decode(md5(v), 'hex'), u, '{}'::jsonb
   FROM (VALUES ('1','s3://lantern-bundles/t1/a.tgz'), ('2','s3://lantern-bundles/t1/b.tgz'), ('3','s3://lantern-bundles-dev/x.tgz'), ('4','s3://test/y.tgz')) AS t(v,u);
 SQL
 echo "  real schema: v$(q lantern lantern 'select version from schema_migrations'), admin=$(q lantern lantern "select email from users where id='00000000-0000-0000-0000-000000000002'"), ns=$(q lantern lantern "select k8s_namespace from tenants where slug='dev'")"
