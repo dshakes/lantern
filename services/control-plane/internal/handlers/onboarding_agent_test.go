@@ -805,3 +805,13 @@ func TestOnboardingAgent_CreateNeverOverwritesAnExistingAgent(t *testing.T) {
 		t.Fatal("progress claims the agent was created")
 	}
 }
+
+// The model is told what a readiness word means, so "offline" (bridge not
+// running) is not narrated as a permissions problem.
+func TestOnbFactsSummary_ExplainsChannelReadiness(t *testing.T) {
+	f := onbFacts{Phase: "channels", Pal: &palOnboardingState{}, Channels: &onbChannelObs{WhatsApp: "offline", IMessage: "needs_full_disk_access"}}
+	got := onbFactsSummary(onbProductPal, f)
+	if !strings.Contains(got, "isn't running") || !strings.Contains(got, "Full Disk Access") {
+		t.Fatalf("readiness not explained:\n%s", got)
+	}
+}

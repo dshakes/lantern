@@ -768,6 +768,24 @@ func onbPhaseText(product string, f onbFacts) string {
 	return "Next: add a model key."
 }
 
+// onbChannelFixes explains a readiness word the client reported, so the model
+// names the real fix (an unreachable bridge is not a permissions problem).
+// Same table as the CLI's palChannelFixes.
+var onbChannelFixes = map[string]string{
+	"offline":                "pal's bridge for that channel isn't running or can't be reached — start pal on the Mac (`pal dev`), then check again",
+	"unauthorized":           "the bridge token doesn't match — set the same bridge token on the dashboard and the bridge",
+	"unsupported":            "iMessage needs a Mac",
+	"not_started":            "the iMessage session isn't started — start_imessage starts it and checks permissions",
+	"needs_full_disk_access": "System Settings → Privacy & Security → Full Disk Access → enable the app running the bridge, then restart it",
+	"needs_automation":       "System Settings → Privacy & Security → Automation → enable Messages for the app running the bridge",
+	"needs_permission":       "grant Full Disk Access and Automation → Messages to the app running the bridge",
+	"not_set_up":             "open Messages and sign in to iMessage",
+	"messages_unavailable":   "open Messages and make sure it's signed in",
+	"error":                  "the bridge returned an error — check its log",
+	"needs_pairing":          "WhatsApp isn't linked — pair_whatsapp shows the QR to scan in WhatsApp → Settings → Linked devices",
+	"connecting":             "WhatsApp is linked and reconnecting — keep the phone online and check again",
+}
+
 // ---- facts (read back every turn) ---------------------------------------------------
 
 func (h *OnboardingAgentHandler) facts(r *http.Request, tenantID, product string, doc *onbChatDoc) onbFacts {
@@ -1343,6 +1361,11 @@ func onbFactsSummary(product string, f onbFacts) string {
 		fmt.Fprintf(&b, "- consent given: %v; voice learning opt-in: %v\n", s.consented(), s.mayLearnVoice())
 		if f.Channels != nil {
 			fmt.Fprintf(&b, "- last live channel check: WhatsApp=%s iMessage=%s (verified now: %v)\n", f.Channels.WhatsApp, f.Channels.IMessage, f.ChannelsVerified)
+			for _, w := range []string{f.Channels.WhatsApp, f.Channels.IMessage} {
+				if fix := onbChannelFixes[w]; fix != "" {
+					fmt.Fprintf(&b, "  - %s means: %s\n", w, fix)
+				}
+			}
 		} else {
 			b.WriteString("- channels: not checked this session\n")
 		}
