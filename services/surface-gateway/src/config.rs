@@ -42,7 +42,7 @@ pub struct Config {
     /// control-plane (invariant #7).  Dev: unset is fine; prod: required.
     pub service_token: String,
     /// Name of the PAL agent that handles inbound surface messages.
-    /// Set LANTERN_AGENT_NAME.  Required — run creation fails without it.
+    /// Set PAL_AGENT_NAME.  Required — run creation fails without it.
     pub agent_name: Option<String>,
     /// PAL tenant UUID that owns this surface-gateway deployment.
     ///
@@ -52,7 +52,7 @@ pub struct Config {
     /// deploy time so the dispatcher can stamp every event with the correct tenant
     /// before forwarding to the control plane.
     ///
-    /// Set `LANTERN_TENANT_ID`.  Required for production.  If unset the gateway will
+    /// Set `PAL_TENANT_ID`.  Required for production.  If unset the gateway will
     /// still start but every webhook dispatch will be rejected at the tenant-resolution
     /// step with a 503.
     pub pal_tenant_id: Option<String>,
@@ -72,8 +72,8 @@ impl Config {
             .unwrap_or_else(|_| "http://localhost:50051".to_string());
 
         let log_level = std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
-        let service_token = pal_env::var("PAL_GRPC_SERVICE_TOKEN").unwrap_or_default();
-        let agent_name = pal_env::var("PAL_AGENT_NAME").ok();
+        let service_token = std::env::var("PAL_GRPC_SERVICE_TOKEN").unwrap_or_default();
+        let agent_name = std::env::var("PAL_AGENT_NAME").ok();
 
         Ok(Config {
             listen_addr,
@@ -105,7 +105,7 @@ impl Config {
                 .collect(),
             service_token,
             agent_name,
-            pal_tenant_id: pal_env::var("PAL_TENANT_ID").ok(),
+            pal_tenant_id: std::env::var("PAL_TENANT_ID").ok(),
         })
     }
 }

@@ -3,9 +3,9 @@ package handlers
 // ENFORCEMENT-ON proof for the identity/people/memory handler group
 // (identity.go) after the P1.1b cutover to s.srv.WithTenant.
 //
-// Runs against the lantern_app-backed harness (newEnforcedServer): every query
+// Runs against the pal_app-backed harness (newEnforcedServer): every query
 // the handlers route through s.srv.WithTenant is executed by the non-superuser
-// `lantern_app` role with RLS genuinely enforced at Postgres. Proves:
+// `pal_app` role with RLS genuinely enforced at Postgres. Proves:
 //
 //	(a) a SAME-TENANT caller still resolves people, ingests events, and reads
 //	    them back (rows returned, NOT zero — the critical regression check), and

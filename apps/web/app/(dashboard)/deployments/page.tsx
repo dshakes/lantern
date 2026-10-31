@@ -19,6 +19,7 @@
 // counts, capacity sparkline) are demo-only. For a REAL plane those render
 // real values where the API has them, and "—" otherwise — never fabricated.
 
+import { usePublicUrls } from "@/lib/public-url";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Cloud,
@@ -113,8 +114,8 @@ const cloudSetups: CloudSetup[] = [
       '  -var="cluster_name=pal-dp"',
       "",
       "# Install the Helm chart",
-      "helm install pal-data-plane lantern/data-plane \\",
-      "  --set controlPlane.endpoint=api.lantern.run \\",
+      "helm install pal-data-plane pal/data-plane \\",
+      "  --set controlPlane.endpoint=__API_BASE__ \\",
       "  --set controlPlane.token=<your-registration-token>",
     ],
   },
@@ -129,8 +130,8 @@ const cloudSetups: CloudSetup[] = [
       '  -var="cluster_name=pal-dp"',
       "",
       "# Install the Helm chart",
-      "helm install pal-data-plane lantern/data-plane \\",
-      "  --set controlPlane.endpoint=api.lantern.run \\",
+      "helm install pal-data-plane pal/data-plane \\",
+      "  --set controlPlane.endpoint=__API_BASE__ \\",
       "  --set controlPlane.token=<your-registration-token>",
     ],
   },
@@ -145,8 +146,8 @@ const cloudSetups: CloudSetup[] = [
       '  -var="cluster_name=pal-dp"',
       "",
       "# Install the Helm chart",
-      "helm install pal-data-plane lantern/data-plane \\",
-      "  --set controlPlane.endpoint=api.lantern.run \\",
+      "helm install pal-data-plane pal/data-plane \\",
+      "  --set controlPlane.endpoint=__API_BASE__ \\",
       "  --set controlPlane.token=<your-registration-token>",
     ],
   },
@@ -261,6 +262,7 @@ function capTone(u: number): "ok" | "accent" | "warn" | "danger" {
 // ---------------------------------------------------------------------------
 
 export default function DeploymentsPage() {
+  const { apiBase } = usePublicUrls();
   const toast = useToast();
   const [loading, setLoading] = useState(true);
   const [planes, setPlanes] = useState<PlaneRow[]>([]);
@@ -527,14 +529,14 @@ export default function DeploymentsPage() {
                       <h4 className="text-sm font-semibold text-zinc-100">{selectedCloud.name} installation</h4>
                     </div>
                     <button
-                      onClick={() => { navigator.clipboard.writeText(selectedCloud.steps.join("\n")); toast.success("Commands copied"); }}
+                      onClick={() => { navigator.clipboard.writeText(selectedCloud.steps.join("\n").replaceAll("__API_BASE__", apiBase || "https://<your-control-plane>")); toast.success("Commands copied"); }}
                       className="inline-flex items-center gap-1.5 rounded-lg bg-surface-2 px-2.5 py-1 text-xs text-zinc-400 transition-colors hover:bg-surface-3 hover:text-zinc-200"
                     >
                       <Copy className="h-3 w-3" /> Copy
                     </button>
                   </div>
                   <pre className="overflow-x-auto rounded-lg bg-surface-0 p-4 font-mono text-xs leading-relaxed text-zinc-400">
-                    {selectedCloud.steps.join("\n")}
+                    {selectedCloud.steps.join("\n").replaceAll("__API_BASE__", apiBase || "https://<your-control-plane>")}
                   </pre>
                   <div className="mt-4 flex items-center gap-3">
                     <Button variant="primary" size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setShowAddPlane(true)}>

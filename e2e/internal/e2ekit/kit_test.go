@@ -118,9 +118,9 @@ func unsetEnv(t *testing.T, key string) {
 // kitFor creates a Kit pointed at srv.URL with fake credentials.
 func kitFor(t *testing.T, srv *httptest.Server) *Kit {
 	t.Helper()
-	setEnv(t, "LANTERN_E2E_API_URL", srv.URL)
-	setEnv(t, "LANTERN_E2E_EMAIL", "admin@lantern.dev")
-	setEnv(t, "LANTERN_E2E_PASSWORD", "lantern")
+	setEnv(t, "PAL_E2E_API_URL", srv.URL)
+	setEnv(t, "PAL_E2E_EMAIL", "admin@pal.local")
+	setEnv(t, "PAL_E2E_PASSWORD", "pal")
 	return Connect(t)
 }
 
@@ -284,7 +284,7 @@ func TestModelPin_NoProviders_FallsBackToFast(t *testing.T) {
 // ---- Connect: stack-down behaviour ----
 
 func TestConnect_StackDown_Fatal(t *testing.T) {
-	setEnv(t, "LANTERN_E2E_API_URL", "http://127.0.0.1:19998")
+	setEnv(t, "PAL_E2E_API_URL", "http://127.0.0.1:19998")
 	unsetEnv(t, "E2E_ALLOW_SKIP")
 
 	if err := probeStack("http://127.0.0.1:19998"); err == nil {
@@ -302,7 +302,7 @@ func TestConnect_StackDown_Fatal(t *testing.T) {
 }
 
 func TestConnect_StackDown_Skip(t *testing.T) {
-	setEnv(t, "LANTERN_E2E_API_URL", "http://127.0.0.1:19998")
+	setEnv(t, "PAL_E2E_API_URL", "http://127.0.0.1:19998")
 	setEnv(t, "E2E_ALLOW_SKIP", "1")
 
 	if err := probeStack("http://127.0.0.1:19998"); err == nil {
@@ -383,9 +383,9 @@ func TestCreateAgent_OverridesModel(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
-	setEnv(t, "LANTERN_E2E_API_URL", srv.URL)
-	setEnv(t, "LANTERN_E2E_EMAIL", "admin@lantern.dev")
-	setEnv(t, "LANTERN_E2E_PASSWORD", "lantern")
+	setEnv(t, "PAL_E2E_API_URL", srv.URL)
+	setEnv(t, "PAL_E2E_EMAIL", "admin@pal.local")
+	setEnv(t, "PAL_E2E_PASSWORD", "pal")
 	k := Connect(t)
 
 	spec := map[string]any{"systemPrompt": "hi", "model": "gpt-4o"} // expensive model should be overridden
@@ -453,7 +453,7 @@ func TestDoAuthRaw_SendsBytesVerbatim(t *testing.T) {
 // agent_usage_daily (keyed identically) follows the same pattern: it too
 // survives delete+recreate, so run counts from an earlier suite execution
 // count against the same daily cap.  Direct DB verification requires
-// LANTERN_E2E_DB_URL and is outside the kit scope; the behaviour is
+// PAL_E2E_DB_URL and is outside the kit scope; the behaviour is
 // guaranteed by the soft-delete implementation in agents.go:DeleteAgent.
 func TestBudgetSurvivesRecreate(t *testing.T) {
 	srv := newFake(t, fakeOpts{})

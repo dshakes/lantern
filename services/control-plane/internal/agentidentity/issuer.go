@@ -8,7 +8,7 @@
 //
 //	{
 //	  "sub": "ai-<uuid>",          // agent_instance_id
-//	  "iss": "pal-agent",          // legacy tokens carry "lantern-agent"
+//	  "iss": "pal-agent",
 //	  "iat": <unix>,
 //	  "exp": <unix>,
 //	  "jti": "<uuid>",
@@ -22,7 +22,7 @@
 //
 //  1. PAL_AGENT_IDENTITY_ED25519_SEED — base64-std or hex-encoded 32-byte
 //     seed. When set, Issue() signs with EdDSA and the public key is published
-//     at /.well-known/lantern-agent-identity for external verifiers.
+//     at /.well-known/pal-agent-identity for external verifiers.
 //  2. PAL_AGENT_IDENTITY_SECRET — HMAC-SHA256 key bytes.
 //  3. Caller-supplied fallback (the existing JWT secret) — used when neither
 //     env var above is set so a bare dev setup works without extra config.
@@ -59,10 +59,6 @@ const (
 
 	// tokenIssuer is the "iss" claim value burned into every agent token.
 	tokenIssuer = "pal-agent"
-
-	// legacyTokenIssuer is the pre-PAL issuer (ADR 0032). Tokens minted before
-	// the rename are still live for up to their TTL, so Verify accepts both.
-	legacyTokenIssuer = "lantern-agent"
 
 	// envIdentitySecret is the environment variable for the HS256 signing key.
 	envIdentitySecret = "PAL_AGENT_IDENTITY_SECRET"
@@ -121,7 +117,7 @@ func loadAgentEd25519Key() agentEd25519State {
 }
 
 // resetAgentEd25519OnceForTest resets the package-level once so tests can
-// inject different LANTERN_AGENT_IDENTITY_ED25519_SEED values via t.Setenv.
+// inject different PAL_AGENT_IDENTITY_ED25519_SEED values via t.Setenv.
 // Only call from test code.
 func resetAgentEd25519OnceForTest() {
 	agentEd25519Once = sync.Once{}
@@ -146,7 +142,7 @@ func StartupInfo() (alg, fingerprint string) {
 
 // AgentIdentityPublicKey returns the Ed25519 public key when
 // PAL_AGENT_IDENTITY_ED25519_SEED is configured, and nil otherwise.
-// Used by the /.well-known/lantern-agent-identity handler.
+// Used by the /.well-known/pal-agent-identity handler.
 func AgentIdentityPublicKey() ed25519.PublicKey {
 	return loadAgentEd25519Key().pub
 }
@@ -250,7 +246,7 @@ func (iss *Issuer) Issue(ctx context.Context, tenantID, runID, agentVersionID st
 }
 
 // instanceIDNamespace scopes the name-based (v5) UUIDs InstanceIDForKey derives.
-var instanceIDNamespace = uuid.NewSHA1(uuid.NameSpaceURL, []byte("lantern:agent-instance"))
+var instanceIDNamespace = uuid.NewSHA1(uuid.NameSpaceURL, []byte("pal:agent-instance"))
 
 // InstanceIDForKey derives a stable agent_instance_id from a schedule
 // idempotency key. A retried schedule that the scheduler dedups returns the VM
@@ -281,7 +277,7 @@ func (iss *Issuer) IssueForID(_ context.Context, instanceID, tenantID, runID, ag
 
 	k := loadAgentEd25519Key()
 	if k.priv != nil {
-		// Ed25519 path: externally verifiable via /.well-known/lantern-agent-identity.
+		// Ed25519 path: externally verifiable via /.well-known/pal-agent-identity.
 		t := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
 		signed, err := t.SignedString(k.priv)
 		if err != nil {
@@ -347,7 +343,7 @@ func (iss *Issuer) Verify(tokenStr string) (*Claims, error) {
 	if c.Typ != TokenTyp {
 		return nil, fmt.Errorf("agentidentity: wrong token type %q", c.Typ)
 	}
-	if c.Issuer != tokenIssuer && c.Issuer != legacyTokenIssuer {
+	if c.Issuer != tokenIssuer {
 		return nil, fmt.Errorf("agentidentity: unexpected issuer %q", c.Issuer)
 	}
 	if c.AgentInstanceID == "" {

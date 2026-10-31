@@ -1,4 +1,4 @@
-module github.com/dshakes/lantern/e2e/internal/e2ekit
+module github.com/dshakes/pal/e2e/internal/e2ekit
 
 go 1.23
 

@@ -761,7 +761,7 @@ export interface RuntimeVm {
 
 /**
  * A header the host-side egress broker sets on requests matching the rule
- * (ADR 0026). `secretRef` is a `lantern.secret/...` ref resolved on the host
+ * (ADR 0026). `secretRef` is a `pal.secret/...` ref resolved on the host
  * at request time — the secret value never enters the VM. Only honoured when
  * the runtime-manager runs in broker egress mode.
  */

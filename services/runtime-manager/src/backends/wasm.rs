@@ -285,8 +285,8 @@ impl RuntimeBackend for WasmBackend {
         // Build the env map for WASI (passed as environment variables).
         let wasi_env: Vec<(String, String)> = {
             let mut e = vec![
-                ("LANTERN_RUN_ID".to_string(), req.run_id.clone()),
-                ("LANTERN_BUNDLE_URI".to_string(), req.bundle_uri.clone()),
+                ("PAL_RUN_ID".to_string(), req.run_id.clone()),
+                ("PAL_BUNDLE_URI".to_string(), req.bundle_uri.clone()),
             ];
             for (k, v) in &req.env {
                 e.push((k.clone(), v.clone()));
@@ -294,7 +294,7 @@ impl RuntimeBackend for WasmBackend {
             for secret in &req.secrets {
                 e.push((
                     secret.env_var.clone(),
-                    format!("lantern.secret/{}", secret.vault_ref),
+                    format!("pal.secret/{}", secret.vault_ref),
                 ));
             }
             e
@@ -523,8 +523,8 @@ impl WasmBackend {
 
         let wasi_env: Vec<(String, String)> = {
             let mut e = vec![
-                ("LANTERN_RUN_ID".to_string(), req.run_id.clone()),
-                ("LANTERN_BUNDLE_URI".to_string(), req.bundle_uri.clone()),
+                ("PAL_RUN_ID".to_string(), req.run_id.clone()),
+                ("PAL_BUNDLE_URI".to_string(), req.bundle_uri.clone()),
             ];
             for (k, v) in &req.env {
                 e.push((k.clone(), v.clone()));

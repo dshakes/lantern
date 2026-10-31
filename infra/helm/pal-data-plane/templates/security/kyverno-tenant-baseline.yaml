@@ -1,7 +1,7 @@
 {{- /*
 Kyverno tenant-namespace baseline (gated policies.enabled, default false).
 
-The control-plane creates tenant namespaces (lantern-t-<tenant_id>) at RUNTIME,
+The control-plane creates tenant namespaces (pal-t-<tenant_id>) at RUNTIME,
 so we cannot ship them as static manifests. Instead we install Kyverno policies
 that fire on namespace CREATE and lock the namespace down BEFORE any agent pod
 lands in it:
@@ -21,14 +21,14 @@ blast radius to PAL Runtime tenant namespaces only (never kube-system, never the
 data-plane's own namespace).
 */ -}}
 {{- if .Values.policies.enabled }}
-{{- $ns := .Values.policies.namespaceSelector | default "lantern-t-*" }}
+{{- $ns := .Values.policies.namespaceSelector | default "pal-t-*" }}
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
   name: {{ include "pal-dp.fullname" . }}-tenant-psa-labels
   labels:
     {{- include "pal-dp.labels" . | nindent 4 }}
-    lantern.dev/policy: tenant-baseline
+    pal.dev/policy: tenant-baseline
   annotations:
     policies.kyverno.io/title: PAL Runtime tenant PSA labels
     policies.kyverno.io/category: PAL Runtime Multi-Tenancy
@@ -63,7 +63,7 @@ metadata:
   name: {{ include "pal-dp.fullname" . }}-tenant-baseline
   labels:
     {{- include "pal-dp.labels" . | nindent 4 }}
-    lantern.dev/policy: tenant-baseline
+    pal.dev/policy: tenant-baseline
   annotations:
     policies.kyverno.io/title: PAL Runtime tenant namespace baseline
     policies.kyverno.io/category: PAL Runtime Multi-Tenancy
@@ -91,7 +91,7 @@ spec:
           metadata:
             labels:
               app.kubernetes.io/managed-by: pal-data-plane
-              lantern.dev/policy: default-deny-all
+              pal.dev/policy: default-deny-all
           spec:
             # Empty podSelector => applies to EVERY pod in the namespace.
             podSelector: {}

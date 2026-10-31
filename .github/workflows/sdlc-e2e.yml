@@ -18,7 +18,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PGPASSWORD: lantern
+  PGPASSWORD: pal
 
 jobs:
   examples:
@@ -28,10 +28,10 @@ jobs:
     services:
       postgres:
         image: pgvector/pgvector:pg16
-        env: { POSTGRES_USER: lantern, POSTGRES_PASSWORD: lantern, POSTGRES_DB: lantern }
+        env: { POSTGRES_USER: pal, POSTGRES_PASSWORD: pal, POSTGRES_DB: pal }
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U lantern" --health-interval 5s --health-timeout 5s --health-retries 10
+          --health-cmd "pg_isready -U pal" --health-interval 5s --health-timeout 5s --health-retries 10
       redis:
         image: redis:7
         ports: ["6379:6379"]
@@ -72,10 +72,10 @@ jobs:
     services:
       postgres:
         image: pgvector/pgvector:pg16
-        env: { POSTGRES_USER: lantern, POSTGRES_PASSWORD: lantern, POSTGRES_DB: lantern }
+        env: { POSTGRES_USER: pal, POSTGRES_PASSWORD: pal, POSTGRES_DB: pal }
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U lantern" --health-interval 5s --health-timeout 5s --health-retries 10
+          --health-cmd "pg_isready -U pal" --health-interval 5s --health-timeout 5s --health-retries 10
       redis:
         image: redis:7
         ports: ["6379:6379"]
@@ -123,10 +123,10 @@ jobs:
     services:
       postgres:
         image: pgvector/pgvector:pg16
-        env: { POSTGRES_USER: lantern, POSTGRES_PASSWORD: lantern, POSTGRES_DB: lantern }
+        env: { POSTGRES_USER: pal, POSTGRES_PASSWORD: pal, POSTGRES_DB: pal }
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U lantern" --health-interval 5s --health-timeout 5s --health-retries 10
+          --health-cmd "pg_isready -U pal" --health-interval 5s --health-timeout 5s --health-retries 10
       redis:
         image: redis:7
         ports: ["6379:6379"]
@@ -140,12 +140,12 @@ jobs:
           cache-dependency-path: |
             services/control-plane/go.sum
             packages/cli/go.sum
-      # Same control-plane env the fixture tier uses; the seeded dev user (admin@lantern.dev) is
+      # Same control-plane env the fixture tier uses; the seeded dev user (admin@pal.local) is
       # what the test logs in as. Own DB so it never shares state with the other jobs' databases.
       - name: Start control-plane
         working-directory: services/control-plane
         env:
-          DATABASE_URL: postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable
+          DATABASE_URL: postgres://pal:pal@localhost:5432/pal?sslmode=disable
           REDIS_URL: redis://localhost:6379/0
           HTTP_ADDR: ":18480"
           LISTEN_ADDR: ":18451"
@@ -159,7 +159,7 @@ jobs:
       - name: Deploy e2e (no skip)
         working-directory: e2e/deploy
         env:
-          LANTERN_E2E_API_URL: http://127.0.0.1:18480
+          PAL_E2E_API_URL: http://127.0.0.1:18480
         run: go test -tags e2e -count=1 -v ./... 2>&1 | tee "$RUNNER_TEMP/deploy.log"; test "${PIPESTATUS[0]}" -eq 0 && ! grep -q -- "--- SKIP" "$RUNNER_TEMP/deploy.log"
       - name: Control-plane log on failure
         if: failure()

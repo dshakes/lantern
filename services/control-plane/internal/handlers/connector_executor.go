@@ -18,9 +18,9 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/secrets"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // credRowQuerier is the subset of pgx used to load a single connector row. Both
@@ -1253,7 +1253,7 @@ func executeTwilio(config map[string]any, action string, params map[string]any) 
 	case "add_conference_participant":
 		// Add a participant to a Twilio Conference room by dialing
 		// their phone number. Used to bridge a third party into an
-		// existing conference (e.g. "lantern, get me on with Madhu" →
+		// existing conference (e.g. "pal, get me on with Madhu" →
 		// bridge dials Madhu first with conference TwiML; once Madhu
 		// is in the room, this action dials the owner with the same
 		// conference name and they're now both in the room).

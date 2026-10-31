@@ -18,7 +18,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
 )
 
 // eventuallyDP polls cond up to timeout; fails the test with msg if never true.
@@ -61,7 +61,7 @@ func TestDataPlane_RoutingLoop_E2E(t *testing.T) {
 	defer cancel()
 
 	// 1. Register → session token.
-	regResp, err := client.Register(ctx, &lanternv1.DpRegisterRequest{
+	regResp, err := client.Register(ctx, &palv1.DpRegisterRequest{
 		TenantId:     routeTenant,
 		AgentToken:   regToken,
 		AgentVersion: "1.0.0",
@@ -77,9 +77,9 @@ func TestDataPlane_RoutingLoop_E2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunStream: %v", err)
 	}
-	if err := stream.Send(&lanternv1.DpRunStreamClientMsg{
-		Msg: &lanternv1.DpRunStreamClientMsg_Hello{
-			Hello: &lanternv1.DpHello{PlaneId: planeID, SessionToken: sessionToken},
+	if err := stream.Send(&palv1.DpRunStreamClientMsg{
+		Msg: &palv1.DpRunStreamClientMsg_Hello{
+			Hello: &palv1.DpHello{PlaneId: planeID, SessionToken: sessionToken},
 		},
 	}); err != nil {
 		t.Fatalf("send hello: %v", err)
@@ -120,9 +120,9 @@ func TestDataPlane_RoutingLoop_E2E(t *testing.T) {
 	}
 
 	// 7. Agent accepts → run transitions queued → running.
-	if err := stream.Send(&lanternv1.DpRunStreamClientMsg{
-		Msg: &lanternv1.DpRunStreamClientMsg_Accepted{
-			Accepted: &lanternv1.DpRunAccepted{RunId: runID},
+	if err := stream.Send(&palv1.DpRunStreamClientMsg{
+		Msg: &palv1.DpRunStreamClientMsg_Accepted{
+			Accepted: &palv1.DpRunAccepted{RunId: runID},
 		},
 	}); err != nil {
 		t.Fatalf("send accepted: %v", err)
@@ -132,11 +132,11 @@ func TestDataPlane_RoutingLoop_E2E(t *testing.T) {
 	})
 
 	// 8. Agent completes → run terminal, cost + tokens persisted.
-	if err := stream.Send(&lanternv1.DpRunStreamClientMsg{
-		Msg: &lanternv1.DpRunStreamClientMsg_Completed{
-			Completed: &lanternv1.DpRunCompleted{
+	if err := stream.Send(&palv1.DpRunStreamClientMsg{
+		Msg: &palv1.DpRunStreamClientMsg_Completed{
+			Completed: &palv1.DpRunCompleted{
 				RunId:      runID,
-				Status:     lanternv1.DpRunStatus_DP_RUN_STATUS_SUCCEEDED,
+				Status:     palv1.DpRunStatus_DP_RUN_STATUS_SUCCEEDED,
 				OutputJson: `{"answer":"hi"}`,
 				CostUsd:    0.0123,
 				TokensIn:   11,

@@ -4,7 +4,7 @@ package handlers
 //
 // Skipped automatically when DATABASE_URL is unset. Run with:
 //
-//	DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable \
+//	DATABASE_URL=postgres://pal:pal@localhost:5432/pal?sslmode=disable \
 //	  go test ./internal/handlers/ -run Introspect -count=1 -v
 
 import (
@@ -17,7 +17,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
 )
 
 // devTenantID (the seeded dev tenant) is declared in surfaces.go.

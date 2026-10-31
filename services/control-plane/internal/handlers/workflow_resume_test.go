@@ -14,7 +14,7 @@ package handlers
 //
 // Gated on DATABASE_URL (same convention as the rest of the DB suite). Run with:
 //
-//	DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable \
+//	DATABASE_URL=postgres://pal:pal@localhost:5432/pal?sslmode=disable \
 //	    go test ./internal/handlers/ -run 'Resume' -count=1 -v
 
 import (
@@ -27,8 +27,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
-	"github.com/dshakes/lantern/services/control-plane/internal/workflow"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/workflow"
 )
 
 // emitJournal writes a single journal_events row using the same self-computing

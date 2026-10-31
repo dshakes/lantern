@@ -1,4 +1,4 @@
-module github.com/dshakes/lantern/services/memory
+module github.com/dshakes/pal/services/memory
 
 go 1.25.0
 
@@ -15,7 +15,6 @@ require (
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
-	github.com/dshakes/lantern/packages/palenv v0.0.0
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
@@ -34,4 +33,3 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 )
 
-replace github.com/dshakes/lantern/packages/palenv => ../../packages/palenv

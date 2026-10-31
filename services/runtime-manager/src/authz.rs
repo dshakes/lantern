@@ -4,13 +4,12 @@
 //! handshake alone cannot tell a guest from the scheduler. This interceptor
 //! closes that gap:
 //!
-//! 1. A peer presenting a **VM cert** (`OU=pal-vm`, or the pre-PAL
-//!    `OU=lantern-vm`) is refused outright —
+//! 1. A peer presenting a **VM cert** (`OU=pal-vm`, or the pre-rename
+//!    marker, see `tls::LEGACY_VM_CERT_OU`) is refused outright —
 //!    guests may only reach `RuntimeHarness`, whose methods bind the cert
 //!    CN/SAN to the request's `vm_id` per message.
-//! 2. Everyone else must present `x-pal-service-token` (or the pre-PAL
-//!    `x-lantern-service-token`) == `PAL_GRPC_SERVICE_TOKEN` (constant-time
-//!    compare) — the same shared
+//! 2. Everyone else must present `x-pal-service-token` ==
+//!    `PAL_GRPC_SERVICE_TOKEN` (constant-time compare) — the same shared
 //!    token the Go services use for their trust boundaries (invariant #7).
 //!
 //! Token unset: prod (`PAL_ENV` prod/production/staging) refuses to start;
@@ -21,8 +20,6 @@ use std::sync::Arc;
 use tonic::{Request, Status};
 
 pub const SERVICE_TOKEN_HEADER: &str = "x-pal-service-token";
-/// Pre-PAL name of the same header (ADR 0032). Accepted; callers send both.
-pub const LEGACY_SERVICE_TOKEN_HEADER: &str = "x-lantern-service-token";
 pub const ENV_SERVICE_TOKEN: &str = "PAL_GRPC_SERVICE_TOKEN";
 
 /// Interceptor state. Cheap to clone (tonic clones it per connection).
@@ -41,7 +38,7 @@ impl ManagerAuth {
     /// Build from env. Errors (refuse to start) in prod when the token is unset.
     pub fn from_env() -> anyhow::Result<Self> {
         Self::from_parts(
-            pal_env::var(ENV_SERVICE_TOKEN).ok(),
+            std::env::var(ENV_SERVICE_TOKEN).ok(),
             crate::tls::is_prod_env(),
         )
     }
@@ -99,14 +96,11 @@ impl tonic::service::Interceptor for ManagerAuth {
     }
 }
 
-/// The token under the PAL header, else under the legacy header. An empty
-/// value counts as absent. Exactly one value is compared, so two names never
-/// give a caller a second guess per call.
+/// The token under the service-token header. An empty value counts as absent.
 pub fn presented_token(md: &tonic::metadata::MetadataMap) -> Option<&[u8]> {
-    [SERVICE_TOKEN_HEADER, LEGACY_SERVICE_TOKEN_HEADER]
-        .into_iter()
-        .filter_map(|k| md.get(k).map(|v| v.as_bytes()))
-        .find(|v| !v.is_empty())
+    md.get(SERVICE_TOKEN_HEADER)
+        .map(|v| v.as_bytes())
+        .filter(|v| !v.is_empty())
 }
 
 /// Constant-time byte comparison (length is not secret).
@@ -178,46 +172,6 @@ mod tests {
         assert!(auth.call(ok).is_ok());
         assert_eq!(
             auth.call(Request::new(())).unwrap_err().code(),
-            Code::Unauthenticated
-        );
-    }
-
-    /// ADR 0032: the legacy header still authenticates; a wrong PAL token is
-    /// not rescued by a right legacy one.
-    #[test]
-    fn interceptor_accepts_pal_and_legacy_header_names() {
-        let mut auth = ManagerAuth::new(Some("tok".into()));
-        let req = |pairs: &[(&'static str, &str)]| {
-            let mut r = Request::new(());
-            for (k, v) in pairs {
-                r.metadata_mut().insert(*k, v.parse().unwrap());
-            }
-            r
-        };
-        assert!(
-            auth.call(req(&[(LEGACY_SERVICE_TOKEN_HEADER, "tok")]))
-                .is_ok()
-        );
-        assert!(
-            auth.call(req(&[
-                (SERVICE_TOKEN_HEADER, "tok"),
-                (LEGACY_SERVICE_TOKEN_HEADER, "tok")
-            ]))
-            .is_ok()
-        );
-        assert_eq!(
-            auth.call(req(&[
-                (SERVICE_TOKEN_HEADER, "bad"),
-                (LEGACY_SERVICE_TOKEN_HEADER, "tok")
-            ]))
-            .unwrap_err()
-            .code(),
-            Code::Unauthenticated
-        );
-        assert_eq!(
-            auth.call(req(&[(LEGACY_SERVICE_TOKEN_HEADER, "bad")]))
-                .unwrap_err()
-                .code(),
             Code::Unauthenticated
         );
     }

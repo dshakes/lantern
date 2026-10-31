@@ -23,13 +23,13 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/control-plane/internal/db"
-	"github.com/dshakes/lantern/services/control-plane/internal/grounding"
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
-	"github.com/dshakes/lantern/services/control-plane/internal/workflow"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/control-plane/internal/db"
+	"github.com/dshakes/pal/services/control-plane/internal/grounding"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/secrets"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/workflow"
 )
 
 // resolveGmailToken looks up the Gmail OAuth access token for a tenant from
@@ -197,7 +197,7 @@ func (h *RESTHandler) ListAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.agentSvc.ListAgents(ctx, &lanternv1.ListAgentsRequest{
+	resp, err := h.agentSvc.ListAgents(ctx, &palv1.ListAgentsRequest{
 		PageSize: 100,
 	})
 	if err != nil {
@@ -261,7 +261,7 @@ func (h *RESTHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	agent, err := h.agentSvc.CreateAgent(ctx, &lanternv1.CreateAgentRequest{
+	agent, err := h.agentSvc.CreateAgent(ctx, &palv1.CreateAgentRequest{
 		Name:        body.Name,
 		Description: body.Description,
 		Labels:      body.Labels,
@@ -331,7 +331,7 @@ func (h *RESTHandler) GetAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agent, err := h.agentSvc.GetAgent(ctx, &lanternv1.GetAgentRequest{
+	agent, err := h.agentSvc.GetAgent(ctx, &palv1.GetAgentRequest{
 		Name: name,
 	})
 	if err != nil {
@@ -395,7 +395,7 @@ func (h *RESTHandler) DeleteAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = h.agentSvc.DeleteAgent(ctx, &lanternv1.DeleteAgentRequest{
+	_, err = h.agentSvc.DeleteAgent(ctx, &palv1.DeleteAgentRequest{
 		Name: name,
 	})
 	if err != nil {
@@ -568,7 +568,7 @@ func (h *RESTHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req := &lanternv1.ListRunsRequest{
+	req := &palv1.ListRunsRequest{
 		PageSize: 100,
 	}
 	if agentName := r.URL.Query().Get("agent"); agentName != "" {
@@ -730,11 +730,11 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 	inputStruct, _ := structpb.NewStruct(body.Input)
 
 	// Ensure the agent exists — auto-create if not found.
-	_, getErr := h.agentSvc.GetAgent(ctx, &lanternv1.GetAgentRequest{Name: body.AgentName})
+	_, getErr := h.agentSvc.GetAgent(ctx, &palv1.GetAgentRequest{Name: body.AgentName})
 	if getErr != nil {
 		// Agent doesn't exist — create it with a default version.
 		h.logger().Info("auto-creating agent for run", zap.String("agent", body.AgentName))
-		_, createErr := h.agentSvc.CreateAgent(ctx, &lanternv1.CreateAgentRequest{
+		_, createErr := h.agentSvc.CreateAgent(ctx, &palv1.CreateAgentRequest{
 			Name:        body.AgentName,
 			Description: "Auto-created by run request",
 		})
@@ -744,7 +744,7 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	run, err := h.runSvc.CreateRun(ctx, &lanternv1.CreateRunRequest{
+	run, err := h.runSvc.CreateRun(ctx, &palv1.CreateRunRequest{
 		AgentName:   body.AgentName,
 		Input:       inputStruct,
 		TriggerKind: runTriggerKind(ctx),
@@ -756,7 +756,7 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 		errStr := err.Error()
 		if strings.Contains(errStr, "no promoted version") || strings.Contains(errStr, "not found") {
 			h.autoCreateVersion(ctx, body.AgentName)
-			run, err = h.runSvc.CreateRun(ctx, &lanternv1.CreateRunRequest{
+			run, err = h.runSvc.CreateRun(ctx, &palv1.CreateRunRequest{
 				AgentName:   body.AgentName,
 				Input:       inputStruct,
 				TriggerKind: runTriggerKind(ctx),
@@ -919,7 +919,7 @@ func (h *RESTHandler) GetRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	run, err := h.runSvc.GetRun(ctx, &lanternv1.GetRunRequest{
+	run, err := h.runSvc.GetRun(ctx, &palv1.GetRunRequest{
 		Id: id,
 	})
 	if err != nil {
@@ -978,7 +978,7 @@ func (h *RESTHandler) CancelRun(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewDecoder(r.Body).Decode(&body) //nolint:errcheck
 
-	run, err := h.runSvc.CancelRun(ctx, &lanternv1.CancelRunRequest{
+	run, err := h.runSvc.CancelRun(ctx, &palv1.CancelRunRequest{
 		Id:     id,
 		Reason: body.Reason,
 	})
@@ -1384,7 +1384,7 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 	}
 	defer releaseLease()
 
-	// Deferred lantern.run.total counter. Fires once per lease-held run at
+	// Deferred pal.run.total counter. Fires once per lease-held run at
 	// the actual function return so it sees the final outErr value.
 	// The workflow path writes status='failed' itself and returns outErr=nil,
 	// so a nil error is not proof of success: read the row back.
@@ -1552,13 +1552,13 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 	// false and tools attached when they shouldn't.
 	//
 	// Resolve in two steps, every run:
-	//   1. labels.lantern.template (set by templates.Apply OR back-fill)
+	//   1. labels.pal.template (set by templates.Apply OR back-fill)
 	//   2. agent-name == template-name (covers any agent named after a
 	//      registered template, even with no labels)
 	resolvedTemplateID = ""
 	{
 		var lbl struct {
-			TemplateID string `json:"lantern.template"`
+			TemplateID string `json:"pal.template"`
 		}
 		_ = json.Unmarshal(labelsJSON, &lbl)
 		resolvedTemplateID = lbl.TemplateID
@@ -1588,9 +1588,9 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 			// fallback needed) — and the setup gate can re-derive
 			// required_connectors/surfaces too.
 			labelsPatch, _ := json.Marshal(map[string]any{
-				"lantern.template":            tpl.ID,
-				"lantern.required_connectors": tpl.Connectors,
-				"lantern.required_surfaces":   tpl.Surfaces,
+				"pal.template":            tpl.ID,
+				"pal.required_connectors": tpl.Connectors,
+				"pal.required_surfaces":   tpl.Surfaces,
 			})
 			// rls-exempt: inline executor — agents back-fill self-scoped by
 			// explicit `tenant_id = $4`.
@@ -2617,28 +2617,28 @@ func (h *RESTHandler) ExecuteScheduledRun(tenantID, agentName string, input map[
 	inputStruct, _ := structpb.NewStruct(input)
 
 	// Ensure agent exists.
-	_, getErr := h.agentSvc.GetAgent(ctx, &lanternv1.GetAgentRequest{Name: agentName})
+	_, getErr := h.agentSvc.GetAgent(ctx, &palv1.GetAgentRequest{Name: agentName})
 	if getErr != nil {
 		h.logger().Info("scheduler: auto-creating agent", zap.String("agent", agentName))
-		_, _ = h.agentSvc.CreateAgent(ctx, &lanternv1.CreateAgentRequest{
+		_, _ = h.agentSvc.CreateAgent(ctx, &palv1.CreateAgentRequest{
 			Name:        agentName,
 			Description: "Auto-created by scheduler",
 		})
 	}
 
-	run, err := h.runSvc.CreateRun(ctx, &lanternv1.CreateRunRequest{
+	run, err := h.runSvc.CreateRun(ctx, &palv1.CreateRunRequest{
 		AgentName:   agentName,
 		Input:       inputStruct,
-		TriggerKind: lanternv1.TriggerKind_TRIGGER_KIND_SCHEDULE,
+		TriggerKind: palv1.TriggerKind_TRIGGER_KIND_SCHEDULE,
 	})
 	if err != nil {
 		errStr := err.Error()
 		if strings.Contains(errStr, "no promoted version") || strings.Contains(errStr, "not found") {
 			h.autoCreateVersion(ctx, agentName)
-			run, err = h.runSvc.CreateRun(ctx, &lanternv1.CreateRunRequest{
+			run, err = h.runSvc.CreateRun(ctx, &palv1.CreateRunRequest{
 				AgentName:   agentName,
 				Input:       inputStruct,
-				TriggerKind: lanternv1.TriggerKind_TRIGGER_KIND_SCHEDULE,
+				TriggerKind: palv1.TriggerKind_TRIGGER_KIND_SCHEDULE,
 			})
 		}
 		if err != nil {
@@ -2879,14 +2879,14 @@ func (h *RESTHandler) GetWorkflow(w http.ResponseWriter, r *http.Request) {
 
 // autoCreateVersion creates a default agent version and promotes it.
 // This is a convenience for the spike — in production, versions come from
-// `lantern deploy`.
+// `pal deploy`.
 func (h *RESTHandler) autoCreateVersion(ctx context.Context, agentName string) {
 	tenantID, _ := middleware.TenantIDFromContext(ctx)
 	if tenantID == "" {
 		return
 	}
 
-	// TenantPool routes to the RLS-enforced lantern_app role when
+	// TenantPool routes to the RLS-enforced pal_app role when
 	// PAL_RLS_ENFORCE=1; the set_config below scopes app.tenant_id either way.
 	tx, err := h.srv.TenantPool().Begin(ctx)
 	if err != nil {
@@ -3028,7 +3028,7 @@ func (h *RESTHandler) emitRunAnomalies(ctx context.Context, runID, tenantID, age
 
 // ---------- proto to map converters ----------
 
-func agentToMap(a *lanternv1.Agent) map[string]any {
+func agentToMap(a *palv1.Agent) map[string]any {
 	m := map[string]any{
 		"id":        a.GetId(),
 		"tenantId":  a.GetTenantId(),
@@ -3124,7 +3124,7 @@ func selectConfidenceEstimator(estimator, samplesEnv string) workflow.Confidence
 	return workflow.SelfConsistencyEstimator{Samples: samples, Fallback: heuristic}
 }
 
-func runToMap(r *lanternv1.Run) map[string]any {
+func runToMap(r *palv1.Run) map[string]any {
 	m := map[string]any{
 		"id":             r.GetId(),
 		"tenantId":       r.GetTenantId(),
@@ -3167,7 +3167,7 @@ func runToMap(r *lanternv1.Run) map[string]any {
 	return m
 }
 
-// runTotalStatus is the lantern.run.total status label. A nil error is not
+// runTotalStatus is the pal.run.total status label. A nil error is not
 // proof of success: the workflow path marks the row 'failed' and returns nil.
 func runTotalStatus(outErr error, dbStatus string) string {
 	if outErr != nil || dbStatus == "failed" {

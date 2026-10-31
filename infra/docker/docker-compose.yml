@@ -1,12 +1,10 @@
-# Env vars are emitted as PAL_* (ADR 0032). The binaries still accept the legacy
-# LANTERN_* names, so existing overrides keep working; PAL_* wins if both are set.
 x-common-env: &common-env
-  DATABASE_URL: postgres://lantern:lantern@postgres:5432/lantern?sslmode=disable
+  DATABASE_URL: postgres://pal:pal@postgres:5432/pal?sslmode=disable
   REDIS_URL: redis://redis:6379
   S3_ENDPOINT: http://minio:9000
-  S3_BUCKET: lantern-dev
-  AWS_ACCESS_KEY_ID: lantern
-  AWS_SECRET_ACCESS_KEY: lanternsecret
+  S3_BUCKET: pal-dev
+  AWS_ACCESS_KEY_ID: pal
+  AWS_SECRET_ACCESS_KEY: palsecret
   LOG_LEVEL: debug
 
 services:
@@ -18,13 +16,13 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_DB: lantern
-      POSTGRES_USER: lantern
-      POSTGRES_PASSWORD: lantern
+      POSTGRES_DB: pal
+      POSTGRES_USER: pal
+      POSTGRES_PASSWORD: pal
     volumes:
       - pg-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U lantern -d lantern"]
+      test: ["CMD-SHELL", "pg_isready -U pal -d pal"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -47,8 +45,8 @@ services:
       - "9000:9000"
       - "9001:9001"
     environment:
-      MINIO_ROOT_USER: lantern
-      MINIO_ROOT_PASSWORD: lanternsecret
+      MINIO_ROOT_USER: pal
+      MINIO_ROOT_PASSWORD: palsecret
     command: server /data --console-address ":9001"
     volumes:
       - minio-data:/data
@@ -65,10 +63,10 @@ services:
         condition: service_healthy
     entrypoint: >
       /bin/sh -c "
-        mc alias set local http://minio:9000 lantern lanternsecret &&
-        mc mb local/lantern-dev --ignore-existing &&
-        mc mb local/lantern-bundles --ignore-existing &&
-        mc mb local/lantern-snapshots --ignore-existing &&
+        mc alias set local http://minio:9000 pal palsecret &&
+        mc mb local/pal-dev --ignore-existing &&
+        mc mb local/pal-bundles --ignore-existing &&
+        mc mb local/pal-snapshots --ignore-existing &&
         echo 'Buckets created'
       "
 
@@ -82,7 +80,7 @@ services:
     environment:
       <<: *common-env
       LISTEN_ADDR: ":50051"
-      JWT_SECRET: lantern-dev-jwt-secret-do-not-use-in-production
+      JWT_SECRET: pal-dev-jwt-secret-do-not-use-in-production
     depends_on:
       postgres:
         condition: service_healthy
@@ -127,7 +125,7 @@ services:
       CONTROL_PLANE_ADDR: control-plane:50051
       MODEL_ROUTER_ADDR: model-router:50053
       WORKFLOW_ENGINE_ADDR: workflow-engine:50052
-      JWT_SECRET: lantern-dev-jwt-secret-do-not-use-in-production
+      JWT_SECRET: pal-dev-jwt-secret-do-not-use-in-production
     depends_on:
       control-plane:
         condition: service_healthy
@@ -183,7 +181,7 @@ services:
       - "8085:8085"
     environment:
       PAL_DEFAULT_MANAGER_ADDR: runtime-manager:50054
-      JWT_SECRET: lantern-dev-jwt-secret-do-not-use-in-production
+      JWT_SECRET: pal-dev-jwt-secret-do-not-use-in-production
       LOG_LEVEL: debug
     depends_on:
       runtime-manager:

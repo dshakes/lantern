@@ -20,7 +20,7 @@ load**, not "too much traffic" per se.
   `sum(pg_stat_database_numbackends) / max(pg_settings_max_connections) > 0.85`
   for 5m. Both are standard `postgres_exporter` metrics (no custom query). Over
   85% of connection slots are in use.
-- **`PostgresExporterDown`** — `up{job="lantern-postgres-exporter"} == 0`. The
+- **`PostgresExporterDown`** — `up{job="pal-postgres-exporter"} == 0`. The
   exporter is the source for this alert **and** for `DataPlaneHeartbeatStale` /
   `CronScheduleOverdue` (its custom queries). While it's down those are blind.
 

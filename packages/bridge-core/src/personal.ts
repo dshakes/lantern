@@ -494,7 +494,7 @@ export class PersonalClient {
             to: ownerEmail,
             subject,
             body,
-            label: "lantern",
+            label: "pal",
             // Drafts are time-sensitive — leave them IN inbox (not
             // skip-inbox like status mail) so they grab attention.
             skipInbox: false,

@@ -23,15 +23,15 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/cluster"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/dialer"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/metrics"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/middleware"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/placement"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/cluster"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/dialer"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/metrics"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/middleware"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/placement"
 )
 
-var tracer = otel.Tracer("lantern.runtime-scheduler")
+var tracer = otel.Tracer("pal.runtime-scheduler")
 
 // SnapshotPersister is the optional interface that records snapshot metadata
 // to a durable backend. Nil means in-memory/no-op (the in-memory map of
@@ -39,7 +39,7 @@ var tracer = otel.Tracer("lantern.runtime-scheduler")
 type SnapshotPersister interface {
 	// PersistSnapshot is called after a Snapshot RPC completes. It MUST NOT
 	// block the caller significantly; DB errors should be logged internally.
-	PersistSnapshot(ctx context.Context, snapshotID, vmID, tenantID, nodeName string, keepRunning bool, resp *lanternv1.SnapshotResponse)
+	PersistSnapshot(ctx context.Context, snapshotID, vmID, tenantID, nodeName string, keepRunning bool, resp *palv1.SnapshotResponse)
 }
 
 // Elector is the subset of leader.Elector used by the service.
@@ -56,7 +56,7 @@ func (alwaysLeader) IsLeader() bool { return true }
 // idempotentEntry caches the result of a Schedule call keyed by
 // idempotency_key so client retries after a timeout get the same VmHandle.
 type idempotentEntry struct {
-	handle    *lanternv1.VmHandle
+	handle    *palv1.VmHandle
 	expiresAt time.Time
 	// done is closed once the reserving call finishes; concurrent callers with
 	// the same key wait on it, then read handle (nil => the first call failed,
@@ -65,9 +65,9 @@ type idempotentEntry struct {
 	err  error
 }
 
-// SchedulerService implements lanternv1.RuntimeSchedulerServer.
+// SchedulerService implements palv1.RuntimeSchedulerServer.
 type SchedulerService struct {
-	lanternv1.UnimplementedRuntimeSchedulerServer
+	palv1.UnimplementedRuntimeSchedulerServer
 
 	Store             cluster.ClusterStore
 	Placement         *placement.Engine
@@ -111,7 +111,7 @@ func NewSchedulerService(
 //
 // Schedule is a leader-only mutating operation; standbys return Unavailable so
 // the caller can retry against another replica.
-func (s *SchedulerService) Schedule(ctx context.Context, req *lanternv1.ScheduleRequest) (retHandle *lanternv1.VmHandle, retErr error) {
+func (s *SchedulerService) Schedule(ctx context.Context, req *palv1.ScheduleRequest) (retHandle *palv1.VmHandle, retErr error) {
 	ctx, span := tracer.Start(ctx, "RuntimeScheduler.Schedule")
 	defer span.End()
 
@@ -208,7 +208,7 @@ func (s *SchedulerService) Schedule(ctx context.Context, req *lanternv1.Schedule
 		return nil, status.Errorf(codes.FailedPrecondition, "placement failed: %v", err)
 	}
 
-	handle := &lanternv1.VmHandle{
+	handle := &palv1.VmHandle{
 		VmId:      "vm-" + uuid.NewString(),
 		Node:      decision.NodeName,
 		CreatedAt: timestamppb.Now(),
@@ -231,7 +231,7 @@ func (s *SchedulerService) Schedule(ctx context.Context, req *lanternv1.Schedule
 	vm := &cluster.VM{
 		Handle:      handle,
 		Spec:        req.Spec,
-		State:       lanternv1.VmState_VM_STATE_PENDING,
+		State:       palv1.VmState_VM_STATE_PENDING,
 		TenantID:    tenantID,
 		NodeName:    decision.NodeName,
 		LastEventAt: time.Now().UTC(),
@@ -245,9 +245,9 @@ func (s *SchedulerService) Schedule(ctx context.Context, req *lanternv1.Schedule
 	}
 
 	// Emit PENDING then dispatch the spawn.
-	s.emit(tenantID, &lanternv1.StatusEvent{
+	s.emit(tenantID, &palv1.StatusEvent{
 		VmId:   handle.VmId,
-		State:  lanternv1.VmState_VM_STATE_PENDING,
+		State:  palv1.VmState_VM_STATE_PENDING,
 		At:     timestamppb.Now(),
 		Reason: "scheduled",
 	})
@@ -289,7 +289,7 @@ func (s *SchedulerService) reserveIdempotent(key string) (*idempotentEntry, bool
 
 // finishIdempotent fills the reservation (24 h TTL) or, on failure, drops it so
 // a retry can run fresh; waiters see err.
-func (s *SchedulerService) finishIdempotent(key string, e *idempotentEntry, h *lanternv1.VmHandle, err error) {
+func (s *SchedulerService) finishIdempotent(key string, e *idempotentEntry, h *palv1.VmHandle, err error) {
 	s.idempotentMu.Lock()
 	if err != nil || h == nil {
 		e.err = err
@@ -306,7 +306,7 @@ func (s *SchedulerService) finishIdempotent(key string, e *idempotentEntry, h *l
 }
 
 // Events streams StatusEvents for one or all of the caller's VMs.
-func (s *SchedulerService) Events(req *lanternv1.EventsRequest, stream lanternv1.RuntimeScheduler_EventsServer) error {
+func (s *SchedulerService) Events(req *palv1.EventsRequest, stream palv1.RuntimeScheduler_EventsServer) error {
 	tenantID, err := middleware.MustTenantID(stream.Context())
 	if err != nil {
 		return err
@@ -330,13 +330,13 @@ func (s *SchedulerService) Events(req *lanternv1.EventsRequest, stream lanternv1
 }
 
 // List returns a tenant-scoped view of live VMs.
-func (s *SchedulerService) List(ctx context.Context, req *lanternv1.ListRequest) (*lanternv1.ListResponse, error) {
+func (s *SchedulerService) List(ctx context.Context, req *palv1.ListRequest) (*palv1.ListResponse, error) {
 	tenantID, err := middleware.MustTenantID(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	stateSet := make(map[lanternv1.VmState]struct{}, len(req.States))
+	stateSet := make(map[palv1.VmState]struct{}, len(req.States))
 	for _, st := range req.States {
 		stateSet[st] = struct{}{}
 	}
@@ -358,9 +358,9 @@ func (s *SchedulerService) List(ctx context.Context, req *lanternv1.ListRequest)
 		return true
 	})
 
-	resp := &lanternv1.ListResponse{Items: make([]*lanternv1.ListResponse_Item, 0, len(vms))}
+	resp := &palv1.ListResponse{Items: make([]*palv1.ListResponse_Item, 0, len(vms))}
 	for _, v := range vms {
-		item := &lanternv1.ListResponse_Item{
+		item := &palv1.ListResponse_Item{
 			Handle: v.Handle,
 			Spec:   v.Spec,
 			State:  v.State,
@@ -380,7 +380,7 @@ func (s *SchedulerService) List(ctx context.Context, req *lanternv1.ListRequest)
 }
 
 // Terminate drains + terminates a VM. Leader-only mutating operation.
-func (s *SchedulerService) Terminate(ctx context.Context, req *lanternv1.TerminateRequest) (*lanternv1.TerminateResponse, error) {
+func (s *SchedulerService) Terminate(ctx context.Context, req *palv1.TerminateRequest) (*palv1.TerminateResponse, error) {
 	if !s.Elector.IsLeader() {
 		return nil, status.Error(codes.Unavailable, "not the leader — retry on another replica")
 	}
@@ -405,8 +405,8 @@ func (s *SchedulerService) Terminate(ctx context.Context, req *lanternv1.Termina
 
 	// A FAILED VM already released its quota slot in dispatchSpawn; a PAUSED
 	// one released it in Pause and is already stopped on its node.
-	paused := vm.State == lanternv1.VmState_VM_STATE_PAUSED
-	quotaAlreadyFreed := vm.State == lanternv1.VmState_VM_STATE_FAILED || paused
+	paused := vm.State == palv1.VmState_VM_STATE_PAUSED
+	quotaAlreadyFreed := vm.State == palv1.VmState_VM_STATE_FAILED || paused
 
 	// An empty address would fall through to the default manager — another
 	// node's, in a multi-node cluster. A PAUSED VM needs no Stop, so no node.
@@ -416,10 +416,10 @@ func (s *SchedulerService) Terminate(ctx context.Context, req *lanternv1.Termina
 	}
 
 	// Mark draining + emit event.
-	s.Store.UpdateVMState(req.VmId, lanternv1.VmState_VM_STATE_DRAINING, req.Reason, nil, time.Now().UTC())
-	s.emit(tenantID, &lanternv1.StatusEvent{
+	s.Store.UpdateVMState(req.VmId, palv1.VmState_VM_STATE_DRAINING, req.Reason, nil, time.Now().UTC())
+	s.emit(tenantID, &palv1.StatusEvent{
 		VmId:   req.VmId,
-		State:  lanternv1.VmState_VM_STATE_DRAINING,
+		State:  palv1.VmState_VM_STATE_DRAINING,
 		At:     timestamppb.Now(),
 		Reason: req.Reason,
 	})
@@ -428,7 +428,7 @@ func (s *SchedulerService) Terminate(ctx context.Context, req *lanternv1.Termina
 	// running — do NOT free the quota slot or mark TERMINATED; leave the VM
 	// in DRAINING so the caller can retry and the quota is not fabricated.
 	// A PAUSED VM has nothing running to stop (its snapshot stays on the node).
-	if _, err := s.stopUnlessPaused(ctx, paused, node.Address, &lanternv1.StopRequest{
+	if _, err := s.stopUnlessPaused(ctx, paused, node.Address, &palv1.StopRequest{
 		VmId:   req.VmId,
 		Grace:  req.Grace,
 		Reason: req.Reason,
@@ -442,10 +442,10 @@ func (s *SchedulerService) Terminate(ctx context.Context, req *lanternv1.Termina
 	}
 
 	// Manager confirmed stop; transition to terminated and free quota.
-	s.Store.UpdateVMState(req.VmId, lanternv1.VmState_VM_STATE_TERMINATED, req.Reason, nil, time.Now().UTC())
-	s.emit(tenantID, &lanternv1.StatusEvent{
+	s.Store.UpdateVMState(req.VmId, palv1.VmState_VM_STATE_TERMINATED, req.Reason, nil, time.Now().UTC())
+	s.emit(tenantID, &palv1.StatusEvent{
 		VmId:   req.VmId,
-		State:  lanternv1.VmState_VM_STATE_TERMINATED,
+		State:  palv1.VmState_VM_STATE_TERMINATED,
 		At:     timestamppb.Now(),
 		Reason: req.Reason,
 	})
@@ -458,7 +458,7 @@ func (s *SchedulerService) Terminate(ctx context.Context, req *lanternv1.Termina
 		}
 	}
 
-	return &lanternv1.TerminateResponse{Ok: true, Detail: "terminated"}, nil
+	return &palv1.TerminateResponse{Ok: true, Detail: "terminated"}, nil
 }
 
 // logIfSnapshotOrphaned notes, once the last VM referencing a pause/fork
@@ -479,15 +479,15 @@ func (s *SchedulerService) logIfSnapshotOrphaned(vm *cluster.VM) {
 	)
 }
 
-func (s *SchedulerService) stopUnlessPaused(ctx context.Context, paused bool, addr string, req *lanternv1.StopRequest) (*lanternv1.StopResponse, error) {
+func (s *SchedulerService) stopUnlessPaused(ctx context.Context, paused bool, addr string, req *palv1.StopRequest) (*palv1.StopResponse, error) {
 	if paused {
-		return &lanternv1.StopResponse{Ok: true, Detail: "already stopped (paused)"}, nil
+		return &palv1.StopResponse{Ok: true, Detail: "already stopped (paused)"}, nil
 	}
 	return s.Dialer.Stop(ctx, addr, req)
 }
 
 // Snapshot requests a snapshot of a running VM. Leader-only mutating operation.
-func (s *SchedulerService) Snapshot(ctx context.Context, req *lanternv1.SnapshotRequest) (*lanternv1.SnapshotResponse, error) {
+func (s *SchedulerService) Snapshot(ctx context.Context, req *palv1.SnapshotRequest) (*palv1.SnapshotResponse, error) {
 	if !s.Elector.IsLeader() {
 		return nil, status.Error(codes.Unavailable, "not the leader — retry on another replica")
 	}
@@ -526,7 +526,7 @@ func (s *SchedulerService) Snapshot(ctx context.Context, req *lanternv1.Snapshot
 		if snapID == "" {
 			snapID = "snap-" + uuid.NewString()
 		}
-		managerResp = &lanternv1.SnapshotResponse{
+		managerResp = &palv1.SnapshotResponse{
 			SnapshotId: snapID,
 			Bytes:      0,
 			Sha256:     "",
@@ -549,7 +549,7 @@ func (s *SchedulerService) Snapshot(ctx context.Context, req *lanternv1.Snapshot
 }
 
 // Cluster returns capacity / health for every registered node.
-func (s *SchedulerService) Cluster(ctx context.Context, _ *lanternv1.ClusterRequest) (*lanternv1.ClusterResponse, error) {
+func (s *SchedulerService) Cluster(ctx context.Context, _ *palv1.ClusterRequest) (*palv1.ClusterResponse, error) {
 	// Cluster RPC is privileged but tenant-scoped: any authenticated caller
 	// can see the topology (the schedule decision uses it implicitly).
 	if _, err := middleware.MustTenantID(ctx); err != nil {
@@ -557,12 +557,12 @@ func (s *SchedulerService) Cluster(ctx context.Context, _ *lanternv1.ClusterRequ
 	}
 
 	nodes := s.Store.ListNodes()
-	resp := &lanternv1.ClusterResponse{
-		Nodes: make([]*lanternv1.ClusterResponse_Node, 0, len(nodes)),
+	resp := &palv1.ClusterResponse{
+		Nodes: make([]*palv1.ClusterResponse_Node, 0, len(nodes)),
 	}
 	var running, pending int64
 	for _, n := range nodes {
-		resp.Nodes = append(resp.Nodes, &lanternv1.ClusterResponse_Node{
+		resp.Nodes = append(resp.Nodes, &palv1.ClusterResponse_Node{
 			Name:              n.Name,
 			AvailabilityZone:  n.AvailabilityZone,
 			Region:            n.Region,
@@ -577,8 +577,8 @@ func (s *SchedulerService) Cluster(ctx context.Context, _ *lanternv1.ClusterRequ
 
 	// Pending = VMs whose state is still PENDING/SPAWNING.
 	for _, v := range s.Store.ListVMs("", func(v *cluster.VM) bool {
-		return v.State == lanternv1.VmState_VM_STATE_PENDING ||
-			v.State == lanternv1.VmState_VM_STATE_SPAWNING
+		return v.State == palv1.VmState_VM_STATE_PENDING ||
+			v.State == palv1.VmState_VM_STATE_SPAWNING
 	}) {
 		_ = v
 		pending++
@@ -593,7 +593,7 @@ func (s *SchedulerService) Cluster(ctx context.Context, _ *lanternv1.ClusterRequ
 // Helpers
 // ---------------------------------------------------------------------
 
-func (s *SchedulerService) emit(tenantID string, ev *lanternv1.StatusEvent) {
+func (s *SchedulerService) emit(tenantID string, ev *palv1.StatusEvent) {
 	s.Store.Publish(ev, tenantID)
 }
 
@@ -603,26 +603,26 @@ func (s *SchedulerService) emit(tenantID string, ev *lanternv1.StatusEvent) {
 // lock), never by mutating the shared *VmHandle: list/heartbeat readers hold it
 // outside the lock. The value is not logged; it reaches relying parties via the
 // receipt and the VM cert.
-func (s *SchedulerService) recordMeasurement(vmID string, resp *lanternv1.SpawnResponse) {
+func (s *SchedulerService) recordMeasurement(vmID string, resp *palv1.SpawnResponse) {
 	if m := resp.GetHandle().GetSoftwareMeasurement(); m != "" {
 		s.Store.SetVMMeasurement(vmID, m)
 		s.Logger.Info("software measurement recorded", zap.String("vm_id", vmID))
 	}
 }
 
-func (s *SchedulerService) dispatchSpawn(nodeAddr string, spec *lanternv1.AgentSpec, handle *lanternv1.VmHandle, tenantID string) {
+func (s *SchedulerService) dispatchSpawn(nodeAddr string, spec *palv1.AgentSpec, handle *palv1.VmHandle, tenantID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	s.Store.UpdateVMState(handle.VmId, lanternv1.VmState_VM_STATE_SPAWNING, "dispatched", nil, time.Now().UTC())
-	s.emit(tenantID, &lanternv1.StatusEvent{
+	s.Store.UpdateVMState(handle.VmId, palv1.VmState_VM_STATE_SPAWNING, "dispatched", nil, time.Now().UTC())
+	s.emit(tenantID, &palv1.StatusEvent{
 		VmId:   handle.VmId,
-		State:  lanternv1.VmState_VM_STATE_SPAWNING,
+		State:  palv1.VmState_VM_STATE_SPAWNING,
 		At:     timestamppb.Now(),
 		Reason: "spawn dispatched to " + handle.Node,
 	})
 
-	resp, err := s.Dialer.Spawn(ctx, nodeAddr, &lanternv1.SpawnRequest{
+	resp, err := s.Dialer.Spawn(ctx, nodeAddr, &palv1.SpawnRequest{
 		Spec:   spec,
 		Handle: handle,
 	})
@@ -639,16 +639,16 @@ func (s *SchedulerService) dispatchSpawn(nodeAddr string, spec *lanternv1.AgentS
 		// still exists and wasn't already terminal (Terminate/reconcile freed it).
 		// Reconcile skips FAILED, so nobody else will.
 		prior, existed := s.Store.GetVM(handle.VmId)
-		s.Store.UpdateVMState(handle.VmId, lanternv1.VmState_VM_STATE_FAILED, err.Error(), nil, time.Now().UTC())
-		if existed && prior.State != lanternv1.VmState_VM_STATE_FAILED && prior.State != lanternv1.VmState_VM_STATE_TERMINATED {
+		s.Store.UpdateVMState(handle.VmId, palv1.VmState_VM_STATE_FAILED, err.Error(), nil, time.Now().UTC())
+		if existed && prior.State != palv1.VmState_VM_STATE_FAILED && prior.State != palv1.VmState_VM_STATE_TERMINATED {
 			s.Store.IncrTenantVMs(tenantID, -1)
 			if s.Metrics != nil {
 				s.Metrics.ActiveVMs.Dec()
 			}
 		}
-		s.emit(tenantID, &lanternv1.StatusEvent{
+		s.emit(tenantID, &palv1.StatusEvent{
 			VmId:   handle.VmId,
-			State:  lanternv1.VmState_VM_STATE_FAILED,
+			State:  palv1.VmState_VM_STATE_FAILED,
 			At:     timestamppb.Now(),
 			Reason: err.Error(),
 		})
@@ -658,10 +658,10 @@ func (s *SchedulerService) dispatchSpawn(nodeAddr string, spec *lanternv1.AgentS
 	// here so consumers see a complete lifecycle. Real wiring (manager
 	// pushes RUNNING when the harness's first heartbeat lands) replaces
 	// this in W12.
-	s.Store.UpdateVMState(handle.VmId, lanternv1.VmState_VM_STATE_RUNNING, "spawn ok", nil, time.Now().UTC())
-	s.emit(tenantID, &lanternv1.StatusEvent{
+	s.Store.UpdateVMState(handle.VmId, palv1.VmState_VM_STATE_RUNNING, "spawn ok", nil, time.Now().UTC())
+	s.emit(tenantID, &palv1.StatusEvent{
 		VmId:   handle.VmId,
-		State:  lanternv1.VmState_VM_STATE_RUNNING,
+		State:  palv1.VmState_VM_STATE_RUNNING,
 		At:     timestamppb.Now(),
 		Reason: "spawn ok",
 	})

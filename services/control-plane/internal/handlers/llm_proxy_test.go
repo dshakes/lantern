@@ -27,7 +27,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // ---------------------------------------------------------------------------
@@ -778,7 +778,7 @@ func TestIsFlagDisabled(t *testing.T) {
 
 func TestComplexityRoutingEnabled_OffValues(t *testing.T) {
 	for _, v := range []string{"0", "off", "false", "OFF", "False"} {
-		t.Run("LANTERN_COMPLEXITY_ROUTING="+v, func(t *testing.T) {
+		t.Run("PAL_COMPLEXITY_ROUTING="+v, func(t *testing.T) {
 			t.Setenv("PAL_COMPLEXITY_ROUTING", v)
 			if complexityRoutingEnabled() {
 				t.Errorf("complexityRoutingEnabled() should be false when env=%q", v)

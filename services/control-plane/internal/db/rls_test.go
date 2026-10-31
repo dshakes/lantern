@@ -3,7 +3,7 @@ package db_test
 // TestRLSEnforcement_CrossTenant is a live-DB integration test that proves
 // Row-Level Security actually denies cross-tenant reads on the 'agents' table.
 //
-// It exercises the 'lantern_app' non-owner role, which lacks BYPASSRLS and
+// It exercises the 'pal_app' non-owner role, which lacks BYPASSRLS and
 // is therefore subject to the tenant_isolation_agents policy:
 //
 //	USING (tenant_id::text = current_setting('app.tenant_id', true))
@@ -11,7 +11,7 @@ package db_test
 // Test strategy
 // -------------
 //  1. Run Migrate() as the superuser pool to ensure the schema + role exist.
-//  2. Open a *second* pool that connects as 'lantern_app' (SET ROLE inside
+//  2. Open a *second* pool that connects as 'pal_app' (SET ROLE inside
 //     a transaction mimics that without needing a second DSN).
 //  3. As tenant A (with GUC set), INSERT an agent and verify SELECT sees it.
 //  4. Switch GUC to tenant B: the tenant-A row must NOT be visible.
@@ -31,7 +31,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/db"
+	"github.com/dshakes/pal/services/control-plane/internal/db"
 )
 
 // openSuperPool opens a pool using DATABASE_URL (the superuser / migration
@@ -85,12 +85,12 @@ func seedRLSTenant(t *testing.T, pool *pgxpool.Pool, tenantID string) {
 }
 
 // TestRLSEnforcement_CrossTenant is the proof that RLS denies cross-tenant
-// reads when the connection operates as the non-owner 'lantern_app' role.
+// reads when the connection operates as the non-owner 'pal_app' role.
 func TestRLSEnforcement_CrossTenant(t *testing.T) {
 	superPool := openSuperPool(t)
 	ctx := context.Background()
 
-	// Ensure schema + lantern_app role exist.
+	// Ensure schema + pal_app role exist.
 	if err := db.Migrate(ctx, superPool, false); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
@@ -104,10 +104,10 @@ func TestRLSEnforcement_CrossTenant(t *testing.T) {
 
 	// -------------------------------------------------------------------------
 	// Step 1 – Insert the agent as tenant A (using a transaction with the GUC
-	// set) operating as lantern_app (the non-owner, non-superuser role).
+	// set) operating as pal_app (the non-owner, non-superuser role).
 	// We use SET LOCAL ROLE inside the transaction so we don't need a separate
 	// DSN for the test — the effect is identical to the pool connecting as
-	// lantern_app from the start.
+	// pal_app from the start.
 	// -------------------------------------------------------------------------
 	func() {
 		tx, err := superPool.Begin(ctx)
@@ -117,8 +117,8 @@ func TestRLSEnforcement_CrossTenant(t *testing.T) {
 		defer tx.Rollback(ctx) //nolint:errcheck
 
 		// Drop to the app role for this transaction.
-		if _, err := tx.Exec(ctx, "SET LOCAL ROLE lantern_app"); err != nil {
-			t.Fatalf("SET LOCAL ROLE lantern_app: %v — is the role created? run Migrate first", err)
+		if _, err := tx.Exec(ctx, "SET LOCAL ROLE pal_app"); err != nil {
+			t.Fatalf("SET LOCAL ROLE pal_app: %v — is the role created? run Migrate first", err)
 		}
 		// Set the tenant GUC (transaction-local).
 		if _, err := tx.Exec(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantA); err != nil {
@@ -192,7 +192,7 @@ func TestRLSEnforcement_CrossTenant(t *testing.T) {
 	})
 }
 
-// queryAgentCount opens a transaction as lantern_app, sets the tenant GUC,
+// queryAgentCount opens a transaction as pal_app, sets the tenant GUC,
 // and returns how many agents with the given name are visible.
 func queryAgentCount(t *testing.T, pool *pgxpool.Pool, ctx context.Context, tenantID, agentName string) int {
 	t.Helper()
@@ -211,7 +211,7 @@ func queryAgentCount(t *testing.T, pool *pgxpool.Pool, ctx context.Context, tena
 	return count
 }
 
-// runAsAppRole opens a transaction, drops to 'lantern_app' via SET LOCAL ROLE
+// runAsAppRole opens a transaction, drops to 'pal_app' via SET LOCAL ROLE
 // (so RLS is enforced as if the pool were connected as that role), runs f,
 // and commits. It rolls back on any error from f.
 func runAsAppRole(pool *pgxpool.Pool, ctx context.Context, f func(pgx.Tx) error) error {
@@ -221,8 +221,8 @@ func runAsAppRole(pool *pgxpool.Pool, ctx context.Context, f func(pgx.Tx) error)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
-	if _, err := tx.Exec(ctx, "SET LOCAL ROLE lantern_app"); err != nil {
-		return fmt.Errorf("SET LOCAL ROLE lantern_app: %w", err)
+	if _, err := tx.Exec(ctx, "SET LOCAL ROLE pal_app"); err != nil {
+		return fmt.Errorf("SET LOCAL ROLE pal_app: %w", err)
 	}
 	if err := f(tx); err != nil {
 		return err
@@ -285,7 +285,7 @@ func TestRLSEnforcement_Runs(t *testing.T) {
 	})
 
 	// -------------------------------------------------------------------------
-	// Step 1 — Tenant A (as lantern_app) sees its own run.
+	// Step 1 — Tenant A (as pal_app) sees its own run.
 	// -------------------------------------------------------------------------
 	t.Run("Runs_WithinTenantA_CanRead", func(t *testing.T) {
 		count := queryRunCount(t, superPool, ctx, tenantA, runID)
@@ -295,7 +295,7 @@ func TestRLSEnforcement_Runs(t *testing.T) {
 	})
 
 	// -------------------------------------------------------------------------
-	// Step 2 — Tenant B (as lantern_app) CANNOT see tenant A's run.
+	// Step 2 — Tenant B (as pal_app) CANNOT see tenant A's run.
 	// -------------------------------------------------------------------------
 	t.Run("Runs_CrossTenant_DeniedByRLS", func(t *testing.T) {
 		count := queryRunCount(t, superPool, ctx, tenantB, runID)
@@ -328,10 +328,10 @@ func TestRLSEnforcement_Runs(t *testing.T) {
 	t.Run("WithTenantConn_SameTenant", func(t *testing.T) {
 		var count int
 		err := db.WithTenantConn(ctx, superPool, tenantA, func(tx pgx.Tx) error {
-			// Inside this tx, lantern_app role + GUC are set.
+			// Inside this tx, pal_app role + GUC are set.
 			// We mimic the GUC-only enforcement (superuser pool still used here
-			// for convenience; a lantern_app pool would enforce at the DB level).
-			if _, err := tx.Exec(ctx, "SET LOCAL ROLE lantern_app"); err != nil {
+			// for convenience; a pal_app pool would enforce at the DB level).
+			if _, err := tx.Exec(ctx, "SET LOCAL ROLE pal_app"); err != nil {
 				return fmt.Errorf("SET LOCAL ROLE: %w", err)
 			}
 			return tx.QueryRow(ctx,
@@ -349,7 +349,7 @@ func TestRLSEnforcement_Runs(t *testing.T) {
 	t.Run("WithTenantConn_CrossTenant", func(t *testing.T) {
 		var count int
 		err := db.WithTenantConn(ctx, superPool, tenantB, func(tx pgx.Tx) error {
-			if _, err := tx.Exec(ctx, "SET LOCAL ROLE lantern_app"); err != nil {
+			if _, err := tx.Exec(ctx, "SET LOCAL ROLE pal_app"); err != nil {
 				return fmt.Errorf("SET LOCAL ROLE: %w", err)
 			}
 			return tx.QueryRow(ctx,
@@ -485,7 +485,7 @@ func TestRLSEnforcement_AllTenantTables(t *testing.T) {
 
 // TestRLSEnforcement_Sessions mirrors the agents/runs cross-tenant proof for the
 // 'sessions' table — the table cut over to s.srv.WithTenant in handlers/sessions.go.
-// Under the lantern_app (RLS-subject) role, a session owned by tenant B is
+// Under the pal_app (RLS-subject) role, a session owned by tenant B is
 // invisible to tenant A, and visible to tenant B. Seeded via the privileged pool.
 func TestRLSEnforcement_Sessions(t *testing.T) {
 	superPool := openSuperPool(t)
@@ -544,7 +544,7 @@ func TestRLSEnforcement_Sessions(t *testing.T) {
 	})
 }
 
-// querySessionCount opens a transaction as lantern_app, sets the tenant GUC, and
+// querySessionCount opens a transaction as pal_app, sets the tenant GUC, and
 // returns how many sessions with the given ID are visible.
 func querySessionCount(t *testing.T, pool *pgxpool.Pool, ctx context.Context, tenantID, sessionID string) int {
 	t.Helper()
@@ -563,7 +563,7 @@ func querySessionCount(t *testing.T, pool *pgxpool.Pool, ctx context.Context, te
 	return count
 }
 
-// queryRunCount opens a transaction as lantern_app, sets the tenant GUC, and
+// queryRunCount opens a transaction as pal_app, sets the tenant GUC, and
 // returns how many runs with the given ID are visible.
 func queryRunCount(t *testing.T, pool *pgxpool.Pool, ctx context.Context, tenantID, runID string) int {
 	t.Helper()
@@ -597,7 +597,7 @@ func queryRunCount(t *testing.T, pool *pgxpool.Pool, ctx context.Context, tenant
 // GetAgent / ListAgents / DeleteAgent and handlers/runs.go CreateRun /
 // CancelRun / GetRun / ListRuns after the TenantPool() cutover, because those
 // handlers call setRLSTenantID (set_config) inside a transaction on TenantPool
-// (which becomes lantern_app when PAL_RLS_ENFORCE=1).
+// (which becomes pal_app when PAL_RLS_ENFORCE=1).
 // ---------------------------------------------------------------------------
 
 // TestRLSEnforcement_CutoverPaths_Agents is the same-tenant-still-works proof
@@ -617,7 +617,7 @@ func TestRLSEnforcement_CutoverPaths_Agents(t *testing.T) {
 
 	agentName := "cutover-agent-" + tenantA[:8]
 
-	// Insert via lantern_app role (simulating TenantPool when enforcement is on).
+	// Insert via pal_app role (simulating TenantPool when enforcement is on).
 	err := runAsAppRole(superPool, ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantA); err != nil {
 			return fmt.Errorf("set_config tenantA: %w", err)
@@ -630,7 +630,7 @@ func TestRLSEnforcement_CutoverPaths_Agents(t *testing.T) {
 		return err
 	})
 	if err != nil {
-		t.Fatalf("insert agent via lantern_app: %v", err)
+		t.Fatalf("insert agent via pal_app: %v", err)
 	}
 
 	// (a) Same-tenant read still works — the GUC is set correctly.
@@ -670,8 +670,8 @@ func TestRLSEnforcement_CutoverPaths_Agents(t *testing.T) {
 		})
 		// Write.
 		err := db.WithTenantConn(ctx, superPool, tenantA, func(tx pgx.Tx) error {
-			// Drop to lantern_app to prove RLS is active (same as TenantPool).
-			if _, err := tx.Exec(ctx, "SET LOCAL ROLE lantern_app"); err != nil {
+			// Drop to pal_app to prove RLS is active (same as TenantPool).
+			if _, err := tx.Exec(ctx, "SET LOCAL ROLE pal_app"); err != nil {
 				return fmt.Errorf("SET LOCAL ROLE: %w", err)
 			}
 			_, err := tx.Exec(ctx, `
@@ -736,7 +736,7 @@ func TestRLSEnforcement_CutoverPaths_Runs(t *testing.T) {
 		_, _ = superPool.Exec(context.Background(), "DELETE FROM agents WHERE id = $1::uuid", agentID)
 	})
 
-	// CreateRun-style insert via lantern_app (TenantPool() pattern).
+	// CreateRun-style insert via pal_app (TenantPool() pattern).
 	runID := uuid.New().String()
 	err = runAsAppRole(superPool, ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantA); err != nil {
@@ -750,7 +750,7 @@ func TestRLSEnforcement_CutoverPaths_Runs(t *testing.T) {
 		return err
 	})
 	if err != nil {
-		t.Fatalf("insert run via lantern_app: %v", err)
+		t.Fatalf("insert run via pal_app: %v", err)
 	}
 	t.Cleanup(func() {
 		_, _ = superPool.Exec(context.Background(), "DELETE FROM runs WHERE id = $1::uuid", runID)
@@ -802,7 +802,7 @@ func TestRLSEnforcement_CutoverPaths_Runs(t *testing.T) {
 //	    pattern) returns ZERO ROWS even for the same tenant — proving the GUC
 //	    is required and was the root cause.
 //
-// The test uses SET LOCAL ROLE lantern_app to simulate PAL_RLS_ENFORCE=1
+// The test uses SET LOCAL ROLE pal_app to simulate PAL_RLS_ENFORCE=1
 // (the TenantPool connecting as the non-superuser role) without needing a
 // separate DSN.
 // ---------------------------------------------------------------------------
@@ -837,15 +837,15 @@ func TestRLSEnforcement_WithTenantConn_HandlerPattern(t *testing.T) {
 
 	// appRolePool simulates TenantPool() under PAL_RLS_ENFORCE=1 by using
 	// SET LOCAL ROLE inside each WithTenantConn transaction. In production the
-	// pool itself connects as lantern_app; here we use superPool + SET LOCAL ROLE
+	// pool itself connects as pal_app; here we use superPool + SET LOCAL ROLE
 	// to achieve the same effect without needing a separate DSN in CI.
 	//
-	// withEnforcement wraps WithTenantConn and drops to lantern_app inside the
+	// withEnforcement wraps WithTenantConn and drops to pal_app inside the
 	// closure — identical to what TenantPool() + WithTenantConn does at runtime.
 	withEnforcement := func(tenantID string, fn func(pgx.Tx) error) error {
 		return db.WithTenantConn(ctx, superPool, tenantID, func(tx pgx.Tx) error {
 			// Drop to the non-superuser role so the RLS policies are evaluated.
-			if _, err := tx.Exec(ctx, "SET LOCAL ROLE lantern_app"); err != nil {
+			if _, err := tx.Exec(ctx, "SET LOCAL ROLE pal_app"); err != nil {
 				return fmt.Errorf("SET LOCAL ROLE: %w", err)
 			}
 			return fn(tx)
@@ -898,14 +898,14 @@ func TestRLSEnforcement_WithTenantConn_HandlerPattern(t *testing.T) {
 	//     makes the difference, and why the fix (WithTenantConn) is necessary.
 	// -------------------------------------------------------------------------
 	t.Run("BarePoolWithoutGUC_ReturnsZero_ProvesFix_Necessary", func(t *testing.T) {
-		// Simulate the broken pre-fix pattern: lantern_app role but NO set_config.
+		// Simulate the broken pre-fix pattern: pal_app role but NO set_config.
 		tx, err := superPool.Begin(ctx)
 		if err != nil {
 			t.Fatalf("begin tx: %v", err)
 		}
 		defer tx.Rollback(ctx) //nolint:errcheck
 
-		if _, err := tx.Exec(ctx, "SET LOCAL ROLE lantern_app"); err != nil {
+		if _, err := tx.Exec(ctx, "SET LOCAL ROLE pal_app"); err != nil {
 			t.Fatalf("SET LOCAL ROLE: %v", err)
 		}
 		// GUC deliberately NOT set — this is the pre-fix bug.
@@ -927,9 +927,9 @@ func TestRLSEnforcement_WithTenantConn_HandlerPattern(t *testing.T) {
 
 // TestGrantAudit_Migration0031 proves that migration 0031_grant_brief_items
 // correctly grants SELECT/INSERT/UPDATE/DELETE on brief_items to the
-// lantern_app non-superuser role (ADR 0042, GRANT audit).
+// pal_app non-superuser role (ADR 0042, GRANT audit).
 //
-// Without migration 0031, lantern_app silently gets permission-denied on
+// Without migration 0031, pal_app silently gets permission-denied on
 // brief_items queries — a runtime error that only surfaces under RLS
 // enforcement, not in dev.
 func TestGrantAudit_Migration0031(t *testing.T) {
@@ -940,7 +940,7 @@ func TestGrantAudit_Migration0031(t *testing.T) {
 		t.Fatalf("Migrate: %v", err)
 	}
 
-	// Verify lantern_app has all four DML privileges on brief_items via the
+	// Verify pal_app has all four DML privileges on brief_items via the
 	// information_schema.role_table_grants catalog — this is what migration 0031
 	// explicitly GRANTs; a missing grant makes RLS enforcement fail at runtime.
 	requiredPrivs := []string{"SELECT", "INSERT", "UPDATE", "DELETE"}
@@ -951,7 +951,7 @@ func TestGrantAudit_Migration0031(t *testing.T) {
 			err := superPool.QueryRow(ctx, `
 				SELECT EXISTS (
 					SELECT 1 FROM information_schema.role_table_grants
-					WHERE grantee    = 'lantern_app'
+					WHERE grantee    = 'pal_app'
 					  AND table_name = 'brief_items'
 					  AND privilege_type = $1
 				)
@@ -960,7 +960,7 @@ func TestGrantAudit_Migration0031(t *testing.T) {
 				t.Fatalf("privilege lookup for %s on brief_items: %v", priv, err)
 			}
 			if !granted {
-				t.Errorf("lantern_app lacks %s on brief_items — migration 0031_grant_brief_items may not have run", priv)
+				t.Errorf("pal_app lacks %s on brief_items — migration 0031_grant_brief_items may not have run", priv)
 			}
 		})
 	}

@@ -7,7 +7,7 @@
 // guarantee.
 //
 // Design notes:
-//   * Gated on LANTERN_CONFIDENTIAL — a no-op when not running in a CC context.
+//   * Gated on PAL_CONFIDENTIAL — a no-op when not running in a CC context.
 //   * Best-effort throughout: any I/O failure skips the measurement (never
 //     fabricates a hash); the frame is always emitted regardless.
 //   * Raw measurement bytes are NEVER logged (invariant #10); only the sha256
@@ -28,7 +28,7 @@ use crate::proto::{AuditEvent, HarnessReport, now_unix_ms};
 
 /// True when the harness should emit a cc_attestation frame.
 ///
-/// Pure fn — takes the raw `LANTERN_CONFIDENTIAL` env value so the logic is
+/// Pure fn — takes the raw `PAL_CONFIDENTIAL` env value so the logic is
 /// unit-testable without `setenv` (mirrors `resolve_fail_closed` in egress.rs).
 pub fn should_attest(confidential_var: Option<&str>) -> bool {
     confidential_var
@@ -44,7 +44,7 @@ pub fn should_attest(confidential_var: Option<&str>) -> bool {
 ///
 /// Returns "sev-snp", "tdx", or "" (unknown / no device).
 fn resolve_cc_tech() -> String {
-    if let Ok(v) = pal_env::var("PAL_CC_TECH")
+    if let Ok(v) = std::env::var("PAL_CC_TECH")
         && !v.is_empty()
     {
         return v;
@@ -66,7 +66,7 @@ fn resolve_cc_tech() -> String {
 /// path yields non-empty content.
 ///
 /// Ordered candidates:
-///   1. `LANTERN_CC_MEASUREMENT_PATH` (if set and non-empty)
+///   1. `PAL_CC_MEASUREMENT_PATH` (if set and non-empty)
 ///   2. TSM configfs glob `/sys/kernel/config/tsm/report/*/outblob`
 ///   3. Raw device nodes `/dev/sev-guest`, `/dev/tdx_guest` as last resort
 ///
@@ -75,7 +75,7 @@ fn resolve_cc_tech() -> String {
 /// `measurement_present = "false"`.
 fn read_measurement() -> Option<Vec<u8>> {
     // 1. Explicit path override.
-    if let Ok(path) = pal_env::var("PAL_CC_MEASUREMENT_PATH")
+    if let Ok(path) = std::env::var("PAL_CC_MEASUREMENT_PATH")
         && !path.is_empty()
         && let Ok(b) = std::fs::read(&path)
         && !b.is_empty()
@@ -169,13 +169,13 @@ pub fn build_frame(
 /// Emit the cc_attestation audit frame. Best-effort — never panics, never
 /// blocks boot on I/O failure.
 pub async fn run(manager: &ManagerClient) {
-    let confidential = pal_env::var("PAL_CONFIDENTIAL").ok();
+    let confidential = std::env::var("PAL_CONFIDENTIAL").ok();
     if !should_attest(confidential.as_deref()) {
         return;
     }
 
     let cc_tech = resolve_cc_tech();
-    let runtime_class = pal_env::var("PAL_RUNTIME_CLASS").unwrap_or_default();
+    let runtime_class = std::env::var("PAL_RUNTIME_CLASS").unwrap_or_default();
     let measurement = read_measurement();
     let measurement_present = measurement.is_some();
 

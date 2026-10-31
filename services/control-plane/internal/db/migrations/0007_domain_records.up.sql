@@ -10,7 +10,7 @@
 --      extracted from email (medications, appointments, service history, …).
 --
 -- RLS posture mirrors 0004–0006 exactly: ENABLE + FORCE + tenant_isolation
--- policy with USING and WITH CHECK, plus GRANT to lantern_app.
+-- policy with USING and WITH CHECK, plus GRANT to pal_app.
 
 -- Part 1: extend gmail_poll_cursors with a domain dimension.
 -- Existing inbox_autopilot rows get domain = 'inbox' via the DEFAULT so the
@@ -50,7 +50,7 @@ CREATE INDEX IF NOT EXISTS domain_records_tenant_domain_valid
     ON domain_records (tenant_id, domain, valid_until);
 
 -- Grant DML to the non-superuser app role (same as 0005/0006).
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE domain_records TO lantern_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE domain_records TO pal_app;
 
 DO $$
 BEGIN

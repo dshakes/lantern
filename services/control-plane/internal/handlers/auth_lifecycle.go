@@ -35,7 +35,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/mailer"
+	"github.com/dshakes/pal/services/control-plane/internal/mailer"
 )
 
 // Sign-up modes (PAL_SIGNUP_MODE).

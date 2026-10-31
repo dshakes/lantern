@@ -8,7 +8,7 @@ import clsx from "clsx";
 import { Shield } from "lucide-react";
 import type { VmState } from "@/lib/runtime-types";
 
-// Palette discipline: neutral zinc everything + ONE accent (lantern). State
+// Palette discipline: neutral zinc everything + ONE accent (pal). State
 // reads as a small muted dot + neutral text — no saturated pills. Only two
 // states carry a quiet hue: running (calm green) and failed (muted red);
 // every other state is a neutral grey dot. The data is the hero.

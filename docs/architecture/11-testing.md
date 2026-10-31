@@ -153,7 +153,7 @@ Run on every PR. Visual regression with Percy or screenshots committed to the re
 ## Security testing
 
 ### SAST
-- **Semgrep** with the OWASP top 10 ruleset + Lantern-specific rules:
+- **Semgrep** with the OWASP top 10 ruleset + PAL-specific rules:
   - "no `panic!` outside main"
   - "no `unwrap` outside tests"
   - "no `sprintf`/`format!` for SQL — use sqlc"
@@ -232,7 +232,7 @@ Chaos tests run weekly on a staging cluster.
 ### Tools
 - **Toxiproxy** for network injection (latency, packet loss, partial failures, slow responses).
 - **chaos-mesh** for K8s-level chaos (pod kill, network partition, IO chaos, time skew).
-- **Custom chaos suite** for Lantern-specific scenarios.
+- **Custom chaos suite** for PAL-specific scenarios.
 
 ### Scenarios
 - Kill the workflow engine mid-run, assert all in-flight runs resume correctly.

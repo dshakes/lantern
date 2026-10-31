@@ -1,5 +1,5 @@
 {
-  "uid": "lantern-dataplane-runtime",
+  "uid": "pal-dataplane-runtime",
   "title": "PAL Runtime — Data Plane & Runtime",
   "tags": ["pal", "ga"],
   "schemaVersion": 39,
@@ -65,7 +65,7 @@
       },
       "targets": [
         {
-          "expr": "lantern_scheduler_active_vms",
+          "expr": "pal_scheduler_active_vms",
           "refId": "A",
           "legendFormat": "active VMs",
           "datasource": {
@@ -115,7 +115,7 @@
       },
       "targets": [
         {
-          "expr": "lantern_scheduler_nodes",
+          "expr": "pal_scheduler_nodes",
           "refId": "A",
           "legendFormat": "nodes",
           "datasource": {
@@ -168,7 +168,7 @@
       },
       "targets": [
         {
-          "expr": "sum(lantern_scheduler_is_leader)",
+          "expr": "sum(pal_scheduler_is_leader)",
           "refId": "A",
           "legendFormat": "leaders",
           "datasource": {
@@ -217,7 +217,7 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.5, sum(rate(lantern_scheduler_placement_score_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.5, sum(rate(pal_scheduler_placement_score_bucket[5m])) by (le))",
           "refId": "A",
           "legendFormat": "p50",
           "datasource": {
@@ -226,7 +226,7 @@
           }
         },
         {
-          "expr": "histogram_quantile(0.9, sum(rate(lantern_scheduler_placement_score_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.9, sum(rate(pal_scheduler_placement_score_bucket[5m])) by (le))",
           "refId": "B",
           "legendFormat": "p90",
           "datasource": {
@@ -276,7 +276,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(lantern_scheduler_schedule_total{result=\"quota\"}[5m]))",
+          "expr": "sum(rate(pal_scheduler_schedule_total{result=\"quota\"}[5m]))",
           "refId": "A",
           "legendFormat": "quota rejections",
           "datasource": {
@@ -336,7 +336,7 @@
       },
       "targets": [
         {
-          "expr": "pal_data_plane_seconds_since_heartbeat or lantern_data_plane_seconds_since_heartbeat",
+          "expr": "pal_data_plane_seconds_since_heartbeat",
           "refId": "A",
           "legendFormat": "{{data_plane_id}} ({{cloud}}/{{region}})",
           "datasource": {
@@ -358,7 +358,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "### Not emitted yet — do not trust as live\n\nThe panels above are built **only** on metrics the runtime-scheduler and postgres_exporter actually export today. The following are **not yet instrumented**:\n\n- **Heartbeat-from-app metrics** — per-data-plane heartbeat is currently derived in postgres_exporter (`lantern_data_plane_seconds_since_heartbeat`). A direct push from the data-plane agent itself is not wired.\n- **runtime-manager (Rust) metrics** — the runtime-manager does **not** export Prometheus metrics yet (per-VM CPU/mem, isolation type, spawn latency, egress denials). These live only as **OTel traces** today.\n- `lantern_runs_completed_total` — run failure rate (OTel trace only).\n- `lantern_budget_denied_total` — runtime quota 402s beyond the scheduler `result=\"quota\"` counter (OTel trace only).\n\n_When the runtime-manager exposes a `/metrics` endpoint, add live VM-resource panels here._"
+        "content": "### Not emitted yet — do not trust as live\n\nThe panels above are built **only** on metrics the runtime-scheduler and postgres_exporter actually export today. The following are **not yet instrumented**:\n\n- **Heartbeat-from-app metrics** — per-data-plane heartbeat is currently derived in postgres_exporter (`pal_data_plane_seconds_since_heartbeat`). A direct push from the data-plane agent itself is not wired.\n- **runtime-manager (Rust) metrics** — the runtime-manager does **not** export Prometheus metrics yet (per-VM CPU/mem, isolation type, spawn latency, egress denials). These live only as **OTel traces** today.\n- `pal_runs_completed_total` — run failure rate (OTel trace only).\n- `pal_budget_denied_total` — runtime quota 402s beyond the scheduler `result=\"quota\"` counter (OTel trace only).\n\n_When the runtime-manager exposes a `/metrics` endpoint, add live VM-resource panels here._"
       }
     }
   ]

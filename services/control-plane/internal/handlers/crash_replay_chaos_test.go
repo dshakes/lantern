@@ -34,7 +34,7 @@ package handlers
 //
 // Run with:
 //
-//	export DATABASE_URL="postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable"
+//	export DATABASE_URL="postgres://pal:pal@localhost:5432/pal?sslmode=disable"
 //	cd services/control-plane
 //	go test ./internal/handlers/... -run 'Replay|Chaos|Crash|Lease|Durable|SideEffect' -v -count=1
 
@@ -48,7 +48,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────

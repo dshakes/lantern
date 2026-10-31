@@ -107,9 +107,9 @@ rustup target add aarch64-unknown-linux-musl
 TARGET=~/.cache/pal-lima/target
 
 # Harness (musl, static)
-cargo build --release --bin lantern-harness --target aarch64-unknown-linux-musl \
+cargo build --release --bin pal-harness --target aarch64-unknown-linux-musl \
   --manifest-path services/harness/Cargo.toml --target-dir "$TARGET"
-HARNESS_BIN="$TARGET/aarch64-unknown-linux-musl/release/lantern-harness"
+HARNESS_BIN="$TARGET/aarch64-unknown-linux-musl/release/pal-harness"
 
 # Kernel + rootfs (sudo for loop-mount; harness passed via env)
 sudo FC_HARNESS_BIN="$HARNESS_BIN" \
@@ -120,7 +120,7 @@ sudo mkdir -p /srv/jailer
 
 # Runtime-manager
 cargo build --release --manifest-path services/runtime-manager/Cargo.toml --target-dir "$TARGET"
-MANAGER_BIN="$TARGET/release/lantern-runtime-manager"
+MANAGER_BIN="$TARGET/release/pal-runtime-manager"
 
 # The test (root: TAP + firecracker + loop devices)
 sudo \

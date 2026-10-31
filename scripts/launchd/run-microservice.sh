@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generic launcher for the Lantern Rust/Go microservices that run as
+# Generic launcher for the PAL Rust/Go microservices that run as
 # always-on LaunchAgents alongside the API, dashboard, and bridges.
 #
 # Usage: run-microservice.sh <service>
@@ -7,7 +7,7 @@
 #   runtime-scheduler | workflow-engine
 #
 # Per-service env (ports, secrets, upstream addrs) lives in the matching
-# dev.lantern.<service>.plist. This wrapper only handles: PATH setup,
+# dev.pal.<service>.plist. This wrapper only handles: PATH setup,
 # waiting for upstream deps to accept TCP (so we don't crash-loop at
 # boot before Postgres/Redis/control-plane are reachable), building the
 # Rust release binary if it's missing, and exec-ing the process.
@@ -34,11 +34,11 @@ case "$SVC" in
   gateway)
     wait_port 6379 redis
     wait_port 50051 control-plane
-    run_rust gateway lantern-gateway
+    run_rust gateway pal-gateway
     ;;
   model-router)
     wait_port 6379 redis
-    run_rust model-router lantern-model-router
+    run_rust model-router pal-model-router
     ;;
   runtime-manager)
     wait_port 9000 minio
@@ -46,12 +46,12 @@ case "$SVC" in
     # of failed first beats at boot; the heartbeat's own backoff covers a late
     # scheduler, so this only ever delays, never blocks.
     wait_port 8085 runtime-scheduler
-    run_rust runtime-manager lantern-runtime-manager
+    run_rust runtime-manager pal-runtime-manager
     ;;
   surface-gateway)
     wait_port 6379 redis
     wait_port 50051 control-plane
-    run_rust surface-gateway lantern-surface-gateway
+    run_rust surface-gateway pal-surface-gateway
     ;;
   runtime-scheduler)
     echo "[$(date +%T)] starting runtime-scheduler on :50055 (grpc) / :8085 (rest)"

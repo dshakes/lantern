@@ -173,7 +173,7 @@ export const TRUST_BOUNDARIES: FlowDef = {
       steps: [
         { title: "The edge", note: "TLS plus a JWT or an API key. API keys are introspected by the control plane and cached for 60 s keyed by a SHA-256 of the key; any error fails closed.", edges: ["ext>gw"] },
         { title: "Tenant from the credential", note: "The tenant is taken from the verified token, never from a body or a path.", edges: ["gw>cp"] },
-        { title: "Every internal gRPC port is a trust boundary", note: "x-lantern-service-token, checked in constant time before tenant extraction. Without it a caller cannot set tenant_id. Fail-closed in production.", edges: ["cp>we", "cp>sc", "cp>mr"] },
+        { title: "Every internal gRPC port is a trust boundary", note: "x-pal-service-token, checked in constant time before tenant extraction. Without it a caller cannot set tenant_id. Fail-closed in production.", edges: ["cp>we", "cp>sc", "cp>mr"] },
         { title: "The manager trusts only the scheduler and control plane", note: "Service token plus client TLS.", edges: ["sc>rm"] },
         { title: "Row-level security underneath", note: "WithTenant sets app.tenant_id; the policies filter every read and check every write. Cross-tenant returns nothing, and handlers answer 404 rather than leak existence.", edges: ["cp>rls", "we>rls"] },
         { title: "The VM wall", note: "Host and guest talk over vsock only. A per-VM certificate is refused on every RuntimeManager method: a guest reaches only the harness RPCs.", edges: ["rm>h", "h>rm"] },

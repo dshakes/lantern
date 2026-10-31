@@ -57,7 +57,7 @@
 									<key>Value</key>
 									<dict>
 										<key>string</key>
-										<string>x-lantern-signal-token</string>
+										<string>x-pal-signal-token</string>
 									</dict>
 									<key>WFSerializationType</key>
 									<string>WFTextTokenString</string>

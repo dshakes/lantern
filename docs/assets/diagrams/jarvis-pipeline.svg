@@ -112,8 +112,8 @@
   <rect class="node" x="230" y="398" width="360" height="92" rx="10"/>
   <text class="t-h" x="244" y="422">Draft to owner, opt-in</text>
   <text class="t-b" x="244" y="442">LOW tier is held only when</text>
-  <text class="t-b" x="244" y="458">LANTERN_DRAFT_CONFIRM (iMessage) or</text>
-  <text class="t-b" x="244" y="474">LANTERN_DRAFT_HIGH_STAKES (WhatsApp)</text>
+  <text class="t-b" x="244" y="458">PAL_DRAFT_CONFIRM (iMessage) or</text>
+  <text class="t-b" x="244" y="474">PAL_DRAFT_HIGH_STAKES (WhatsApp)</text>
   <path class="edge" d="M315 358V396" marker-end="url(#jarvis-pipeline-a)"/>
   <rect class="node-deny" x="610" y="398" width="360" height="92" rx="10"/>
   <text class="t-h" x="624" y="422">Held for the owner, never sent</text>

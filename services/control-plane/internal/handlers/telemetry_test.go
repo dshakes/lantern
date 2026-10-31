@@ -13,9 +13,9 @@ package handlers
 // Test C — runtime.Schedule span attributes:
 //   Two sub-tests:
 //    1. No-DB: uses the nil-pool handler + empty imageDigest to trigger a 400
-//       early return and verify span + lantern.tenant_id attribute are recorded.
+//       early return and verify span + pal.tenant_id attribute are recorded.
 //    2. DB-backed: uses openTestPool + stub scheduler (skipped when DATABASE_URL
-//       unset) to verify the success path records lantern.vm_id.
+//       unset) to verify the success path records pal.vm_id.
 
 import (
 	"bytes"
@@ -31,7 +31,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // installTestRecorder installs an in-memory OTel TracerProvider as the global
@@ -169,11 +169,11 @@ func TestCallLLMSync_GenAISpan_ClaudeCode(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Test C: runtime.Schedule emits a span with lantern.* attributes
+// Test C: runtime.Schedule emits a span with pal.* attributes
 // ---------------------------------------------------------------------------
 
 // TestSchedule_SpanAttributes_EarlyReturn verifies the span is started and
-// carries lantern.tenant_id even when Schedule returns 400 (missing imageDigest)
+// carries pal.tenant_id even when Schedule returns 400 (missing imageDigest)
 // before touching the database. This exercises the nil-pool handler so no
 // DATABASE_URL is required.
 func TestSchedule_SpanAttributes_EarlyReturn(t *testing.T) {
@@ -206,16 +206,16 @@ func TestSchedule_SpanAttributes_EarlyReturn(t *testing.T) {
 		t.Fatalf("'runtime.schedule' span not found; recorded: %v", names)
 	}
 
-	kv, ok := findAttr(s.Attributes, "lantern.tenant_id")
+	kv, ok := findAttr(s.Attributes, "pal.tenant_id")
 	if !ok {
-		t.Error("lantern.tenant_id attribute missing from span")
+		t.Error("pal.tenant_id attribute missing from span")
 	} else if kv.Value.AsString() != "tenant-span-test" {
-		t.Errorf("lantern.tenant_id = %q, want %q", kv.Value.AsString(), "tenant-span-test")
+		t.Errorf("pal.tenant_id = %q, want %q", kv.Value.AsString(), "tenant-span-test")
 	}
 }
 
 // TestSchedule_SpanAttributes_Success verifies the success-path span includes
-// lantern.vm_id. Requires DATABASE_URL (same gate as the existing DB suite).
+// pal.vm_id. Requires DATABASE_URL (same gate as the existing DB suite).
 func TestSchedule_SpanAttributes_Success(t *testing.T) {
 	pool := openTestPool(t) // skips when DATABASE_URL unset
 	migrateRuntimeTables(t, pool)
@@ -250,9 +250,9 @@ func TestSchedule_SpanAttributes_Success(t *testing.T) {
 	}
 
 	for _, check := range []struct{ key, want string }{
-		{"lantern.tenant_id", tenantID},
-		{"lantern.isolation_class", "standard"},
-		{"lantern.vm_id", "vm-span-success-1"},
+		{"pal.tenant_id", tenantID},
+		{"pal.isolation_class", "standard"},
+		{"pal.vm_id", "vm-span-success-1"},
 	} {
 		kv, ok := findAttr(s.Attributes, check.key)
 		if !ok {

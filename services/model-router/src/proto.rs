@@ -1,4 +1,4 @@
-/// Hand-defined protobuf types matching `packages/proto/lantern/v1/models.proto`.
+/// Hand-defined protobuf types matching `packages/proto/pal/v1/models.proto`.
 ///
 /// We define these with prost derive macros rather than running `protoc` so the
 /// service can be compiled stand-alone without a protoc toolchain. The field
@@ -398,22 +398,22 @@ impl<T: ModelService> tonic::codegen::Service<tonic::codegen::http::Request<toni
 
         Box::pin(async move {
             let resp = match path.as_str() {
-                "/lantern.v1.ModelService/Complete" => {
+                "/pal.v1.ModelService/Complete" => {
                     let mut grpc = tonic::server::Grpc::new(tonic::codec::ProstCodec::default());
                     let svc = CompleteService(inner);
                     grpc.unary(svc, req).await
                 }
-                "/lantern.v1.ModelService/CompleteStream" => {
+                "/pal.v1.ModelService/CompleteStream" => {
                     let mut grpc = tonic::server::Grpc::new(tonic::codec::ProstCodec::default());
                     let svc = CompleteStreamService(inner);
                     grpc.server_streaming(svc, req).await
                 }
-                "/lantern.v1.ModelService/Embed" => {
+                "/pal.v1.ModelService/Embed" => {
                     let mut grpc = tonic::server::Grpc::new(tonic::codec::ProstCodec::default());
                     let svc = EmbedService(inner);
                     grpc.unary(svc, req).await
                 }
-                "/lantern.v1.ModelService/Tokenize" => {
+                "/pal.v1.ModelService/Tokenize" => {
                     let mut grpc = tonic::server::Grpc::new(tonic::codec::ProstCodec::default());
                     let svc = TokenizeService(inner);
                     grpc.unary(svc, req).await
@@ -432,7 +432,7 @@ impl<T: ModelService> tonic::codegen::Service<tonic::codegen::http::Request<toni
 }
 
 impl<T: ModelService> tonic::server::NamedService for ModelServiceServer<T> {
-    const NAME: &'static str = "lantern.v1.ModelService";
+    const NAME: &'static str = "pal.v1.ModelService";
 }
 
 // --- per-method service adapters ---

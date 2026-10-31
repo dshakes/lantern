@@ -508,7 +508,7 @@ export class Http2GrpcTransport implements GrpcTransport {
 // High-level runtime sidecar client
 // ---------------------------------------------------------------------------
 
-const SIDECAR_SERVICE = "lantern.runtime.v1.RuntimeSidecar";
+const SIDECAR_SERVICE = "pal.runtime.v1.RuntimeSidecar";
 
 /**
  * High-level, fully-typed client for the PAL runtime sidecar.

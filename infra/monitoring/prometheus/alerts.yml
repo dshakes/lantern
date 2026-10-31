@@ -39,7 +39,7 @@ groups:
   - name: pal-scheduler
     rules:
       - alert: SchedulerDown
-        expr: up{job=~"(pal|lantern)-runtime-scheduler"} == 0
+        expr: up{job=~"pal-runtime-scheduler"} == 0
         for: 2m
         labels:
           severity: critical
@@ -54,7 +54,7 @@ groups:
       - alert: SchedulerNoLeader
         # IsLeader is 1 on exactly one replica when healthy. Sum across replicas
         # == 0 means leader election produced no leader → nothing is scheduling.
-        expr: sum(lantern_scheduler_is_leader) == 0
+        expr: sum(pal_scheduler_is_leader) == 0
         for: 3m
         labels:
           severity: critical
@@ -62,7 +62,7 @@ groups:
         annotations:
           summary: "No runtime-scheduler replica holds the leader lock"
           description: >
-            sum(lantern_scheduler_is_leader) has been 0 for 3m. Leader election
+            sum(pal_scheduler_is_leader) has been 0 for 3m. Leader election
             (Postgres advisory lock) is not producing a leader, so Schedule RPCs
             are served by standby replicas only and placement stalls.
           runbook: "docs/runbooks/scheduler-not-firing.md"
@@ -71,9 +71,9 @@ groups:
         # Real counter. Error fraction of Schedule RPCs over 10m.
         expr: |
           (
-            sum(rate(lantern_scheduler_schedule_errors_total[10m]))
+            sum(rate(pal_scheduler_schedule_errors_total[10m]))
             /
-            clamp_min(sum(rate(lantern_scheduler_schedule_total[10m])), 0.001)
+            clamp_min(sum(rate(pal_scheduler_schedule_total[10m])), 0.001)
           ) > 0.10
         for: 10m
         labels:
@@ -88,10 +88,10 @@ groups:
           runbook: "docs/runbooks/scheduler-not-firing.md"
 
       - alert: SchedulerQuotaRejectionSurge
-        # result="quota" is a real label value on lantern_scheduler_schedule_total.
+        # result="quota" is a real label value on pal_scheduler_schedule_total.
         # A surge means tenants are hitting the per-tenant microVM cap (HTTP 402
         # on /v1/runtime/schedule). Mirrors the budget-402 SLO for the runtime.
-        expr: sum(rate(lantern_scheduler_schedule_total{result="quota"}[15m])) > 0.2
+        expr: sum(rate(pal_scheduler_schedule_total{result="quota"}[15m])) > 0.2
         for: 15m
         labels:
           severity: warning
@@ -105,7 +105,7 @@ groups:
           runbook: "docs/runbooks/budget-402-surge.md"
 
       - alert: SchedulerNoRegisteredNodes
-        expr: max(lantern_scheduler_nodes) == 0
+        expr: max(pal_scheduler_nodes) == 0
         for: 5m
         labels:
           severity: critical
@@ -113,7 +113,7 @@ groups:
         annotations:
           summary: "Scheduler sees zero registered nodes"
           description: >
-            lantern_scheduler_nodes == 0 for 5m. No runtime-manager nodes are
+            pal_scheduler_nodes == 0 for 5m. No runtime-manager nodes are
             registered/healthy, so nothing can be placed. Check node heartbeats
             and the runtime-manager DaemonSet/pods.
           runbook: "docs/runbooks/data-plane-disconnected.md"
@@ -131,7 +131,7 @@ groups:
         # control-plane yet (it does now — /metrics on :9464), point this job at a
         # blackbox-exporter probe of http://<cp>:8080/readyz instead and alert on
         # probe_success == 0. Keep ONE of the two, not both.
-        expr: up{job=~"(pal|lantern)-control-plane"} == 0
+        expr: up{job=~"pal-control-plane"} == 0
         for: 2m
         labels:
           severity: critical
@@ -146,9 +146,9 @@ groups:
 
       - alert: ControlPlaneNotReady
         # blackbox probe of /readyz. Requires a blackbox-exporter job named
-        # "(pal|lantern)-control-plane-readyz". probe_success==0 means /readyz is
+        # "pal-control-plane-readyz". probe_success==0 means /readyz is
         # failing (DB/Redis dependency down) even if the process is up.
-        expr: probe_success{job=~"(pal|lantern)-control-plane-readyz"} == 0
+        expr: probe_success{job=~"pal-control-plane-readyz"} == 0
         for: 3m
         labels:
           severity: critical
@@ -162,7 +162,7 @@ groups:
           runbook: "docs/runbooks/db-saturation.md"
 
       - alert: GatewayDown
-        expr: up{job=~"(pal|lantern)-gateway"} == 0
+        expr: up{job=~"pal-gateway"} == 0
         for: 2m
         labels:
           severity: critical
@@ -175,7 +175,7 @@ groups:
           runbook: "docs/runbooks/gateway-latency.md"
 
       - alert: ModelRouterDown
-        expr: up{job=~"(pal|lantern)-model-router"} == 0
+        expr: up{job=~"pal-model-router"} == 0
         for: 2m
         labels:
           severity: critical
@@ -197,7 +197,7 @@ groups:
   - name: pal-postgres
     rules:
       - alert: PostgresExporterDown
-        expr: up{job=~"(pal|lantern)-postgres-exporter"} == 0
+        expr: up{job=~"pal-postgres-exporter"} == 0
         for: 3m
         labels:
           severity: warning
@@ -214,9 +214,9 @@ groups:
         # pg_stat_database_numbackends is a STANDARD postgres_exporter metric
         # (no custom query needed). Compare live backends to max_connections.
         expr: |
-          sum(pg_stat_database_numbackends{job=~"(pal|lantern)-postgres-exporter"})
+          sum(pg_stat_database_numbackends{job=~"pal-postgres-exporter"})
           /
-          max(pg_settings_max_connections{job=~"(pal|lantern)-postgres-exporter"})
+          max(pg_settings_max_connections{job=~"pal-postgres-exporter"})
           > 0.85
         for: 5m
         labels:
@@ -232,10 +232,10 @@ groups:
           runbook: "docs/runbooks/db-saturation.md"
 
       - alert: DataPlaneHeartbeatStale
-        # CUSTOM query metric: pal_data_plane_seconds_since_heartbeat (legacy name lantern_data_plane_seconds_since_heartbeat also matched), a gauge
+        # CUSTOM query metric: pal_data_plane_seconds_since_heartbeat, a gauge
         # per data_planes row = EXTRACT(EPOCH FROM now()-last_heartbeat). Defined
         # in postgres-exporter-queries.yaml. Heartbeat cadence is ~30s.
-        expr: (pal_data_plane_seconds_since_heartbeat{job=~"(pal|lantern)-postgres-exporter"} or lantern_data_plane_seconds_since_heartbeat{job=~"(pal|lantern)-postgres-exporter"}) > 120
+        expr: pal_data_plane_seconds_since_heartbeat{job=~"pal-postgres-exporter"} > 120
         for: 2m
         labels:
           severity: critical
@@ -250,11 +250,11 @@ groups:
           runbook: "docs/runbooks/data-plane-disconnected.md"
 
       - alert: CronScheduleOverdue
-        # CUSTOM query metric: pal_schedules_overdue (legacy name lantern_schedules_overdue also matched), a gauge counting enabled
+        # CUSTOM query metric: pal_schedules_overdue, a gauge counting enabled
         # schedules whose next_fire_at is in the past by > grace. If the cron
         # ticker is firing, this stays ~0. A rising value = ticker stalled / lost
         # its lock. Defined in postgres-exporter-queries.yaml.
-        expr: (pal_schedules_overdue{job=~"(pal|lantern)-postgres-exporter"} or lantern_schedules_overdue{job=~"(pal|lantern)-postgres-exporter"}) > 0
+        expr: pal_schedules_overdue{job=~"pal-postgres-exporter"} > 0
         for: 5m
         labels:
           severity: critical
@@ -278,9 +278,9 @@ groups:
         # otelhttp wraps the whole control-plane mux (cmd/server/main.go).
         expr: |
           (
-            sum(rate(http_server_request_duration_seconds_count{job=~"(pal|lantern)-control-plane",http_response_status_code=~"5.."}[5m]))
+            sum(rate(http_server_request_duration_seconds_count{job=~"pal-control-plane",http_response_status_code=~"5.."}[5m]))
             /
-            clamp_min(sum(rate(http_server_request_duration_seconds_count{job=~"(pal|lantern)-control-plane"}[5m])), 0.001)
+            clamp_min(sum(rate(http_server_request_duration_seconds_count{job=~"pal-control-plane"}[5m])), 0.001)
           ) > 0.05
         for: 5m
         labels: { severity: critical, service: control-plane }
@@ -295,9 +295,9 @@ groups:
         # required scope" response body. Runbook: ga-staged-rollout.md.
         expr: |
           (
-            sum(rate(http_server_request_duration_seconds_count{job=~"(pal|lantern)-control-plane",http_response_status_code="403"}[10m]))
+            sum(rate(http_server_request_duration_seconds_count{job=~"pal-control-plane",http_response_status_code="403"}[10m]))
             /
-            clamp_min(sum(rate(http_server_request_duration_seconds_count{job=~"(pal|lantern)-control-plane"}[10m])), 0.001)
+            clamp_min(sum(rate(http_server_request_duration_seconds_count{job=~"pal-control-plane"}[10m])), 0.001)
           ) > 0.02
         for: 10m
         labels: { severity: warning, service: control-plane }
@@ -309,9 +309,9 @@ groups:
         # Inline executor only (rest.go RecordRunTotal); microVM-tier runs are not counted yet.
         expr: |
           (
-            sum(rate(lantern_run_total{job=~"(pal|lantern)-control-plane",lantern_status="failed"}[10m]))
+            sum(rate(pal_run_total{job=~"pal-control-plane",pal_status="failed"}[10m]))
             /
-            clamp_min(sum(rate(lantern_run_total{job=~"(pal|lantern)-control-plane"}[10m])), 0.001)
+            clamp_min(sum(rate(pal_run_total{job=~"pal-control-plane"}[10m])), 0.001)
           ) > 0.20
         for: 10m
         labels: { severity: critical, service: control-plane }
@@ -320,7 +320,7 @@ groups:
           runbook: "docs/runbooks/run-failure-spike.md"
 
       - alert: BudgetDenied402Surge
-        expr: sum(rate(lantern_run_budget_blocks_total{job=~"(pal|lantern)-control-plane"}[15m])) > 0.2
+        expr: sum(rate(pal_run_budget_blocks_total{job=~"pal-control-plane"}[15m])) > 0.2
         for: 15m
         labels: { severity: warning, service: control-plane }
         annotations:
@@ -334,8 +334,8 @@ groups:
   #
       # --- gateway / model-router p99 latency --------------------------------
       # NEEDS: a Prometheus histogram on the Rust hot path, e.g.
-      #   `lantern_gateway_request_duration_seconds_bucket` and
-      #   `lantern_model_router_request_duration_seconds_bucket`, exported via a
+      #   `pal_gateway_request_duration_seconds_bucket` and
+      #   `pal_model_router_request_duration_seconds_bucket`, exported via a
       #   /metrics endpoint on each Rust service. Today gateway/model-router emit
       #   OTel TRACES only (services/{gateway,model-router}/src/otel.rs) — no
       #   scrapeable histogram. Until then, latency SLOs live in the tracing
@@ -343,7 +343,7 @@ groups:
       # - alert: GatewayP99LatencyHigh
       #   expr: |
       #     histogram_quantile(0.99,
-      #       sum(rate(lantern_gateway_request_duration_seconds_bucket[5m])) by (le)
+      #       sum(rate(pal_gateway_request_duration_seconds_bucket[5m])) by (le)
       #     ) > 2
       #   for: 10m
       #   labels: { severity: warning, service: gateway }
@@ -353,7 +353,7 @@ groups:
       # - alert: ModelRouterP99LatencyHigh
       #   expr: |
       #     histogram_quantile(0.99,
-      #       sum(rate(lantern_model_router_request_duration_seconds_bucket[5m])) by (le)
+      #       sum(rate(pal_model_router_request_duration_seconds_bucket[5m])) by (le)
       #     ) > 5
       #   for: 10m
       #   labels: { severity: warning, service: model-router }

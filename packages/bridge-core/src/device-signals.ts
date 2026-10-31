@@ -415,9 +415,9 @@ export function latestKnownLocation(
   const locTs = locSig?.ts ?? -Infinity;
   const focusTs = focusSig?.ts ?? -Infinity;
   // Driving is "current" only if NOTHING newer superseded it — a newer geofence
-  // (arrival) OR a newer focus/status (e.g. the existing Lantern-Status-Available
+  // (arrival) OR a newer focus/status (e.g. the existing PAL-Status-Available
   // shortcut fired on CarPlay Disconnect = you parked) both END driving. This is
-  // why attaching "CarPlay Disconnects" → Lantern-Status-Available works with no
+  // why attaching "CarPlay Disconnects" → PAL-Status-Available works with no
   // new shortcut: the focus:Available lands newer than the driving signal.
   const devNewest = devTs >= locTs && devTs >= focusTs;
   const age = (ts: number) => Math.round((nowMs - ts) / 60000);

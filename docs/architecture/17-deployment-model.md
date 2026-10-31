@@ -7,7 +7,7 @@
 
 PAL deploys as two logically and physically separable planes:
 
-1. **Control Plane** — the "brain." Dashboard, API gateway, model router, control-plane service, surface gateway, billing, and scheduler. Manages tenant configuration, agent definitions, routing decisions, and billing. Hosted by PAL SaaS at `lantern.run` or self-hosted by the customer.
+1. **Control Plane** — the "brain." Dashboard, API gateway, model router, control-plane service, surface gateway, billing, and scheduler. Manages tenant configuration, agent definitions, routing decisions, and billing. Hosted by PAL SaaS at `pal.example.com` or self-hosted by the customer.
 
 2. **Data Plane** — the "muscle." Workflow engine, runtime manager, Firecracker/Kata/Wasm sandboxes, and agent execution. All user code runs here. All user data stays here. Deployed into the customer's own cloud infrastructure (EKS, GKE, AKS, or bare metal).
 
@@ -24,7 +24,7 @@ This split is the primary deployment model for Team and Enterprise tiers and is 
 Regulated industries (finance, healthcare, government, legal) require that customer data — including the prompts, agent code, tool outputs, and LLM responses that flow through an agent platform — never leave the customer's VPC. The data plane runs entirely within the customer's infrastructure. No agent code, no run inputs, no run outputs, no secrets, and no LLM response tokens transit the control plane. The control plane sees only metadata: run IDs, status transitions, timing, and metering counters.
 
 This architecture enables compliance with:
-- **SOC 2 Type II** — clear boundary between Lantern-managed and customer-managed components
+- **SOC 2 Type II** — clear boundary between PAL-managed and customer-managed components
 - **HIPAA** — PHI never leaves the customer's VPC; BAA covers only the control plane SaaS
 - **GDPR / CCPA** — data residency is guaranteed by deploying the data plane in the customer's chosen region
 - **FedRAMP** — self-hosted control plane option satisfies IL4/IL5 requirements
@@ -48,8 +48,8 @@ Customers choose their own instance types, reserved instances, savings plans, an
 
 ```
 +---------------------------------------------------------+
-|                  LANTERN CONTROL PLANE                   |
-|               (lantern.run or self-hosted)               |
+|                  PAL CONTROL PLANE                   |
+|               (pal.example.com or self-hosted)               |
 |                                                          |
 |  +----------+  +----------+  +-------------------+      |
 |  | Dashboard |  | Gateway  |  |   Control Plane   |      |
@@ -67,7 +67,7 @@ Customers choose their own instance types, reserved instances, savings plans, an
                        |
 +----------------------|-----------------------------------+
 |                      v                                   |
-|              LANTERN DATA PLANE                          |
+|              PAL DATA PLANE                          |
 |           (customer's EKS / GKE / AKS)                  |
 |                                                          |
 |  +-----------------+  +-------------------------+        |
@@ -85,7 +85,7 @@ Customers choose their own instance types, reserved instances, savings plans, an
 |  +--------------+  +--------------+                      |
 |  |  Postgres    |  |    Redis     |  <- customer-        |
 |  |  (pgvector)  |  |              |     managed or       |
-|  +--------------+  +--------------+     Lantern-         |
+|  +--------------+  +--------------+     PAL-         |
 |                                          provisioned     |
 +----------------------------------------------------------+
 ```
@@ -101,7 +101,7 @@ Both control plane and data plane are hosted by PAL. The customer does not manag
 **Best for:** Startups, personal projects, teams that want zero ops burden and do not have data residency requirements.
 
 **Characteristics:**
-- Single Helm chart (`lantern`) deployed to Lantern-operated clusters
+- Single Helm chart (`pal`) deployed to PAL-operated clusters
 - Multi-tenant: all tenants share the same control plane and data plane infrastructure
 - Isolation is per-run via Firecracker microVMs (tenant A's code cannot observe tenant B)
 - PAL manages upgrades, scaling, backups, and incident response
@@ -114,21 +114,21 @@ Control plane is hosted by PAL SaaS. Data plane is deployed into the customer's 
 **Best for:** Teams and enterprises that need data sovereignty, compliance, or low-latency access to internal services.
 
 **Characteristics:**
-- Control plane: `lantern-control-plane` Helm chart on PAL Runtime's infrastructure
-- Data plane: `lantern-data-plane` Helm chart on the customer's EKS / GKE / AKS cluster
+- Control plane: `pal-control-plane` Helm chart on PAL Runtime's infrastructure
+- Data plane: `pal-data-plane` Helm chart on the customer's EKS / GKE / AKS cluster
 - The data plane agent initiates an outbound gRPC connection to the control plane — no inbound firewall rules required on the customer's VPC
 - Customer data (agent code, run inputs/outputs, secrets, tool results) never leaves the customer's VPC
 - Control plane receives only metadata (run IDs, status, timing, metering)
 - Customer provisions their own Postgres and Redis (or PAL Runtime's Terraform modules provision them)
-- Upgrades: PAL upgrades the control plane transparently; the customer upgrades the data plane via `lantern infra upgrade` or Helm
+- Upgrades: PAL upgrades the control plane transparently; the customer upgrades the data plane via `pal infra upgrade` or Helm
 
 **Installation flow:**
-1. Customer signs up at `lantern.run` and creates a tenant
-2. Customer runs `lantern infra install --cloud aws --region us-east-1`
+1. Customer signs up at `pal.example.com` and creates a tenant
+2. Customer runs `pal infra install --cloud aws --region us-east-1`
 3. CLI generates Terraform configuration for the customer's cloud
 4. Customer reviews and applies the Terraform (or PAL applies it via a guided flow)
-5. Terraform provisions EKS cluster (or uses existing), installs the `lantern-data-plane` Helm chart
-6. Data plane agent connects to `api.lantern.run`, registers, begins receiving run assignments
+5. Terraform provisions EKS cluster (or uses existing), installs the `pal-data-plane` Helm chart
+6. Data plane agent connects to `api.pal.example.com`, registers, begins receiving run assignments
 
 ### Mode 3: Self-hosted
 
@@ -137,7 +137,7 @@ Both control plane and data plane are deployed into the customer's own infrastru
 **Best for:** Enterprises with strict compliance requirements (FedRAMP, air-gapped environments, government), or organizations that want full control.
 
 **Characteristics:**
-- Both `lantern-control-plane` and `lantern-data-plane` Helm charts deployed to customer infrastructure
+- Both `pal-control-plane` and `pal-data-plane` Helm charts deployed to customer infrastructure
 - Customer manages all upgrades, backups, and scaling
 - License key required (validated offline via cryptographic signature, no phone-home)
 - PAL provides support via a private channel; no telemetry leaves the customer's network unless explicitly configured
@@ -151,7 +151,7 @@ The data plane agent maintains a persistent, bidirectional gRPC stream to the co
 
 ### Why outbound-only
 
-Enterprise network security policies strongly prefer outbound connections over inbound. Opening an inbound port in a production VPC requires firewall changes, security review, and ongoing audit. An outbound HTTPS connection to a known endpoint (`api.lantern.run:443`) is typically allowed by default and requires no firewall changes.
+Enterprise network security policies strongly prefer outbound connections over inbound. Opening an inbound port in a production VPC requires firewall changes, security review, and ongoing audit. An outbound HTTPS connection to a known endpoint (`api.pal.example.com:443`) is typically allowed by default and requires no firewall changes.
 
 ### Connection lifecycle
 
@@ -179,7 +179,7 @@ Data Plane Agent                    Control Plane
 
 ### Authentication
 
-1. **Initial registration:** The data plane agent authenticates with a short-lived token provisioned by PAL during `lantern infra install`. This token is a signed JWT with claims `{tenant_id, plane_id, exp}`.
+1. **Initial registration:** The data plane agent authenticates with a short-lived token provisioned by PAL during `pal infra install`. This token is a signed JWT with claims `{tenant_id, plane_id, exp}`.
 2. **mTLS:** After registration, the control plane issues a client certificate for the data plane. Subsequent connections use mutual TLS. Certificates are rotated automatically every 24 hours.
 3. **Token refresh:** The data plane agent refreshes its token before expiry. If the token expires (e.g., due to prolonged disconnection), the agent falls back to the initial registration token stored as a Kubernetes secret.
 
@@ -259,7 +259,7 @@ Same binary as the control plane's runtime manager. Manages Firecracker microVMs
 ### Postgres and Redis
 
 The data plane requires its own Postgres (with pgvector) and Redis instances. These can be:
-- **Lantern-provisioned:** Terraform modules create RDS/Cloud SQL/Azure Database and ElastiCache/Memorystore/Azure Cache
+- **PAL-provisioned:** Terraform modules create RDS/Cloud SQL/Azure Database and ElastiCache/Memorystore/Azure Cache
 - **Customer-managed:** The customer provides connection strings for their existing instances
 
 ---
@@ -269,7 +269,7 @@ The data plane requires its own Postgres (with pgvector) and Redis instances. Th
 ### AWS (EKS)
 
 - **Instance types for Firecracker:** Requires bare-metal instances (`m5.metal`, `m6i.metal`, `m7i.metal`) or instances with nested virtualization support. For development/testing, `m5.xlarge` with Kata containers as a fallback.
-- **Networking:** Data plane runs in customer's VPC. Outbound HTTPS to `api.lantern.run:443` must be allowed. No inbound rules needed.
+- **Networking:** Data plane runs in customer's VPC. Outbound HTTPS to `api.pal.example.com:443` must be allowed. No inbound rules needed.
 - **Storage:** S3 bucket for agent bundles and snapshots. EBS for Postgres persistence.
 - **IAM:** Terraform creates an IAM role for the data plane service account (IRSA) with least-privilege access to S3 and KMS.
 - **Provisioning:** Terraform module at `infra/terraform/aws/` creates EKS cluster, node group, VPC (optional), IAM roles, S3 bucket, and deploys the Helm chart.
@@ -277,7 +277,7 @@ The data plane requires its own Postgres (with pgvector) and Redis instances. Th
 ### GCP (GKE)
 
 - **Instance types for Firecracker:** `n2-standard-*` with nested virtualization enabled (GCE supports this natively). Or `c2d-metal-*` for bare metal.
-- **Networking:** Data plane runs in customer's VPC. Outbound HTTPS to `api.lantern.run:443`. Cloud NAT for outbound if nodes are private.
+- **Networking:** Data plane runs in customer's VPC. Outbound HTTPS to `api.pal.example.com:443`. Cloud NAT for outbound if nodes are private.
 - **Storage:** GCS bucket for bundles and snapshots. Persistent Disk for Postgres.
 - **IAM:** Workload Identity for GKE service account to GCP service account binding.
 - **Provisioning:** Terraform module at `infra/terraform/gcp/`.
@@ -285,7 +285,7 @@ The data plane requires its own Postgres (with pgvector) and Redis instances. Th
 ### Azure (AKS)
 
 - **Instance types for Firecracker:** `Standard_D*_v5` with nested virtualization. Or dedicated hosts for bare metal.
-- **Networking:** Data plane runs in customer's VNet. Outbound HTTPS to `api.lantern.run:443`. Azure NAT Gateway for outbound.
+- **Networking:** Data plane runs in customer's VNet. Outbound HTTPS to `api.pal.example.com:443`. Azure NAT Gateway for outbound.
 - **Storage:** Azure Blob Storage for bundles and snapshots. Azure Managed Disk for Postgres.
 - **IAM:** Managed identity with federated credentials for pod identity.
 - **Provisioning:** Terraform module at `infra/terraform/azure/`.
@@ -293,8 +293,8 @@ The data plane requires its own Postgres (with pgvector) and Redis instances. Th
 ### Bare metal / on-premises
 
 - **Requirements:** Kubernetes 1.28+, containerd, KVM support (`/dev/kvm`), persistent storage (local-path or NFS).
-- **Networking:** Outbound HTTPS to `api.lantern.run:443` (or self-hosted control plane endpoint).
-- **Installation:** Manual Helm install of `lantern-data-plane` chart. No Terraform module — the customer manages their own cluster.
+- **Networking:** Outbound HTTPS to `api.pal.example.com:443` (or self-hosted control plane endpoint).
+- **Installation:** Manual Helm install of `pal-data-plane` chart. No Terraform module — the customer manages their own cluster.
 
 ---
 
@@ -310,7 +310,7 @@ The initial registration token is a signed JWT with a 1-hour expiry. After regis
 
 ### No secrets cross the boundary
 
-Customer secrets (LLM API keys, database credentials, tool credentials) are stored in the customer's own secret manager (AWS Secrets Manager, GCP Secret Manager, Azure Key Vault, or Kubernetes Secrets). The runtime manager resolves secrets at execution time using the `lantern.secret/...` reference form. The control plane never sees secret values.
+Customer secrets (LLM API keys, database credentials, tool credentials) are stored in the customer's own secret manager (AWS Secrets Manager, GCP Secret Manager, Azure Key Vault, or Kubernetes Secrets). The runtime manager resolves secrets at execution time using the `pal.secret/...` reference form. The control plane never sees secret values.
 
 ### Network isolation
 
@@ -328,32 +328,32 @@ The data plane agent logs every message sent to and received from the control pl
 
 ## Helm charts
 
-### `infra/helm/lantern/` (all-in-one)
+### `infra/helm/pal/` (all-in-one)
 
 The existing unified chart deploys all components into a single cluster. Used for:
 - Local development (`values-dev.yaml`)
 - Self-hosted deployments where simplicity is preferred over separation
 - CI/CD environments
 
-### `infra/helm/lantern-control-plane/`
+### `infra/helm/pal-control-plane/`
 
 Deploys only control plane components: gateway, control-plane service, model router, surface gateway, dashboard, billing, scheduler. Includes Postgres, Redis, and MinIO/S3 dependencies. This is what PAL runs as SaaS.
 
-### `infra/helm/lantern-data-plane/`
+### `infra/helm/pal-data-plane/`
 
-Deploys only data plane components: data plane agent, workflow engine, runtime manager. Configured with a `controlPlane.endpoint` that points to the control plane (either `api.lantern.run` or a self-hosted URL). Optionally provisions Postgres and Redis, or accepts external connection strings.
+Deploys only data plane components: data plane agent, workflow engine, runtime manager. Configured with a `controlPlane.endpoint` that points to the control plane (either `api.pal.example.com` or a self-hosted URL). Optionally provisions Postgres and Redis, or accepts external connection strings.
 
 ---
 
 ## Upgrade strategy
 
-### Control plane upgrades (Lantern-managed)
+### Control plane upgrades (PAL-managed)
 
 PAL performs rolling upgrades of the control plane with zero downtime. The gRPC tunnel protocol is versioned; the control plane maintains backward compatibility with data planes up to 2 minor versions behind.
 
 ### Data plane upgrades (customer-managed)
 
-1. `lantern infra upgrade` checks the current data plane version against the latest compatible version.
+1. `pal infra upgrade` checks the current data plane version against the latest compatible version.
 2. The CLI generates an updated Helm values file and presents a diff.
 3. The customer reviews and applies the upgrade via `helm upgrade`.
 4. The data plane agent reconnects and re-registers with the new version.
@@ -390,7 +390,7 @@ The control plane dashboard shows a summary view of data plane health and run st
 
 ### Control plane failure
 
-If the Lantern-hosted control plane goes down:
+If the PAL-hosted control plane goes down:
 - In-flight runs on the data plane continue to completion
 - The data plane agent queues status updates and delivers them when connectivity is restored
 - New runs cannot be triggered via the dashboard or API (they queue at the control plane)
@@ -427,8 +427,8 @@ the [failover runbook](../runbooks/region-failover.md).
 - [01-overview.md](01-overview.md) — Architecture overview
 - [04-runtime-isolation.md](04-runtime-isolation.md) — Firecracker, Kata, Wasm isolation
 - [10-security.md](10-security.md) — Full security model and threat analysis
-- `infra/helm/lantern-control-plane/` — Control plane Helm chart
-- `infra/helm/lantern-data-plane/` — Data plane Helm chart
+- `infra/helm/pal-control-plane/` — Control plane Helm chart
+- `infra/helm/pal-data-plane/` — Data plane Helm chart
 - `services/data-plane-agent/` — Data plane agent service
 - `infra/terraform/aws/` — AWS Terraform module
 - `infra/terraform/gcp/` — GCP Terraform module

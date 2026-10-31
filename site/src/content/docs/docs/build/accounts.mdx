@@ -115,7 +115,7 @@ Body: `{"error":"too many requests; please try again later"}` (login says `too m
 
 ## Data export
 
-`GET /v1/tenants/{id}/export` returns everything the workspace owns as one JSON document, sent with `Content-Disposition: attachment; filename="lantern-export-<tenantId>.json"`. Owner JWT only; the id must be your own tenant. Another tenant's id is `404` (existence is not leaked), a non-owner is `403 owner role required`, no token is `401`.
+`GET /v1/tenants/{id}/export` returns everything the workspace owns as one JSON document, sent with `Content-Disposition: attachment; filename="pal-export-<tenantId>.json"`. Owner JWT only; the id must be your own tenant. Another tenant's id is `404` (existence is not leaked), a non-owner is `403 owner role required`, no token is `401`.
 
 ```json
 {
@@ -230,7 +230,7 @@ Where verification is required (production), `POST /v1/runs` from an unverified 
 | `PAL_TURNSTILE_SECRET` | none | Turnstile secret. Setting it requires a captcha on every sign-up; required for `open` in prod. |
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | none | Dashboard build-time site key; renders the widget. |
 | `PAL_MAILER` | `log` | `log`, `smtp` or `http`. |
-| `PAL_MAIL_FROM` | `Lantern <no-reply@localhost>` | From address for `smtp` and `http`. |
+| `PAL_MAIL_FROM` | `PAL <no-reply@localhost>` | From address for `smtp` and `http`. |
 | `PAL_SMTP_ADDR` | none | `host:port`. Required for `smtp`. |
 | `PAL_SMTP_USER`, `PAL_SMTP_PASSWORD` | none | SMTP credentials (PLAIN auth). |
 | `PAL_MAIL_HTTP_URL` | none | Endpoint for the `http` driver. Required for it. |

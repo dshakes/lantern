@@ -12,12 +12,12 @@
 //!
 //! | Impl | Where used |
 //! |------|-----------|
-//! | `EnvSecretResolver` | Dev/CI — reads `LANTERN_SECRET_<hex-encoded-uri>`. |
+//! | `EnvSecretResolver` | Dev/CI — reads `PAL_SECRET_<hex-encoded-uri>`. |
 //! | `HashMapSecretResolver` | Unit tests — backed by a `HashMap`. |
 //! | `RelaySecretResolver` | Production — calls `POST /v1/runtime/secrets/resolve` |
 //! |                        | on the control-plane. Activated when both |
-//! |                        | `LANTERN_CONTROL_PLANE_URL` and |
-//! |                        | `LANTERN_RUNTIME_SECRET_TOKEN` are set. |
+//! |                        | `PAL_CONTROL_PLANE_URL` and |
+//! |                        | `PAL_RUNTIME_SECRET_TOKEN` are set. |
 //!
 //! # Selection logic (see `build`)
 //!
@@ -39,7 +39,7 @@ use serde::{Deserialize, Serialize};
 // Trait
 // ---------------------------------------------------------------------------
 
-/// Resolve a `lantern.secret://...` URI to its plaintext value.
+/// Resolve a `pal.secret://...` URI to its plaintext value.
 ///
 /// Implementations MUST:
 /// - Return `Err` when the URI is unknown rather than a default/empty value.
@@ -98,27 +98,27 @@ pub enum SecretResolverError {
 
 /// Development / CI resolver.
 ///
-/// Reads `PAL_SECRET_<key>`, else `LANTERN_SECRET_<key>` (ADR 0032), from the
+/// Reads `PAL_SECRET_<key>` from the
 /// process environment, where `<key>` is the URI with every non-alphanumeric
 /// byte replaced by `_`.  Example:
 ///
 /// ```text
-/// secret_uri = "lantern.secret://tenant/t1/key/OPENAI_API_KEY"
-/// env var    = LANTERN_SECRET_lantern_secret___tenant_t1_key_OPENAI_API_KEY
+/// secret_uri = "pal.secret://tenant/t1/key/OPENAI_API_KEY"
+/// env var    = PAL_SECRET_pal_secret___tenant_t1_key_OPENAI_API_KEY
 /// ```
 ///
 /// This keeps secrets out of the process's args and out of any log lines that
 /// happen to dump env — they're still in the env block, but no more exposed
 /// than normal env-var secrets.
 ///
-/// **Never use in production.** Set `LANTERN_SECRET_RESOLVER=env` only in
+/// **Never use in production.** Set `PAL_SECRET_RESOLVER=env` only in
 /// dev/test environments.
 #[derive(Clone, Default)]
 pub struct EnvSecretResolver;
 
 impl EnvSecretResolver {
     fn env_key(uri: &str) -> String {
-        format!("LANTERN_SECRET_{}", Self::slug(uri))
+        format!("PAL_SECRET_{}", Self::slug(uri))
     }
 
     fn slug(uri: &str) -> String {
@@ -127,11 +127,9 @@ impl EnvSecretResolver {
             .collect()
     }
 
-    /// The secret for `uri` from `get` (an env lookup): `PAL_SECRET_<slug>`
-    /// wins over `LANTERN_SECRET_<slug>`, same as every other PAL/LANTERN pair.
+    /// The secret for `uri` from `get` (an env lookup of `PAL_SECRET_<slug>`).
     fn lookup(uri: &str, get: impl Fn(&str) -> Option<String>) -> Option<String> {
-        let slug = Self::slug(uri);
-        get(&format!("PAL_SECRET_{slug}")).or_else(|| get(&format!("LANTERN_SECRET_{slug}")))
+        get(&Self::env_key(uri))
     }
 }
 
@@ -216,20 +214,20 @@ struct RelayResolveResponse {
 /// Production resolver: calls `POST /v1/runtime/secrets/resolve` on the
 /// control-plane with a pre-shared service token.
 ///
-/// Activated when BOTH `LANTERN_CONTROL_PLANE_URL` and
-/// `LANTERN_RUNTIME_SECRET_TOKEN` are set in the manager's environment.
+/// Activated when BOTH `PAL_CONTROL_PLANE_URL` and
+/// `PAL_RUNTIME_SECRET_TOKEN` are set in the manager's environment.
 ///
 /// # Transport security (required)
 ///
-/// `LANTERN_CONTROL_PLANE_URL` MUST use the `https://` scheme.  A plaintext
+/// `PAL_CONTROL_PLANE_URL` MUST use the `https://` scheme.  A plaintext
 /// `http://` URL is refused at construction time to prevent decrypted tenant
 /// secrets and the shared token from crossing the network in cleartext.
 ///
 /// ```text
-/// LANTERN_CONTROL_PLANE_URL=https://control-plane.internal:8443
+/// PAL_CONTROL_PLANE_URL=https://control-plane.internal:8443
 /// ```
 ///
-/// **Dev escape hatch**: set `LANTERN_RUNTIME_RELAY_ALLOW_INSECURE=1` to
+/// **Dev escape hatch**: set `PAL_RUNTIME_RELAY_ALLOW_INSECURE=1` to
 /// allow `http://` (local dev / docker-compose only).  A prominent `WARN`
 /// log is emitted; the process continues.  Never set this in production.
 ///
@@ -272,7 +270,7 @@ impl RelaySecretResolver {
     /// Construct from explicit values.
     ///
     /// Returns `Err` when:
-    /// - `control_plane_url` uses `http://` and `LANTERN_RUNTIME_RELAY_ALLOW_INSECURE`
+    /// - `control_plane_url` uses `http://` and `PAL_RUNTIME_RELAY_ALLOW_INSECURE`
     ///   is not `"1"` — plaintext transport is refused to prevent secrets from
     ///   crossing the network in cleartext.
     /// - The reqwest client cannot be built (should never happen in practice).
@@ -290,20 +288,20 @@ impl RelaySecretResolver {
 
         // Enforce https:// unless the dev escape hatch is explicitly set.
         if url.starts_with("http://") {
-            let insecure_ok = pal_env::var(ENV_RELAY_ALLOW_INSECURE).as_deref() == Ok("1");
+            let insecure_ok = std::env::var(ENV_RELAY_ALLOW_INSECURE).as_deref() == Ok("1");
             if insecure_ok {
                 // Emit a prominent warning; never log the token.
                 tracing::warn!(
                     control_plane_url = %url,
                     "INSECURE: relay transport is plaintext http — dev only; \
-                     set LANTERN_CONTROL_PLANE_URL to an https:// address in production"
+                     set PAL_CONTROL_PLANE_URL to an https:// address in production"
                 );
             } else {
                 return Err(SecretResolverError::Backend {
                     detail: format!(
-                        "relay: LANTERN_CONTROL_PLANE_URL uses plaintext http:// \
+                        "relay: PAL_CONTROL_PLANE_URL uses plaintext http:// \
                          ('{url}'); secrets would cross the network in cleartext. \
-                         Use https:// or set LANTERN_RUNTIME_RELAY_ALLOW_INSECURE=1 \
+                         Use https:// or set PAL_RUNTIME_RELAY_ALLOW_INSECURE=1 \
                          for local dev only."
                     ),
                 });
@@ -327,8 +325,8 @@ impl RelaySecretResolver {
 
     /// Try to build from environment variables.
     ///
-    /// Returns `Some(RelaySecretResolver)` when both `LANTERN_CONTROL_PLANE_URL`
-    /// and `LANTERN_RUNTIME_SECRET_TOKEN` are set AND the URL passes the scheme
+    /// Returns `Some(RelaySecretResolver)` when both `PAL_CONTROL_PLANE_URL`
+    /// and `PAL_RUNTIME_SECRET_TOKEN` are set AND the URL passes the scheme
     /// check (see [`RelaySecretResolver::new`]).
     ///
     /// Returns `None` when either var is absent.
@@ -341,10 +339,10 @@ impl RelaySecretResolver {
     /// In practice `build()` calls `from_env_or_err` so a bad URL is a hard
     /// startup error, not a silent fallback.
     pub fn from_env() -> Option<Self> {
-        let url = pal_env::var(ENV_CONTROL_PLANE_URL).ok()?;
-        let token = pal_env::var(ENV_RUNTIME_SECRET_TOKEN).ok()?;
-        let tenant_id = pal_env::var("PAL_TENANT_ID").unwrap_or_default();
-        let vm_id = pal_env::var("PAL_VM_ID").unwrap_or_default();
+        let url = std::env::var(ENV_CONTROL_PLANE_URL).ok()?;
+        let token = std::env::var(ENV_RUNTIME_SECRET_TOKEN).ok()?;
+        let tenant_id = std::env::var("PAL_TENANT_ID").unwrap_or_default();
+        let vm_id = std::env::var("PAL_VM_ID").unwrap_or_default();
         // Silently suppress the error here; `build()` uses from_env_or_err
         // for the hard-failure path.
         Self::new(url, token, tenant_id, vm_id).ok()
@@ -354,16 +352,16 @@ impl RelaySecretResolver {
     /// than `None`, so callers can distinguish "env vars not set" (returns
     /// `Ok(None)`) from "vars set but URL is bad" (returns `Err`).
     pub fn from_env_or_err() -> Result<Option<Self>, SecretResolverError> {
-        let url = match pal_env::var(ENV_CONTROL_PLANE_URL) {
+        let url = match std::env::var(ENV_CONTROL_PLANE_URL) {
             Ok(v) => v,
             Err(_) => return Ok(None),
         };
-        let token = match pal_env::var(ENV_RUNTIME_SECRET_TOKEN) {
+        let token = match std::env::var(ENV_RUNTIME_SECRET_TOKEN) {
             Ok(v) => v,
             Err(_) => return Ok(None),
         };
-        let tenant_id = pal_env::var("PAL_TENANT_ID").unwrap_or_default();
-        let vm_id = pal_env::var("PAL_VM_ID").unwrap_or_default();
+        let tenant_id = std::env::var("PAL_TENANT_ID").unwrap_or_default();
+        let vm_id = std::env::var("PAL_VM_ID").unwrap_or_default();
         Self::new(url, token, tenant_id, vm_id).map(Some)
     }
 
@@ -465,10 +463,7 @@ impl SecretResolver for RelaySecretResolver {
             let mut rb = self
                 .client
                 .post(self.resolve_url())
-                // PAL name plus the pre-PAL name for a control plane that
-                // has not upgraded yet (ADR 0032).
                 .header("X-Pal-Runtime-Token", &self.token)
-                .header("X-Lantern-Runtime-Token", &self.token)
                 .header("Content-Type", "application/json");
             if let Some(tok) = agent_bearer {
                 rb = rb.header("Authorization", format!("Bearer {tok}"));
@@ -568,9 +563,9 @@ impl SecretResolver for RelaySecretResolver {
 /// Build the production `SecretResolver`.
 ///
 /// Decision tree:
-/// - Both `LANTERN_CONTROL_PLANE_URL` and `LANTERN_RUNTIME_SECRET_TOKEN` set,
+/// - Both `PAL_CONTROL_PLANE_URL` and `PAL_RUNTIME_SECRET_TOKEN` set,
 ///   URL passes the scheme check → `RelaySecretResolver`.
-/// - Both set, but URL is `http://` and `LANTERN_RUNTIME_RELAY_ALLOW_INSECURE`
+/// - Both set, but URL is `http://` and `PAL_RUNTIME_RELAY_ALLOW_INSECURE`
 ///   is not `"1"` → **panics** at startup with a clear message.  A plaintext
 ///   URL is a misconfiguration, not a graceful fallback situation.
 /// - Either var absent → `EnvSecretResolver` (dev/CI default).
@@ -598,8 +593,8 @@ pub fn build() -> Arc<dyn SecretResolver> {
             // back to the env resolver (which would mask the bad config).
             panic!(
                 "secret resolver: relay misconfiguration — refusing to start: {e}\n\
-                 Fix LANTERN_CONTROL_PLANE_URL to use https://, or set \
-                 LANTERN_RUNTIME_RELAY_ALLOW_INSECURE=1 for local dev only."
+                 Fix PAL_CONTROL_PLANE_URL to use https://, or set \
+                 PAL_RUNTIME_RELAY_ALLOW_INSECURE=1 for local dev only."
             );
         }
     }
@@ -617,12 +612,12 @@ mod tests {
     async fn hashmap_resolver_returns_value() {
         let mut m = HashMap::new();
         m.insert(
-            "lantern.secret://tenant/t1/key/OPENAI".to_string(),
+            "pal.secret://tenant/t1/key/OPENAI".to_string(),
             "sk-test-1234".to_string(),
         );
         let r = HashMapSecretResolver::new(m);
         let val = r
-            .resolve("lantern.secret://tenant/t1/key/OPENAI", None)
+            .resolve("pal.secret://tenant/t1/key/OPENAI", None)
             .await
             .unwrap();
         assert_eq!(val, "sk-test-1234");
@@ -631,29 +626,24 @@ mod tests {
     #[tokio::test]
     async fn hashmap_resolver_missing_returns_not_found() {
         let r = HashMapSecretResolver::new(HashMap::new());
-        let err = r
-            .resolve("lantern.secret://tenant/t1/key/MISSING", None)
-            .await;
+        let err = r.resolve("pal.secret://tenant/t1/key/MISSING", None).await;
         assert!(matches!(err, Err(SecretResolverError::NotFound { .. })));
     }
 
     #[test]
     fn env_key_encoding_is_stable() {
-        let uri = "lantern.secret://tenant/t1/key/OPENAI_API_KEY";
+        let uri = "pal.secret://tenant/t1/key/OPENAI_API_KEY";
         let key = EnvSecretResolver::env_key(uri);
         // Must start with the prefix and replace non-alphanum with _.
-        assert!(key.starts_with("LANTERN_SECRET_"));
+        assert!(key.starts_with("PAL_SECRET_"));
         assert!(!key.contains("://"), "slashes must be replaced");
         assert!(!key.contains('.'), "dots must be replaced");
     }
 
-    /// ADR 0032: the dev resolver honours `PAL_SECRET_*` like
-    /// `LANTERN_SECRET_*`, PAL first.
     #[test]
-    fn env_lookup_reads_pal_then_lantern() {
-        let uri = "lantern.secret://tenant/t1/key/OPENAI_API_KEY";
-        let legacy = EnvSecretResolver::env_key(uri);
-        let pal = legacy.replacen("LANTERN_", "PAL_", 1);
+    fn env_lookup_reads_pal_secret_key() {
+        let uri = "pal.secret://tenant/t1/key/OPENAI_API_KEY";
+        let pal = EnvSecretResolver::env_key(uri);
         let get = |pairs: &[(&str, &str)]| {
             let env: HashMap<String, String> = pairs
                 .iter()
@@ -662,8 +652,7 @@ mod tests {
             EnvSecretResolver::lookup(uri, |k| env.get(k).cloned())
         };
         assert_eq!(get(&[(&pal, "p")]).as_deref(), Some("p"));
-        assert_eq!(get(&[(&legacy, "l")]).as_deref(), Some("l"));
-        assert_eq!(get(&[(&legacy, "l"), (&pal, "p")]).as_deref(), Some("p"));
+        assert_eq!(get(&[("OTHER", "x")]), None);
         assert_eq!(get(&[]), None);
     }
 
@@ -672,7 +661,7 @@ mod tests {
         let r = EnvSecretResolver;
         // Use a URI whose encoded key definitely doesn't exist.
         let err = r
-            .resolve("lantern.secret://tenant/no-such-key/test", None)
+            .resolve("pal.secret://tenant/no-such-key/test", None)
             .await;
         assert!(matches!(err, Err(SecretResolverError::NotFound { .. })));
     }
@@ -737,12 +726,12 @@ mod tests {
     async fn relay_happy_path_returns_value() {
         let (addr, listener) = bind_mock().await;
 
-        let body = r#"{"resolved":[{"ref":"lantern.secret/llm/openai","value":"sk-secret-val"}]}"#;
+        let body = r#"{"resolved":[{"ref":"pal.secret/llm/openai","value":"sk-secret-val"}]}"#;
         let server = tokio::spawn(serve_one(listener, 200, body));
 
         let resolver = relay_for(addr, "valid-token");
         let val = resolver
-            .resolve("lantern.secret/llm/openai", None)
+            .resolve("pal.secret/llm/openai", None)
             .await
             .expect("should resolve");
 
@@ -756,12 +745,12 @@ mod tests {
     async fn relay_not_found_surfaces_as_not_found_error() {
         let (addr, listener) = bind_mock().await;
 
-        let body = r#"{"resolved":[{"ref":"lantern.secret/llm/missing","error":"not found"}]}"#;
+        let body = r#"{"resolved":[{"ref":"pal.secret/llm/missing","error":"not found"}]}"#;
         let _server = tokio::spawn(serve_one(listener, 200, body));
 
         let resolver = relay_for(addr, "valid-token");
         let err = resolver
-            .resolve("lantern.secret/llm/missing", None)
+            .resolve("pal.secret/llm/missing", None)
             .await
             .expect_err("not-found ref should produce an error");
 
@@ -787,7 +776,7 @@ mod tests {
 
         let resolver = relay_for(addr, "wrong-token");
         let err = resolver
-            .resolve("lantern.secret/llm/openai", None)
+            .resolve("pal.secret/llm/openai", None)
             .await
             .expect_err("403 should be an error");
 
@@ -810,13 +799,13 @@ mod tests {
     async fn relay_agent_bearer_forwarded_in_request() {
         let (addr, listener) = bind_mock().await;
 
-        let body = r#"{"resolved":[{"ref":"lantern.secret/llm/openai","value":"v"}]}"#;
+        let body = r#"{"resolved":[{"ref":"pal.secret/llm/openai","value":"v"}]}"#;
         // serve_one returns the raw request bytes for inspection.
         let server = tokio::spawn(serve_one(listener, 200, body));
 
         let resolver = relay_for(addr, "svc-token");
         let _ = resolver
-            .resolve("lantern.secret/llm/openai", Some("instance-bearer-jwt"))
+            .resolve("pal.secret/llm/openai", Some("instance-bearer-jwt"))
             .await
             .expect("should resolve");
 
@@ -842,7 +831,7 @@ mod tests {
     #[tokio::test]
     async fn relay_scoped_sends_the_vms_tenant_and_vm_id() {
         let (addr, listener) = bind_mock().await;
-        let body = r#"{"resolved":[{"ref":"lantern.secret/llm/openai","value":"v"}]}"#;
+        let body = r#"{"resolved":[{"ref":"pal.secret/llm/openai","value":"v"}]}"#;
         let server = tokio::spawn(serve_one(listener, 200, body));
         let resolver = relay_for(addr, "svc-token");
         let scope = ResolveScope {
@@ -850,7 +839,7 @@ mod tests {
             vm_id: "vm-42",
         };
         resolver
-            .resolve_scoped("lantern.secret/llm/openai", scope, None)
+            .resolve_scoped("pal.secret/llm/openai", scope, None)
             .await
             .expect("should resolve");
         let req = String::from_utf8_lossy(&server.await.unwrap()).to_string();
@@ -870,7 +859,7 @@ mod tests {
             vm_id: "vm-42",
         };
         let err = resolver
-            .resolve_scoped("lantern.secret/llm/openai", scope, None)
+            .resolve_scoped("pal.secret/llm/openai", scope, None)
             .await
             .expect_err("empty tenant must not be sent");
         assert!(matches!(err, SecretResolverError::Backend { .. }));
@@ -882,12 +871,12 @@ mod tests {
     async fn relay_no_agent_bearer_omits_authorization_header() {
         let (addr, listener) = bind_mock().await;
 
-        let body = r#"{"resolved":[{"ref":"lantern.secret/llm/openai","value":"v"}]}"#;
+        let body = r#"{"resolved":[{"ref":"pal.secret/llm/openai","value":"v"}]}"#;
         let server = tokio::spawn(serve_one(listener, 200, body));
 
         let resolver = relay_for(addr, "svc-token");
         let _ = resolver
-            .resolve("lantern.secret/llm/openai", None)
+            .resolve("pal.secret/llm/openai", None)
             .await
             .expect("should resolve");
 
@@ -911,11 +900,11 @@ mod tests {
         // We deliberately avoid std::env::remove_var for thread safety;
         // instead construct the resolver directly.
         let relay = RelaySecretResolver::from_env();
-        // In the test environment neither LANTERN_CONTROL_PLANE_URL nor
-        // LANTERN_RUNTIME_SECRET_TOKEN should be set → None.
+        // In the test environment neither PAL_CONTROL_PLANE_URL nor
+        // PAL_RUNTIME_SECRET_TOKEN should be set → None.
         // If they happen to be set in CI the test is a no-op (not a failure).
-        if pal_env::var(ENV_CONTROL_PLANE_URL).is_err()
-            || pal_env::var(ENV_RUNTIME_SECRET_TOKEN).is_err()
+        if std::env::var(ENV_CONTROL_PLANE_URL).is_err()
+            || std::env::var(ENV_RUNTIME_SECRET_TOKEN).is_err()
         {
             assert!(
                 relay.is_none(),
@@ -935,7 +924,7 @@ mod tests {
         // Ensure the escape hatch is NOT set.  We read the current value and
         // assert only when it is absent, so concurrent tests that set it for
         // their own purposes don't cause a false failure here.
-        if pal_env::var(ENV_RELAY_ALLOW_INSECURE).is_ok() {
+        if std::env::var(ENV_RELAY_ALLOW_INSECURE).is_ok() {
             // Escape hatch already active in this process; skip rather than
             // fight the global env.
             return;
@@ -974,7 +963,7 @@ mod tests {
 
     #[tokio::test]
     async fn http_url_with_escape_hatch_works_against_mock() {
-        // This test sets LANTERN_RUNTIME_RELAY_ALLOW_INSECURE=1 via new()
+        // This test sets PAL_RUNTIME_RELAY_ALLOW_INSECURE=1 via new()
         // directly rather than through std::env::set_var (which is not
         // thread-safe in concurrent test execution).  We instead pass the
         // env var check inside new() by temporarily manipulating the env only
@@ -991,7 +980,7 @@ mod tests {
         // http_url_without_escape_hatch_is_refused.
 
         let (addr, listener) = bind_mock().await;
-        let body = r#"{"resolved":[{"ref":"lantern.secret/llm/openai","value":"relay-val"}]}"#;
+        let body = r#"{"resolved":[{"ref":"pal.secret/llm/openai","value":"relay-val"}]}"#;
         let _server = tokio::spawn(serve_one(listener, 200, body));
 
         // new_unchecked mirrors what new() does after the escape hatch
@@ -999,7 +988,7 @@ mod tests {
         let resolver =
             RelaySecretResolver::new_unchecked(format!("http://{addr}"), "test-token", "t1", "vm1");
         let val = resolver
-            .resolve("lantern.secret/llm/openai", None)
+            .resolve("pal.secret/llm/openai", None)
             .await
             .expect("resolve should succeed over http with insecure bypass");
         assert_eq!(val, "relay-val");
@@ -1009,7 +998,7 @@ mod tests {
 
     #[test]
     fn scheme_refusal_error_contains_no_token() {
-        if pal_env::var(ENV_RELAY_ALLOW_INSECURE).is_ok() {
+        if std::env::var(ENV_RELAY_ALLOW_INSECURE).is_ok() {
             return; // escape hatch active; test inapplicable
         }
 

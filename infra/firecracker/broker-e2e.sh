@@ -2,7 +2,7 @@
 #
 # broker-e2e.sh — live broker-egress-mode (ADR 0026) boot on a Linux/KVM host.
 #
-# Boots a Firecracker microVM with LANTERN_EGRESS_MODE=broker and asserts:
+# Boots a Firecracker microVM with PAL_EGRESS_MODE=broker and asserts:
 #   1. the VM has NO network device (no TAP created, no /network-interfaces PUT,
 #      guest sees no eth0),
 #   2. the harness reaches the manager over vsock (heartbeat/report) — no NIC,
@@ -25,14 +25,14 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PROTO_DIR="${REPO_ROOT}/packages/proto"
-PROTO_FILE="lantern/v1/runtime.proto"
+PROTO_FILE="pal/v1/runtime.proto"
 LISTEN_PORT="${LISTEN_PORT:-51054}"
 MANAGER_ADDR="127.0.0.1:${LISTEN_PORT}"
 WORK="$(mktemp -d /tmp/broker-e2e.XXXXXX)"
 LOG="${WORK}/manager.log"
 TENANT="00000000-0000-0000-0000-000000000001"
 INJECT_HOST="${INJECT_HOST:-httpbin.org}"
-SECRET_URI="lantern.secret/llm/httpbin"
+SECRET_URI="pal.secret/llm/httpbin"
 # base64("user:passwd") — what httpbin's hidden-basic-auth expects.
 SECRET_VALUE="dXNlcjpwYXNzd2Q="
 
@@ -47,7 +47,7 @@ for t in grpcurl jq openssl; do command -v "$t" >/dev/null || fail "missing $t";
 g() { # grpcurl to our manager
   grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" \
     -servername localhost -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
-    -H "x-lantern-service-token: e2e-token" -d "$1" "${MANAGER_ADDR}" "lantern.v1.RuntimeManager/$2"
+    -H "x-pal-service-token: e2e-token" -d "$1" "${MANAGER_ADDR}" "pal.v1.RuntimeManager/$2"
 }
 
 cleanup() {
@@ -72,24 +72,24 @@ for who in server client; do
     -subj "/CN=${who}" >/dev/null 2>&1 || fail "${who} csr"
 done
 openssl x509 -req -in "${WORK}/server.csr" -CA "${WORK}/ca.crt" -CAkey "${WORK}/ca.key" -CAcreateserial \
-  -days 1 -out "${WORK}/server.crt" -extfile <(printf 'subjectAltName=IP:127.0.0.1,DNS:localhost,DNS:manager.lantern.internal\nextendedKeyUsage=serverAuth\nbasicConstraints=CA:FALSE') >/dev/null 2>&1 || fail server
+  -days 1 -out "${WORK}/server.crt" -extfile <(printf 'subjectAltName=IP:127.0.0.1,DNS:localhost,DNS:manager.pal.internal\nextendedKeyUsage=serverAuth\nbasicConstraints=CA:FALSE') >/dev/null 2>&1 || fail server
 openssl x509 -req -in "${WORK}/client.csr" -CA "${WORK}/ca.crt" -CAkey "${WORK}/ca.key" -CAcreateserial \
   -days 1 -out "${WORK}/client.crt" -extfile <(printf 'extendedKeyUsage=clientAuth\nbasicConstraints=CA:FALSE') >/dev/null 2>&1 || fail client
 
-MANAGER_BIN="${MANAGER_BIN:-${REPO_ROOT}/services/runtime-manager/target/release/lantern-runtime-manager}"
+MANAGER_BIN="${MANAGER_BIN:-${REPO_ROOT}/services/runtime-manager/target/release/pal-runtime-manager}"
 [ -x "${MANAGER_BIN}" ] || fail "no manager at ${MANAGER_BIN}"
-SECRET_ENV_KEY="LANTERN_SECRET_$(printf '%s' "${SECRET_URI}" | tr -c 'A-Za-z0-9' '_')"
+SECRET_ENV_KEY="PAL_SECRET_$(printf '%s' "${SECRET_URI}" | tr -c 'A-Za-z0-9' '_')"
 
 log "starting manager (broker mode) on ${MANAGER_ADDR}"
 # shellcheck disable=SC2016  # $$ expands in the child bash
 setsid bash -c 'echo $$ >"$1"; shift; exec "$@"' _ "${WORK}/pgid" env \
   RUNTIME_BACKEND=firecracker LISTEN_ADDR="0.0.0.0:${LISTEN_PORT}" LOG_LEVEL=info \
-  LANTERN_EGRESS_MODE=broker \
-  LANTERN_GRPC_SERVICE_TOKEN=e2e-token \
+  PAL_EGRESS_MODE=broker \
+  PAL_GRPC_SERVICE_TOKEN=e2e-token \
   FC_KERNEL_PATH="${FC_KERNEL_PATH}" FC_ROOTFS_PATH="${FC_ROOTFS_PATH}" \
-  LANTERN_MANAGER_TLS_CA="${WORK}/ca.crt" LANTERN_MANAGER_TLS_CERT="${WORK}/server.crt" \
-  LANTERN_MANAGER_TLS_KEY="${WORK}/server.key" \
-  LANTERN_VM_SIGNING_CA_CERT="${WORK}/ca.crt" LANTERN_VM_SIGNING_CA_KEY="${WORK}/ca.key" \
+  PAL_MANAGER_TLS_CA="${WORK}/ca.crt" PAL_MANAGER_TLS_CERT="${WORK}/server.crt" \
+  PAL_MANAGER_TLS_KEY="${WORK}/server.key" \
+  PAL_VM_SIGNING_CA_CERT="${WORK}/ca.crt" PAL_VM_SIGNING_CA_KEY="${WORK}/ca.key" \
   "${SECRET_ENV_KEY}=${SECRET_VALUE}" \
   "${MANAGER_BIN}" >"${LOG}" 2>&1 &
 for _ in $(seq 50); do [ -s "${WORK}/pgid" ] && break; sleep 0.1; done
@@ -110,9 +110,9 @@ VM_ID=$(printf '%s' "${RESP}" | jq -r '.handle.vmId // empty')
 [ -n "${VM_ID}" ] || fail "no vm_id: ${RESP}"
 log "spawned ${VM_ID}"
 
-for _ in $(seq 150); do grep -q "starting lantern-harness (PID 1)" "${LOG}" && break; grep -q "Kernel panic" "${LOG}" && break; sleep 0.3; done
+for _ in $(seq 150); do grep -q "starting pal-harness (PID 1)" "${LOG}" && break; grep -q "Kernel panic" "${LOG}" && break; sleep 0.3; done
 grep -q "Kernel panic" "${LOG}" && fail "guest panicked:\n$(grep -B8 'Kernel panic' "${LOG}" | tail -20)"
-grep -q "starting lantern-harness (PID 1)" "${LOG}" || fail "guest never came up:\n$(tail -40 "${LOG}")"
+grep -q "starting pal-harness (PID 1)" "${LOG}" || fail "guest never came up:\n$(tail -40 "${LOG}")"
 pass "guest booted (harness PID 1)"
 
 # (1) no NIC: no TAP on the host, and the guest has no eth0.
@@ -138,15 +138,15 @@ pass "exec works over host-initiated vsock; guest /proc/net/dev lists no eth0"
 # Stats frame proves a heartbeat crossed vsock -> relay -> manager over mTLS.
 for _ in $(seq 30); do
   STATS=$(timeout 8 grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" \
-    -servername localhost -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" -H "x-lantern-service-token: e2e-token" \
+    -servername localhost -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" -H "x-pal-service-token: e2e-token" \
     -max-msg-sz 1048576 -d "$(jq -n --arg id "${VM_ID}" '{vm_id:$id, interval:"1s"}')" \
-    "${MANAGER_ADDR}" lantern.v1.RuntimeManager/Stats 2>&1 | head -c 400)
+    "${MANAGER_ADDR}" pal.v1.RuntimeManager/Stats 2>&1 | head -c 400)
   printf '%s' "${STATS}" | grep -q '{' && break; sleep 1
 done
 printf '%s\n' "${STATS}" | head -5 >&2
 printf '%s' "${STATS}" | grep -q '{' || fail "no heartbeat-backed Stats — harness control channel over vsock is not up:\n${STATS}"
 pass "harness heartbeat reached the manager over guest-initiated vsock (Stats served from it)"
-log "host-side vsock sockets for the VM:"; find /run/lantern/vsock/ -maxdepth 1 -name "*${VM_ID}*" -exec ls -la {} + >&2
+log "host-side vsock sockets for the VM:"; find /run/pal/vsock/ -maxdepth 1 -name "*${VM_ID}*" -exec ls -la {} + >&2
 
 # (4) injected host via the guest's http_fetch (harness reqwest -> 127.0.0.1:3128 -> vsock -> broker).
 FETCH="$(jq -n --arg u "https://${INJECT_HOST}/hidden-basic-auth/user/passwd" '{url:$u, headers:{Authorization:"Basic placeholder"}}')"
@@ -166,7 +166,7 @@ pass "HTTPS to ${INJECT_HOST}: broker injected the credential, upstream authenti
 # before any credential is attached (cleartext on the wire).
 OUT=$(tool http_fetch "$(jq -n --arg u "http://${INJECT_HOST}:443/hidden-basic-auth/user/passwd" '{url:$u}')")
 printf '%s\n' "${OUT}" | jq -c . >&2
-printf '%s' "${OUT}" | jq -e '.result.status == 403 and (.result.headers["x-lantern-reason"] | test("plain-HTTP"))' >/dev/null \
+printf '%s' "${OUT}" | jq -e '.result.status == 403 and (.result.headers["x-pal-reason"] | test("plain-HTTP"))' >/dev/null \
   || fail "plain-HTTP :443 request to an injecting host was not refused:\n${OUT}"
 pass "H1: plain-HTTP to ${INJECT_HOST}:443 refused (403) — no cleartext credential"
 
@@ -174,7 +174,7 @@ pass "H1: plain-HTTP to ${INJECT_HOST}:443 refused (403) — no cleartext creden
 # refused before the secret is resolved.
 OUT=$(tool http_fetch "$(jq -n --arg u "https://${INJECT_HOST}/hidden-basic-auth/user/passwd" '{url:$u, headers:{Host:"evil.example"}}')")
 printf '%s\n' "${OUT}" | jq -c . >&2
-printf '%s' "${OUT}" | jq -e '.result.status == 403 and (.result.headers["x-lantern-reason"] | test("Host header not bound"))' >/dev/null \
+printf '%s' "${OUT}" | jq -e '.result.status == 403 and (.result.headers["x-pal-reason"] | test("Host header not bound"))' >/dev/null \
   || fail "mismatched Host on a terminated injected request was not refused:\n${OUT}"
 pass "M1: injected request with Host: evil.example refused (403) before the secret was resolved"
 
@@ -202,7 +202,7 @@ printf '%s\n' "${OUT}" | jq -c . >&2
 pass "DLP control: clean POST to ${INJECT_HOST} is not blocked"
 OUT=$(post "card ${TEST_PAN} exp 12/30")
 printf '%s\n' "${OUT}" | jq -c . >&2
-printf '%s' "${OUT}" | jq -e '.result.status == 403 and .result.headers["x-lantern-reason"] == "dlp-block"' >/dev/null \
+printf '%s' "${OUT}" | jq -e '.result.status == 403 and .result.headers["x-pal-reason"] == "dlp-block"' >/dev/null \
   || fail "DLP: card number was NOT blocked (want 403 dlp-block):\n${OUT}\n$(tail -30 "${LOG}")"
 grep -q "${TEST_PAN}" "${LOG}" && fail "DLP: matched card number appeared in the manager log (invariant #10)"
 pass "DLP: card number blocked (403 dlp-block); value absent from manager log"
@@ -211,7 +211,7 @@ pass "DLP: card number blocked (403 dlp-block); value absent from manager log"
 TEST_SSN="SSN-123-45-6789"
 OUT=$(post "ref ${TEST_SSN}")
 printf '%s\n' "${OUT}" | jq -c . >&2
-printf '%s' "${OUT}" | jq -e '.result.status == 403 and .result.headers["x-lantern-reason"] == "dlp-block"' >/dev/null \
+printf '%s' "${OUT}" | jq -e '.result.status == 403 and .result.headers["x-pal-reason"] == "dlp-block"' >/dev/null \
   || fail "DLP: custom_regex match was NOT blocked (want 403 dlp-block):\n${OUT}\n$(tail -30 "${LOG}")"
 grep -q "${TEST_SSN}" "${LOG}" && fail "DLP: custom_regex match appeared in the manager log (invariant #10)"
 pass "DLP: custom_regex blocked (403 dlp-block); value absent from manager log"

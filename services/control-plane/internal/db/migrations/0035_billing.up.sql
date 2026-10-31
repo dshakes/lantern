@@ -125,7 +125,7 @@ CREATE POLICY tenant_isolation ON billing_meter_exports
 	USING (tenant_id::text = current_setting('app.tenant_id', true))
 	WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
 
-GRANT SELECT ON billing_plans TO lantern_app;
-GRANT SELECT, INSERT, UPDATE ON billing_accounts TO lantern_app;
-GRANT SELECT, INSERT ON billing_webhook_events TO lantern_app;
-GRANT SELECT, INSERT, UPDATE ON billing_meter_exports TO lantern_app;
+GRANT SELECT ON billing_plans TO pal_app;
+GRANT SELECT, INSERT, UPDATE ON billing_accounts TO pal_app;
+GRANT SELECT, INSERT ON billing_webhook_events TO pal_app;
+GRANT SELECT, INSERT, UPDATE ON billing_meter_exports TO pal_app;

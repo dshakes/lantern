@@ -58,7 +58,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
+	"github.com/dshakes/pal/services/control-plane/internal/secrets"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )

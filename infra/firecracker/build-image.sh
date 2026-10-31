@@ -7,7 +7,7 @@
 #
 #   1. vmlinux       — a KVM-bootable, uncompressed Linux kernel image.
 #   2. rootfs.ext4   — a minimal ext4 root filesystem whose init (PID 1) is the
-#                      statically-linked `lantern-harness` binary.
+#                      statically-linked `pal-harness` binary.
 #
 # It then exports the paths the backend reads:
 #
@@ -49,7 +49,7 @@
 #   FC_KERNEL_URL       Override the kernel download URL entirely. When set,
 #                       FC_KERNEL_VERSION is ignored and no kernel is built.
 #   FC_ROOTFS_SIZE_MB   ext4 image size in MiB. Default: 64 (harness is ~8 MiB).
-#   FC_HARNESS_BIN      Path to a prebuilt static lantern-harness binary. When
+#   FC_HARNESS_BIN      Path to a prebuilt static pal-harness binary. When
 #                       unset, the script builds it from services/harness via
 #                       a musl target (requires the Rust musl toolchain).
 #   ARCH                x86_64 or aarch64 (default: the host arch). Selects the prebuilt kernel.
@@ -147,14 +147,14 @@ build_harness() {
     *) die "unsupported ARCH=${ARCH}" ;;
   esac
 
-  log "Building lantern-harness (static musl, target=${target})"
+  log "Building pal-harness (static musl, target=${target})"
   command -v cargo >/dev/null 2>&1 || die "cargo not found; install Rust or set FC_HARNESS_BIN"
   rustup target add "${target}" 2>/dev/null || true
 
   ( cd "${REPO_ROOT}/services/harness" \
-      && cargo build --release --bin lantern-harness --target "${target}" )
+      && cargo build --release --bin pal-harness --target "${target}" )
 
-  HARNESS_BIN="${REPO_ROOT}/services/harness/target/${target}/release/lantern-harness"
+  HARNESS_BIN="${REPO_ROOT}/services/harness/target/${target}/release/pal-harness"
   [ -f "${HARNESS_BIN}" ] || die "harness build did not produce ${HARNESS_BIN}"
   log "Harness built: ${HARNESS_BIN} ($(du -h "${HARNESS_BIN}" | cut -f1))"
 }
@@ -166,10 +166,10 @@ build_harness() {
 # the kernel cmdline — see build_boot_args() in the Firecracker backend, which
 # does NOT pass init=, so the rootfs default init must be the harness):
 #
-#   /sbin/init                -> lantern-harness (PID 1)
-#   /usr/local/bin/lantern-harness (canonical path the README documents)
-#   /run/lantern              -> tmpfs mount point for sockets + cert drive
-#   /etc/lantern/harness.toml -> defaults file (per ADR-0004)
+#   /sbin/init                -> pal-harness (PID 1)
+#   /usr/local/bin/pal-harness (canonical path the README documents)
+#   /run/pal              -> tmpfs mount point for sockets + cert drive
+#   /etc/pal/harness.toml -> defaults file (per ADR-0004)
 #
 # We build the image with a loop mount. This needs root (or CAP_SYS_ADMIN);
 # the CI job runs the script under sudo.
@@ -190,8 +190,8 @@ build_rootfs() {
   sudo mkdir -p \
     "${mnt}/sbin" \
     "${mnt}/usr/local/bin" \
-    "${mnt}/etc/lantern" \
-    "${mnt}/run/lantern" \
+    "${mnt}/etc/pal" \
+    "${mnt}/run/pal" \
     "${mnt}/tmp" \
     "${mnt}/proc" \
     "${mnt}/sys" \
@@ -203,9 +203,9 @@ build_rootfs() {
   sudo chmod 1777 "${mnt}/workspace" "${mnt}/tmp"
 
   # Install the harness as both the documented path and as PID 1 init.
-  sudo cp "${HARNESS_BIN}" "${mnt}/usr/local/bin/lantern-harness"
+  sudo cp "${HARNESS_BIN}" "${mnt}/usr/local/bin/pal-harness"
   sudo cp "${HARNESS_BIN}" "${mnt}/sbin/init"
-  sudo chmod 0755 "${mnt}/usr/local/bin/lantern-harness" "${mnt}/sbin/init"
+  sudo chmod 0755 "${mnt}/usr/local/bin/pal-harness" "${mnt}/sbin/init"
 
   # A static shell, so the guest can actually run a tool.
   #
@@ -235,12 +235,12 @@ build_rootfs() {
 
   # Minimal defaults file (ADR-0004). The manager overrides these via the
   # kernel cmdline (build_boot_args) and the per-VM env contract.
-  sudo tee "${mnt}/etc/lantern/harness.toml" >/dev/null <<'TOML'
+  sudo tee "${mnt}/etc/pal/harness.toml" >/dev/null <<'TOML'
 # PAL Runtime harness defaults — overridden by the kernel cmdline / env contract.
 # See services/harness/README.md "Boot contract".
-run_dir = "/run/lantern"
-secrets_socket = "/run/lantern/secrets.sock"
-otlp_socket = "/run/lantern/otlp.sock"
+run_dir = "/run/pal"
+secrets_socket = "/run/pal/secrets.sock"
+otlp_socket = "/run/pal/otlp.sock"
 TOML
 
   # ca-certificates so the harness mTLS client can verify TLS chains if needed.

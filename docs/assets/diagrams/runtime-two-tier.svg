@@ -106,7 +106,7 @@
   <path class="edge" d="M620 500H590V666" marker-end="url(#runtime-two-tier-a)"/>
   <g transform="translate(40 792)">
   <rect class="node" x="0" width="14" height="14" rx="3"/><text class="t-s" x="22" y="11">Control plane</text>
-  <rect class="node-host" x="130" width="14" height="14" rx="3"/><text class="t-s" x="152" y="11">Trusted Lantern infrastructure</text>
+  <rect class="node-host" x="130" width="14" height="14" rx="3"/><text class="t-s" x="152" y="11">Trusted PAL infrastructure</text>
   <rect class="node-guest" x="362" width="14" height="14" rx="3"/><text class="t-s" x="384" y="11">Untrusted guest</text>
   <rect class="wall" x="512" width="14" height="14" rx="3"/><text class="t-s" x="534" y="11">Sandbox wall</text>
   <rect class="node-deny" x="642" width="14" height="14" rx="3"/><text class="t-s" x="664" y="11">Refused</text>

@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/db"
+	"github.com/dshakes/pal/services/control-plane/internal/db"
 )
 
 // ---------- pure unit tests (no DB) ----------

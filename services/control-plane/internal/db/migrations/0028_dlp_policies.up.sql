@@ -30,4 +30,4 @@ CREATE POLICY tenant_isolation ON dlp_policies
 	USING (tenant_id::text = current_setting('app.tenant_id', true))
 	WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON dlp_policies TO lantern_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON dlp_policies TO pal_app;

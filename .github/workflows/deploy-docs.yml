@@ -40,7 +40,7 @@ jobs:
           node-version: "22"
       - name: Install deps
         run: cd site && npm ci
-      # Repo is github.com/dshakes/lantern -> Pages at /lantern (base in
+      # Repo is github.com/dshakes/pal -> Pages at /pal (base in
       # site/astro.config.mjs). For a custom domain, change base and site there.
       - name: Build site
         run: cd site && npm run build

@@ -198,7 +198,7 @@ analyst material. Treat funding figures / exact version tags as directional.
 | Per-session isolation | ✅ microVM, sanitized teardown | ✅ serverless + code-exec sandbox (no-net, 300s) | Hosted code sandbox (5GiB/1CPU/no-net); managed via Bedrock | BYO sandbox (E2B/Modal/…) | N/A (you host workers) | ✅ **RuntimeClass tiering (runc→gVisor→Kata), fail-closed gate, cluster-e2e legs (fail-closed green in CI; execution legs operator-run)** |
 | Max session | 8h | quota-limited | long/resumable (beta) | provider-dependent | days–years (durable timers) | design supports long; replay partial |
 | Durable execution | Memory persists; runtime ephemeral | Sessions GA; runtime ephemeral | server-side event log (beta) | snapshot/rehydrate (BYO compute) | ✅ **best-in-class** replay | journal_events ✅; **replay partial** |
-| Per-agent identity | IAM + workload identity | ✅ **SPIFFE + X.509-bound tokens** | Workload Identity Federation | OpenAI-cloud centric | namespaces (Cloud RBAC) | ✅ **per-instance Ed25519 identity, externally verifiable** (`/.well-known/lantern-agent-identity`); presented as Bearer on `VendSecret` |
+| Per-agent identity | IAM + workload identity | ✅ **SPIFFE + X.509-bound tokens** | Workload Identity Federation | OpenAI-cloud centric | namespaces (Cloud RBAC) | ✅ **per-instance Ed25519 identity, externally verifiable** (`/.well-known/pal-agent-identity`); presented as Bearer on `VendSecret` |
 | Egress control | VPC | VPC-SC + PSC + Agent Gateway | product permissioning | — | your workers | ✅ **harness allowlist + nftables (designed)** |
 | Signed receipts/audit | CloudWatch GenAI audit | Access Transparency | RSP/ASL | dev tracing | Cloud audit = control-plane only | ✅ **HMAC receipts + journal hash** |
 | Interop | MCP + A2A | **owns A2A**; MCP | **owns MCP**; A2A | MCP (adopted) | — | MCP + A2A cards ✅ |
@@ -461,7 +461,7 @@ green now.)*
   disables a hardened capability (fail-closed) when its class is absent at boot.
 - ✅ *(done, hardening branch)* Data-plane install: Helm provisions gVisor/Kata
   `RuntimeClass`es (opt-in) + a Kyverno tenant-baseline (PSA `restricted` + default-deny
-  NetworkPolicy + ResourceQuota/LimitRange generated per `lantern-t-*` namespace) +
+  NetworkPolicy + ResourceQuota/LimitRange generated per `pal-t-*` namespace) +
   **cosign image-signature verification** (keyless GitHub-OIDC, fail-closed) + Cilium
   host-level default-deny egress + a (deny-by-default) credential-injecting egress proxy
   + External Secrets Operator — all opt-in via values, lint/template clean.
@@ -488,7 +488,7 @@ legs green in CI + the execution legs runnable against a real cluster (operator 
 - ✅ *(done, this branch)* **RBAC scope enforcement** on the runtime routes
   (`runtime:read/write/admin`, least-privilege, 403 + audit on denial; 27 tests).
 - ✅ *(done, this branch)* **Asymmetric receipts** — Ed25519 signing, public key
-  published at `/.well-known/lantern-receipts`, offline external verification, tamper
+  published at `/.well-known/pal-receipts`, offline external verification, tamper
   detection; HMAC back-compat retained (8 tests).
 - ✅ *(already present, verified)* **Durable HITL approval** — `rest.go` wires
   `WaitForApproval` to a `takeover_requests` row that blocks until
@@ -511,10 +511,10 @@ legs green in CI + the execution legs runnable against a real cluster (operator 
   ✅ *(done, PR #36)* manager/harness now **present the Bearer on `VendSecret`** (harness
   reads `PAL_AGENT_INSTANCE_TOKEN` → `authorization` metadata → manager forwards to the
   relay). ✅ *(done, PR #40)* the identity signature can now be **Ed25519** (externally
-  verifiable, public key at `/.well-known/lantern-agent-identity`), additive over HS256 —
+  verifiable, public key at `/.well-known/pal-agent-identity`), additive over HS256 —
   the alg-confusion surface is defended (a published public key can't be used as an HMAC
   secret). *Follow-up:* stamp `agent_instance_id` on tool-call spans; SPIFFE SVID issuance.
-- ✅ *(done, PR #40)* **Non-owner Postgres role (`lantern_app`) RLS cutover machinery** —
+- ✅ *(done, PR #40)* **Non-owner Postgres role (`pal_app`) RLS cutover machinery** —
   dual-pool (`AppPool`) + `db.WithTenantConn` (tx-local `app.tenant_id` GUC) + gRPC
   RunService cut over as the representative path; cross-tenant denial proven against real
   Postgres. **Flag-gated OFF** (`PAL_RLS_ENFORCE`) so the live app is untouched. Follow-up:
@@ -552,7 +552,7 @@ and an abandoned-run-in-'running' JSON bug; both regression-tested.)*
 - ✅ *(done, this branch)* **OTel tracing foundation** (`internal/telemetry`, env-gated
   OTLP exporter — no-op when unset, no collector dependency) + **GenAI semconv spans**
   on the LLM path (`gen_ai.system/request.model/operation.name/usage.input_tokens/
-  output_tokens`, `lantern.cost_usd`) and a `runtime.schedule` span carrying
+  output_tokens`, `pal.cost_usd`) and a `runtime.schedule` span carrying
   `tenant_id/run_id/agent_version_id/agent_instance_id/isolation_class/vm_id`. Tested
   with an in-memory span recorder.
 - ✅ *(done, PR #39)* **W3C trace context across the spawn chain** — control-plane already
@@ -600,7 +600,7 @@ confidentiality guarantee. See [ADR 0023](../adr/0023-confidential-compute.md).
 
 ##### What was built
 
-`bool confidential = 17` on `AgentSpec` (`packages/proto/lantern/v1/runtime.proto`)
+`bool confidential = 17` on `AgentSpec` (`packages/proto/pal/v1/runtime.proto`)
 — a flag orthogonal to `IsolationClass`. It is not a new isolation-class value; it
 composes with any class (see ADR 0023 for why).
 
@@ -636,7 +636,7 @@ Runtime-manager  (Rust)
     (defense-in-depth behind gate 1)
   Selects Kata-CC RuntimeClass (PAL_RUNTIMECLASS_KATA_CC)
   Injects PAL_CONFIDENTIAL=1 into pod env
-  Adds node affinity + toleration on lantern.dev/confidential-compute label
+  Adds node affinity + toleration on pal.dev/confidential-compute label
           │
           │ Kata-CC pod  (SEV-SNP / TDX encrypted VM)
           ▼
@@ -704,7 +704,7 @@ Do not read this block as a confidentiality guarantee.
 ##### Helm opt-in
 
 ```yaml
-# infra/helm/lantern-data-plane/values.yaml
+# infra/helm/pal-data-plane/values.yaml
 runtimeManager:
   runtimeClasses:
     kataCc: ""      # e.g. "kata-qemu-snp" — REQUIRED; empty → confidential refused
@@ -714,7 +714,7 @@ runtimeManager:
 Operators must label and taint CC nodes:
 
 ```
-lantern.dev/confidential-compute=<tech>   # mirrors NFD sev-snp/tdx feature labels
+pal.dev/confidential-compute=<tech>   # mirrors NFD sev-snp/tdx feature labels
 ```
 
 Without this label, confidential pods do not land on CC nodes even if the

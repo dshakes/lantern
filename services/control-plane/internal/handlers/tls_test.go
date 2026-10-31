@@ -32,7 +32,7 @@ func writeTestCert(t *testing.T, dir string) (certPath, keyPath string) {
 
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "lantern-control-plane-test"},
+		Subject:      pkix.Name{CommonName: "pal-control-plane-test"},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,

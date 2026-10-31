@@ -3,8 +3,8 @@ package handlers
 import (
 	"time"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/cluster"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/cluster"
 )
 
 // reconcileGrace is how long after creation a VM is exempt from
@@ -73,10 +73,10 @@ func ReconcileNodeInventory(
 			return false
 		}
 		switch v.State {
-		case lanternv1.VmState_VM_STATE_PENDING,
-			lanternv1.VmState_VM_STATE_SPAWNING,
-			lanternv1.VmState_VM_STATE_RUNNING,
-			lanternv1.VmState_VM_STATE_DRAINING:
+		case palv1.VmState_VM_STATE_PENDING,
+			palv1.VmState_VM_STATE_SPAWNING,
+			palv1.VmState_VM_STATE_RUNNING,
+			palv1.VmState_VM_STATE_DRAINING:
 			return true
 		default:
 			return false
@@ -110,17 +110,17 @@ func ReconcileNodeInventory(
 		// that the node is not running is PAUSED — its snapshot is intact — not
 		// TERMINATED. CAS so the racing lifecycle RPC cannot release twice.
 		// ReasonIdlePausing is handled identically to ReasonPausing.
-		if (v.State == lanternv1.VmState_VM_STATE_DRAINING &&
+		if (v.State == palv1.VmState_VM_STATE_DRAINING &&
 			(v.Reason == ReasonPausing || v.Reason == ReasonIdlePausing)) ||
-			(v.State == lanternv1.VmState_VM_STATE_SPAWNING && v.Reason == ReasonResuming) {
-			if store.TransitionVMState(id, v.State, v.Reason, lanternv1.VmState_VM_STATE_PAUSED,
+			(v.State == palv1.VmState_VM_STATE_SPAWNING && v.Reason == ReasonResuming) {
+			if store.TransitionVMState(id, v.State, v.Reason, palv1.VmState_VM_STATE_PAUSED,
 				"reconciled: not running on node after interrupted pause/resume", now) {
 				store.IncrTenantVMs(v.TenantID, -1)
 			}
 			continue
 		}
 		// CAS on the observed state: a racing Terminate must not release twice.
-		if store.TransitionVMState(id, v.State, v.Reason, lanternv1.VmState_VM_STATE_TERMINATED,
+		if store.TransitionVMState(id, v.State, v.Reason, palv1.VmState_VM_STATE_TERMINATED,
 			"reconciled: node no longer reports this VM as live", now) {
 			store.IncrTenantVMs(v.TenantID, -1)
 			terminated = append(terminated, id)

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run the Lantern control-plane API. Waits for Postgres to be reachable
+# Run the PAL control-plane API. Waits for Postgres to be reachable
 # before launching (launchd-spawned processes don't have a guarantee
 # that the infra LaunchAgent finished, and we don't want a crash-loop
 # at boot).
@@ -20,7 +20,7 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:/opt/homebrew/opt/go/bin:/usr/bin:
 . "$REPO_ROOT/scripts/launchd/lib.sh"
 
 # Shared local env — same file the bridge + dashboard wrappers source. Feature
-# flags (LANTERN_CONFIDENCE_*, LANTERN_IMMIGRATION_SENTINEL, …) live here so a
+# flags (PAL_CONFIDENCE_*, PAL_IMMIGRATION_SENTINEL, …) live here so a
 # plain `kickstart -k` reloads them with no plist bootout/bootstrap: launchd
 # re-runs this wrapper, which re-sources the file every start. That still holds
 # now the server is a compiled binary rather than `go run` — the reload comes
@@ -28,10 +28,10 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:/opt/homebrew/opt/go/bin:/usr/bin:
 #
 # Sourced AFTER service-env.sh so anything set here wins over the shared
 # defaults.
-if [ -f "$HOME/.lantern/bridge.env" ]; then
+if [ -f "$HOME/.pal/bridge.env" ]; then
   set -a
   # shellcheck disable=SC1091
-  . "$HOME/.lantern/bridge.env"
+  . "$HOME/.pal/bridge.env"
   set +a
 fi
 
@@ -42,14 +42,14 @@ fi
 # master key. Least privilege — the key exists only in the one process that
 # encrypts and decrypts with it.
 #
-# LANTERN_CREDENTIAL_KEY is the AES-256 key for connector tokens and LLM API
+# PAL_CREDENTIAL_KEY is the AES-256 key for connector tokens and LLM API
 # keys at rest. Unset means plaintext storage, which is how the Gmail and
 # Google Calendar tokens ended up stranded: they were written under a key that
 # was later lost, leaving ciphertext nothing could read.
-if [ -f "$HOME/.lantern/control-plane.env" ]; then
+if [ -f "$HOME/.pal/control-plane.env" ]; then
   set -a
   # shellcheck disable=SC1091
-  . "$HOME/.lantern/control-plane.env"
+  . "$HOME/.pal/control-plane.env"
   set +a
 fi
 

@@ -2,7 +2,7 @@
 //
 // Two layers:
 //
-// 1. `pb` — tonic-generated wire types from `lantern.v1` (client-only).
+// 1. `pb` — tonic-generated wire types from `pal.v1` (client-only).
 //    Used in `manager_client.rs` for the actual gRPC calls.
 //
 // 2. Hand-defined internal types at the module root — richer/simpler shapes
@@ -11,7 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Generated tonic types — `lantern.v1` package from runtime.proto.
+/// Generated tonic types — `pal.v1` package from runtime.proto.
 ///
 /// Client stubs are used by `manager_client.rs` to call the manager;
 /// server stubs back the in-guest exec server (`exec.rs`), which serves
@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
     clippy::derive_partial_eq_without_eq
 )]
 pub mod pb {
-    tonic::include_proto!("lantern.v1");
+    tonic::include_proto!("pal.v1");
 }
 
 // ---------------------------------------------------------------------------

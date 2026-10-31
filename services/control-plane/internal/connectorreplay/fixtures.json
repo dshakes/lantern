@@ -9,7 +9,7 @@
   {"method": "GET", "path": "/repos/acme/api/pulls/42", "status": 200,
    "response": {"number": 42, "title": "Fix retry storm", "state": "open", "additions": 12, "deletions": 3}},
   {"method": "POST", "path": "/repos/acme/api/issues/42/comments", "status": 201,
-   "response": {"id": 9001, "body": "recorded", "html_url": "https://github.com/acme/api/pull/42#issuecomment-9001", "user": {"login": "lantern-bot"}}},
+   "response": {"id": 9001, "body": "recorded", "html_url": "https://github.com/acme/api/pull/42#issuecomment-9001", "user": {"login": "pal-bot"}}},
 
   {"method": "GET", "path": "/api/0/organizations/acme/issues/", "status": 200,
    "response": [{"id": "1001", "title": "TypeError: undefined is not a function", "status": "unresolved", "count": "128"}]},

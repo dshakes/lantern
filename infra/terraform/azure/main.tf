@@ -137,7 +137,7 @@ resource "azurerm_storage_account" "bundles" {
 }
 
 resource "azurerm_storage_container" "bundles" {
-  name                  = "lantern-bundles"
+  name                  = "pal-bundles"
   storage_account_name  = azurerm_storage_account.bundles.name
   container_access_type = "private"
 }
@@ -190,7 +190,7 @@ resource "azurerm_kubernetes_cluster" "this" {
 # ---------------------------------------------------------------------------
 
 resource "azurerm_kubernetes_cluster_node_pool" "pal" {
-  name                  = "lantern"
+  name                  = "pal"
   kubernetes_cluster_id = data.azurerm_kubernetes_cluster.target.id
   vm_size               = var.vm_size
   node_count            = var.node_count
@@ -199,7 +199,7 @@ resource "azurerm_kubernetes_cluster_node_pool" "pal" {
   enable_auto_scaling   = true
 
   node_labels = {
-    "lantern.run/component" = "data-plane"
+    "pal.dev/component" = "data-plane"
   }
 
   tags = var.tags
@@ -214,7 +214,7 @@ data "azurerm_subscription" "current" {}
 # For BOTH new and existing clusters: without it Workload Identity silently
 # yields no token. An existing cluster must have the OIDC issuer enabled.
 resource "azurerm_federated_identity_credential" "data_plane" {
-  name                = "lantern-data-plane"
+  name                = "pal-data-plane"
   resource_group_name = local.rg_name
   parent_id           = azurerm_user_assigned_identity.data_plane.id
   audience            = ["api://AzureADTokenExchange"]
@@ -226,7 +226,7 @@ resource "azurerm_federated_identity_credential" "data_plane" {
       error_message = "The AKS cluster has no OIDC issuer: enable it (az aks update --enable-oidc-issuer --enable-workload-identity)."
     }
   }
-  subject = "system:serviceaccount:lantern:pal-data-plane"
+  subject = "system:serviceaccount:pal:pal-data-plane"
 }
 
 # ---------------------------------------------------------------------------
@@ -262,7 +262,7 @@ provider "helm" {
 
 resource "kubernetes_namespace" "pal" {
   metadata {
-    name = "lantern"
+    name = "pal"
 
     labels = {
       "app.kubernetes.io/part-of"    = "pal-data-plane"
@@ -278,7 +278,7 @@ resource "kubernetes_namespace" "pal" {
 # ---------------------------------------------------------------------------
 
 resource "helm_release" "pal_data_plane" {
-  name      = "lantern-dp"
+  name      = "pal-dp"
   namespace = kubernetes_namespace.pal.metadata[0].name
   chart     = "${path.module}/../../helm/pal-data-plane"
   # Local chart: Bitnami postgresql/redis deps (Chart.lock) are not vendored,
@@ -339,19 +339,3 @@ resource "helm_release" "pal_data_plane" {
   ]
 }
 
-# ADR 0032: addresses renamed lantern -> pal. `moved` keeps existing state in place
-# (no destroy/recreate). Remove once every deployment has applied this version.
-moved {
-  from = kubernetes_namespace.lantern
-  to   = kubernetes_namespace.pal
-}
-
-moved {
-  from = helm_release.lantern_data_plane
-  to   = helm_release.pal_data_plane
-}
-
-moved {
-  from = azurerm_kubernetes_cluster_node_pool.lantern
-  to   = azurerm_kubernetes_cluster_node_pool.pal
-}

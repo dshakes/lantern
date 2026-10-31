@@ -1,50 +1,25 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
-import { palStateDir } from "./state-dir.js";
+import { palStateDir } from "./state-dir.ts";
 
-function withEnv(env: Record<string, string | undefined>, fn: () => void): void {
-  const saved: Record<string, string | undefined> = {};
-  for (const k of Object.keys(env)) {
-    saved[k] = process.env[k];
-    if (env[k] === undefined) delete process.env[k];
-    else process.env[k] = env[k];
-  }
-  try { fn(); } finally {
-    for (const k of Object.keys(saved)) {
-      if (saved[k] === undefined) delete process.env[k];
-      else process.env[k] = saved[k];
-    }
+function withEnv(v: string | undefined, fn: () => void) {
+  const saved = process.env.PAL_STATE_DIR;
+  if (v === undefined) delete process.env.PAL_STATE_DIR;
+  else process.env.PAL_STATE_DIR = v;
+  try {
+    fn();
+  } finally {
+    if (saved === undefined) delete process.env.PAL_STATE_DIR;
+    else process.env.PAL_STATE_DIR = saved;
   }
 }
 
-test("PAL_STATE_DIR wins", () => {
-  withEnv({ PAL_STATE_DIR: "/x/state", HOME: mkdtempSync(join(tmpdir(), "pal-sd-")) }, () => {
-    assert.equal(palStateDir(), "/x/state");
-  });
+test("palStateDir: ~/.pal by default", () => {
+  withEnv(undefined, () => assert.equal(palStateDir(), join(homedir(), ".pal")));
 });
 
-test("legacy ~/.lantern when ~/.pal does not exist", () => {
-  const home = mkdtempSync(join(tmpdir(), "pal-sd-"));
-  mkdirSync(join(home, ".lantern"));
-  withEnv({ PAL_STATE_DIR: undefined, HOME: home }, () => {
-    assert.equal(palStateDir(), join(home, ".lantern"));
-  });
-});
-
-test("~/.pal once it exists", () => {
-  const home = mkdtempSync(join(tmpdir(), "pal-sd-"));
-  mkdirSync(join(home, ".lantern"));
-  mkdirSync(join(home, ".pal"));
-  withEnv({ PAL_STATE_DIR: undefined, HOME: home }, () => {
-    assert.equal(palStateDir(), join(home, ".pal"));
-  });
-});
-
-test("legacy LANTERN_STATE_DIR honoured without the env-compat mirror", () => {
-  withEnv({ PAL_STATE_DIR: undefined, LANTERN_STATE_DIR: "/legacy/state" }, () => {
-    assert.equal(palStateDir(), "/legacy/state");
-  });
+test("palStateDir: PAL_STATE_DIR overrides", () => {
+  withEnv("/x/state", () => assert.equal(palStateDir(), "/x/state"));
 });

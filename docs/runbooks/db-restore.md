@@ -31,15 +31,15 @@ postgresql:
   enabled: false
 externalDatabase:
   enabled: true
-  host: lantern-prod.xxxx.us-west-2.rds.amazonaws.com
+  host: pal-prod.xxxx.us-west-2.rds.amazonaws.com
   port: 5432
-  database: lantern
-  user: lantern
+  database: pal
+  user: pal
   sslmode: require
-  existingSecret: lantern-db
+  existingSecret: pal-db
   existingSecretPasswordKey: postgres-password
-  appUser: lantern_app           # for RLS enforcement (PAL_RLS_ENFORCE=1)
-  appExistingSecretPasswordKey: lantern-app-password
+  appUser: pal_app           # for RLS enforcement (PAL_RLS_ENFORCE=1)
+  appExistingSecretPasswordKey: pal-app-password
 ```
 
 Provision on the managed instance:
@@ -75,12 +75,12 @@ Provision on the managed instance:
 backup:
   enabled: true
   schedule: "0 2 * * *"     # 02:00 daily
-  s3Bucket: lantern-backups
+  s3Bucket: pal-backups
   s3Endpoint: ""            # empty = AWS S3; set to the MinIO endpoint for in-cluster
   retentionDays: 14
 ```
 The CronJob (`*-pg-backup`) runs `pg_dump --clean --if-exists | gzip`, uploads to
-`s3://<bucket>/postgres/lantern-<ts>.sql.gz`, and prunes objects older than
+`s3://<bucket>/postgres/pal-<ts>.sql.gz`, and prunes objects older than
 `retentionDays`.
 
 > **Limits — read before relying on this.** A logical `pg_dump` is a point-in-time
@@ -90,19 +90,19 @@ The CronJob (`*-pg-backup`) runs `pg_dump --clean --if-exists | gzip`, uploads t
 
 ### Verify a backup exists
 ```bash
-aws s3 ls s3://lantern-backups/postgres/        # newest object should be < 24h old
+aws s3 ls s3://pal-backups/postgres/        # newest object should be < 24h old
 ```
 
 ### Restore from a dump
 1. **Stop writes**: `kubectl scale deploy/<control-plane> --replicas=0`.
 2. Pull the dump:
    ```bash
-   aws s3 cp s3://lantern-backups/postgres/lantern-<ts>.sql.gz ./restore.sql.gz
+   aws s3 cp s3://pal-backups/postgres/pal-<ts>.sql.gz ./restore.sql.gz
    ```
 3. Restore into a fresh database (do NOT restore over the live one in place):
    ```bash
    # create a clean target DB, then:
-   gunzip -c restore.sql.gz | psql "postgres://lantern:***@<host>:5432/lantern_restore?sslmode=require"
+   gunzip -c restore.sql.gz | psql "postgres://pal:***@<host>:5432/pal_restore?sslmode=require"
    ```
    The dump uses `--clean --if-exists`, so it drops+recreates objects; restoring into an
    empty DB is cleanest.
@@ -128,8 +128,8 @@ is the GA recommendation.
 
 ### Scripted drill (umbrella chart, `backup.enabled=true`)
 
-The `lantern` umbrella chart ships the same CronJob (`<release>-postgres-backup`, dumps to
-`s3://<s3Bucket>/postgres/lantern-<ts>.sql.gz`). The drill is scripted -- needs only docker, touches
+The `pal` umbrella chart ships the same CronJob (`<release>-postgres-backup`, dumps to
+`s3://<s3Bucket>/postgres/pal-<ts>.sql.gz`). The drill is scripted -- needs only docker, touches
 no live database:
 
 ```bash
@@ -141,7 +141,7 @@ scripts/db-restore-drill.sh --self-test            # exercises the script itself
 It restores with `ON_ERROR_STOP` (a corrupt gzip fails the drill) and requires `agents`, `runs`,
 `journal_events` to exist (`DRILL_EXPECT_TABLES`). Empty tables pass, so a fresh or low-traffic
 database is fine; set `DRILL_REQUIRE_ROWS=1` to also fail on empty tables when you know the source has data. `DRILL_PG_IMAGE` (default `pgvector/pgvector:pg16`) must match the
-server major version. A dump contains no roles: after a real restore recreate `lantern_app` and
+server major version. A dump contains no roles: after a real restore recreate `pal_app` and
 its password, then run `DATABASE_URL=... scripts/check-app-grants.sh` before enabling
 `PAL_RLS_ENFORCE=1`. Take a dump on demand with
 `kubectl create job --from=cronjob/<release>-postgres-backup backup-manual-1`.

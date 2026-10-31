@@ -63,9 +63,9 @@ It reads `agent.yaml` (`name`, `description`, `model`, `system_prompt`, `labels`
 Generate a data plane for EKS, GKE or AKS. Agents then execute in that cloud while the control plane schedules them. `pal infra install` only writes Terraform; you apply it.
 
 ```bash
-pal infra install --cloud aws --region us-east-1 --node-count 3 --firecracker   # writes ./lantern-data-plane-aws
+pal infra install --cloud aws --region us-east-1 --node-count 3 --firecracker   # writes ./pal-data-plane-aws
 export TF_VAR_agent_token="<one-time token from Settings → Data planes>"
-cd lantern-data-plane-aws && terraform init && terraform plan && terraform apply
+cd pal-data-plane-aws && terraform init && terraform plan && terraform apply
 ```
 
 `pal infra status` is a placeholder today; check the data-plane-agent pod logs instead.

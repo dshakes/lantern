@@ -29,9 +29,9 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/packages/grpctls"
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/packages/grpctls"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
 )
 
 type testCA struct {
@@ -117,8 +117,8 @@ func TestControlPlaneGRPC_MTLS(t *testing.T) {
 			middleware.UnaryServiceAuthInterceptor(log, testToken),
 		),
 	)
-	lanternv1.RegisterAgentServiceServer(srv, lanternv1.UnimplementedAgentServiceServer{})
-	lanternv1.RegisterDataPlaneServiceServer(srv, lanternv1.UnimplementedDataPlaneServiceServer{})
+	palv1.RegisterAgentServiceServer(srv, palv1.UnimplementedAgentServiceServer{})
+	palv1.RegisterDataPlaneServiceServer(srv, palv1.UnimplementedDataPlaneServiceServer{})
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -147,7 +147,7 @@ func TestControlPlaneGRPC_MTLS(t *testing.T) {
 		return c
 	}
 	agent := func(conn *grpc.ClientConn, token string) codes.Code {
-		_, err := lanternv1.NewAgentServiceClient(conn).GetAgent(ctx(token), &lanternv1.GetAgentRequest{})
+		_, err := palv1.NewAgentServiceClient(conn).GetAgent(ctx(token), &palv1.GetAgentRequest{})
 		return status.Code(err)
 	}
 
@@ -178,7 +178,7 @@ func TestControlPlaneGRPC_MTLS(t *testing.T) {
 		t.Errorf("foreign-CA client cert reached the handler (code %v)", c)
 	}
 	// The customer-VPC tunnel has no service cert and authenticates itself.
-	_, err = lanternv1.NewDataPlaneServiceClient(noCert).Register(ctx(""), &lanternv1.DpRegisterRequest{})
+	_, err = palv1.NewDataPlaneServiceClient(noCert).Register(ctx(""), &palv1.DpRegisterRequest{})
 	if status.Code(err) != codes.Unimplemented {
 		t.Errorf("DataPlaneService without a client cert: got %v, want Unimplemented", status.Code(err))
 	}

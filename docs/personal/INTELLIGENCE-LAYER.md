@@ -5,7 +5,7 @@ The iMessage + WhatsApp bridges share a set of pure, best-effort modules in
 more like a personal OS: it knows who it's talking to, tells the truth about
 where you are, never fabricates, and answers from your real message history.
 
-Every module is owner-only, stores state as `0600` JSONL under `~/.lantern/`,
+Every module is owner-only, stores state as `0600` JSONL under `~/.pal/`,
 and is **best-effort** — any failure degrades to prior behavior, never a crash
 or a blocked reply. Nothing here touches the control plane or another tenant.
 
@@ -62,7 +62,7 @@ fresher iPhone location/focus signal contradicts it, and the rendered line
 carries an as-of clause. Place is only ever stated when it has a timestamp.
 
 The freshness comparison uses `latestSignalTs()` (newest entry in
-`~/.lantern/device-signals.jsonl`), TTL-cached 10s so it never does a per-message
+`~/.pal/device-signals.jsonl`), TTL-cached 10s so it never does a per-message
 disk read on the hot path.
 
 ### Stable identity + owner corrections (`identity.ts`, `entity-binding.ts`)
@@ -81,7 +81,7 @@ correction on iMessage applies on WhatsApp for the same person):
 Only the **explicit-handle** form is auto-captured. Ambiguous forms ("that's
 Manasa") and annotations ("512 is just spam", "512 is probably Manasa") are
 deliberately ignored so a stray sentence can't permanently mislabel a number.
-Stored in `~/.lantern/identity-overrides.jsonl` (last-write-wins; correct again
+Stored in `~/.pal/identity-overrides.jsonl` (last-write-wins; correct again
 to change it).
 
 ### Thread-peek — answer from the real thread (`thread-peek.ts`)
@@ -107,7 +107,7 @@ directive is rewritten, and a hard never-reveal instruction is injected:
 > **Bot:** `📝 noted — I won't tell Ravi where you are`
 > **You:** `you can tell Ravi where I am again`   ← re-allow
 
-Stored in `~/.lantern/disclosure-denies.jsonl` (cross-channel, last-write-wins).
+Stored in `~/.pal/disclosure-denies.jsonl` (cross-channel, last-write-wins).
 This is owner-set, not heuristic probe-detection — a deliberate flag, consistent
 with how identity corrections work.
 
@@ -148,11 +148,11 @@ rather than punting to "I can't tell."
 
 ---
 
-## Stores (`~/.lantern/`, all mode 0600)
+## Stores (`~/.pal/`, all mode 0600)
 
 `episodes.jsonl`, `topic-index.jsonl`, and `dislike-patterns.jsonl` are
 AES-256-GCM encrypted at rest (`enc1:` line envelope, `secure-store.ts`; key
-auto-created 0600 at `~/.lantern/state.key`). Old plaintext lines still read
+auto-created 0600 at `~/.pal/state.key`). Old plaintext lines still read
 and age out naturally.
 
 | File | Written by | Read by |

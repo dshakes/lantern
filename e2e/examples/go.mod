@@ -1,11 +1,11 @@
-module github.com/dshakes/lantern/e2e/examples
+module github.com/dshakes/pal/e2e/examples
 
 go 1.25.0
 
 toolchain go1.26.6
 
 require (
-	github.com/dshakes/lantern/e2e/internal/e2ekit v0.0.0
+	github.com/dshakes/pal/e2e/internal/e2ekit v0.0.0
 	github.com/jackc/pgx/v5 v5.10.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -18,4 +18,4 @@ require (
 	golang.org/x/text v0.29.0 // indirect
 )
 
-replace github.com/dshakes/lantern/e2e/internal/e2ekit => ../internal/e2ekit
+replace github.com/dshakes/pal/e2e/internal/e2ekit => ../internal/e2ekit

@@ -1,7 +1,7 @@
 """deepagents agent running on a PAL microVM sandbox.
 
 Requires: pip install "./packages/sdk-python[deepagents]"  (from a repo checkout)
-Env: LANTERN_API_URL, LANTERN_API_KEY
+Env: PAL_API_URL, PAL_API_KEY
 
 Demonstrates:
 - the PAL sandbox backend (execute + derived filesystem tools in a

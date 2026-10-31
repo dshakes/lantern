@@ -1,4 +1,4 @@
-package lantern
+package pal
 
 import (
 	"context"
@@ -262,7 +262,7 @@ func TestVMFiles(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 			w.Write([]byte(`{"error":"no such file"}`))
 		case r.Method == http.MethodGet:
-			w.Header().Set("X-Lantern-Truncated", "true")
+			w.Header().Set("X-Pal-Truncated", "true")
 			w.Write([]byte("héllo"))
 		default:
 			w.Write([]byte(`{"path":"a b.txt","bytesWritten":2}`))
@@ -313,7 +313,7 @@ func TestScheduleVM_SendsEgressInject(t *testing.T) {
 		ImageDigest: "sha256:abc",
 		EgressRules: []EgressRule{{
 			Pattern: "api.openai.com",
-			Inject:  []CredentialInjection{{Header: "Authorization", SecretRef: "lantern.secret/llm/openai", ValuePrefix: "Bearer "}},
+			Inject:  []CredentialInjection{{Header: "Authorization", SecretRef: "pal.secret/llm/openai", ValuePrefix: "Bearer "}},
 		}},
 		RunID: "r-1",
 	})
@@ -321,7 +321,7 @@ func TestScheduleVM_SendsEgressInject(t *testing.T) {
 		t.Fatalf("ScheduleVM: %v %v", out, err)
 	}
 	inj := got["egressRules"].([]any)[0].(map[string]any)["inject"].([]any)[0].(map[string]any)
-	if inj["header"] != "Authorization" || inj["secretRef"] != "lantern.secret/llm/openai" || inj["valuePrefix"] != "Bearer " {
+	if inj["header"] != "Authorization" || inj["secretRef"] != "pal.secret/llm/openai" || inj["valuePrefix"] != "Bearer " {
 		t.Fatalf("inject wire shape wrong: %v", inj)
 	}
 	if got["runId"] != "r-1" || got["imageDigest"] != "sha256:abc" {
@@ -329,10 +329,9 @@ func TestScheduleVM_SendsEgressInject(t *testing.T) {
 	}
 }
 
-// ReadFile honours X-Pal-Truncated and, from a pre-rename control plane, the
-// legacy X-Lantern-Truncated (ADR 0032).
+// ReadFile honours X-Pal-Truncated.
 func TestReadFile_TruncatedHeaderNames(t *testing.T) {
-	for header, want := range map[string]bool{"X-Pal-Truncated": true, "X-Lantern-Truncated": true, "X-Other": false} {
+	for header, want := range map[string]bool{"X-Pal-Truncated": true, "X-Other": false} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set(header, "true")
 			w.Write([]byte("x"))

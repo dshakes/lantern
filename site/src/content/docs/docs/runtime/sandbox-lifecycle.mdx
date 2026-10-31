@@ -43,7 +43,7 @@ The runtime-manager's snapshot store keeps the canonical copy on local disk and 
 
 | Env var (runtime-manager) | Default | Purpose |
 | --- | --- | --- |
-| `SNAPSHOT_DIR` | `/var/lib/lantern/snapshots` | Local tier root, laid out `<agent_version_id>/<vm_id>/<snapshot_id>/` |
+| `SNAPSHOT_DIR` | `/var/lib/pal/snapshots` | Local tier root, laid out `<agent_version_id>/<vm_id>/<snapshot_id>/` |
 | `S3_ENDPOINT` + `S3_BUCKET` | unset (S3 tier off) | Enable the S3/MinIO mirror under `snapshots/<agent_version_id>/<vm_id>/<snapshot_id>/` |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | unset | S3 credentials (same variables the control-plane uses) |
 
@@ -96,7 +96,7 @@ Snapshots are owned by the tenant that created them; restoring another tenant's 
 
 ## Files
 
-Read and write files under the VM's `/workspace`. These run through the in-guest harness tool runner, so paths are confined to `/workspace` (escapes return 400) and files are accessed as the workload user. Content is UTF-8 text, at most 1 MiB (writes above return 413; larger reads are cut and flagged with `X-Lantern-Truncated: true`). Firecracker VMs only; other backends return 503.
+Read and write files under the VM's `/workspace`. These run through the in-guest harness tool runner, so paths are confined to `/workspace` (escapes return 400) and files are accessed as the workload user. Content is UTF-8 text, at most 1 MiB (writes above return 413; larger reads are cut and flagged with `X-Pal-Truncated: true`). Firecracker VMs only; other backends return 503.
 
 ```
 GET /v1/runtime/vms/{id}/files?path=src            # → { path, entries: [{name, type, size}], truncated }

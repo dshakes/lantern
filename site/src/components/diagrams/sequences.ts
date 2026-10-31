@@ -29,7 +29,7 @@ const EB = "services/runtime-manager/src/egress_broker.rs";
 const LC = "services/runtime-scheduler/internal/handlers/lifecycle.go";
 const IS = "services/runtime-scheduler/internal/handlers/idle_sweeper.go";
 const RL = `${H}/runtime_lifecycle.go`;
-const PROTO = "packages/proto/lantern/v1/runtime.proto";
+const PROTO = "packages/proto/pal/v1/runtime.proto";
 const DLP = "docs/adr/0030-egress-dlp.md";
 const RT = `${H}/runtime.go`;
 
@@ -131,7 +131,7 @@ const execTool: Step = {
   src: [M(STEP), M(STEP), M(PROTO)],
 };
 const authz: Step = {
-  from: "rm", to: "rm", label: "authz interceptor", note: "Service token required; any peer presenting a per-VM cert (OU=lantern-vm) is refused.",
+  from: "rm", to: "rm", label: "authz interceptor", note: "Service token required; any peer presenting a per-VM cert (OU=pal-vm) is refused.",
   src: [M("services/runtime-manager/src/authz.rs")],
 };
 
@@ -154,7 +154,7 @@ export const TOOL_SEQUENCE: SequenceDef = {
         execTool,
         authz,
         { from: "rm", to: "rm", label: "resolve VM + tenant", note: "By vm_id, or by scanning for run_id. The owning tenant must match.", src: [M(SVC)] },
-        { from: "rm", to: "h", label: "Exec __lantern_tool_call__", note: "Envelope { tool, args, idempotency_key, timeout_sec } in argv[0], with this incarnation's Bearer exec token. On broker VMs the same gRPC rides host-initiated vsock.", src: [M(SVC), M(SVC), B("docs/adr/0026-host-egress-broker.md", 90)] },
+        { from: "rm", to: "h", label: "Exec __pal_tool_call__", note: "Envelope { tool, args, idempotency_key, timeout_sec } in argv[0], with this incarnation's Bearer exec token. On broker VMs the same gRPC rides host-initiated vsock.", src: [M(SVC), M(SVC), B("docs/adr/0026-host-egress-broker.md", 90)] },
         { from: "h", to: "tr", label: "run_tool_call", note: "The exec server intercepts the sentinel before its generic exec audit (args are never logged).", src: [M("services/harness/src/exec.rs"), M(TR)] },
         { from: "tr", to: "ws", label: "read_file under /workspace", note: "openat2 with RESOLVE_BENEATH as the workload's fsuid: no .. or symlink escape. shell_exec runs /bin/sh -c as the workload uid.", src: [M(TR, 657), M(TR)] },
         { from: "ws", to: "tr", label: "bytes (≤ 1 MiB)", kind: "return", note: "Every captured output is capped and flagged truncated.", src: [M(TR, 252)] },
@@ -167,7 +167,7 @@ export const TOOL_SEQUENCE: SequenceDef = {
       label: "Tool fails",
       steps: [
         execTool,
-        { from: "rm", to: "h", label: "Exec __lantern_tool_call__", note: "Dispatched as above.", src: [M(SVC)] },
+        { from: "rm", to: "h", label: "Exec __pal_tool_call__", note: "Dispatched as above.", src: [M(SVC)] },
         { from: "h", to: "tr", label: "run_tool_call", note: "E.g. read_file on a path outside /workspace.", src: [M(TR)] },
         { from: "tr", to: "rm", label: "{ ok: false, error }", kind: "deny", note: "The tool ran and failed, or the name is unknown.", src: [M(TR)] },
         { from: "rm", to: "we", label: "TOOL_STATUS_ERROR", kind: "deny", note: "The step fails with the manager's detail.", src: [M(PROTO)] },
@@ -187,7 +187,7 @@ export const TOOL_SEQUENCE: SequenceDef = {
       label: "Wrong tenant",
       steps: [
         { ...execTool, note: "A caller asks for a VM that belongs to another tenant." },
-        { from: "rm", to: "rm", label: "tenant mismatch", kind: "deny", note: "Audited under lantern_audit as exec_tool DENIED.", src: [M(SVC)] },
+        { from: "rm", to: "rm", label: "tenant mismatch", kind: "deny", note: "Audited under pal_audit as exec_tool DENIED.", src: [M(SVC)] },
         { from: "rm", to: "we", label: "NOT_FOUND", kind: "deny", note: "Indistinguishable from a VM that does not exist: no existence leak (ADR 0025).", src: [M(SVC)] },
       ],
     },
@@ -234,7 +234,7 @@ export const EGRESS_SEQUENCE: SequenceDef = {
         { from: "br", to: "wl", label: "200 Connection Established", kind: "return", note: "This rule injects, so the broker terminates TLS with a leaf from the per-VM ephemeral CA. Nothing is dialled yet.", src: [B(EB, 753), B(EB, 768)] },
         { from: "wl", to: "br", label: "GET /user (inside TLS)", note: "The workload's real request, with a placeholder or no Authorization header." },
         { from: "br", to: "br", label: "preflight: method + Host", note: "Not TRACE or CONNECT; the target and exactly one Host: header must name api.github.com.", src: [B(EB, 822), B(EB, 343), B(EB, 375)] },
-        { from: "br", to: "sr", label: "resolve lantern.secret/…", note: "Resolved on the host at request time, scoped to the VM's tenant. The ref comes from the manager's spawn record, not the guest.", src: [B(EB, 989), B("docs/adr/0026-host-egress-broker.md", 108)] },
+        { from: "br", to: "sr", label: "resolve pal.secret/…", note: "Resolved on the host at request time, scoped to the VM's tenant. The ref comes from the manager's spawn record, not the guest.", src: [B(EB, 989), B("docs/adr/0026-host-egress-broker.md", 108)] },
         { from: "sr", to: "br", label: "secret value", kind: "return", note: "Held for one header write, then dropped. Never logged, traced or audited." },
         { from: "br", to: "up", label: "TLS + header injected", kind: "inject", note: "DNS checked against private ranges, upstream verified against native roots, same-named header replaced, Connection: close.", src: [B(EB, 1025), B(EB, 840), B(EB, 415)] },
         { from: "br", to: "br", label: "audit egress_inject", note: "Header names only, logged locally first, then the report path.", src: [B(EB, 854), B(EB, 1053)] },
@@ -263,7 +263,7 @@ export const EGRESS_SEQUENCE: SequenceDef = {
         head,
         { from: "br", to: "br", label: "no matching allowlist rule", kind: "deny", note: "Policy.evaluate returns the deny reason.", src: [B(EB, 217)] },
         { from: "br", to: "br", label: "audit egress deny", kind: "deny", note: "Always logged locally. Into the shared audit channel at a burst of 20, then 5 per second per VM.", src: [B(EB, 748), B(EB, 71), B(EB, 1053)] },
-        { from: "br", to: "wl", label: "403 Forbidden", kind: "deny", note: "X-Lantern-Reason carries the static reason. Nothing was dialled.", src: [B(EB, 749), B(EB, 445)] },
+        { from: "br", to: "wl", label: "403 Forbidden", kind: "deny", note: "X-Pal-Reason carries the static reason. Nothing was dialled.", src: [B(EB, 749), B(EB, 445)] },
       ],
     },
     {
@@ -298,7 +298,7 @@ export const EGRESS_SEQUENCE: SequenceDef = {
         { from: "wl", to: "br", label: "POST /gists · body has a card number", note: "The workload tries to send sensitive data through an allowlisted host." },
         { from: "br", to: "br", label: "read body before dialling", note: "Up to max_inspect_bytes (64 KiB default, 1 MiB ceiling), de-chunked so chunk sizes cannot split a value. Ambiguous framing is a 400.", src: [M(DLP, 89), M(DLP, 96)] },
         { from: "br", to: "br", label: "detector card_number → block", kind: "deny", note: "Luhn and an issuer prefix. Detectors: card_number, secret_key, email, phone, custom_regex. Block beats audit.", src: [M(DLP, 65), M(DLP)] },
-        { from: "br", to: "wl", label: "403 · X-Lantern-Reason: dlp-block", kind: "deny", note: "Audited as dlp, decision=block. Nothing was dialled and no secret was resolved. DLP is a guard rail and an audit trail; the allowlist stays the boundary.", src: [M(DLP, 87), M(DLP, 62)] },
+        { from: "br", to: "wl", label: "403 · X-Pal-Reason: dlp-block", kind: "deny", note: "Audited as dlp, decision=block. Nothing was dialled and no secret was resolved. DLP is a guard rail and an audit trail; the allowlist stays the boundary.", src: [M(DLP, 87), M(DLP, 62)] },
       ],
     },
   ],
@@ -404,7 +404,7 @@ export const MICROVM_RUN_SEQUENCE: SequenceDef = {
       steps: [
         { from: "c", to: "cp", label: "POST /v1/runtime/schedule", note: "Straight to the control plane on :8080 (the gateway does not serve /v1/runtime). An AgentSpec: image, isolation, limits, egress rules, secret refs, idleTimeoutSecs. A JWT or API key; the tenant comes from the credential, never the body." },
         { from: "cp", to: "cp", label: "quota gate", note: "Resolves the agent version and stamps tenant_id and run_id. Over the tenant's concurrent-VM quota the answer is HTTP 402 and nothing is placed.", src: [M(RT, 1814)] },
-        { from: "cp", to: "sc", label: "RuntimeScheduler.Schedule", note: "Carries x-lantern-service-token; the scheduler's port refuses callers without it (fail-closed in prod).", src: [M(PROTO)] },
+        { from: "cp", to: "sc", label: "RuntimeScheduler.Schedule", note: "Carries x-pal-service-token; the scheduler's port refuses callers without it (fail-closed in prod).", src: [M(PROTO)] },
         { from: "sc", to: "sc", label: "placement", note: "Warm pool, region, fair share, cost and health pick a node." },
         { from: "sc", to: "rm", label: "RuntimeManager.Spawn", note: "Service token plus client TLS. The manager refuses any per-VM certificate on its RuntimeManager methods." },
         { from: "rm", to: "vm", label: "boot or restore snapshot", note: "spawn.json on a read-only image gives the harness its command, env, egress rules and workload uid." },

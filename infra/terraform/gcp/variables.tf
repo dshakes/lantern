@@ -6,7 +6,7 @@ variable "project_id" {
 variable "cluster_name" {
   description = "Name of the GKE cluster to create or use."
   type        = string
-  default     = "lantern-data-plane"
+  default     = "pal-data-plane"
 }
 
 variable "region" {
@@ -60,13 +60,13 @@ variable "kubernetes_version" {
 variable "network" {
   description = "VPC network name. Created if it does not exist."
   type        = string
-  default     = "lantern-data-plane-vpc"
+  default     = "pal-data-plane-vpc"
 }
 
 variable "subnetwork" {
   description = "Subnetwork name. Created if it does not exist."
   type        = string
-  default     = "lantern-data-plane-subnet"
+  default     = "pal-data-plane-subnet"
 }
 
 variable "subnet_cidr" {
@@ -88,15 +88,13 @@ variable "services_cidr" {
 }
 
 variable "pal_control_plane_endpoint" {
-  description = "Endpoint of the PAL Runtime control plane (default https://api.lantern.run)."
+  description = "Endpoint of YOUR PAL Runtime control plane (required; no default: the data-plane agent sends its credentials here). Must be https:// unless it points at localhost."
   type        = string
-  default     = null
-}
 
-variable "lantern_control_plane_endpoint" {
-  description = "Deprecated alias of pal_control_plane_endpoint; still honored when the PAL name is unset."
-  type        = string
-  default     = null
+  validation {
+    condition     = can(regex("^https://", var.pal_control_plane_endpoint)) || can(regex("^http://(localhost|127\\.0\\.0\\.1)(:[0-9]+)?(/.*)?$", var.pal_control_plane_endpoint))
+    error_message = "pal_control_plane_endpoint must be an https:// URL (http:// only for localhost)."
+  }
 }
 
 variable "tenant_id" {
@@ -116,15 +114,9 @@ variable "pal_version" {
   default     = null
 }
 
-variable "lantern_version" {
-  description = "Deprecated alias of pal_version; still honored when the PAL name is unset."
-  type        = string
-  default     = null
-}
-
 locals {
-  control_plane_endpoint = coalesce(var.pal_control_plane_endpoint, var.lantern_control_plane_endpoint, "https://api.lantern.run")
-  chart_version          = coalesce(var.pal_version, var.lantern_version, "0.1.0")
+  control_plane_endpoint = var.pal_control_plane_endpoint
+  chart_version          = coalesce(var.pal_version, "0.1.0")
 }
 
 variable "firecracker_enabled" {

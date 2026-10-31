@@ -10,8 +10,8 @@
 # the iPhone. They embed the signal token, so they are NEVER committed.
 #
 # Usage:
-#   LANTERN_SIGNAL_TOKEN=... scripts/iphone/app-context/generate-signals.sh
-# Token resolution order: $LANTERN_SIGNAL_TOKEN, else the value baked into the
+#   PAL_SIGNAL_TOKEN=... scripts/iphone/app-context/generate-signals.sh
+# Token resolution order: $PAL_SIGNAL_TOKEN, else the value baked into the
 # control-plane LaunchAgent plist.
 #
 # Each line below is:  <ShortcutName>|<kind>|<detail>
@@ -22,16 +22,16 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 TEMPLATE="$HERE/_signal-template.shortcut"
-OUT_DIR="${PAL_SHORTCUT_OUT:-${LANTERN_SHORTCUT_OUT:-$HOME/Desktop}}"
-PLIST="$HOME/Library/LaunchAgents/dev.lantern.api.plist"
+OUT_DIR="${PAL_SHORTCUT_OUT:-$HOME/Desktop}"
+PLIST="$HOME/Library/LaunchAgents/dev.pal.api.plist"
 
 # --- resolve token ---------------------------------------------------------
-TOKEN="${PAL_SIGNAL_TOKEN:-${LANTERN_SIGNAL_TOKEN:-}}"
+TOKEN="${PAL_SIGNAL_TOKEN:-}"
 if [ -z "$TOKEN" ] && [ -f "$PLIST" ]; then
-  TOKEN="$(/usr/libexec/PlistBuddy -c 'Print :EnvironmentVariables:LANTERN_SIGNAL_TOKEN' "$PLIST" 2>/dev/null || true)"
+  TOKEN="$(/usr/libexec/PlistBuddy -c 'Print :EnvironmentVariables:PAL_SIGNAL_TOKEN' "$PLIST" 2>/dev/null || true)"
 fi
 if [ -z "$TOKEN" ]; then
-  echo "ERROR: no LANTERN_SIGNAL_TOKEN (env or plist). Set it and retry." >&2
+  echo "ERROR: no PAL_SIGNAL_TOKEN (env or plist). Set it and retry." >&2
   exit 1
 fi
 [ -f "$TEMPLATE" ] || { echo "ERROR: template not found: $TEMPLATE" >&2; exit 1; }
@@ -41,21 +41,21 @@ mkdir -p "$OUT_DIR"
 # --- the signal set --------------------------------------------------------
 # Presence / status (Action Button, NFC tag, or home-screen tap):
 SIGNALS=(
-  "Lantern-Status-Busy|focus|Busy"
-  "Lantern-Status-Available|focus|Available"
-  "Lantern-Status-DND|focus|DND"
-  "Lantern-Status-Desk|focus|Desk"
-  "Lantern-Driving|device|driving"
+  "PAL-Status-Busy|focus|Busy"
+  "PAL-Status-Available|focus|Available"
+  "PAL-Status-DND|focus|DND"
+  "PAL-Status-Desk|focus|Desk"
+  "PAL-Driving|device|driving"
   # Automation-driven presence:
-  "Lantern-Sleep|focus|Sleep"
-  "Lantern-Wake|focus|Available"
-  "Lantern-LowBattery|device|low_battery"
+  "PAL-Sleep|focus|Sleep"
+  "PAL-Wake|focus|Available"
+  "PAL-LowBattery|device|low_battery"
   # Geofence presence (attach to Arrive/Leave automations):
-  "Lantern-Location-Home|location|Home"
-  "Lantern-Location-Office|location|Office"
-  "Lantern-Location-Gym|location|Gym"
-  "Lantern-Location-Airport|location|Airport"
-  "Lantern-Traveling|location|Traveling"
+  "PAL-Location-Home|location|Home"
+  "PAL-Location-Office|location|Office"
+  "PAL-Location-Gym|location|Gym"
+  "PAL-Location-Airport|location|Airport"
+  "PAL-Traveling|location|Traveling"
 )
 
 TMP="$(mktemp -d)"

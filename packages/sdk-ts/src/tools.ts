@@ -2,7 +2,7 @@ import type { ToolDef } from "./types.js";
 
 export const tool = {
   web: {
-    name: "lantern.web",
+    name: "pal.web",
     description: "Web search and fetch. Search the web or fetch a URL.",
     parameters: {
       type: "object",
@@ -16,7 +16,7 @@ export const tool = {
   } satisfies ToolDef,
 
   python: {
-    name: "lantern.python",
+    name: "pal.python",
     description: "Execute Python code in a sandboxed environment.",
     parameters: {
       type: "object",
@@ -33,7 +33,7 @@ export const tool = {
   } satisfies ToolDef,
 
   fs: {
-    name: "lantern.fs",
+    name: "pal.fs",
     description: "Read and write files in the agent's scoped workspace.",
     parameters: {
       type: "object",
@@ -47,7 +47,7 @@ export const tool = {
   } satisfies ToolDef,
 
   browser: {
-    name: "lantern.browser",
+    name: "pal.browser",
     description: "Control a headless browser for web automation.",
     parameters: {
       type: "object",

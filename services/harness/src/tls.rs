@@ -6,9 +6,9 @@
 //! to the runtime-manager.  Three env vars are injected by the manager at
 //! spawn time:
 //!
-//!   - `LANTERN_VM_TLS_CERT` — path to the per-VM PEM client cert.
-//!   - `LANTERN_VM_TLS_KEY`  — path to the per-VM PEM private key.
-//!   - `LANTERN_MANAGER_TLS_CA` — path to the PEM CA that signed the
+//!   - `PAL_VM_TLS_CERT` — path to the per-VM PEM client cert.
+//!   - `PAL_VM_TLS_KEY`  — path to the per-VM PEM private key.
+//!   - `PAL_MANAGER_TLS_CA` — path to the PEM CA that signed the
 //!     manager's server cert.
 //!
 //! When all three are present, `build_client_tls_config` returns a tonic
@@ -20,13 +20,13 @@
 //!
 //! ## Prod gate
 //!
-//! `LANTERN_ENV` ∈ {prod, production, staging} → missing vars are fatal
+//! `PAL_ENV` ∈ {prod, production, staging} → missing vars are fatal
 //! (`eprintln!` + `process::exit(1)`).
 //!
 //! ## Remaining work
 //!
 //! Per-VM cert PROVISIONING: the manager must generate a cert with CN=vm_id
-//! and inject `LANTERN_VM_TLS_CERT`/`LANTERN_VM_TLS_KEY` into the
+//! and inject `PAL_VM_TLS_CERT`/`PAL_VM_TLS_KEY` into the
 //! container/VM env at spawn time.  Until that is wired, the harness runs
 //! plaintext in dev and tests.  The env-var names above are the agreed-upon
 //! contract between manager (provisioner) and harness (consumer).
@@ -47,14 +47,14 @@ pub const ENV_MANAGER_CA: &str = "PAL_MANAGER_TLS_CA";
 ///
 /// Deliberately not an address: every microVM reaches the manager on its own
 /// point-to-point link, so the IP differs per VM while the identity does not.
-pub const DEFAULT_MANAGER_SERVER_NAME: &str = "manager.lantern.internal";
+pub const DEFAULT_MANAGER_SERVER_NAME: &str = "manager.pal.internal";
 
-/// Returns `true` when `LANTERN_ENV` indicates a production-like environment.
+/// Returns `true` when `PAL_ENV` indicates a production-like environment.
 pub fn is_prod_env() -> bool {
-    is_prod_value(&pal_env::var("PAL_ENV").unwrap_or_default())
+    is_prod_value(&std::env::var("PAL_ENV").unwrap_or_default())
 }
 
-/// Whether a `LANTERN_ENV` value is production-like.
+/// Whether a `PAL_ENV` value is production-like.
 pub fn is_prod_value(v: &str) -> bool {
     matches!(v.to_lowercase().as_str(), "prod" | "production" | "staging")
 }
@@ -62,9 +62,9 @@ pub fn is_prod_value(v: &str) -> bool {
 /// Build a tonic `ClientTlsConfig` from the three env-var paths, or return
 /// `None` when any are absent (dev mode).  Exits in production if absent.
 pub fn build_client_tls_config() -> anyhow::Result<Option<ClientTlsConfig>> {
-    let cert_path = pal_env::var(ENV_VM_CERT).ok();
-    let key_path = pal_env::var(ENV_VM_KEY).ok();
-    let ca_path = pal_env::var(ENV_MANAGER_CA).ok();
+    let cert_path = std::env::var(ENV_VM_CERT).ok();
+    let key_path = std::env::var(ENV_VM_KEY).ok();
+    let ca_path = std::env::var(ENV_MANAGER_CA).ok();
 
     match (cert_path, key_path, ca_path) {
         (Some(cert), Some(key), Some(ca)) => {
@@ -96,15 +96,15 @@ pub fn build_client_tls_config() -> anyhow::Result<Option<ClientTlsConfig>> {
             if is_prod_env() {
                 eprintln!(
                     "FATAL: {ENV_VM_CERT}, {ENV_VM_KEY}, {ENV_MANAGER_CA} are required \
-                     in production (LANTERN_ENV={:?}). Refusing to start without mTLS.",
-                    pal_env::var("PAL_ENV").unwrap_or_default()
+                     in production (PAL_ENV={:?}). Refusing to start without mTLS.",
+                    std::env::var("PAL_ENV").unwrap_or_default()
                 );
                 std::process::exit(1);
             }
             tracing::warn!(
                 "mTLS client env vars ({ENV_VM_CERT}/{ENV_VM_KEY}/{ENV_MANAGER_CA}) not set; \
                  harness→manager channel is PLAINTEXT. \
-                 Set LANTERN_ENV=prod to make this fatal."
+                 Set PAL_ENV=prod to make this fatal."
             );
             Ok(None)
         }
@@ -151,8 +151,8 @@ pub fn build_client_tls_config_from_pem(
     // the endpoint happens to use. Each microVM sits on its own point-to-point
     // /30, so the manager's address differs per VM (172.16.x.1); pinning to a
     // name means one server cert covers every VM instead of needing a SAN for
-    // each allocated host IP. Override with LANTERN_MANAGER_SERVER_NAME.
-    let server_name = pal_env::var("PAL_MANAGER_SERVER_NAME")
+    // each allocated host IP. Override with PAL_MANAGER_SERVER_NAME.
+    let server_name = std::env::var("PAL_MANAGER_SERVER_NAME")
         .unwrap_or_else(|_| DEFAULT_MANAGER_SERVER_NAME.to_string());
 
     let config = ClientTlsConfig::new()
@@ -189,7 +189,7 @@ mod tests {
     /// Valid PEM triplet produces a ClientTlsConfig without error.
     #[test]
     fn client_tls_config_built_from_valid_pem() {
-        let (ca_pem, _) = make_cert_for("ca.lantern.internal");
+        let (ca_pem, _) = make_cert_for("ca.pal.internal");
         let (cert_pem, key_pem) = make_cert_for("vm-abc123");
 
         let result = build_client_tls_config_from_pem(&cert_pem, &key_pem, &ca_pem);
@@ -199,7 +199,7 @@ mod tests {
     /// Empty client cert PEM is rejected.
     #[test]
     fn client_tls_config_rejects_empty_cert_pem() {
-        let (ca_pem, _) = make_cert_for("ca.lantern.internal");
+        let (ca_pem, _) = make_cert_for("ca.pal.internal");
         let (_, key_pem) = make_cert_for("vm-abc123");
 
         let result = build_client_tls_config_from_pem(b"", &key_pem, &ca_pem);
@@ -225,7 +225,7 @@ mod tests {
             );
             assert_eq!(
                 result, expected,
-                "LANTERN_ENV={val:?} should be prod={expected}"
+                "PAL_ENV={val:?} should be prod={expected}"
             );
         };
         check("prod", true);

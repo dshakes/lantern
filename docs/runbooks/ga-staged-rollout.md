@@ -14,8 +14,8 @@ These five were left as explicit opt-ins (not auto-on) because each either needs
 **Enable (one-time + env):**
 ```sql
 -- give the non-superuser app role a real password (it is subject to RLS;
--- the privileged `lantern` superuser bypasses it)
-ALTER ROLE lantern_app PASSWORD '<strong-random>';
+-- the privileged `pal` superuser bypasses it)
+ALTER ROLE pal_app PASSWORD '<strong-random>';
 ```
 ```bash
 # control-plane env
@@ -27,7 +27,7 @@ Restart the control-plane.
 **Verify (DB-gated — needs a real Postgres):**
 ```bash
 cd services/control-plane
-DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable \
+DATABASE_URL=postgres://pal:pal@localhost:5432/pal?sslmode=disable \
   go test ./internal/db -run TestRLSEnforcement -count=1
 ```
 Proves cross-tenant reads/writes are denied and same-tenant works. `TestRLSEnforcement_AllTenantTables` is the permanent catalog gate — a new tenant table without RLS (or an explicit exemption) fails it.
@@ -77,7 +77,7 @@ Without `KUBECONFIG` the Kata legs skip (not fail) — by design.
 
 ## 4 · In-VM tool runtime — ADR&nbsp;0015
 
-**State (honest):** `RuntimeManager.ExecTool` validates the request and returns `TOOL_STATUS_UNAVAILABLE` — **fail-closed, never a fabricated success** — because there is no in-guest *typed* tool runner yet. The harness serves a raw `Exec` shell channel (the one `lantern vm exec` uses), not a typed tool registry. `tool_call` workflow steps therefore fail with the typed `ErrRuntimeManagerUnavailable` rather than faking output.
+**State (honest):** `RuntimeManager.ExecTool` validates the request and returns `TOOL_STATUS_UNAVAILABLE` — **fail-closed, never a fabricated success** — because there is no in-guest *typed* tool runner yet. The harness serves a raw `Exec` shell channel (the one `pal vm exec` uses), not a typed tool registry. `tool_call` workflow steps therefore fail with the typed `ErrRuntimeManagerUnavailable` rather than faking output.
 
 **Remaining work (the last mile):** an in-guest tool runner baked into the VM image that the manager forwards `exec_tool` to, mapping a typed tool registry over the existing exec channel. This is a Rust change in `services/harness` + `services/runtime-manager`; building the VM image and validating the in-guest run end-to-end requires the Kata/Firecracker substrate from §3 (it cannot be E2E-validated on a dev laptop), so it stays explicitly `UNAVAILABLE` until that lands.
 
@@ -103,16 +103,16 @@ Audit of every API-key caller (grep of the repo; routes from `cmd/server/main.go
 | Caller | Credential | Endpoints / scope it needs | Action |
 | --- | --- | --- | --- |
 | Gateway (`services/gateway`, `introspect.rs`) | `X-API-Key` → `/internal/auth/introspect-key` → scopes in claims | Enforces scopes from the key's own list on whatever the client calls | None for the gateway itself; the clients' keys below matter |
-| TS / Python / Go SDKs, `lantern` CLI (`PAL_API_KEY`) | Bearer API key | Management calls: `agents:write` (agents, schedules, deployments, workflow, mcp attach, eval suites/baselines, experiments, marketplace), `runs:execute` (runs, sessions, completions, connector execute, forecast, a2a), `runs:write` (receipts, feedback, rehearse, eval-runs, takeover), `budgets:write`, `connectors:write`, `settings:write` (surfaces, llm-providers, voice numbers), `admin` (api-keys, data-planes, tenant delete) | **Re-scope** any key minted with a narrow list: list with `GET /v1/api-keys`, confirm each key's `scopes` covers what its owner's scripts call. Prefer coarse `write` for CI deploy keys; `admin` only where api-keys/data-planes are used |
+| TS / Python / Go SDKs, `pal` CLI (`PAL_API_KEY`) | Bearer API key | Management calls: `agents:write` (agents, schedules, deployments, workflow, mcp attach, eval suites/baselines, experiments, marketplace), `runs:execute` (runs, sessions, completions, connector execute, forecast, a2a), `runs:write` (receipts, feedback, rehearse, eval-runs, takeover), `budgets:write`, `connectors:write`, `settings:write` (surfaces, llm-providers, voice numbers), `admin` (api-keys, data-planes, tenant delete) | **Re-scope** any key minted with a narrow list: list with `GET /v1/api-keys`, confirm each key's `scopes` covers what its owner's scripts call. Prefer coarse `write` for CI deploy keys; `admin` only where api-keys/data-planes are used |
 | `examples/eval-gated-deploy/scripts/{eval,release}.sh`, `scripts/bench/runtime-latency.sh` | Bearer key | `eval-runs` = `runs:write`, `eval-baselines` + deploy = `agents:write`; bench = runtime routes | Key needs `runs:write` + `agents:write` (bench: runtime routes have their own `runtime:*` checks, unchanged) |
 | WhatsApp / iMessage bridges (`bridge-core/src/auth.ts`) | `PAL_API_TOKEN` (JWT) or credential login (JWT) | Writes to `/v1/people/*`, `/v1/memory/events`, `/v1/life-events`, `/v1/commitments`, `/v1/completions`, sessions | **None** — JWT sessions pass. Re-scope only if an operator replaced the token with a scoped API key: then it needs `write` + `runs:execute` |
 | surface-gateway | gRPC to control-plane under `PAL_GRPC_SERVICE_TOKEN` | not the HTTP `WithScope` path | None |
-| runtime-manager relay (`report_forwarder.rs`) | `X-Lantern-Runtime-Token` | `/v1/runtime/secrets/resolve`, own token auth | None |
+| runtime-manager relay (`report_forwarder.rs`) | `X-Pal-Runtime-Token` | `/v1/runtime/secrets/resolve`, own token auth | None |
 | Dashboard (`apps/web`) | HttpOnly-cookie JWT | all | None |
 | Kiosk visitors | kiosk token | see above | Expected: 403 on write-class routes outside its list |
 | Third-party webhooks (Twilio, Slack, WhatsApp heartbeat, signals) | their own shared-secret/signature auth | not `WithScope` | None |
 
-To find keys at risk in the target DB (read-only; run as the `lantern` role, not through the app):
+To find keys at risk in the target DB (read-only; run as the `pal` role, not through the app):
 
 ```sql
 SELECT tenant_id, name, key_prefix, scopes, last_used_at FROM api_keys

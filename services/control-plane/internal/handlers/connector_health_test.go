@@ -107,11 +107,3 @@ func TestIsConnectorNeedsReauth_UnwrapsWrapped(t *testing.T) {
 		t.Fatal("detection must work through fmt.Errorf wrapping")
 	}
 }
-
-// ADR 0032: the classifier recognises the missing-key error under the legacy
-// key name too (the secrets package may still name LANTERN_CREDENTIAL_KEY).
-func TestPermanentCredentialFailure_MissingKeyLegacyName(t *testing.T) {
-	if _, permanent := permanentCredentialFailure(errors.New("credential is encrypted but LANTERN_CREDENTIAL_KEY is not set")); !permanent {
-		t.Fatal("legacy key-name error must classify as permanent")
-	}
-}

@@ -129,8 +129,8 @@ secrets:
   jwtSecret: "dev-jwt-secret-not-for-production"
   openaiApiKey: "sk-dev-placeholder"
   anthropicApiKey: "sk-ant-dev-placeholder"
-  postgresPassword: "lantern-dev"
-  minioPassword: "lantern-dev-secret"
+  postgresPassword: "pal-dev"
+  minioPassword: "pal-dev-secret"
 
 serviceAccount:
   create: true

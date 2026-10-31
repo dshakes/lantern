@@ -2,7 +2,7 @@
 --
 -- agent_triggers: one public endpoint (POST /v1/hooks/{id}) bound to one agent.
 -- secret_enc is an internal/secrets envelope (AES-256-GCM when
--- LANTERN_CREDENTIAL_KEY is set) — never logged, never returned by list/get.
+-- PAL_CREDENTIAL_KEY is set) — never logged, never returned by list/get.
 --
 -- agent_trigger_deliveries: the idempotency ledger. A delivery is unique per
 -- trigger on BOTH the provider delivery id and a hash of the signed bytes, so a
@@ -49,5 +49,5 @@ CREATE POLICY tenant_isolation ON agent_trigger_deliveries
 	USING (tenant_id::text = current_setting('app.tenant_id', true))
 	WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON agent_triggers TO lantern_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON agent_trigger_deliveries TO lantern_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON agent_triggers TO pal_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON agent_trigger_deliveries TO pal_app;

@@ -22,13 +22,12 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
-
-	"github.com/dshakes/lantern/packages/palenv"
 )
 
 // callbackMaxAttempts is the number of delivery tries before giving up.
@@ -52,7 +51,7 @@ var errSSRF = errors.New("callback URL blocked: target is a private/loopback/met
 // Returns an error when PAL_CALLBACK_SIGNING_SECRET is unset; callers skip
 // delivery in that case (startup guard ensures prod always has the secret set).
 func callbackSigningSecret(tenantID string) ([]byte, error) {
-	root := palenv.Get("CALLBACK_SIGNING_SECRET")
+	root := os.Getenv("PAL_CALLBACK_SIGNING_SECRET")
 	if root == "" {
 		if isProd() {
 			// runStartupGuards() should have caught this; be defensive.
@@ -236,8 +235,8 @@ func deliverCallbackVia(ctx context.Context, client *http.Client, payload callba
 		return fmt.Errorf("callbacks: build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Lantern-Signature", "v1="+sig)
-	req.Header.Set("X-Lantern-Run-ID", payload.RunID)
+	req.Header.Set("X-Pal-Signature", "v1="+sig)
+	req.Header.Set("X-Pal-Run-ID", payload.RunID)
 
 	resp, err := client.Do(req)
 	if err != nil {

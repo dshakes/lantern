@@ -21,7 +21,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"gopkg.in/yaml.v3"
 
-	"github.com/dshakes/lantern/e2e/internal/e2ekit"
+	"github.com/dshakes/pal/e2e/internal/e2ekit"
 )
 
 // need returns env[key]; when unset it fails the test (or skips under
@@ -60,7 +60,7 @@ type replayRequest struct {
 
 func replayRequests(t *testing.T) []replayRequest {
 	t.Helper()
-	resp, err := http.Get(need(t, "LANTERN_E2E_REPLAY_URL") + "/__requests")
+	resp, err := http.Get(need(t, "PAL_E2E_REPLAY_URL") + "/__requests")
 	if err != nil {
 		t.Fatalf("GET /__requests: %v", err)
 	}

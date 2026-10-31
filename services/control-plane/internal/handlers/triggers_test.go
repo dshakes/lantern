@@ -7,7 +7,7 @@ package handlers
 // DB-backed (skip when DATABASE_URL is unset): CRUD, cross-tenant 404, every
 // provider end-to-end, bad signature, replay, duplicate delivery, disabled
 // hook, budget 402, per-hook rate limit, missing scope 403, and RLS enforced on
-// the lantern_app pool.
+// the pal_app pool.
 
 import (
 	"bytes"
@@ -27,8 +27,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 const hookTestSecret = "whsec_test_secret_0123456789abcdef"
@@ -100,7 +100,7 @@ func TestVerifyHookDelivery(t *testing.T) {
 		{"sentry non-hex sig", "sentry", body, http.Header{"Sentry-Hook-Signature": {"zz-not-hex"}}, true, "", ""},
 		{"generic stale timestamp", "generic", body, signedHookHeaders("generic", hookTestSecret, body, "g", now.Add(-6*time.Minute)), true, "", ""},
 		{"generic future timestamp", "generic", body, signedHookHeaders("generic", hookTestSecret, body, "g", now.Add(6*time.Minute)), true, "", ""},
-		{"generic no timestamp", "generic", body, http.Header{"X-Lantern-Signature": {"v1=" + hmacHex(hookTestSecret, body)}}, true, "", ""},
+		{"generic no timestamp", "generic", body, http.Header{"X-Pal-Signature": {"v1=" + hmacHex(hookTestSecret, body)}}, true, "", ""},
 		{"unknown provider", "gitlab", body, signedHookHeaders("github", hookTestSecret, body, "g", now), true, "", ""},
 	}
 	for _, tc := range tests {
@@ -212,7 +212,7 @@ func TestHookRunInput_DefaultAndNonJSON(t *testing.T) {
 }
 
 func TestRunTriggerKind_DefaultsToAPI(t *testing.T) {
-	if k := runTriggerKind(context.Background()); k != lanternv1.TriggerKind_TRIGGER_KIND_API {
+	if k := runTriggerKind(context.Background()); k != palv1.TriggerKind_TRIGGER_KIND_API {
 		t.Errorf("default kind = %v, want API", k)
 	}
 }
@@ -273,7 +273,7 @@ func seedTriggerTenant(t *testing.T, env *triggerEnv, agentName string) string {
 	id := uuid.NewString()
 	if _, err := pool.Exec(context.Background(), `
 		INSERT INTO tenants (id, slug, name, tier, k8s_namespace)
-		VALUES ($1, $2, 'Trigger Test', 'personal', 'lantern-t-' || $2)`, id, "trg-"+id[:8]); err != nil {
+		VALUES ($1, $2, 'Trigger Test', 'personal', 'pal-t-' || $2)`, id, "trg-"+id[:8]); err != nil {
 		t.Fatalf("seed tenant: %v", err)
 	}
 	cleanupAgent := ensureAgentForBudgetTest(t, env.rest, id, agentName)
@@ -669,7 +669,7 @@ func TestTriggers_MissingScope403(t *testing.T) {
 }
 
 // TestRLSTriggers_EnforcedAppPool runs CRUD and a delivery with the handler's
-// tenant-scoped work on the lantern_app pool, where RLS genuinely applies —
+// tenant-scoped work on the pal_app pool, where RLS genuinely applies —
 // proving both the policies and the GRANTs in migration 0024.
 func TestRLSTriggers_EnforcedAppPool(t *testing.T) {
 	e := newEnforcedServer(t)
@@ -700,27 +700,5 @@ func TestRLSTriggers_EnforcedAppPool(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("tenant B sees %d of tenant A's deliveries", n)
-	}
-}
-
-// ADR 0032: a generic sender configured before the rename signs with the
-// X-Lantern-* names; those still verify and carry the delivery id + event.
-func TestVerifyHookDelivery_GenericLegacyHeaderNames(t *testing.T) {
-	now := time.Now()
-	body := []byte(`{"ok":true}`)
-	pal := signedHookHeaders("generic", hookTestSecret, body, "dlv-1", now)
-	legacy := http.Header{}
-	for k, v := range pal {
-		legacy[strings.Replace(k, "X-Pal-", "X-Lantern-", 1)] = v
-	}
-	if _, ok := legacy["X-Lantern-Signature"]; !ok {
-		t.Fatalf("fixture did not produce legacy names: %v", legacy)
-	}
-	d, err := verifyHookDelivery("generic", hookTestSecret, legacy, body, now)
-	if err != nil {
-		t.Fatalf("legacy-signed delivery rejected: %v", err)
-	}
-	if d.ID != "dlv-1" || d.Event != "custom.event" {
-		t.Errorf("legacy delivery fields: %+v", d)
 	}
 }

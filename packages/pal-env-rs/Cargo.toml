@@ -1,8 +1,0 @@
-[package]
-name = "pal_env"
-version = "0.1.0"
-edition = "2024"
-description = "Read PAL_X with LANTERN_X fallback (ADR 0032 env compat)"
-publish = false
-
-[dependencies]

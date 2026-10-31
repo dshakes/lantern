@@ -24,7 +24,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dshakes/lantern/packages/palenv"
 	"go.uber.org/zap"
 )
 
@@ -34,9 +33,8 @@ const e2eImage = "python:3.11-slim"
 
 func runtimeE2EOrSkip(t *testing.T) (schedAddr string) {
 	t.Helper()
-	// The CI gate (and older docs) set LANTERN_*; a test binary has no main()
+	// The CI gate (and older docs) set PAL_*; a test binary has no main()
 	// to run the compat bridge, so mirror them here or the gate silently skips.
-	palenv.Bridge()
 	if os.Getenv("PAL_RUNTIME_E2E") != "1" {
 		t.Skip("PAL_RUNTIME_E2E != 1 — skipping live runtime exec e2e")
 	}
@@ -130,14 +128,14 @@ func TestRuntimeExecE2E_RealVM(t *testing.T) {
 	vmID, node := scheduleE2EVM(tctx, t, c, tenantID)
 
 	t.Run("stdout is real command output", func(t *testing.T) {
-		stdout, stderr, exit, err := c.Exec(tctx, node, vmID, "/bin/sh", []string{"-c", "echo lantern-e2e-marker"})
+		stdout, stderr, exit, err := c.Exec(tctx, node, vmID, "/bin/sh", []string{"-c", "echo pal-e2e-marker"})
 		if err != nil {
 			t.Fatalf("Exec: %v (stderr=%q)", err, stderr)
 		}
 		if exit != 0 {
 			t.Errorf("exit = %d, want 0 (stderr=%q)", exit, stderr)
 		}
-		if !strings.Contains(stdout, "lantern-e2e-marker") {
+		if !strings.Contains(stdout, "pal-e2e-marker") {
 			t.Errorf("stdout = %q, want it to contain the echoed marker", stdout)
 		}
 		// The old stub answered every exec with this, and claimed success.
@@ -189,10 +187,10 @@ func TestRuntimeExecE2E_RealVM(t *testing.T) {
 	t.Run("filesystem writes persist across execs", func(t *testing.T) {
 		// This is the property the deepagents sandbox backend depends on:
 		// write in one exec, read it back in the next.
-		if _, stderr, exit, err := c.Exec(tctx, node, vmID, "/bin/sh", []string{"-c", "echo persisted > /tmp/lantern-e2e.txt"}); err != nil || exit != 0 {
+		if _, stderr, exit, err := c.Exec(tctx, node, vmID, "/bin/sh", []string{"-c", "echo persisted > /tmp/pal-e2e.txt"}); err != nil || exit != 0 {
 			t.Fatalf("write exec: err=%v exit=%d stderr=%q", err, exit, stderr)
 		}
-		stdout, stderr, exit, err := c.Exec(tctx, node, vmID, "/bin/sh", []string{"-c", "cat /tmp/lantern-e2e.txt"})
+		stdout, stderr, exit, err := c.Exec(tctx, node, vmID, "/bin/sh", []string{"-c", "cat /tmp/pal-e2e.txt"})
 		if err != nil || exit != 0 {
 			t.Fatalf("read exec: err=%v exit=%d stderr=%q", err, exit, stderr)
 		}

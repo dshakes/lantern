@@ -18,9 +18,9 @@ TRUST MODEL:
     permitted broad egress. Compromising an agent pod does not yield raw
     credentials — those live at the proxy.
 
-Targets pods labelled lantern.dev/agent=true (the runtime-manager stamps agent
+Targets pods labelled pal.dev/agent=true (the runtime-manager stamps agent
 workload pods; adjust egress.cilium.podSelector to match your label). Scope is
-clusterwide by default so it covers every lantern-t-* namespace; flip
+clusterwide by default so it covers every pal-t-* namespace; flip
 egress.cilium.scope to "namespaced" to emit a per-namespace CiliumNetworkPolicy
 instead (set egress.cilium.namespace).
 
@@ -28,7 +28,7 @@ REQUIRES: Cilium CNI installed with policy enforcement. These are Cilium CRDs;
 `helm template` renders them, `kubectl apply` needs the Cilium CRDs present.
 */ -}}
 {{- if .Values.egress.cilium.enabled }}
-{{- $podSel := .Values.egress.cilium.podSelector | default (dict "lantern.dev/agent" "true") }}
+{{- $podSel := .Values.egress.cilium.podSelector | default (dict "pal.dev/agent" "true") }}
 {{- if eq (.Values.egress.cilium.scope | default "cluster") "cluster" }}
 apiVersion: cilium.io/v2
 kind: CiliumClusterwideNetworkPolicy
@@ -36,16 +36,16 @@ metadata:
   name: {{ include "pal-dp.fullname" . }}-agent-egress
   labels:
     {{- include "pal-dp.labels" . | nindent 4 }}
-    lantern.dev/policy: agent-egress
+    pal.dev/policy: agent-egress
 {{- else }}
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
   name: {{ include "pal-dp.fullname" . }}-agent-egress
-  namespace: {{ .Values.egress.cilium.namespace | default "lantern-system" | quote }}
+  namespace: {{ .Values.egress.cilium.namespace | default "pal-system" | quote }}
   labels:
     {{- include "pal-dp.labels" . | nindent 4 }}
-    lantern.dev/policy: agent-egress
+    pal.dev/policy: agent-egress
 {{- end }}
 spec:
   endpointSelector:
@@ -67,10 +67,10 @@ spec:
             - port: "53"
               protocol: TCP
     # 2. The runtime-manager / control-plane channel (heartbeats, logs, mTLS
-    #    secret vend) — gRPC :50054 to the lantern-system namespace.
+    #    secret vend) — gRPC :50054 to the pal-system namespace.
     - toEndpoints:
         - matchLabels:
-            k8s:io.kubernetes.pod.namespace: {{ .Values.egress.cilium.systemNamespace | default "lantern-system" | quote }}
+            k8s:io.kubernetes.pod.namespace: {{ .Values.egress.cilium.systemNamespace | default "pal-system" | quote }}
       toPorts:
         - ports:
             - port: "50054"
@@ -80,8 +80,8 @@ spec:
     #    the fence. Agent outbound to the wider internet must traverse this.
     - toEndpoints:
         - matchLabels:
-            k8s:io.kubernetes.pod.namespace: {{ .Values.egress.proxy.namespace | default "lantern-system" | quote }}
-            app.kubernetes.io/name: lantern-egress-proxy
+            k8s:io.kubernetes.pod.namespace: {{ .Values.egress.proxy.namespace | default "pal-system" | quote }}
+            app.kubernetes.io/name: pal-egress-proxy
       toPorts:
         - ports:
             - port: {{ .Values.egress.proxy.port | default 3128 | quote }}

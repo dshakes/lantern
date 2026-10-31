@@ -15,8 +15,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DC="docker compose -f $ROOT/infra/docker/docker-compose.yml"
-PSQL="$DC exec -T postgres psql -U lantern -d lantern"
-DB_URL="postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable"
+PSQL="$DC exec -T postgres psql -U pal -d pal"
+DB_URL="postgres://pal:pal@localhost:5432/pal?sslmode=disable"
 TENANT="00000000-0000-0000-0000-000000000001"
 
 CP_BIN="/tmp/pal-cp-smoke"; AGENT_BIN="/tmp/pal-dpa-smoke"
@@ -51,7 +51,7 @@ echo "==> [2/9] build control-plane + data-plane-agent (CGO off)"
 echo "==> [3/9] free ports + start control-plane (:8080 REST, :50051 gRPC)"
 bash "$ROOT/scripts/kill-port.sh" 8080 50051 8090 >/dev/null 2>&1 || true
 DATABASE_URL="$DB_URL" REDIS_URL="redis://localhost:6379" S3_ENDPOINT="http://localhost:9000" \
-  JWT_SECRET="lantern-dev-jwt-secret-do-not-use-in-production" LOG_LEVEL="info" \
+  JWT_SECRET="pal-dev-jwt-secret-do-not-use-in-production" LOG_LEVEL="info" \
   "$CP_BIN" >"$CP_LOG" 2>&1 &
 CP_PID=$!
 for i in $(seq 1 45); do curl -fsS "http://localhost:8080/healthz" >/dev/null 2>&1 && break; [ "$i" = 45 ] && fail "control-plane not healthy"; sleep 1; done
@@ -59,7 +59,7 @@ echo "    control-plane up (pid $CP_PID)"
 
 echo "==> [4/9] login (dev admin)"
 TOKEN=$(curl -fsS -X POST "http://localhost:8080/auth/login" -H "Content-Type: application/json" \
-  -d '{"email":"admin@lantern.dev","password":"lantern"}' | jget token) || fail "login request"
+  -d '{"email":"admin@pal.local","password":"pal"}' | jget token) || fail "login request"
 [ -n "$TOKEN" ] || fail "empty login token"
 
 echo "==> [5/9] register a data plane (POST /v1/data-planes)"

@@ -1,6 +1,6 @@
 // Command connector-replay serves recorded vendor API fixtures for local
 // examples/e2e: run it, then point the control-plane at it with
-// LANTERN_CONNECTOR_BASEURL_<SLACK|GITHUB|SENTRY|GOOGLE|PAGERDUTY>=http://127.0.0.1:<port>.
+// PAL_CONNECTOR_BASEURL_<SLACK|GITHUB|SENTRY|GOOGLE|PAGERDUTY>=http://127.0.0.1:<port>.
 // Recorded calls are readable at GET /__requests.
 package main
 
@@ -10,12 +10,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/dshakes/lantern/packages/palenv"
-	"github.com/dshakes/lantern/services/control-plane/internal/connectorreplay"
+	"github.com/dshakes/pal/services/control-plane/internal/connectorreplay"
 )
 
 func main() {
-	palenv.Bridge()
 	addr := flag.String("addr", "127.0.0.1:9191", "listen address (loopback by default)")
 	flag.Parse()
 	s, err := connectorreplay.New()

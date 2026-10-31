@@ -21,7 +21,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
 )
 
 const introspectServiceTokenEnv = "PAL_GRPC_SERVICE_TOKEN"

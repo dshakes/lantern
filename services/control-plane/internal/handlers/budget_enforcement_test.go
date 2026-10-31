@@ -6,7 +6,7 @@ package handlers
 //
 // Skipped automatically when DATABASE_URL is unset. Run with:
 //
-//	DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern_ga1?sslmode=disable \
+//	DATABASE_URL=postgres://pal:pal@localhost:5432/pal_ga1?sslmode=disable \
 //	  go test -race -run TestBudget ./internal/handlers/ -v -count=1
 
 import (
@@ -19,8 +19,8 @@ import (
 
 	"go.uber.org/zap"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // ---------------------------------------------------------------------------
@@ -96,7 +96,7 @@ func ensureAgentForBudgetTest(t *testing.T, h *RESTHandler, tenantID, agentName 
 	ctx := tenantCtx(tenantID)
 	pool := h.srv.Pool
 
-	_, _ = h.agentSvc.CreateAgent(ctx, &lanternv1.CreateAgentRequest{
+	_, _ = h.agentSvc.CreateAgent(ctx, &palv1.CreateAgentRequest{
 		Name: agentName, Description: "budget test agent",
 	})
 

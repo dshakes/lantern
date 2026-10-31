@@ -6,7 +6,7 @@
 
 ## Context
 
-We want `lantern demo`: a clean clone reaches a guided tour in minutes, on a booth
+We want `pal demo`: a clean clone reaches a guided tour in minutes, on a booth
 machine or a public demo host, with no account and **no LLM provider key**. That
 means anonymous visitors get a working workspace. This is a trust-boundary change:
 the control plane mints tenants and credentials with no human sign-up.

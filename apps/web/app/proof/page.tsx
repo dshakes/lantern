@@ -5,7 +5,7 @@
 // Lives outside the (dashboard) route group so it's reachable without
 // auth. Paste a PAL signed receipt JSON; the page verifies it
 // against the control-plane's public key (exposed at
-// /v1/.well-known/lantern-receipts) and shows whether the signature
+// /v1/.well-known/pal-receipts) and shows whether the signature
 // matches. This is the consumer-visible side of verifiable receipts:
 // when an agent runs against a user's WhatsApp, the receipt is what
 // the user can later show to prove what happened.
@@ -178,7 +178,7 @@ export default function ProofPage() {
         <section className="text-[11px] text-zinc-500">
           The signing key fingerprint is published at{" "}
           <code className="rounded bg-surface-2 px-1 text-zinc-400">
-            /.well-known/lantern-receipts
+            /.well-known/pal-receipts
           </code>
           . External verifiers can replicate the algorithm offline using the
           published JWS / HMAC scheme.

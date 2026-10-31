@@ -1,5 +1,6 @@
 "use client";
 
+import { usePublicUrls } from "@/lib/public-url";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { format } from "date-fns";
@@ -212,6 +213,7 @@ function saveSharing(n: string, cfg: SharingConfig) { if (typeof window === "und
 // ---------------------------------------------------------------------------
 
 export default function AgentDetailPage() {
+  const { apiBase } = usePublicUrls();
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -2029,8 +2031,8 @@ export default function AgentDetailPage() {
               <div className="border-t border-zinc-800 pt-4 space-y-2">
                 <h4 className="flex items-center gap-2 text-xs font-medium text-zinc-300"><Webhook className="h-3.5 w-3.5 text-blue-400" /> Webhook</h4>
                 <div className="flex items-center gap-2">
-                  <code className="flex-1 rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 font-mono text-xs text-zinc-400 select-all">https://api.lantern.dev/v1/agents/{name}/trigger</code>
-                  <button onClick={() => navigator.clipboard.writeText(`https://api.lantern.dev/v1/agents/${name}/trigger`)} className="rounded-lg border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-surface-3">Copy</button>
+                  <code className="flex-1 rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 font-mono text-xs text-zinc-400 select-all">{apiBase}/v1/agents/{name}/trigger</code>
+                  <button onClick={() => navigator.clipboard.writeText(`${apiBase}/v1/agents/${name}/trigger`)} className="rounded-lg border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-surface-3">Copy</button>
                 </div>
               </div>
 
@@ -2301,8 +2303,8 @@ export default function AgentDetailPage() {
                   <div>
                     <label className="mb-1 block text-xs text-zinc-400">Shareable URL</label>
                     <div className="flex items-center gap-2">
-                      <code className="flex-1 truncate rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 font-mono text-xs text-zinc-400 select-all">https://lantern.run/agents/public/{sharing.publicId}</code>
-                      <button onClick={() => { navigator.clipboard.writeText(`https://lantern.run/agents/public/${sharing.publicId}`); toast.success("Link copied"); }} className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-surface-3">
+                      <code className="flex-1 truncate rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 font-mono text-xs text-zinc-400 select-all">https://dshakes.github.io/pal/agents/public/{sharing.publicId}</code>
+                      <button onClick={() => { navigator.clipboard.writeText(`https://dshakes.github.io/pal/agents/public/${sharing.publicId}`); toast.success("Link copied"); }} className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-surface-3">
                         <Copy className="h-3 w-3" /> Copy
                       </button>
                     </div>
@@ -2336,15 +2338,15 @@ export default function AgentDetailPage() {
                   <div>
                     <label className="mb-1 block text-xs text-zinc-400">Agent Card URL</label>
                     <div className="flex items-center gap-2">
-                      <code className="flex-1 truncate rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 font-mono text-xs text-zinc-400 select-all">https://api.lantern.run/v1/agents/{name}/card</code>
-                      <button onClick={() => { navigator.clipboard.writeText(`https://api.lantern.run/v1/agents/${name}/card`); toast.success("Card URL copied"); }} className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-surface-3">
+                      <code className="flex-1 truncate rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 font-mono text-xs text-zinc-400 select-all">{apiBase}/v1/agents/{name}/card</code>
+                      <button onClick={() => { navigator.clipboard.writeText(`${apiBase}/v1/agents/${name}/card`); toast.success("Card URL copied"); }} className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-surface-3">
                         <Copy className="h-3 w-3" /> Copy
                       </button>
                     </div>
                   </div>
                   <div>
                     <label className="mb-1 block text-xs text-zinc-400">Agent Card Preview</label>
-                    <pre className="rounded-lg border border-zinc-800 bg-surface-0 p-3 font-mono text-[11px] text-zinc-500 overflow-x-auto leading-relaxed max-h-40 overflow-y-auto">{JSON.stringify({ name, description: agent?.description || "", version: "0.1.0", capabilities: ["text-generation"], endpoint: `https://api.lantern.run/v1/agents/${name}/a2a/invoke`, auth: { type: "bearer", description: "PAL API key" }, inputSchema: (() => { try { return JSON.parse(a2aInputSchema); } catch { return {}; } })(), outputSchema: (() => { try { return JSON.parse(a2aOutputSchema); } catch { return {}; } })(), provider: { name: "PAL", url: "https://lantern.run" } }, null, 2)}</pre>
+                    <pre className="rounded-lg border border-zinc-800 bg-surface-0 p-3 font-mono text-[11px] text-zinc-500 overflow-x-auto leading-relaxed max-h-40 overflow-y-auto">{JSON.stringify({ name, description: agent?.description || "", version: "0.1.0", capabilities: ["text-generation"], endpoint: `${apiBase}/v1/agents/${name}/a2a/invoke`, auth: { type: "bearer", description: "PAL API key" }, inputSchema: (() => { try { return JSON.parse(a2aInputSchema); } catch { return {}; } })(), outputSchema: (() => { try { return JSON.parse(a2aOutputSchema); } catch { return {}; } })(), provider: { name: "PAL", url: "https://dshakes.github.io/pal" } }, null, 2)}</pre>
                   </div>
                   <div>
                     <label className="mb-1 block text-xs text-zinc-400">Input Schema (JSON)</label>
@@ -2377,8 +2379,8 @@ export default function AgentDetailPage() {
                   <div>
                     <label className="mb-1 block text-xs text-zinc-400">Live URL</label>
                     <div className="flex items-center gap-2">
-                      <code className="flex-1 truncate rounded-lg border border-emerald-500/20 bg-surface-0 px-3 py-2 font-mono text-xs text-emerald-400 select-all">{cloudDeployUrl || (typeof window !== "undefined" && window.location.hostname === "localhost" ? `http://localhost:8080/v1/agents/${name}/a2a/invoke` : `https://agents.lantern.run/${name}`)}</code>
-                      <button onClick={() => { navigator.clipboard.writeText(cloudDeployUrl || `https://agents.lantern.run/${name}`); toast.success("URL copied"); }} className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-surface-3">
+                      <code className="flex-1 truncate rounded-lg border border-emerald-500/20 bg-surface-0 px-3 py-2 font-mono text-xs text-emerald-400 select-all">{cloudDeployUrl || `${apiBase}/v1/agents/${name}/a2a/invoke`}</code>
+                      <button onClick={() => { navigator.clipboard.writeText(cloudDeployUrl || `${apiBase}/v1/agents/${name}/a2a/invoke`); toast.success("URL copied"); }} className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-surface-3">
                         <Copy className="h-3 w-3" /> Copy
                       </button>
                     </div>

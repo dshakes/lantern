@@ -31,8 +31,6 @@
 // or launchd — without baking PII into the repo. Node 20.12+/21.7+
 // native loader; no dependency. Looks next to the service dir first,
 // then ~/.pal/imessage.env as a fallback.
-// FIRST import: mirrors PAL_X <-> LANTERN_X before any module reads the env (ADR 0032).
-import { bridgeEnv } from "@pal/bridge-core/env-compat";
 import { existsSync as _existsSync } from "node:fs";
 import { join as _join, dirname as _dirname } from "node:path";
 import { fileURLToPath as _fileURLToPath } from "node:url";
@@ -53,8 +51,6 @@ import { palStateDir } from "@pal/bridge-core/state-dir";
       }
     }
   }
-  // The env files may add LANTERN_/PAL_ keys the import-time bridge never saw.
-  bridgeEnv();
 }
 
 import express from "express";

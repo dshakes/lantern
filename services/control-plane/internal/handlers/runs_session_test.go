@@ -5,13 +5,13 @@ package handlers
 // Skipped automatically when DATABASE_URL is unset (same convention as
 // rest_subagent_test.go / runtime_test.go). Run with:
 //
-//	DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable \
+//	DATABASE_URL=postgres://pal:pal@localhost:5432/pal?sslmode=disable \
 //	  go test -run TestSession ./internal/handlers/ -v -count=1
 
 import (
 	"testing"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
 )
 
 // ensureAgentWithVersionForSession creates (or reuses) a test agent with a
@@ -22,7 +22,7 @@ func ensureAgentWithVersionForSession(t *testing.T, h *RESTHandler, agentName st
 	ctx := tenantCtx(devTenantID)
 	pool := h.srv.Pool
 
-	_, _ = h.agentSvc.CreateAgent(ctx, &lanternv1.CreateAgentRequest{
+	_, _ = h.agentSvc.CreateAgent(ctx, &palv1.CreateAgentRequest{
 		Name:        agentName,
 		Description: "session grouping test agent",
 	})
@@ -87,10 +87,10 @@ func TestRunService_CreateRun_ExplicitSessionId(t *testing.T) {
 
 	fakeSessionID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
-	run, err := h.runSvc.CreateRun(ctx, &lanternv1.CreateRunRequest{
+	run, err := h.runSvc.CreateRun(ctx, &palv1.CreateRunRequest{
 		AgentName:   agentName,
 		SessionId:   fakeSessionID,
-		TriggerKind: lanternv1.TriggerKind_TRIGGER_KIND_API,
+		TriggerKind: palv1.TriggerKind_TRIGGER_KIND_API,
 	})
 	if err != nil {
 		t.Fatalf("CreateRun with sessionId: %v", err)
@@ -115,9 +115,9 @@ func TestRunService_CreateRun_ExplicitSessionId(t *testing.T) {
 	}
 
 	// Run without sessionId → NULL in DB, empty string in proto.
-	run2, err := h.runSvc.CreateRun(ctx, &lanternv1.CreateRunRequest{
+	run2, err := h.runSvc.CreateRun(ctx, &palv1.CreateRunRequest{
 		AgentName:   agentName,
-		TriggerKind: lanternv1.TriggerKind_TRIGGER_KIND_API,
+		TriggerKind: palv1.TriggerKind_TRIGGER_KIND_API,
 	})
 	if err != nil {
 		t.Fatalf("CreateRun without sessionId: %v", err)
@@ -227,7 +227,7 @@ func TestRunService_GetAndListRun_IncludeSessionId(t *testing.T) {
 	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM runs WHERE id = $1`, runID) })
 
 	// GetRun.
-	run, err := h.runSvc.GetRun(ctx, &lanternv1.GetRunRequest{Id: runID})
+	run, err := h.runSvc.GetRun(ctx, &palv1.GetRunRequest{Id: runID})
 	if err != nil {
 		t.Fatalf("GetRun: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestRunService_GetAndListRun_IncludeSessionId(t *testing.T) {
 	}
 
 	// ListRuns — find our run in the response and verify sessionId.
-	resp, err := h.runSvc.ListRuns(ctx, &lanternv1.ListRunsRequest{PageSize: 100})
+	resp, err := h.runSvc.ListRuns(ctx, &palv1.ListRunsRequest{PageSize: 100})
 	if err != nil {
 		t.Fatalf("ListRuns: %v", err)
 	}
@@ -280,7 +280,7 @@ func TestListRuns_SessionIdFilter(t *testing.T) {
 		_, _ = pool.Exec(bg, `DELETE FROM runs WHERE id IN ($1, $2, $3)`, runA1, runA2, runB)
 	})
 
-	resp, err := h.runSvc.ListRuns(ctx, &lanternv1.ListRunsRequest{
+	resp, err := h.runSvc.ListRuns(ctx, &palv1.ListRunsRequest{
 		PageSize:  100,
 		SessionId: sessA,
 	})
@@ -308,7 +308,7 @@ func TestListRuns_SessionIdFilter(t *testing.T) {
 // omits both keys when empty.
 // -----------------------------------------------------------------------
 func TestRunToMap_IncludesSessionIdAndParentRunId(t *testing.T) {
-	run := &lanternv1.Run{
+	run := &palv1.Run{
 		Id:          "run-1",
 		SessionId:   "sess-1",
 		ParentRunId: "parent-1",
@@ -323,7 +323,7 @@ func TestRunToMap_IncludesSessionIdAndParentRunId(t *testing.T) {
 	}
 
 	// Empty → keys absent.
-	m2 := runToMap(&lanternv1.Run{Id: "run-2"})
+	m2 := runToMap(&palv1.Run{Id: "run-2"})
 	if _, ok := m2["sessionId"]; ok {
 		t.Error("sessionId key should be absent when empty")
 	}

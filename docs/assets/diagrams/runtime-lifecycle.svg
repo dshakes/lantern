@@ -96,7 +96,7 @@
   <text class="t-s" x="157" y="688">Ed25519 over the journal hash</text>
   <g transform="translate(40 762)">
   <rect class="node" x="0" width="14" height="14" rx="3"/><text class="t-s" x="22" y="11">Control plane and journal</text>
-  <rect class="node-host" x="190" width="14" height="14" rx="3"/><text class="t-s" x="212" y="11">Trusted Lantern infrastructure</text>
+  <rect class="node-host" x="190" width="14" height="14" rx="3"/><text class="t-s" x="212" y="11">Trusted PAL infrastructure</text>
   <rect class="wall" x="422" width="14" height="14" rx="3"/><text class="t-s" x="444" y="11">Sandbox wall</text>
   </g>
 </svg>

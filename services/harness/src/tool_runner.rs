@@ -6,7 +6,7 @@
 // protoc and updating gen/go stubs. Instead we reuse the existing
 // RuntimeHarness.Exec stream at port 50056 with a magic command sentinel:
 //
-//   ExecRequest { command: "__lantern_tool_call__", argv: [<envelope_json>] }
+//   ExecRequest { command: "__pal_tool_call__", argv: [<envelope_json>] }
 //
 // Envelope format (argv[0], compact JSON):
 //   { "tool": "<name>", "args": {…}, "idempotency_key": "…", "timeout_sec": 30 }
@@ -103,7 +103,7 @@ impl ToolResult {
 // Entry point called by exec.rs when the magic command is detected
 // ---------------------------------------------------------------------------
 
-/// Handle a `__lantern_tool_call__` ExecRequest. Parses the envelope from
+/// Handle a `__pal_tool_call__` ExecRequest. Parses the envelope from
 /// `argv[0]`, dispatches to the tool registry, and sends the result as a
 /// single stdout frame followed by `done = true`.
 ///
@@ -460,9 +460,9 @@ async fn http_fetch(args: serde_json::Value, timeout: Duration) -> ToolResult {
 const LIST_DIR_MAX_ENTRIES: usize = 10_000;
 
 /// Confinement root of the file tools. A constant, deliberately: spawn.json
-/// `env` and `lantern.env.*` boot-args are hydrated into the harness's OWN
+/// `env` and `pal.env.*` boot-args are hydrated into the harness's OWN
 /// environment, so any env-chosen root is workload-chosen (`/` would expose
-/// the mTLS key under /run/lantern).
+/// the mTLS key under /run/pal).
 const WORKSPACE_ROOT: &str = "/workspace";
 
 fn workspace_root() -> Result<PathBuf, String> {
@@ -471,7 +471,7 @@ fn workspace_root() -> Result<PathBuf, String> {
 
 /// `root` must already be canonical (no symlink anywhere in it) and must not
 /// be `/`: a workload that could swap /workspace for a link to `/` or
-/// /run/lantern would otherwise move the confinement root itself.
+/// /run/pal would otherwise move the confinement root itself.
 fn check_workspace_root(root: &Path) -> Result<PathBuf, String> {
     let canonical = root
         .canonicalize()
@@ -851,15 +851,15 @@ fn list_dir(path: &str, root: &Path) -> Result<ToolResult, String> {
 // Tests
 // ---------------------------------------------------------------------------
 
-/// The broker CA from `LANTERN_EGRESS_CA_PEM`, in broker mode only.
+/// The broker CA from `PAL_EGRESS_CA_PEM`, in broker mode only.
 fn broker_ca_cert() -> Option<reqwest::Certificate> {
     // The installed file first: re-identify (resume/fork) rewrites it with
     // the new incarnation's CA; the boot env would still hold the old one.
     let pem = std::fs::read_to_string(crate::egress::BROKER_CA_FILE)
         .ok()
-        .or_else(|| pal_env::var("PAL_EGRESS_CA_PEM").ok());
+        .or_else(|| std::env::var("PAL_EGRESS_CA_PEM").ok());
     broker_ca_from(
-        pal_env::var("PAL_EGRESS_MODE").ok().as_deref(),
+        std::env::var("PAL_EGRESS_MODE").ok().as_deref(),
         pem.as_deref(),
     )
 }
@@ -1010,7 +1010,7 @@ mod tests {
 
     /// A fresh workspace root plus a sibling "outside" dir holding a secret.
     fn sandbox(tag: &str) -> (PathBuf, PathBuf) {
-        let base = std::env::temp_dir().join(format!("lantern-ws-{tag}-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("pal-ws-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let ws = base.join("ws");
         std::fs::create_dir_all(ws.join("sub")).unwrap();
@@ -1184,16 +1184,16 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    /// The confinement root is fixed: a workload-supplied LANTERN_WORKSPACE
-    /// (spawn.json env / lantern.env.* both land in the harness env) cannot
+    /// The confinement root is fixed: a workload-supplied PAL_WORKSPACE
+    /// (spawn.json env / pal.env.* both land in the harness env) cannot
     /// widen it to `/`.
     #[tokio::test]
-    async fn workload_lantern_workspace_cannot_widen_the_root() {
-        // SAFETY: LANTERN_WORKSPACE is read by no harness code (that is the
+    async fn workload_pal_workspace_cannot_widen_the_root() {
+        // SAFETY: PAL_WORKSPACE is read by no harness code (that is the
         // point of the test); std's env lock serialises std readers.
-        unsafe { std::env::set_var("LANTERN_WORKSPACE", "/") };
+        unsafe { std::env::set_var("PAL_WORKSPACE", "/") };
         let r = dispatch(env("read_file", serde_json::json!({"path": "etc/passwd"}))).await;
-        unsafe { std::env::remove_var("LANTERN_WORKSPACE") };
+        unsafe { std::env::remove_var("PAL_WORKSPACE") };
         assert!(!r.ok, "read outside /workspace must fail: {:?}", r.result);
         assert_eq!(WORKSPACE_ROOT, "/workspace");
     }

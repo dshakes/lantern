@@ -33,7 +33,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
 
 	"google.golang.org/grpc/metadata"
 )
@@ -314,17 +314,17 @@ const maxMicroVMResumeAttempts = 3
 //  2. Count ALL runtime_vms rows for this run (resume_attempts).
 //  3. If count >= maxMicroVMResumeAttempts → fail run with microvm_resume_exhausted.
 //  4. Otherwise re-schedule a new VM via the microVM dispatcher, injecting
-//     LANTERN_RESUME=1 so the in-VM agent knows it is being re-driven and
+//     PAL_RESUME=1 so the in-VM agent knows it is being re-driven and
 //     can consult the journal CompletedStep cache to skip finished nodes.
 //
-// Span: runtime.recovery.microvm_resume (attrs: lantern.run_id, lantern.tenant_id).
+// Span: runtime.recovery.microvm_resume (attrs: pal.run_id, pal.tenant_id).
 func (h *RESTHandler) resumeMicroVMRun(ctx context.Context, run orphanedRun) error {
-	tracer := otel.Tracer("lantern.control-plane")
+	tracer := otel.Tracer("pal.control-plane")
 	ctx, span := tracer.Start(ctx, "runtime.recovery.microvm_resume")
 	defer span.End()
 	span.SetAttributes(
-		attribute.String("pal.run_id", run.runID), attribute.String("lantern.run_id", run.runID),
-		attribute.String("pal.tenant_id", run.tenantID), attribute.String("lantern.tenant_id", run.tenantID),
+		attribute.String("pal.run_id", run.runID),
+		attribute.String("pal.tenant_id", run.tenantID),
 	)
 
 	log := h.logger().Named("recovery.microvm")
@@ -353,7 +353,7 @@ func (h *RESTHandler) resumeMicroVMRun(ctx context.Context, run orphanedRun) err
 		SELECT COUNT(*) FROM runtime_vms WHERE run_id = $1::uuid
 	`, run.runID).Scan(&totalVMs)
 
-	span.SetAttributes(attribute.Int("pal.microvm_attempts", totalVMs), attribute.Int("lantern.microvm_attempts", totalVMs))
+	span.SetAttributes(attribute.Int("pal.microvm_attempts", totalVMs))
 
 	// 3. Cap: if maxMicroVMResumeAttempts VMs have already been tried, fail the run.
 	if totalVMs >= maxMicroVMResumeAttempts {
@@ -404,9 +404,9 @@ func (h *RESTHandler) resumeMicroVMRun(ctx context.Context, run orphanedRun) err
 		manifest = map[string]any{}
 	}
 
-	// Inject LANTERN_RESUME=1 so the in-VM agent knows it is a re-drive and
+	// Inject PAL_RESUME=1 so the in-VM agent knows it is a re-drive and
 	// can read journal_events CompletedStep rows to skip finished nodes.
-	env := map[string]any{"LANTERN_RESUME": "1"}
+	env := map[string]any{"PAL_RESUME": "1"}
 	manifest["env"] = env
 	// Distinct scheduler idempotency key per re-drive attempt: reusing the
 	// first attempt's key would hand back the crashed VM's handle.

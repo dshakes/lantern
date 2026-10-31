@@ -61,4 +61,3 @@ export {
 
 export { getTracer, traced } from "./tracing.js";
 export type { Span, Tracer } from "./tracing.js";
-export * from "./deprecated.js";

@@ -10,7 +10,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var tracer = otel.Tracer("lantern.notifier.delivery")
+var tracer = otel.Tracer("pal.notifier.delivery")
 
 // Channel represents a notification delivery channel.
 type Channel string

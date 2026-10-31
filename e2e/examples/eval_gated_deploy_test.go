@@ -7,7 +7,7 @@ package examples_e2e
 //
 //	regressing candidate -> eval.sh exits 1 on HTTP 422, release.sh refuses, and the
 //	                        agent is never created/deployed
-//	passing candidate    -> eval.sh clean, `lantern deploy --json` records a deployment,
+//	passing candidate    -> eval.sh clean, `pal deploy --json` records a deployment,
 //	                        the receipt for the gating run verifies
 //	tampered receipt     -> POST /v1/runs/receipts/verify says valid:false
 //
@@ -15,7 +15,6 @@ package examples_e2e
 // fixture LLM, driven by examples/eval-gated-deploy/fixtures/llm-rules.json.
 
 import (
-	"cmp"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -92,7 +91,7 @@ func TestEvalGatedDeploy(t *testing.T) {
 
 	branch := uniq("e2e-main") // baselines are per (agent, branch): never touch another run's
 	env := []string{
-		"PAL_API_URL=" + strings.TrimRight(cmp.Or(os.Getenv("PAL_E2E_API_URL"), os.Getenv("LANTERN_E2E_API_URL")), "/"),
+		"PAL_API_URL=" + strings.TrimRight(os.Getenv("PAL_E2E_API_URL"), "/"),
 		"PAL_API_KEY=" + s.token(t),
 		"PAL_CLI=" + cli,
 		"STAGING_AGENT=" + egdStaging,
@@ -101,8 +100,8 @@ func TestEvalGatedDeploy(t *testing.T) {
 		"DEPLOY_JSON=" + filepath.Join(tmp, "deploy.json"),
 		"RECEIPT_JSON=" + filepath.Join(tmp, "receipt.json"),
 	}
-	if cmp.Or(os.Getenv("PAL_E2E_API_URL"), os.Getenv("LANTERN_E2E_API_URL")) == "" {
-		t.Fatal("LANTERN_E2E_API_URL must be set (scripts/e2e-examples.sh sets it)")
+	if os.Getenv("PAL_E2E_API_URL") == "" {
+		t.Fatal("PAL_E2E_API_URL must be set (scripts/e2e-examples.sh sets it)")
 	}
 	deployments := func() int {
 		var list []struct {

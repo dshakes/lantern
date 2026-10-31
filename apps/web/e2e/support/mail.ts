@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { CP_LOG } from "./env";
 
-// The control-plane runs with LANTERN_MAILER=log (dev), which writes the whole
+// The control-plane runs with PAL_MAILER=log (dev), which writes the whole
 // message body to its JSON log. Poll that log for the newest mail to `to` and
 // return the first URL in it.
 export async function mailLink(to: string, subjectIncludes: string, timeoutMs = 15_000): Promise<string> {

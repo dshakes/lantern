@@ -13,12 +13,12 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // devTenantID is the seeded dev tenant. When the bridge runs in dev mode
-// (no LANTERN_TENANT_ID set) it identifies itself as "default" — we map
+// (no PAL_TENANT_ID set) it identifies itself as "default" — we map
 // that here so heartbeats land on a real row. In prod, the bridge sends
 // the real tenant UUID and this fallback is never used.
 const devTenantID = "00000000-0000-0000-0000-000000000001"

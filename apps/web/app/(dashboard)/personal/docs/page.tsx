@@ -8,7 +8,7 @@
 // test a query, and surfaces the audit log so you can see every
 // search + read + send the agent has done.
 //
-// To CHANGE allowed roots, edit LANTERN_PERSONAL_DOCS_ROOTS in
+// To CHANGE allowed roots, edit PAL_PERSONAL_DOCS_ROOTS in
 // .env.local and restart the bridges (the bridges own the roots).
 
 import { useCallback, useEffect, useState } from "react";
@@ -141,7 +141,7 @@ function RootsCard({ roots }: { roots: RootInfo[] }) {
         ))}
       </ul>
       <div className="border-t border-zinc-800/60 p-4 text-xs text-zinc-500">
-        Change via <code className="rounded bg-zinc-900 px-1 py-0.5 text-zinc-300">LANTERN_PERSONAL_DOCS_ROOTS</code> in <code className="rounded bg-zinc-900 px-1 py-0.5 text-zinc-300">.env.local</code> (colon-separated paths), then restart the bridges.
+        Change via <code className="rounded bg-zinc-900 px-1 py-0.5 text-zinc-300">PAL_PERSONAL_DOCS_ROOTS</code> in <code className="rounded bg-zinc-900 px-1 py-0.5 text-zinc-300">.env.local</code> (colon-separated paths), then restart the bridges.
       </div>
     </div>
   );

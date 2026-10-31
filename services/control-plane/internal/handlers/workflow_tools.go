@@ -20,8 +20,8 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/control-plane/internal/workflow"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/control-plane/internal/workflow"
 )
 
 // errToolRuntimeUnavailable: the tool needs the microVM runtime but no
@@ -41,7 +41,7 @@ var workflowBuiltinTools = map[string]func(ctx context.Context, pool *pgxpool.Po
 // ExecTool lets RuntimeHandler serve workflow tool nodes through the same
 // manager client the sandbox file API uses. Without a manager-capable
 // scheduler it returns errToolRuntimeUnavailable.
-func (h *RuntimeHandler) ExecTool(ctx context.Context, node string, req *lanternv1.ExecToolRequest) (*lanternv1.ExecToolResponse, error) {
+func (h *RuntimeHandler) ExecTool(ctx context.Context, node string, req *palv1.ExecToolRequest) (*palv1.ExecToolResponse, error) {
 	te, ok := h.scheduler.(toolExecer)
 	if !ok {
 		return nil, errToolRuntimeUnavailable
@@ -93,7 +93,7 @@ func callWorkflowTool(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logge
 		return nil, fmt.Errorf("tool %q: encode params: %w", tool, err)
 	}
 	ref, _ := workflow.StepFromContext(ctx)
-	req := &lanternv1.ExecToolRequest{
+	req := &palv1.ExecToolRequest{
 		// ponytail: run_id lets the default manager find the run's VM; a VM on
 		// another node needs a runtime_vms lookup for its node first.
 		RunId:          runID,
@@ -115,9 +115,9 @@ func callWorkflowTool(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logge
 		return nil, fmt.Errorf("tool %q: ExecTool: %w", tool, err)
 	}
 	switch resp.GetStatus() {
-	case lanternv1.ToolStatus_TOOL_STATUS_OK:
+	case palv1.ToolStatus_TOOL_STATUS_OK:
 		return map[string]any{"tool_name": tool, "result": resp.GetResult().AsMap()}, nil
-	case lanternv1.ToolStatus_TOOL_STATUS_UNAVAILABLE:
+	case palv1.ToolStatus_TOOL_STATUS_UNAVAILABLE:
 		return nil, fmt.Errorf("%w: %q: %s", errToolRuntimeUnavailable, tool, resp.GetError())
 	default:
 		return nil, fmt.Errorf("%w: %q: %s", errToolFailed, tool, resp.GetError())

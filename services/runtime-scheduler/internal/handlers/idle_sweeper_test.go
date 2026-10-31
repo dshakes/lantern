@@ -12,11 +12,11 @@ import (
 
 	"go.uber.org/zap"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/cluster"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/handlers"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/placement"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/scoring"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/cluster"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/handlers"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/placement"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/scoring"
 )
 
 var errBoom = errors.New("boom")
@@ -32,13 +32,13 @@ func newIdleService(store cluster.ClusterStore, d *lifecycleDialer) *handlers.Sc
 // If lastActivityAt.IsZero() the VM's LastActivityAt is left zero (active / no heartbeat).
 func seedIdleVM(store cluster.ClusterStore, id, tenant string, idleTimeout int32, lastActivityAt time.Time) {
 	vm := &cluster.VM{
-		Handle: &lanternv1.VmHandle{VmId: id, Node: "n1"},
-		Spec: &lanternv1.AgentSpec{
+		Handle: &palv1.VmHandle{VmId: id, Node: "n1"},
+		Spec: &palv1.AgentSpec{
 			ImageDigest:     "sha256:abc",
 			TenantId:        tenant,
 			IdleTimeoutSecs: idleTimeout,
 		},
-		State:           lanternv1.VmState_VM_STATE_RUNNING,
+		State:           palv1.VmState_VM_STATE_RUNNING,
 		TenantID:        tenant,
 		NodeName:        "n1",
 		IdleTimeoutSecs: idleTimeout,
@@ -90,7 +90,7 @@ func TestIdleSweeper_NotEligible_NoTimeout(t *testing.T) {
 	if !ok {
 		t.Fatal("VM disappeared")
 	}
-	if vm.State != lanternv1.VmState_VM_STATE_RUNNING {
+	if vm.State != palv1.VmState_VM_STATE_RUNNING {
 		t.Errorf("state = %v, want RUNNING (no timeout set)", vm.State)
 	}
 	if len(d.snaps) != 0 {
@@ -110,7 +110,7 @@ func TestIdleSweeper_NotEligible_NotYetIdle(t *testing.T) {
 	driveOneSweep(t, svc, time.Now())
 
 	vm, _ := store.GetVM("vm-1")
-	if vm.State != lanternv1.VmState_VM_STATE_RUNNING {
+	if vm.State != palv1.VmState_VM_STATE_RUNNING {
 		t.Errorf("state = %v, want RUNNING", vm.State)
 	}
 	if len(d.snaps) != 0 {
@@ -130,7 +130,7 @@ func TestIdleSweeper_NotEligible_ZeroLastActivity(t *testing.T) {
 	driveOneSweep(t, svc, time.Now())
 
 	vm, _ := store.GetVM("vm-1")
-	if vm.State != lanternv1.VmState_VM_STATE_RUNNING {
+	if vm.State != palv1.VmState_VM_STATE_RUNNING {
 		t.Errorf("state = %v, want RUNNING", vm.State)
 	}
 }
@@ -150,7 +150,7 @@ func TestIdleSweeper_AutoSuspend_Success(t *testing.T) {
 	if !ok {
 		t.Fatal("VM disappeared")
 	}
-	if vm.State != lanternv1.VmState_VM_STATE_PAUSED {
+	if vm.State != palv1.VmState_VM_STATE_PAUSED {
 		t.Errorf("state = %v, want PAUSED", vm.State)
 	}
 	if vm.SnapshotID == "" {
@@ -176,7 +176,7 @@ func TestIdleSweeper_QuotaReleased(t *testing.T) {
 
 	// Also add a second running VM with no idle timeout to confirm it doesn't
 	// lose its slot.
-	seedVM(store, "vm-2", "t1", lanternv1.VmState_VM_STATE_RUNNING, "")
+	seedVM(store, "vm-2", "t1", palv1.VmState_VM_STATE_RUNNING, "")
 	svc := newIdleService(store, d)
 
 	driveOneSweep(t, svc, time.Now())
@@ -197,7 +197,7 @@ func TestIdleSweeper_SnapshotFailure_RestoredToRunning(t *testing.T) {
 	driveOneSweep(t, svc, time.Now())
 
 	vm, _ := store.GetVM("vm-1")
-	if vm.State != lanternv1.VmState_VM_STATE_RUNNING {
+	if vm.State != palv1.VmState_VM_STATE_RUNNING {
 		t.Errorf("state = %v after snapshot failure, want RUNNING", vm.State)
 	}
 	if got := store.TenantLiveVMs("t1"); got != 1 {
@@ -216,7 +216,7 @@ func TestIdleSweeper_StopFailure_RestoredToRunning(t *testing.T) {
 	driveOneSweep(t, svc, time.Now())
 
 	vm, _ := store.GetVM("vm-1")
-	if vm.State != lanternv1.VmState_VM_STATE_RUNNING {
+	if vm.State != palv1.VmState_VM_STATE_RUNNING {
 		t.Errorf("state = %v after stop failure, want RUNNING", vm.State)
 	}
 	if got := store.TenantLiveVMs("t1"); got != 1 {
@@ -241,7 +241,7 @@ func TestIdleSweeper_StandbyDoesNotSweep(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	vm, _ := store.GetVM("vm-1")
-	if vm.State != lanternv1.VmState_VM_STATE_RUNNING {
+	if vm.State != palv1.VmState_VM_STATE_RUNNING {
 		t.Errorf("state = %v (standby should not sweep)", vm.State)
 	}
 	if len(d.snaps) != 0 {
@@ -270,7 +270,7 @@ func TestIdleSweeper_ConcurrentSweep_NoDoubleRelease(t *testing.T) {
 	time.Sleep(60 * time.Millisecond)
 
 	vm, _ := store.GetVM("vm-1")
-	if vm.State != lanternv1.VmState_VM_STATE_PAUSED {
+	if vm.State != palv1.VmState_VM_STATE_PAUSED {
 		t.Errorf("state = %v, want PAUSED", vm.State)
 	}
 	// Quota must be exactly 0, not negative (double-release would give -1).
@@ -295,9 +295,9 @@ func TestIdleSweeper_StaleGuestTs_AfterResume(t *testing.T) {
 	// Seed a VM that just resumed: LastActivityAt is zero (reset by the RUNNING
 	// transition in TransitionVMState).
 	store.CreateVM(&cluster.VM{
-		Handle:          &lanternv1.VmHandle{VmId: "vm-resume", Node: "n1"},
-		Spec:            &lanternv1.AgentSpec{IdleTimeoutSecs: 60},
-		State:           lanternv1.VmState_VM_STATE_RUNNING,
+		Handle:          &palv1.VmHandle{VmId: "vm-resume", Node: "n1"},
+		Spec:            &palv1.AgentSpec{IdleTimeoutSecs: 60},
+		State:           palv1.VmState_VM_STATE_RUNNING,
 		TenantID:        "t1",
 		NodeName:        "n1",
 		IdleTimeoutSecs: 60,
@@ -320,7 +320,7 @@ func TestIdleSweeper_StaleGuestTs_AfterResume(t *testing.T) {
 	}
 	// The VM must still be RUNNING — the idle clock started ~0 seconds ago
 	// (scheduler receive time), so it is nowhere near the 60-second timeout.
-	if vm.State != lanternv1.VmState_VM_STATE_RUNNING {
+	if vm.State != palv1.VmState_VM_STATE_RUNNING {
 		t.Errorf("VM state = %v after resume+stale-ts beat, want RUNNING (idle < timeout)", vm.State)
 	}
 	if len(d.snaps) != 0 {
@@ -337,9 +337,9 @@ func TestIdleSweeper_AlreadyPaused_Skipped(t *testing.T) {
 
 	// Create it PAUSED (no slot held).
 	store.CreateVM(&cluster.VM{
-		Handle:          &lanternv1.VmHandle{VmId: "vm-1", Node: "n1"},
-		Spec:            &lanternv1.AgentSpec{IdleTimeoutSecs: 30},
-		State:           lanternv1.VmState_VM_STATE_PAUSED,
+		Handle:          &palv1.VmHandle{VmId: "vm-1", Node: "n1"},
+		Spec:            &palv1.AgentSpec{IdleTimeoutSecs: 30},
+		State:           palv1.VmState_VM_STATE_PAUSED,
 		TenantID:        "t1",
 		NodeName:        "n1",
 		IdleTimeoutSecs: 30,

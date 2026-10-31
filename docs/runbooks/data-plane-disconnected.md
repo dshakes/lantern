@@ -16,12 +16,12 @@ plane can't reach the workloads.
 
 ## What fired it
 
-- **`DataPlaneHeartbeatStale`** — `lantern_data_plane_seconds_since_heartbeat`
+- **`DataPlaneHeartbeatStale`** — `pal_data_plane_seconds_since_heartbeat`
   (a gauge derived from `data_planes.last_heartbeat` by the postgres_exporter
   custom query, see `infra/monitoring/prometheus/postgres-exporter-queries.yaml`)
   exceeded 120s for one plane. Heartbeat cadence is ~30s, so >120s = missed
   several in a row. Labels carry `data_plane_id`, `cloud`, `region`.
-- **`SchedulerNoRegisteredNodes`** — `lantern_scheduler_nodes == 0` for 5m. The
+- **`SchedulerNoRegisteredNodes`** — `pal_scheduler_nodes == 0` for 5m. The
   scheduler sees zero healthy runtime-manager nodes; placement is impossible.
 
 ---
@@ -49,7 +49,7 @@ kubectl -n <dp-ns> logs deploy/<data-plane-agent> --tail=200 \
 
 # Runtime-scheduler view of nodes (the :8085 metrics it exposes).
 kubectl -n <ns> exec deploy/<runtime-scheduler> -- wget -qO- localhost:8085/metrics \
-  | grep -E 'lantern_scheduler_(nodes|active_vms|is_leader)'
+  | grep -E 'pal_scheduler_(nodes|active_vms|is_leader)'
 ```
 
 Decide which side broke:
@@ -57,7 +57,7 @@ Decide which side broke:
   tunnel path between the clusters (egress policy, expired token, LB/DNS).
 - **data-plane-agent pod not Running** (CrashLoop/Pending/evicted) → the data
   plane itself is the problem; the control plane is fine.
-- **`lantern_scheduler_nodes == 0` but planes heartbeat fine** → runtime-manager
+- **`pal_scheduler_nodes == 0` but planes heartbeat fine** → runtime-manager
   nodes aren't registering with the scheduler (different layer); check
   runtime-manager pods and the scheduler's node-registration logs.
 
@@ -74,10 +74,10 @@ Decide which side broke:
 3. **Plane is genuinely gone** (decommissioned) → deregister it so it stops
    alerting and nothing routes to it: `DELETE /v1/data-planes/{id}`.
 4. **`nodes == 0`** → recover the runtime-manager DaemonSet/pods on the plane;
-   confirm they re-register (`lantern_scheduler_nodes` climbs off 0).
+   confirm they re-register (`pal_scheduler_nodes` climbs off 0).
 
 Confirm recovery: `seconds_since_heartbeat` drops back under ~30s for the plane,
-`lantern_scheduler_nodes > 0`, and a test run routes to that plane and completes.
+`pal_scheduler_nodes > 0`, and a test run routes to that plane and completes.
 
 ---
 

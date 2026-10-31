@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bring up Lantern infra (Postgres, Redis, MinIO) via docker-compose.
+# Bring up PAL infra (Postgres, Redis, MinIO) via docker-compose.
 # Waits for Docker Desktop to be ready before issuing the up command —
 # at login, Docker Desktop and this script race, and Docker often
 # isn't accepting connections in the first 10-20 seconds.

@@ -8,9 +8,9 @@ This replaced an ephemeral `cloudflared` quick-tunnel (random URL each restart, 
 exposed the API publicly). If that's still around, disable it:
 
 ```bash
-launchctl bootout gui/$(id -u)/dev.lantern.tunnel
-launchctl bootout gui/$(id -u)/dev.lantern.tunnel-watcher
-launchctl disable gui/$(id -u)/dev.lantern.tunnel
+launchctl bootout gui/$(id -u)/dev.pal.tunnel
+launchctl bootout gui/$(id -u)/dev.pal.tunnel-watcher
+launchctl disable gui/$(id -u)/dev.pal.tunnel
 ```
 
 ## How it routes
@@ -55,8 +55,8 @@ final config. Re-run it any time the routing looks wrong.
 
 | Var | Where | Why |
 |-----|-------|-----|
-| `PAL_SIGNAL_TOKEN` | **API** (`dev.lantern.api.plist`) **and** dashboard | Gates `POST /v1/signals`; the iOS Shortcut sends it as `x-lantern-signal-token`. Pick any long random string. |
-| `NEXT_PUBLIC_API_URL` | **dashboard** (`dev.lantern.dashboard.plist`) | Set to `https://<your-mac>.<tailnet>.ts.net` so the dashboard's *client-side* API calls resolve to the tailnet host instead of `localhost:8080` (which a phone can't reach). |
+| `PAL_SIGNAL_TOKEN` | **API** (`dev.pal.api.plist`) **and** dashboard | Gates `POST /v1/signals`; the iOS Shortcut sends it as `x-pal-signal-token`. Pick any long random string. |
+| `NEXT_PUBLIC_API_URL` | **dashboard** (`dev.pal.dashboard.plist`) | Set to `https://<your-mac>.<tailnet>.ts.net` so the dashboard's *client-side* API calls resolve to the tailnet host instead of `localhost:8080` (which a phone can't reach). |
 
 Set plist env via `PlistBuddy` then reload with `launchctl bootout … && bootstrap …`
 (a plain `kickstart -k` does **not** reload env). Keep the token **out of git**.
@@ -66,7 +66,7 @@ Set plist env via `PlistBuddy` then reload with `launchctl bootout … && bootst
 - **Dashboard / Automations page:** open `https://<your-mac>.<tailnet>.ts.net/automations`
   in Safari → log in → **Share → Add to Home Screen**.
 - **App-context Shortcuts:** POST to `https://<your-mac>.<tailnet>.ts.net/v1/signals`
-  with header `x-lantern-signal-token`. See `scripts/iphone/app-context/README.md`.
+  with header `x-pal-signal-token`. See `scripts/iphone/app-context/README.md`.
 - **Home-screen widget:** set `API_BASE = https://<your-mac>.<tailnet>.ts.net`. See
   `scripts/iphone/README.md`.
 

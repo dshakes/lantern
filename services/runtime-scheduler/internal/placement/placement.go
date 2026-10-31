@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"sort"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/cluster"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/scoring"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/cluster"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/scoring"
 )
 
 // Decision is the placement result returned to the caller.
@@ -32,7 +32,7 @@ type Engine struct {
 //   - draining nodes are excluded
 //   - nodes without enough free vCPU / memory are excluded
 //   - if a PlacementHint pins a node, that's used (still validated)
-func (e *Engine) Pick(spec *lanternv1.AgentSpec, hint *lanternv1.PlacementHint, tenantSoftCap int) (*Decision, error) {
+func (e *Engine) Pick(spec *palv1.AgentSpec, hint *palv1.PlacementHint, tenantSoftCap int) (*Decision, error) {
 	nodes := e.Store.ListNodes()
 	if len(nodes) == 0 {
 		return nil, fmt.Errorf("no nodes registered in cluster")
@@ -133,7 +133,7 @@ func (e *Engine) Pick(spec *lanternv1.AgentSpec, hint *lanternv1.PlacementHint, 
 
 // buildWorkload converts the AgentSpec into the slim WorkloadSnapshot
 // that the scorer needs.
-func buildWorkload(spec *lanternv1.AgentSpec, softCap, live int) scoring.WorkloadSnapshot {
+func buildWorkload(spec *palv1.AgentSpec, softCap, live int) scoring.WorkloadSnapshot {
 	var region, continent string
 	if len(spec.PreferredRegions) > 0 {
 		region = spec.PreferredRegions[0]
@@ -181,7 +181,7 @@ func continentFor(region string) string {
 // requiredCapacity converts the AgentSpec resource limits into raw
 // vcpu_millis / memory_bytes integers. Unparseable values yield 0 so
 // we don't accidentally block placement on malformed input.
-func requiredCapacity(spec *lanternv1.AgentSpec) (int64, int64) {
+func requiredCapacity(spec *palv1.AgentSpec) (int64, int64) {
 	if spec == nil || spec.Limits == nil {
 		return 0, 0
 	}

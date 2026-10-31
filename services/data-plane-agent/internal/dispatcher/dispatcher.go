@@ -19,9 +19,9 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/packages/grpctls"
-	"github.com/dshakes/lantern/services/data-plane-agent/internal/tunnel"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/packages/grpctls"
+	"github.com/dshakes/pal/services/data-plane-agent/internal/tunnel"
 )
 
 // tenantMetadataKey is the gRPC metadata key read by tenant interceptors.
@@ -31,13 +31,7 @@ const tenantMetadataKey = "tenant_id"
 // Kept local so the dispatcher does not take a build dep on the control-plane module.
 const serviceTokenMetadataKey = "x-pal-service-token"
 
-// legacyServiceTokenMetadataKey is the pre-PAL name (ADR 0032). The token is
-// sent under both names so a control plane that predates the PAL name (the
-// customer data plane and the control plane upgrade independently) still
-// authenticates the call.
-const legacyServiceTokenMetadataKey = "x-lantern-service-token"
-
-var tracer = otel.Tracer("lantern.data-plane-agent.dispatcher")
+var tracer = otel.Tracer("pal.data-plane-agent.dispatcher")
 
 // Dispatcher receives run assignments and dispatches them to the workflow engine.
 type Dispatcher struct {
@@ -147,9 +141,9 @@ func (d *Dispatcher) driveRun(ctx context.Context, conn *grpc.ClientConn, assign
 
 	runID := assignment.RunID
 
-	weClient := lanternv1.NewWorkflowEngineServiceClient(conn)
+	weClient := palv1.NewWorkflowEngineServiceClient(conn)
 
-	req := &lanternv1.ExecuteRunRequest{
+	req := &palv1.ExecuteRunRequest{
 		RunId:          runID,
 		AgentVersionId: assignment.AgentVersionID,
 	}
@@ -193,20 +187,20 @@ func (d *Dispatcher) driveRun(ctx context.Context, conn *grpc.ClientConn, assign
 		}
 
 		switch v := event.GetPayload().(type) {
-		case *lanternv1.StreamEvent_StepStarted:
+		case *palv1.StreamEvent_StepStarted:
 			d.logger.Debug("step started",
 				zap.String("run_id", runID),
 				zap.String("step_id", v.StepStarted.GetStepId()),
 				zap.String("kind", v.StepStarted.GetKind()),
 			)
 
-		case *lanternv1.StreamEvent_StepCompleted:
+		case *palv1.StreamEvent_StepCompleted:
 			d.logger.Debug("step completed",
 				zap.String("run_id", runID),
 				zap.String("step_id", v.StepCompleted.GetStepId()),
 			)
 
-		case *lanternv1.StreamEvent_StepFailed:
+		case *palv1.StreamEvent_StepFailed:
 			d.logger.Warn("step failed",
 				zap.String("run_id", runID),
 				zap.String("step_id", v.StepFailed.GetStepId()),
@@ -214,7 +208,7 @@ func (d *Dispatcher) driveRun(ctx context.Context, conn *grpc.ClientConn, assign
 			// A step failure doesn't necessarily fail the whole run;
 			// wait for the StreamEnd event for the authoritative terminal status.
 
-		case *lanternv1.StreamEvent_End:
+		case *palv1.StreamEvent_End:
 			reason := v.End.GetReason()
 			d.logger.Debug("stream end",
 				zap.String("run_id", runID),
@@ -248,7 +242,7 @@ func (d *Dispatcher) driveRun(ctx context.Context, conn *grpc.ClientConn, assign
 func (d *Dispatcher) outgoingContext(ctx context.Context, tenantID string) context.Context {
 	pairs := []string{tenantMetadataKey, tenantID}
 	if d.serviceToken != "" {
-		pairs = append(pairs, serviceTokenMetadataKey, d.serviceToken, legacyServiceTokenMetadataKey, d.serviceToken)
+		pairs = append(pairs, serviceTokenMetadataKey, d.serviceToken)
 	}
 	return metadata.AppendToOutgoingContext(ctx, pairs...)
 }

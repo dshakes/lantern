@@ -1,6 +1,6 @@
 # Owner profile — TEMPLATE
 
-Copy this file to `~/.lantern/owner-profile.md` (or set `PAL_OWNER_PROFILE`
+Copy this file to `~/.pal/owner-profile.md` (or set `PAL_OWNER_PROFILE`
 to point elsewhere) and fill it in. The macOS WhatsApp/iMessage bridges read it
 to sound like *you* — your voice, your world, your people. It is hot-reloaded
 within ~30 seconds, so edits take effect without a restart.
@@ -10,7 +10,7 @@ reply prompt. **Do NOT put secrets here** (passwords, card numbers) other than
 in the sealed `## Private` section described at the bottom; ordinary lines can
 shape a reply to a third party, so curate deliberately.
 
-> Your real `~/.lantern/owner-profile.md` is OUTSIDE the repo and is never
+> Your real `~/.pal/owner-profile.md` is OUTSIDE the repo and is never
 > committed. This example contains only placeholder data.
 
 ## About me

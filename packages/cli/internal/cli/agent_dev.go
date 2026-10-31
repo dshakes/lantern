@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dshakes/lantern/packages/cli/internal"
+	"github.com/dshakes/pal/packages/cli/internal"
 	"github.com/spf13/cobra"
 )
 

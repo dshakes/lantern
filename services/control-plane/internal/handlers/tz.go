@@ -3,7 +3,7 @@ package handlers
 import (
 	"time"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/scheduler"
+	"github.com/dshakes/pal/services/control-plane/internal/scheduler"
 )
 
 // usageDate returns today's date string ("2006-01-02") in the deployment

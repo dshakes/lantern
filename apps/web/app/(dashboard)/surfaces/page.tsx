@@ -1,5 +1,6 @@
 "use client";
 
+import { usePublicUrls } from "@/lib/public-url";
 import { useState, useEffect, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import {
@@ -168,7 +169,7 @@ const surfaces: SurfaceDefinition[] = [
     // configured" status driven by surface_configs. iMessage doesn't
     // need a config row — the bridge running on this Mac IS the
     // configuration.
-    livenessProbeUrl: (process.env.NEXT_PUBLIC_PAL_IMESSAGE_BRIDGE_URL || process.env.NEXT_PUBLIC_LANTERN_IMESSAGE_BRIDGE_URL) || "http://localhost:3200",
+    livenessProbeUrl: (process.env.NEXT_PUBLIC_PAL_IMESSAGE_BRIDGE_URL || process.env.NEXT_PUBLIC_PAL_IMESSAGE_BRIDGE_URL) || "http://localhost:3200",
     primaryActionHref: "/personal/setup",
     primaryActionLabel: "Manage on /personal",
   },
@@ -235,6 +236,7 @@ function validateFields(fields: Record<string, string>, definitions: ConfigField
 // ---------------------------------------------------------------------------
 
 export default function SurfacesPage() {
+  const publicUrls = usePublicUrls();
   const toast = useToast();
   const searchParams = useSearchParams();
   const { user } = useAuth();
@@ -288,7 +290,7 @@ export default function SurfacesPage() {
     const existing = configs[surface.id];
     const fields: Record<string, string> = {};
     surface.configFields.forEach((f) => { fields[f.key] = existing?.fields?.[f.key] ?? ""; });
-    if (surface.id === "email" && !fields.tenantEmail) fields.tenantEmail = "t_acme.lantern.email";
+    if (surface.id === "email" && !fields.tenantEmail) fields.tenantEmail = "t_acme.pal.email";
     setFormFields(fields);
     setFieldErrors({});
     setTestStatus("idle");
@@ -409,9 +411,10 @@ export default function SurfacesPage() {
     toast.info(`${configModal.name} disconnected`);
   };
 
-  const embedCode = `<script src="https://cdn.lantern.run/webchat.js"
-  data-tenant="t_acme"
-  data-agent="auto"
+  const embedCode = `<script src="${publicUrls.widgetSrc}"
+  data-api-key="pk_live_..."
+  data-agent="your-agent"
+  data-api-base="${publicUrls.apiBase}"
   data-theme="dark">
 </script>`;
 
@@ -431,8 +434,8 @@ export default function SurfacesPage() {
       }
     }
     async function checkBoth() {
-      const waUrl = (process.env.NEXT_PUBLIC_PAL_BRIDGE_URL || process.env.NEXT_PUBLIC_LANTERN_BRIDGE_URL) || "http://localhost:3100";
-      const imUrl = (process.env.NEXT_PUBLIC_PAL_IMESSAGE_BRIDGE_URL || process.env.NEXT_PUBLIC_LANTERN_IMESSAGE_BRIDGE_URL) || "http://localhost:3200";
+      const waUrl = (process.env.NEXT_PUBLIC_PAL_BRIDGE_URL || process.env.NEXT_PUBLIC_PAL_BRIDGE_URL) || "http://localhost:3100";
+      const imUrl = (process.env.NEXT_PUBLIC_PAL_IMESSAGE_BRIDGE_URL || process.env.NEXT_PUBLIC_PAL_IMESSAGE_BRIDGE_URL) || "http://localhost:3200";
       await Promise.all([
         probe(`${waUrl}/health`, setWhatsappBridgeRunning),
         probe(`${imUrl}/health`, setImessageBridgeRunning),
@@ -716,11 +719,11 @@ export default function SurfacesPage() {
                   <p className="text-xs text-zinc-500 mb-4">{configModal.qrLabel}</p>
                   <div className="flex justify-center">
                     <QRCode
-                      value={buildQRLink({ type: configModal.qrType ?? "pair", token: generatePairingToken(), botUsername: formFields.botToken ? "LanternBot" : undefined, phoneNumber: formFields.phoneNumberId || undefined })}
+                      value={buildQRLink({ type: configModal.qrType ?? "pair", token: generatePairingToken(), botUsername: formFields.botToken ? "PalBot" : undefined, phoneNumber: formFields.phoneNumberId || undefined })}
                       size={180}
                       label={configModal.qrLabel}
                       expiresIn={300}
-                      onRefresh={() => buildQRLink({ type: configModal.qrType ?? "pair", token: generatePairingToken(), botUsername: formFields.botToken ? "LanternBot" : undefined, phoneNumber: formFields.phoneNumberId || undefined })}
+                      onRefresh={() => buildQRLink({ type: configModal.qrType ?? "pair", token: generatePairingToken(), botUsername: formFields.botToken ? "PalBot" : undefined, phoneNumber: formFields.phoneNumberId || undefined })}
                     />
                   </div>
                 </div>

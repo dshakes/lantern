@@ -12,18 +12,17 @@
 //	real LLM:  a provider key configured for the dev tenant; nothing else.
 //	fixture:   start the stack against cmd/llm-replay with the example's rules
 //	           (see e2e/README.md, "Support desk"), and set
-//	           LANTERN_E2E_FIXTURE_LLM=1 so the reply text itself is asserted to
+//	           PAL_E2E_FIXTURE_LLM=1 so the reply text itself is asserted to
 //	           cite the document.
 //
-// The Slack ping is asserted when LANTERN_E2E_SLACK_FIXTURE_ADDR (e.g.
-// 127.0.0.1:9193) is set; start the API with LANTERN_CONNECTOR_BASEURL_SLACK
+// The Slack ping is asserted when PAL_E2E_SLACK_FIXTURE_ADDR (e.g.
+// 127.0.0.1:9193) is set; start the API with PAL_CONNECTOR_BASEURL_SLACK
 // pointing at it. Without it the ping is not checked (and no Slack connector is
 // installed — an existing install is never touched either way).
 package examples_e2e
 
 import (
 	"bufio"
-	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -37,7 +36,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dshakes/lantern/e2e/internal/e2ekit"
+	"github.com/dshakes/pal/e2e/internal/e2ekit"
 )
 
 const (
@@ -225,7 +224,7 @@ func TestSupportDesk_KBAnswerThenHumanHandoff(t *testing.T) {
 
 	// Slack handoff ping (optional; see the package comment).
 	var slack *slackFixture
-	if addr := cmp.Or(os.Getenv("PAL_E2E_SLACK_FIXTURE_ADDR"), os.Getenv("LANTERN_E2E_SLACK_FIXTURE_ADDR")); addr != "" {
+	if addr := os.Getenv("PAL_E2E_SLACK_FIXTURE_ADDR"); addr != "" {
 		var existing []struct{ ID, ConnectorID string }
 		k.DoAuth(t, "GET", "/v1/connectors", nil, &existing)
 		for _, c := range existing {
@@ -263,7 +262,7 @@ func TestSupportDesk_KBAnswerThenHumanHandoff(t *testing.T) {
 	if !strings.Contains(string(srcs), resetDocID) {
 		t.Fatalf("message_completed sources = %s, want the seeded password-reset doc %s", srcs, resetDocID)
 	}
-	if cmp.Or(os.Getenv("PAL_E2E_FIXTURE_LLM"), os.Getenv("LANTERN_E2E_FIXTURE_LLM")) == "1" {
+	if os.Getenv("PAL_E2E_FIXTURE_LLM") == "1" {
 		if text, _ := done.Data["text"].(string); !strings.Contains(text, "[doc:"+resetDocID+"]") {
 			t.Fatalf("fixture answer %q does not cite [doc:%s]", text, resetDocID)
 		}

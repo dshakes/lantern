@@ -117,14 +117,14 @@ For an orphaned `microvm` run (no live VM, lock expired) the sweep calls `resume
 1. If a live (non-terminal) VM exists for this run, skip. The VM is self-managing.
 2. Count all `runtime_vms` rows for this run (total VMs ever spawned equals resume attempts).
 3. If attempts are 3 or more, mark the run `failed` with code `microvm_resume_exhausted`. No further retries.
-4. Otherwise re-schedule a new VM via the dispatcher, injecting `LANTERN_RESUME=1` in the environment.
+4. Otherwise re-schedule a new VM via the dispatcher, injecting `PAL_RESUME=1` in the environment.
 
 ```bash
 # environment injected into the re-scheduled VM
-LANTERN_RESUME=1
+PAL_RESUME=1
 ```
 
-`LANTERN_RESUME=1` (the code still emits the old name) signals a re-drive; skipping completed work is the workload's responsibility (no SDK helper reads it yet). The 3-attempt cap is a hard constant (`maxMicroVMResumeAttempts = 3`). On exhaustion the run is marked `failed` and its error field carries `{code: microvm_resume_exhausted, attempts}`.
+`PAL_RESUME=1` signals a re-drive; skipping completed work is the workload's responsibility (no SDK helper reads it yet). The 3-attempt cap is a hard constant (`maxMicroVMResumeAttempts = 3`). On exhaustion the run is marked `failed` and its error field carries `{code: microvm_resume_exhausted, attempts}`.
 
 ## Inspecting and recovering a run
 

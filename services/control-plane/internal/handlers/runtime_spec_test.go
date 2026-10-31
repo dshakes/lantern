@@ -16,8 +16,8 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
 )
 
 // Defect 1: limits / egress_rules / secrets must survive map -> AgentSpec,
@@ -35,18 +35,18 @@ func TestAgentSpecFromMap_RoundTripsLimitsEgressSecrets(t *testing.T) {
 			{"pattern": "*.openai.com", "http_methods": []any{"GET", "POST"}, "rate_bps": 4096},
 		},
 		"secrets": []map[string]any{
-			{"env_name": "OPENAI_API_KEY", "secret_uri": "lantern.secret://tenant/t/key/k"},
+			{"env_name": "OPENAI_API_KEY", "secret_uri": "pal.secret://tenant/t/key/k"},
 		},
 	}
-	want := &lanternv1.AgentSpec{
+	want := &palv1.AgentSpec{
 		ImageDigest: "sha256:abc",
-		Isolation:   lanternv1.IsolationClass_ISOLATION_STANDARD,
-		Limits: &lanternv1.ResourceLimits{
+		Isolation:   palv1.IsolationClass_ISOLATION_STANDARD,
+		Limits: &palv1.ResourceLimits{
 			Vcpu: "500m", Memory: "512Mi", Gpu: "1", ScratchSize: "1Gi",
 			Timeout: durationProto(5 * time.Minute), MaxSteps: 10, MaxTokens: 1000, MaxCostUsd: 2.5,
 		},
-		EgressRules: []*lanternv1.EgressRule{{Pattern: "*.openai.com", HttpMethods: []string{"GET", "POST"}, RateBps: 4096}},
-		Secrets:     []*lanternv1.SecretRef{{EnvName: "OPENAI_API_KEY", SecretUri: "lantern.secret://tenant/t/key/k"}},
+		EgressRules: []*palv1.EgressRule{{Pattern: "*.openai.com", HttpMethods: []string{"GET", "POST"}, RateBps: 4096}},
+		Secrets:     []*palv1.SecretRef{{EnvName: "OPENAI_API_KEY", SecretUri: "pal.secret://tenant/t/key/k"}},
 	}
 	if got := agentSpecFromMap(in); !proto.Equal(got, want) {
 		t.Errorf("typed map: got %v\nwant %v", got, want)
@@ -75,7 +75,7 @@ func TestAgentSpecFromMap_RoundTripsLimitsEgressSecrets(t *testing.T) {
 
 func TestParseIsolation_MicroVMAndFirecrackerAreStandard(t *testing.T) {
 	for _, in := range []string{"microvm", "MicroVM", "firecracker"} {
-		if got := parseIsolation(in); got != lanternv1.IsolationClass_ISOLATION_STANDARD {
+		if got := parseIsolation(in); got != palv1.IsolationClass_ISOLATION_STANDARD {
 			t.Errorf("parseIsolation(%q) = %v, want ISOLATION_STANDARD (Firecracker)", in, got)
 		}
 	}
@@ -83,13 +83,13 @@ func TestParseIsolation_MicroVMAndFirecrackerAreStandard(t *testing.T) {
 
 // fakeSchedClient captures the ScheduleRequest the control plane sends.
 type fakeSchedClient struct {
-	lanternv1.RuntimeSchedulerClient
-	req *lanternv1.ScheduleRequest
+	palv1.RuntimeSchedulerClient
+	req *palv1.ScheduleRequest
 }
 
-func (f *fakeSchedClient) Schedule(_ context.Context, in *lanternv1.ScheduleRequest, _ ...grpc.CallOption) (*lanternv1.VmHandle, error) {
+func (f *fakeSchedClient) Schedule(_ context.Context, in *palv1.ScheduleRequest, _ ...grpc.CallOption) (*palv1.VmHandle, error) {
 	f.req = in
-	return &lanternv1.VmHandle{VmId: "vm-1", Node: "n", AvailabilityZone: "az"}, nil
+	return &palv1.VmHandle{VmId: "vm-1", Node: "n", AvailabilityZone: "az"}, nil
 }
 
 // Defect 3: the key in the spec map reaches ScheduleRequest.IdempotencyKey.
@@ -127,7 +127,7 @@ func TestScheduleRunInMicroVM_KeyAndIsolation(t *testing.T) {
 	if got := sched.spec["idempotency_key"]; got != "run:"+runID+":1" {
 		t.Errorf("idempotency_key = %v, want run:%s:1", got, runID)
 	}
-	if iso := agentSpecFromMap(sched.spec).Isolation; iso == lanternv1.IsolationClass_ISOLATION_UNSPECIFIED {
+	if iso := agentSpecFromMap(sched.spec).Isolation; iso == palv1.IsolationClass_ISOLATION_UNSPECIFIED {
 		t.Error("run path isolation decoded to UNSPECIFIED")
 	}
 	if agentSpecFromMap(sched.spec).Limits.GetVcpu() != "1" {
@@ -150,13 +150,13 @@ func (s *specCapScheduler) Schedule(ctx context.Context, spec map[string]any) (s
 // ---------------------------------------------------------------------------
 
 type fakeExecStream struct {
-	frames []*lanternv1.ExecResponse
-	sent   *lanternv1.ExecRequest
+	frames []*palv1.ExecResponse
+	sent   *palv1.ExecRequest
 }
 
-func (f *fakeExecStream) Send(r *lanternv1.ExecRequest) error { f.sent = r; return nil }
-func (f *fakeExecStream) CloseSend() error                    { return nil }
-func (f *fakeExecStream) Recv() (*lanternv1.ExecResponse, error) {
+func (f *fakeExecStream) Send(r *palv1.ExecRequest) error { f.sent = r; return nil }
+func (f *fakeExecStream) CloseSend() error                { return nil }
+func (f *fakeExecStream) Recv() (*palv1.ExecResponse, error) {
 	if len(f.frames) == 0 {
 		return nil, io.EOF
 	}
@@ -167,7 +167,7 @@ func (f *fakeExecStream) Recv() (*lanternv1.ExecResponse, error) {
 
 func TestPumpExec_EmitsPerFrameAndCaps(t *testing.T) {
 	big := make([]byte, execMaxOutputBytes)
-	st := &fakeExecStream{frames: []*lanternv1.ExecResponse{
+	st := &fakeExecStream{frames: []*palv1.ExecResponse{
 		{Stdout: []byte("a")},
 		{Stderr: []byte("e")},
 		{Stdout: big}, // pushes stdout over the cap by 1 byte
@@ -306,7 +306,7 @@ func TestScheduleAgentSpec_ReplayKeepsBootIdentity(t *testing.T) {
 	if sched.keys[0] != sched.keys[1] {
 		t.Fatalf("retry used a different idempotency key: %v", sched.keys)
 	}
-	bootID := sched.bootEnv["LANTERN_AGENT_INSTANCE_ID"]
+	bootID := sched.bootEnv["PAL_AGENT_INSTANCE_ID"]
 	var rowID string
 	if err := pool.QueryRow(context.Background(), `SELECT agent_instance_id FROM runtime_vms WHERE vm_id=$1`, vmID).Scan(&rowID); err != nil {
 		t.Fatal(err)
@@ -315,7 +315,7 @@ func TestScheduleAgentSpec_ReplayKeepsBootIdentity(t *testing.T) {
 		t.Errorf("row agent_instance_id=%q returned=%q, VM booted with %q", rowID, instanceID, bootID)
 	}
 	// The token the VM booted with names the persisted instance id.
-	claims, err := h.identity.Verify(sched.bootEnv["LANTERN_AGENT_INSTANCE_TOKEN"].(string))
+	claims, err := h.identity.Verify(sched.bootEnv["PAL_AGENT_INSTANCE_TOKEN"].(string))
 	if err != nil || claims.AgentInstanceID != rowID {
 		t.Errorf("boot token claims %v (err %v) do not match row %q", claims, err, rowID)
 	}
@@ -332,11 +332,11 @@ func TestSchedulePaths_HonorEgressSecretsLimits(t *testing.T) {
 	snake := `{"image_digest":"sha256:abc","isolation_class":"microvm",
 		"limits":{"max_steps":4},
 		"egress_rules":[{"pattern":"*.example.com","http_methods":["GET"],"rate_bps":100}],
-		"secrets":[{"env_name":"API_KEY","secret_uri":"lantern.secret://t/k"}]}`
+		"secrets":[{"env_name":"API_KEY","secret_uri":"pal.secret://t/k"}]}`
 	camel := `{"imageDigest":"sha256:abc","isolation":"microvm",
 		"limits":{"maxSteps":4},
 		"egressRules":[{"pattern":"*.example.com","httpMethods":["GET"],"rateBps":100}],
-		"secrets":[{"envName":"API_KEY","secretUri":"lantern.secret://t/k"}]}`
+		"secrets":[{"envName":"API_KEY","secretUri":"pal.secret://t/k"}]}`
 	check := func(t *testing.T, spec map[string]any) {
 		t.Helper()
 		a := agentSpecFromMap(spec)
@@ -344,7 +344,7 @@ func TestSchedulePaths_HonorEgressSecretsLimits(t *testing.T) {
 			len(a.EgressRules[0].HttpMethods) != 1 {
 			t.Errorf("egress rules lost: %v", a.EgressRules)
 		}
-		if len(a.Secrets) != 1 || a.Secrets[0].EnvName != "API_KEY" || a.Secrets[0].SecretUri != "lantern.secret://t/k" {
+		if len(a.Secrets) != 1 || a.Secrets[0].EnvName != "API_KEY" || a.Secrets[0].SecretUri != "pal.secret://t/k" {
 			t.Errorf("secrets lost: %v", a.Secrets)
 		}
 		if a.Limits.GetMaxSteps() != 4 {
@@ -389,8 +389,8 @@ func TestAgentSpecFromMap_EgressInject(t *testing.T) {
 			map[string]any{
 				"pattern": "api.openai.com",
 				"inject": []any{
-					map[string]any{"header": "Authorization", "secretRef": "lantern.secret/llm/openai", "valuePrefix": "Bearer "},
-					map[string]any{"header": "x-org", "secret_ref": "lantern.secret/connector/5f2b7c1e-1111-4222-8333-444455556666/org"},
+					map[string]any{"header": "Authorization", "secretRef": "pal.secret/llm/openai", "valuePrefix": "Bearer "},
+					map[string]any{"header": "x-org", "secret_ref": "pal.secret/connector/5f2b7c1e-1111-4222-8333-444455556666/org"},
 				},
 			},
 		},
@@ -400,7 +400,7 @@ func TestAgentSpecFromMap_EgressInject(t *testing.T) {
 	if len(inj) != 2 {
 		t.Fatalf("want 2 injections, got %d", len(inj))
 	}
-	if inj[0].GetHeader() != "Authorization" || inj[0].GetSecretUri() != "lantern.secret/llm/openai" || inj[0].GetValuePrefix() != "Bearer " {
+	if inj[0].GetHeader() != "Authorization" || inj[0].GetSecretUri() != "pal.secret/llm/openai" || inj[0].GetValuePrefix() != "Bearer " {
 		t.Errorf("camelCase entry mis-parsed: %+v", inj[0])
 	}
 	if inj[1].GetSecretUri() == "" || inj[1].GetValuePrefix() != "" {
@@ -412,7 +412,7 @@ func TestValidateEgressInject(t *testing.T) {
 	rule := func(pattern string, inj map[string]any) []map[string]any {
 		return []map[string]any{{"pattern": pattern, "inject": []any{inj}}}
 	}
-	ok := map[string]any{"header": "Authorization", "secretRef": "lantern.secret/llm/openai"}
+	ok := map[string]any{"header": "Authorization", "secretRef": "pal.secret/llm/openai"}
 	if err := validateEgressInject(rule("api.openai.com", ok), nil); err != nil {
 		t.Fatalf("valid inject rejected: %v", err)
 	}
@@ -422,9 +422,9 @@ func TestValidateEgressInject(t *testing.T) {
 	const raw = "sk-live-RAWSECRET"
 	bad := map[string][]map[string]any{
 		"raw value as ref": rule("api.openai.com", map[string]any{"header": "Authorization", "secretRef": raw}),
-		"wrong scheme":     rule("api.openai.com", map[string]any{"header": "Authorization", "secretRef": "lantern.secret://tenant/t/key/k"}),
-		"bad header":       rule("api.openai.com", map[string]any{"header": "X-A\r\nEvil", "secretRef": "lantern.secret/llm/openai"}),
-		"crlf prefix":      rule("api.openai.com", map[string]any{"header": "A", "secretRef": "lantern.secret/llm/openai", "valuePrefix": "x\r\n"}),
+		"wrong scheme":     rule("api.openai.com", map[string]any{"header": "Authorization", "secretRef": "pal.secret://tenant/t/key/k"}),
+		"bad header":       rule("api.openai.com", map[string]any{"header": "X-A\r\nEvil", "secretRef": "pal.secret/llm/openai"}),
+		"crlf prefix":      rule("api.openai.com", map[string]any{"header": "A", "secretRef": "pal.secret/llm/openai", "valuePrefix": "x\r\n"}),
 		"ip pattern":       rule("8.8.8.8", ok),
 		"cidr pattern":     rule("10.0.0.0/8", ok),
 		"wildcard pattern": rule("*.openai.com", ok),
@@ -436,7 +436,7 @@ func TestValidateEgressInject(t *testing.T) {
 			t.Errorf("%s: want error", name)
 			continue
 		}
-		if strings.Contains(err.Error(), raw) || strings.Contains(err.Error(), "lantern.secret/llm") {
+		if strings.Contains(err.Error(), raw) || strings.Contains(err.Error(), "pal.secret/llm") {
 			t.Errorf("%s: error echoes the ref: %v", name, err)
 		}
 	}
@@ -446,21 +446,21 @@ func TestValidateEgressInject(t *testing.T) {
 // injection exists to keep out of the VM.
 func TestValidateEgressInject_RefAlsoInSecretsRejected(t *testing.T) {
 	rules := []map[string]any{{"pattern": "api.openai.com", "inject": []any{
-		map[string]any{"header": "Authorization", "secretRef": "lantern.secret/llm/openai"},
+		map[string]any{"header": "Authorization", "secretRef": "pal.secret/llm/openai"},
 	}}}
 	for _, secrets := range [][]map[string]any{
-		{{"env_name": "K", "secret_uri": "lantern.secret/llm/openai"}},
-		{{"envName": "K", "secretUri": "lantern.secret/llm/openai"}},
+		{{"env_name": "K", "secret_uri": "pal.secret/llm/openai"}},
+		{{"envName": "K", "secretUri": "pal.secret/llm/openai"}},
 	} {
 		err := validateEgressInject(rules, secrets)
 		if err == nil || !strings.Contains(err.Error(), "also listed in secrets") {
 			t.Fatalf("want overlap rejection, got %v", err)
 		}
-		if strings.Contains(err.Error(), "lantern.secret/") {
+		if strings.Contains(err.Error(), "pal.secret/") {
 			t.Fatalf("error echoes the ref: %v", err)
 		}
 	}
-	if err := validateEgressInject(rules, []map[string]any{{"secret_uri": "lantern.secret/llm/anthropic"}}); err != nil {
+	if err := validateEgressInject(rules, []map[string]any{{"secret_uri": "pal.secret/llm/anthropic"}}); err != nil {
 		t.Fatalf("distinct ref rejected: %v", err)
 	}
 }
@@ -485,10 +485,9 @@ func TestScheduleAgentSpec_DLPLoadErrorFailsClosed(t *testing.T) {
 	}
 }
 
-// ADR 0032: pal.secret/ refs are accepted, and the overlap check compares the
-// canonical form, so spelling one side pal.secret/ and the other
-// lantern.secret/ cannot slip an injected credential into the VM.
-func TestValidateEgressInject_PALRefsAndMixedSpellingOverlap(t *testing.T) {
+// pal.secret/ refs are accepted, and an injected ref that is also vended into
+// the VM is rejected.
+func TestValidateEgressInject_PALRefsAndOverlap(t *testing.T) {
 	rule := func(ref string) []map[string]any {
 		return []map[string]any{{"pattern": "api.openai.com", "inject": []any{
 			map[string]any{"header": "Authorization", "secretRef": ref},
@@ -497,15 +496,10 @@ func TestValidateEgressInject_PALRefsAndMixedSpellingOverlap(t *testing.T) {
 	if err := validateEgressInject(rule("pal.secret/llm/openai"), nil); err != nil {
 		t.Fatalf("pal.secret/ inject rejected: %v", err)
 	}
-	for _, c := range [][2]string{
-		{"pal.secret/llm/openai", "lantern.secret/llm/openai"},
-		{"lantern.secret/llm/openai", "pal.secret/llm/openai"},
-		{"pal.secret/llm/openai", "pal.secret/llm/openai"},
-	} {
-		err := validateEgressInject(rule(c[0]), []map[string]any{{"secret_uri": c[1]}})
-		if err == nil || !strings.Contains(err.Error(), "also listed in secrets") {
-			t.Errorf("inject %q + secret %q: want overlap rejection, got %v", c[0], c[1], err)
-		}
+	const ref = "pal.secret/llm/openai"
+	err := validateEgressInject(rule(ref), []map[string]any{{"secret_uri": ref}})
+	if err == nil || !strings.Contains(err.Error(), "also listed in secrets") {
+		t.Errorf("inject %q + secret %q: want overlap rejection, got %v", ref, ref, err)
 	}
 }
 
@@ -515,9 +509,6 @@ func TestParseRef_PALPrefix(t *testing.T) {
 	}
 	if p := parseRef("pal.secret/connector/abc/apiKey"); p.scope != "connector" || p.installID != "abc" || p.configKey != "apiKey" {
 		t.Errorf("pal connector ref: %+v", p)
-	}
-	if p := parseRef("lantern.secret/llm/openai"); p.scope != "llm" || p.provider != "openai" {
-		t.Errorf("legacy ref: %+v", p)
 	}
 	if p := parseRef("palx.secret/llm/openai"); p.scope != "" {
 		t.Errorf("look-alike prefix accepted: %+v", p)

@@ -8,9 +8,9 @@ package db
 //  4. Runs fn inside that transaction.
 //  5. Commits on success; rolls back on any fn error.
 //
-// When pool is the AppPool (lantern_app role, non-superuser), Postgres enforces
+// When pool is the AppPool (pal_app role, non-superuser), Postgres enforces
 // the tenant_isolation_{agents,runs} RLS policies automatically. When pool is
-// the privileged Pool (lantern superuser, the default with no env vars set),
+// the privileged Pool (pal superuser, the default with no env vars set),
 // the RLS policies are technically bypassed at the DB level — but the GUC is
 // still set, which provides application-level tenant scoping consistent with
 // the existing setRLSTenantID helper used by gRPC handlers.

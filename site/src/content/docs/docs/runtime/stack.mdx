@@ -99,7 +99,7 @@ These boundaries are load-bearing: breaking one causes an incident, not a bug.
 - **Untrusted code gets a microVM.** Never a bare container. If the node cannot provide isolation for an untrusted or hostile workload, the manager refuses it instead of downgrading.
 - **Models are named by capability, not vendor.** Your code says `reasoning-large`; the router resolves it to a vendor model, so a swap needs no code change.
 - **Multi-tenant by default.** Every row carries a tenant, every call carries a tenant, and Postgres row-level security backs it below the application in production, where the control plane refuses to start without the app database password unless you set `PAL_RLS_ENFORCE=0`.
-- **Secrets never appear in logs, traces, or run state.** Only a `lantern.secret/...` reference travels; it is resolved at the moment of use.
+- **Secrets never appear in logs, traces, or run state.** Only a `pal.secret/...` reference travels; it is resolved at the moment of use.
 
 ## What this costs
 

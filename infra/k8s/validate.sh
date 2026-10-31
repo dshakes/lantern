@@ -39,7 +39,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLUSTER_NAME="pal-k8s-validate" # must match kind-cluster.yaml `name:`
 # In --ci mode the workflow owns the cluster + context; honor an override.
 KCTX="${CLUSTER_CONTEXT:-kind-${CLUSTER_NAME}}"
-NS="lantern-t-validate"
+NS="pal-t-validate"
 
 # CI mode: the GitHub workflow already created the kind+Calico cluster, so this
 # script must NOT create or tear it down — only run the assertions.
@@ -57,7 +57,7 @@ for arg in "$@"; do
     --execution) EXEC_MODE=1 ;;
   esac
 done
-RUN_LABEL="lantern.dev/run-id=run-validate-00000001"
+RUN_LABEL="pal.dev/run-id=run-validate-00000001"
 CALICO_MANIFEST="${CALICO_MANIFEST:-https://raw.githubusercontent.com/projectcalico/calico/v3.28.2/manifests/calico.yaml}"
 
 # Colors. Disable if NO_COLOR=1 or stdout isn't a terminal.
@@ -396,6 +396,7 @@ assert_security_chart_renders() {
   fi
   local out
   if ! out=$(helm template "$chart" \
+      --set controlPlane.endpoint=https://cp.example.com \
       --set policies.enabled=true \
       --set imageVerification.enabled=true \
       --set egress.cilium.enabled=true \
@@ -427,7 +428,7 @@ assert_security_chart_renders() {
 
   # Default values (everything OFF) must render NONE of these — safe default.
   local def
-  def=$(helm template "$chart" 2>/dev/null)
+  def=$(helm template "$chart" --set controlPlane.endpoint=https://cp.example.com 2>/dev/null)
   if grep -qE '^kind: (ClusterPolicy|CiliumClusterwideNetworkPolicy|SecretStore|ExternalSecret)$' <<<"$def"; then
     fail "security artifacts off by default" "a policy kind rendered with default values"
   else
@@ -473,7 +474,7 @@ assert_gvisor_execution() {
   else
     # Some runsc builds don't stamp /proc/version; fall back to the node label.
     local node; node=$(kc -n "$NS" get pod untrusted-gvisor-exec -o jsonpath='{.spec.nodeName}' 2>/dev/null)
-    local rc; rc=$(kc get node "$node" -o jsonpath='{.metadata.labels.lantern\.dev/runtimeclass}' 2>/dev/null)
+    local rc; rc=$(kc get node "$node" -o jsonpath='{.metadata.labels.pal\.dev/runtimeclass}' 2>/dev/null)
     if [[ "$rc" == "gvisor" ]]; then
       pass "workload is gVisor-sandboxed" "node '$node' is a gvisor-labelled sandbox node (/proc/version unstamped on this runsc build)"
     else
@@ -535,9 +536,9 @@ assert_no_cotenancy() {
   local others
   others=$(kc get pods --all-namespaces --field-selector "spec.nodeName=$node" \
     -o jsonpath='{range .items[*]}{.metadata.namespace}{"\n"}{end}' 2>/dev/null \
-    | grep -E '^lantern-t-' | grep -v "^${NS}\$" | sort -u || true)
+    | grep -E '^pal-t-' | grep -v "^${NS}\$" | sort -u || true)
   if [[ -z "$others" ]]; then
-    pass "hostile node is dedicated" "no other lantern-t-* tenant shares node '$node' (taint enforced)"
+    pass "hostile node is dedicated" "no other pal-t-* tenant shares node '$node' (taint enforced)"
   else
     fail "hostile node is dedicated" "node '$node' also runs tenant ns: $(tr '\n' ' ' <<<"$others")" \
       "HOSTILE must get a dedicated, tainted node pool — co-tenancy with another tenant is an isolation breach."

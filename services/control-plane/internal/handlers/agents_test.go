@@ -12,10 +12,10 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/control-plane/internal/handlers"
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/control-plane/internal/handlers"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // ---------------------------------------------------------------------------
@@ -61,7 +61,7 @@ func newTestService(pool *pgxpool.Pool) *handlers.AgentService {
 
 func TestCreateAgent_MissingTenant(t *testing.T) {
 	svc := newTestService(nil)
-	_, err := svc.CreateAgent(ctxWithoutTenant(), &lanternv1.CreateAgentRequest{
+	_, err := svc.CreateAgent(ctxWithoutTenant(), &palv1.CreateAgentRequest{
 		Name: "test-agent",
 	})
 	if err == nil {
@@ -78,7 +78,7 @@ func TestCreateAgent_MissingTenant(t *testing.T) {
 
 func TestCreateAgent_EmptyName(t *testing.T) {
 	svc := newTestService(nil)
-	_, err := svc.CreateAgent(ctxWithTenant("tenant-1"), &lanternv1.CreateAgentRequest{
+	_, err := svc.CreateAgent(ctxWithTenant("tenant-1"), &palv1.CreateAgentRequest{
 		Name: "",
 	})
 	if err == nil {
@@ -103,7 +103,7 @@ func TestCreateAgent_EmptyName(t *testing.T) {
 
 func TestGetAgent_MissingTenant(t *testing.T) {
 	svc := newTestService(nil)
-	_, err := svc.GetAgent(ctxWithoutTenant(), &lanternv1.GetAgentRequest{
+	_, err := svc.GetAgent(ctxWithoutTenant(), &palv1.GetAgentRequest{
 		Name: "test-agent",
 	})
 	if err == nil {
@@ -117,7 +117,7 @@ func TestGetAgent_MissingTenant(t *testing.T) {
 
 func TestGetAgent_EmptyName(t *testing.T) {
 	svc := newTestService(nil)
-	_, err := svc.GetAgent(ctxWithTenant("tenant-1"), &lanternv1.GetAgentRequest{
+	_, err := svc.GetAgent(ctxWithTenant("tenant-1"), &palv1.GetAgentRequest{
 		Name: "",
 	})
 	if err == nil {
@@ -135,7 +135,7 @@ func TestGetAgent_EmptyName(t *testing.T) {
 
 func TestListAgents_MissingTenant(t *testing.T) {
 	svc := newTestService(nil)
-	_, err := svc.ListAgents(ctxWithoutTenant(), &lanternv1.ListAgentsRequest{})
+	_, err := svc.ListAgents(ctxWithoutTenant(), &palv1.ListAgentsRequest{})
 	if err == nil {
 		t.Fatal("expected error for missing tenant")
 	}
@@ -154,7 +154,7 @@ func TestListAgents_MissingTenant(t *testing.T) {
 
 func TestDeleteAgent_MissingTenant(t *testing.T) {
 	svc := newTestService(nil)
-	_, err := svc.DeleteAgent(ctxWithoutTenant(), &lanternv1.DeleteAgentRequest{
+	_, err := svc.DeleteAgent(ctxWithoutTenant(), &palv1.DeleteAgentRequest{
 		Name: "test-agent",
 	})
 	if err == nil {
@@ -168,7 +168,7 @@ func TestDeleteAgent_MissingTenant(t *testing.T) {
 
 func TestDeleteAgent_EmptyName(t *testing.T) {
 	svc := newTestService(nil)
-	_, err := svc.DeleteAgent(ctxWithTenant("tenant-1"), &lanternv1.DeleteAgentRequest{
+	_, err := svc.DeleteAgent(ctxWithTenant("tenant-1"), &palv1.DeleteAgentRequest{
 		Name: "",
 	})
 	if err == nil {
@@ -186,7 +186,7 @@ func TestDeleteAgent_EmptyName(t *testing.T) {
 
 func TestUpdateAgent_Unimplemented(t *testing.T) {
 	svc := newTestService(nil)
-	_, err := svc.UpdateAgent(context.Background(), &lanternv1.UpdateAgentRequest{})
+	_, err := svc.UpdateAgent(context.Background(), &palv1.UpdateAgentRequest{})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -198,7 +198,7 @@ func TestUpdateAgent_Unimplemented(t *testing.T) {
 
 func TestCreateAgentVersion_Unimplemented(t *testing.T) {
 	svc := newTestService(nil)
-	_, err := svc.CreateAgentVersion(context.Background(), &lanternv1.CreateAgentVersionRequest{})
+	_, err := svc.CreateAgentVersion(context.Background(), &palv1.CreateAgentVersionRequest{})
 	if err == nil {
 		t.Fatal("expected error")
 	}

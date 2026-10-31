@@ -28,13 +28,13 @@ func TestExtractTenant_HealthCheck_NoMetadata(t *testing.T) {
 func TestExtractTenant_DataPlaneService_NoMetadata(t *testing.T) {
 	// DataPlaneService methods must NOT require tenant_id metadata — the service
 	// authenticates via bootstrap token + session JWT. Any method under the
-	// /lantern.v1.DataPlaneService/ prefix must pass through without metadata.
+	// /pal.v1.DataPlaneService/ prefix must pass through without metadata.
 	methods := []string{
-		"/lantern.v1.DataPlaneService/Register",
-		"/lantern.v1.DataPlaneService/Heartbeat",
-		"/lantern.v1.DataPlaneService/ReportMetrics",
-		"/lantern.v1.DataPlaneService/RefreshToken",
-		"/lantern.v1.DataPlaneService/RunStream",
+		"/pal.v1.DataPlaneService/Register",
+		"/pal.v1.DataPlaneService/Heartbeat",
+		"/pal.v1.DataPlaneService/ReportMetrics",
+		"/pal.v1.DataPlaneService/RefreshToken",
+		"/pal.v1.DataPlaneService/RunStream",
 	}
 	logger := zap.NewNop()
 	for _, m := range methods {
@@ -49,7 +49,7 @@ func TestExtractTenant_DataPlaneService_NoMetadata(t *testing.T) {
 
 func TestExtractTenant_UnknownMethod_RequiresMetadata(t *testing.T) {
 	logger := zap.NewNop()
-	_, err := extractTenant(context.Background(), logger, "/lantern.v1.AgentService/ListAgents")
+	_, err := extractTenant(context.Background(), logger, "/pal.v1.AgentService/ListAgents")
 	if err == nil {
 		t.Error("expected error for unknown method without metadata, got nil")
 	}
@@ -60,11 +60,11 @@ func TestIsDataPlaneService(t *testing.T) {
 		method string
 		want   bool
 	}{
-		{"/lantern.v1.DataPlaneService/Register", true},
-		{"/lantern.v1.DataPlaneService/RunStream", true},
+		{"/pal.v1.DataPlaneService/Register", true},
+		{"/pal.v1.DataPlaneService/RunStream", true},
 		{"/grpc.health.v1.Health/Check", false},
-		{"/lantern.v1.AgentService/ListAgents", false},
-		{"lantern.v1.DataPlaneService/Register", false}, // no leading slash
+		{"/pal.v1.AgentService/ListAgents", false},
+		{"pal.v1.DataPlaneService/Register", false}, // no leading slash
 	}
 	for _, tc := range cases {
 		got := isDataPlaneService(tc.method)

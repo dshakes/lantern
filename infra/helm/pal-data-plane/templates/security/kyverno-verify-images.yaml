@@ -25,7 +25,7 @@ metadata:
   name: {{ include "pal-dp.fullname" . }}-verify-images
   labels:
     {{- include "pal-dp.labels" . | nindent 4 }}
-    lantern.dev/policy: image-verification
+    pal.dev/policy: image-verification
   annotations:
     policies.kyverno.io/title: PAL Runtime image signature verification
     policies.kyverno.io/category: PAL Runtime Supply Chain

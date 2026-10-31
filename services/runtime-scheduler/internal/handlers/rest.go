@@ -19,10 +19,10 @@ import (
 
 	"go.uber.org/zap"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/cluster"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/metrics"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/middleware"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/cluster"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/metrics"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/middleware"
 )
 
 // RESTHandler exposes the REST gateway.
@@ -85,10 +85,10 @@ func writeErr(w http.ResponseWriter, code int, msg string) {
 // proto field names in snake_case so SDK / curl users get the same
 // shape they see in proto.
 type scheduleBody struct {
-	Spec            *lanternv1.AgentSpec     `json:"spec"`
-	Hint            *lanternv1.PlacementHint `json:"hint,omitempty"`
-	ColdStartBudget string                   `json:"cold_start_budget,omitempty"` // e.g. "10s"
-	ReserveOnly     bool                     `json:"reserve_only,omitempty"`
+	Spec            *palv1.AgentSpec     `json:"spec"`
+	Hint            *palv1.PlacementHint `json:"hint,omitempty"`
+	ColdStartBudget string               `json:"cold_start_budget,omitempty"` // e.g. "10s"
+	ReserveOnly     bool                 `json:"reserve_only,omitempty"`
 }
 
 // POST /v1/schedule
@@ -104,7 +104,7 @@ func (h *RESTHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := middleware.InjectTenantID(r.Context(), tenantID)
-	handle, err := h.Service.Schedule(ctx, &lanternv1.ScheduleRequest{
+	handle, err := h.Service.Schedule(ctx, &palv1.ScheduleRequest{
 		Spec:        body.Spec,
 		Hint:        body.Hint,
 		ReserveOnly: body.ReserveOnly,
@@ -125,7 +125,7 @@ func (h *RESTHandler) ListVMs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := middleware.InjectTenantID(r.Context(), tenantID)
-	resp, err := h.Service.List(ctx, &lanternv1.ListRequest{
+	resp, err := h.Service.List(ctx, &palv1.ListRequest{
 		LabelSelector: r.URL.Query().Get("labels"),
 	})
 	if err != nil {
@@ -148,7 +148,7 @@ func (h *RESTHandler) TerminateVM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := middleware.InjectTenantID(r.Context(), tenantID)
-	resp, err := h.Service.Terminate(ctx, &lanternv1.TerminateRequest{
+	resp, err := h.Service.Terminate(ctx, &palv1.TerminateRequest{
 		VmId:   id,
 		Reason: r.URL.Query().Get("reason"),
 	})
@@ -167,7 +167,7 @@ func (h *RESTHandler) GetCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := middleware.InjectTenantID(r.Context(), tenantID)
-	resp, err := h.Service.Cluster(ctx, &lanternv1.ClusterRequest{})
+	resp, err := h.Service.Cluster(ctx, &palv1.ClusterRequest{})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return

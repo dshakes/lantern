@@ -71,7 +71,7 @@ func TestParsePgxPoolConfig_Defaults(t *testing.T) {
 	os.Unsetenv("PAL_PG_MAX_CONN_LIFETIME")
 	os.Unsetenv("PAL_PG_MAX_CONN_IDLE_TIME")
 
-	cfg, err := parsePgxPoolConfig("postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable")
+	cfg, err := parsePgxPoolConfig("postgres://pal:pal@localhost:5432/pal?sslmode=disable")
 	if err != nil {
 		t.Fatalf("parsePgxPoolConfig returned error: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestParsePgxPoolConfig_EnvOverrides(t *testing.T) {
 	t.Setenv("PAL_PG_MAX_CONN_LIFETIME", "2h")
 	t.Setenv("PAL_PG_MAX_CONN_IDLE_TIME", "15m")
 
-	cfg, err := parsePgxPoolConfig("postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable")
+	cfg, err := parsePgxPoolConfig("postgres://pal:pal@localhost:5432/pal?sslmode=disable")
 	if err != nil {
 		t.Fatalf("parsePgxPoolConfig returned error: %v", err)
 	}

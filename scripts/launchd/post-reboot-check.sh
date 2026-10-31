@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
-# One-shot post-reboot health check for the Lantern dev stack.
-# Armed via dev.lantern.post-reboot-check.plist (RunAtLoad). After it writes
+# One-shot post-reboot health check for the PAL dev stack.
+# Armed via dev.pal.post-reboot-check.plist (RunAtLoad). After it writes
 # its report it disarms itself so it only runs on the first login after arming.
 set -uo pipefail
 
-# Works on either side of the PAL cutover (ADR 0032): dev.pal.* once installed.
-LABEL_PREFIX=dev.lantern LOG_DIR="$HOME/Library/Logs/Lantern"
-if [ -e "$HOME/Library/LaunchAgents/dev.pal.api.plist" ]; then LABEL_PREFIX=dev.pal LOG_DIR="$HOME/Library/Logs/PAL"; fi
+LABEL_PREFIX=dev.pal LOG_DIR="$HOME/Library/Logs/PAL"
 
 REPORT="$LOG_DIR/post-reboot-check.log"
 mkdir -p "$(dirname "$REPORT")"
@@ -15,7 +13,7 @@ UID_NUM="$(id -u)"
 
 {
   echo "================================================================"
-  echo "Lantern post-reboot check — started $(date '+%Y-%m-%d %H:%M:%S %Z')"
+  echo "PAL post-reboot check — started $(date '+%Y-%m-%d %H:%M:%S %Z')"
   echo "uptime: $(uptime)"
   echo "================================================================"
 

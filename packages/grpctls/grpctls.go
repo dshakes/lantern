@@ -31,11 +31,9 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/dshakes/lantern/packages/palenv"
 )
 
-// Env suffixes, read as PAL_<suffix> with LANTERN_<suffix> fallback.
+// Env suffixes, read as PAL_<suffix>.
 const (
 	ServicePrefix = "GRPC_TLS"            // service-mesh identity
 	ManagerPrefix = "RUNTIME_MANAGER_TLS" // client side of the runtime-manager CA
@@ -47,7 +45,7 @@ const (
 // VMCertOU marks a per-VM guest cert minted by the runtime-manager
 // (runtime-manager/src/tls.rs VM_CERT_OU). A guest identity is never a
 // service, whatever CA signed it.
-const VMCertOU = "lantern-vm"
+const VMCertOU = "pal-vm"
 
 // Files names one PEM triplet. Prefix is the env suffix stem, used in errors.
 type Files struct {
@@ -55,9 +53,9 @@ type Files struct {
 	CA, Cert, Key string
 }
 
-// FromEnv reads PAL_<prefix>_CA/_CERT/_KEY (LANTERN_ fallback).
+// FromEnv reads PAL_<prefix>_CA/_CERT/_KEY.
 func FromEnv(prefix string) Files {
-	get := func(s string) string { return strings.TrimSpace(palenv.Get(prefix + "_" + s)) }
+	get := func(s string) string { return strings.TrimSpace(os.Getenv("PAL_" + prefix + "_" + s)) }
 	return Files{Prefix: prefix, CA: get("CA"), Cert: get("CERT"), Key: get("KEY")}
 }
 
@@ -69,7 +67,7 @@ func (f Files) name(s string) string { return "PAL_" + f.Prefix + "_" + s }
 // IsProd reports a production-like PAL_ENV (prod/production/staging), the
 // same rule every service applies. For callers with no env helper of their own.
 func IsProd() bool {
-	switch strings.ToLower(strings.TrimSpace(palenv.Get("ENV"))) {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("PAL_ENV"))) {
 	case "prod", "production", "staging":
 		return true
 	}
@@ -79,7 +77,7 @@ func IsProd() bool {
 // InsecureOverride reports PAL_GRPC_INSECURE=1|true|on: the explicit, loud
 // opt-out that lets a prod-like env run service-mesh gRPC in plaintext.
 func InsecureOverride() bool {
-	v := strings.ToLower(strings.TrimSpace(palenv.Get(envInsecure)))
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("PAL_" + envInsecure)))
 	return v == "1" || v == "true" || v == "on"
 }
 
@@ -87,7 +85,7 @@ func InsecureOverride() bool {
 // SPIFFE IDs, e.g. spiffe://pal.internal/svc/gateway). Empty → nil.
 func AllowedPeersFromEnv() []string {
 	var out []string
-	for _, p := range strings.Split(palenv.Get(envAllowedPeers), ",") {
+	for _, p := range strings.Split(os.Getenv("PAL_"+envAllowedPeers), ",") {
 		if p = strings.TrimSpace(p); p != "" {
 			out = append(out, p)
 		}

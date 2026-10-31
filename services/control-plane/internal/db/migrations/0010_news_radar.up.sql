@@ -5,7 +5,7 @@
 -- podcasts. URL-level dedup via UNIQUE(tenant_id, url).
 --
 -- RLS posture mirrors 0007 exactly: ENABLE + FORCE + tenant_isolation policy
--- with USING and WITH CHECK, plus GRANT to lantern_app.
+-- with USING and WITH CHECK, plus GRANT to pal_app.
 
 CREATE TABLE IF NOT EXISTS news_items (
     id           uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -30,7 +30,7 @@ CREATE INDEX IF NOT EXISTS news_items_tenant_created
     ON news_items (tenant_id, created_at DESC);
 
 -- Grant DML to the non-superuser app role (same as 0005–0007).
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE news_items TO lantern_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE news_items TO pal_app;
 
 DO $$
 BEGIN

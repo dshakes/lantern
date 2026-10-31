@@ -1,6 +1,6 @@
 // Package llmreplay is a deterministic fixture LLM server speaking the OpenAI
 // chat-completions and Anthropic messages wire formats (JSON and SSE, text and
-// tool calls). With LANTERN_LLM_BASEURL_{OPENAI,ANTHROPIC} pointed at it, CI and
+// tool calls). With PAL_LLM_BASEURL_{OPENAI,ANTHROPIC} pointed at it, CI and
 // kiosk mode get repeatable model output and realistic usage counts with no
 // provider key.
 //

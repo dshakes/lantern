@@ -22,9 +22,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
-	"github.com/dshakes/lantern/services/control-plane/internal/storage"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/storage"
 	"go.uber.org/zap"
 )
 
@@ -60,7 +60,7 @@ type DLHandler struct {
 }
 
 func NewDLHandler(srv *server.Server) *DLHandler {
-	dir := filepath.Join(os.TempDir(), "lantern-dl")
+	dir := filepath.Join(os.TempDir(), "pal-dl")
 	_ = os.MkdirAll(dir, 0o700)
 	h := &DLHandler{srv: srv, dir: dir, secret: resolveDLSecret()}
 	if srv.Blob != nil { // avoid a typed-nil interface
@@ -86,7 +86,7 @@ func resolveDLSecret() []byte {
 	}
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		return []byte("lantern-dl-fallback-secret") // unreachable in practice
+		return []byte("pal-dl-fallback-secret") // unreachable in practice
 	}
 	return b
 }

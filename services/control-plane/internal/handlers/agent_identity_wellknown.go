@@ -1,6 +1,6 @@
 package handlers
 
-// AgentIdentityWellKnown handles GET /.well-known/pal-agent-identity (and the legacy /.well-known/lantern-agent-identity).
+// AgentIdentityWellKnown handles GET /.well-known/pal-agent-identity.
 //
 // Ed25519 mode: publishes {algorithm, publicKey, keyFingerprint} so external
 // verifiers can confirm agent-instance JWT signatures without a shared secret.
@@ -14,7 +14,7 @@ import (
 	"encoding/base64"
 	"net/http"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/agentidentity"
+	"github.com/dshakes/pal/services/control-plane/internal/agentidentity"
 )
 
 // AgentIdentityWellKnown is a standalone handler function (no state needed
@@ -26,13 +26,13 @@ func AgentIdentityWellKnown(w http.ResponseWriter, _ *http.Request) {
 			"algorithm":      "Ed25519",
 			"publicKey":      base64.StdEncoding.EncodeToString(pub),
 			"keyFingerprint": agentidentity.AgentIdentityKeyFingerprint(),
-			"docs":           "https://docs.lantern.dev/agent-identity",
+			"docs":           "https://dshakes.github.io/pal/agent-identity",
 		})
 		return
 	}
 	// HS256 fallback — never emit the secret.
 	writeJSON(w, http.StatusOK, map[string]any{
 		"algorithm": "HS256",
-		"docs":      "https://docs.lantern.dev/agent-identity",
+		"docs":      "https://dshakes.github.io/pal/agent-identity",
 	})
 }

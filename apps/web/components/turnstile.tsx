@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 
 // Cloudflare Turnstile widget (ADR 0027). Renders only when
 // NEXT_PUBLIC_TURNSTILE_SITE_KEY is set; the control plane verifies the token
-// server-side with LANTERN_TURNSTILE_SECRET.
+// server-side with PAL_TURNSTILE_SECRET.
 export const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? "";
 
 type TurnstileApi = {

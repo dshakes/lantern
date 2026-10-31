@@ -26,9 +26,9 @@
 //
 // Override target / credentials:
 //
-//	LANTERN_E2E_API_URL   (default http://localhost:8080)
-//	LANTERN_E2E_EMAIL     (default admin@lantern.dev)
-//	LANTERN_E2E_PASSWORD  (default lantern)
+//	PAL_E2E_API_URL   (default http://localhost:8080)
+//	PAL_E2E_EMAIL     (default admin@pal.local)
+//	PAL_E2E_PASSWORD  (default pal)
 package quickstart_e2e
 
 import (
@@ -38,7 +38,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dshakes/lantern/e2e/internal/e2ekit"
+	"github.com/dshakes/pal/e2e/internal/e2ekit"
 )
 
 // TestMain sweeps any e2e-* leftovers before running the suite.

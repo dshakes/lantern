@@ -11,11 +11,11 @@ The full history is in [CHANGELOG.md](repo:/blob/master/CHANGELOG.md).
 
 ## Breaking
 
-- **Firecracker guests no longer get caller env on the kernel cmdline.** `spawn.json` is the only channel for caller env; the cmdline carries just the manager-owned `LANTERN_ENV`, `LANTERN_MANAGER_ADDR` and `LANTERN_WORKLOAD_UID`. Harness builds that predate `spawn.json` are unsupported for caller env. The old path leaked values such as an instance token into console logs.
+- **Firecracker guests no longer get caller env on the kernel cmdline.** `spawn.json` is the only channel for caller env; the cmdline carries just the manager-owned `PAL_ENV`, `PAL_MANAGER_ADDR` and `PAL_WORKLOAD_UID`. Harness builds that predate `spawn.json` are unsupported for caller env. The old path leaked values such as an instance token into console logs.
 
 ## Renamed
 
-The product is now **PAL** ([ADR 0032](repo:/blob/master/docs/adr/0032-rename-lantern-to-pal.md)). Docs, dashboard copy, widget and CLI help say PAL, the CLI binary is `pal`, and variables are spelled `PAL_*`. The old `LANTERN_*` names are still read as aliases, and wire identifiers (`x-lantern-service-token`, `lantern.secret/`, `lantern.v1`) are unchanged.
+The product is now **PAL** ([ADR 0032](repo:/blob/master/docs/adr/0032-rename-to-pal.md)). Docs, dashboard copy, widget and CLI help say PAL, the CLI binary is `pal`, and variables are spelled `PAL_*`. Wire identifiers use the PAL names too (`x-pal-service-token`, `pal.secret/`, `pal.v1`); there are no fallback names.
 
 ## New since 0.2.0
 

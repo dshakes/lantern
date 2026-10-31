@@ -109,14 +109,14 @@ impl TokenBucket {
 // H4 (a): port allowlist
 //
 // Default: only port 443 is permitted.  The operator may widen this via
-// `LANTERN_EGRESS_ALLOWED_PORTS` (comma-separated list of u16).  An empty
+// `PAL_EGRESS_ALLOWED_PORTS` (comma-separated list of u16).  An empty
 // env var re-applies the default (443 only).
 // ---------------------------------------------------------------------------
 
 /// Parse the allowed-ports configuration from the environment.
 /// Returns a `Vec` of allowed ports; default is `[443]`.
 fn allowed_ports_from_env() -> Vec<u16> {
-    match pal_env::var("PAL_EGRESS_ALLOWED_PORTS") {
+    match std::env::var("PAL_EGRESS_ALLOWED_PORTS") {
         Ok(raw) if !raw.trim().is_empty() => raw
             .split(',')
             .filter_map(|s| s.trim().parse::<u16>().ok())
@@ -400,9 +400,9 @@ pub fn pattern_matches(pattern: &str, host: &str) -> bool {
 // we either FAIL CLOSED (refuse to start the workload) or log a prominent
 // SECURITY warning + audit event and proceed.
 //
-// FAIL-CLOSED is the DEFAULT in production (LANTERN_ENV=prod/production/
-// staging). In dev (LANTERN_ENV unset or any other value) it is opt-in via
-// LANTERN_EGRESS_FAIL_CLOSED=1. An explicit LANTERN_EGRESS_FAIL_CLOSED=0 in
+// FAIL-CLOSED is the DEFAULT in production (PAL_ENV=prod/production/
+// staging). In dev (PAL_ENV unset or any other value) it is opt-in via
+// PAL_EGRESS_FAIL_CLOSED=1. An explicit PAL_EGRESS_FAIL_CLOSED=0 in
 // a prod environment is IGNORED — prod is never fail-open.
 // ---------------------------------------------------------------------------
 
@@ -442,13 +442,13 @@ pub fn preflight_decision(
 /// Pure: takes `Option<&str>` so the logic is unit-testable without `setenv`.
 ///
 /// Decision rule:
-///  * Prod (`LANTERN_ENV` = `"prod"`, `"production"`, or `"staging"`): always
-///    returns `true`. An explicit `LANTERN_EGRESS_FAIL_CLOSED=0` is IGNORED.
-///  * Dev (any other value, or unset): honours `LANTERN_EGRESS_FAIL_CLOSED`;
+///  * Prod (`PAL_ENV` = `"prod"`, `"production"`, or `"staging"`): always
+///    returns `true`. An explicit `PAL_EGRESS_FAIL_CLOSED=0` is IGNORED.
+///  * Dev (any other value, or unset): honours `PAL_EGRESS_FAIL_CLOSED`;
 ///    defaults to `false` (warn-only) when unset or empty.
 #[must_use]
-pub fn resolve_fail_closed(lantern_env: Option<&str>, fail_closed_var: Option<&str>) -> bool {
-    let is_prod = lantern_env
+pub fn resolve_fail_closed(pal_env: Option<&str>, fail_closed_var: Option<&str>) -> bool {
+    let is_prod = pal_env
         .map(|e| matches!(e, "prod" | "production" | "staging"))
         .unwrap_or(false);
     if is_prod {
@@ -463,10 +463,10 @@ pub fn resolve_fail_closed(lantern_env: Option<&str>, fail_closed_var: Option<&s
 /// Derive the fail-closed policy from the current process environment.
 ///
 /// Calls [`resolve_fail_closed`]. Emits a warning when prod ignores an
-/// explicit `LANTERN_EGRESS_FAIL_CLOSED=0`.
+/// explicit `PAL_EGRESS_FAIL_CLOSED=0`.
 fn egress_fail_closed_from_env() -> bool {
-    let env = pal_env::var("PAL_ENV").ok();
-    let var = pal_env::var("PAL_EGRESS_FAIL_CLOSED").ok();
+    let env = std::env::var("PAL_ENV").ok();
+    let var = std::env::var("PAL_EGRESS_FAIL_CLOSED").ok();
     let fail_closed = resolve_fail_closed(env.as_deref(), var.as_deref());
     // Warn when prod overrides an operator's explicit-false attempt.
     let explicit_false = var
@@ -475,9 +475,9 @@ fn egress_fail_closed_from_env() -> bool {
         .unwrap_or(false);
     if fail_closed && explicit_false {
         tracing::warn!(
-            lantern_env = %env.as_deref().unwrap_or(""),
-            "egress: LANTERN_EGRESS_FAIL_CLOSED=0 is IGNORED in production. \
-             Egress enforcement is always fail-closed when LANTERN_ENV is \
+            pal_env = %env.as_deref().unwrap_or(""),
+            "egress: PAL_EGRESS_FAIL_CLOSED=0 is IGNORED in production. \
+             Egress enforcement is always fail-closed when PAL_ENV is \
              prod/production/staging."
         );
     }
@@ -527,7 +527,7 @@ pub async fn enforcement_preflight(
     manager: &ManagerClient,
     egress_configured: bool,
 ) -> anyhow::Result<()> {
-    let proxy_port = pal_env::var("PAL_EGRESS_BIND")
+    let proxy_port = std::env::var("PAL_EGRESS_BIND")
         .ok()
         .and_then(|b| b.rsplit(':').next().and_then(|p| p.parse::<u16>().ok()))
         .unwrap_or(3128);
@@ -550,7 +550,7 @@ pub async fn enforcement_preflight(
                 "egress: SECURITY — egress rules are declared but the iptables REDIRECT \
                  enforcement layer was NOT detected. The allowlist is ADVISORY only: a workload \
                  that ignores HTTP(S)_PROXY can bypass it. Install the REDIRECT rule in the VM \
-                 image (see egress.rs header) or set LANTERN_EGRESS_FAIL_CLOSED=1 to refuse to \
+                 image (see egress.rs header) or set PAL_EGRESS_FAIL_CLOSED=1 to refuse to \
                  start without it."
             );
             audit_preflight(manager, proxy_port, "warn_only").await;
@@ -560,7 +560,7 @@ pub async fn enforcement_preflight(
             anyhow::bail!(
                 "egress: refusing to start — egress rules declared but iptables REDIRECT \
                  enforcement absent. Fail-closed is active (prod env or \
-                 LANTERN_EGRESS_FAIL_CLOSED=1). Install the REDIRECT rule in the VM image \
+                 PAL_EGRESS_FAIL_CLOSED=1). Install the REDIRECT rule in the VM image \
                  (see egress.rs header)."
             );
         }
@@ -589,7 +589,7 @@ async fn audit_preflight(manager: &ManagerClient, proxy_port: u16, decision: &st
 
 /// Run the HTTP CONNECT proxy. Binds to 127.0.0.1:3128.
 pub async fn run_proxy(policy: Arc<EgressPolicy>) -> anyhow::Result<()> {
-    let bind = pal_env::var("PAL_EGRESS_BIND").unwrap_or_else(|_| "127.0.0.1:3128".into());
+    let bind = std::env::var("PAL_EGRESS_BIND").unwrap_or_else(|_| "127.0.0.1:3128".into());
     let listener = TcpListener::bind(&bind).await?;
     tracing::info!(%bind, "egress: HTTP CONNECT proxy listening");
 
@@ -674,7 +674,7 @@ async fn handle_connect(
         Some(hp) => hp,
         None => {
             let _ = write_half
-                .write_all(b"HTTP/1.1 400 Bad Request\r\nX-Pal-Reason: missing-port\r\nX-Lantern-Reason: missing-port\r\n\r\n")
+                .write_all(b"HTTP/1.1 400 Bad Request\r\nX-Pal-Reason: missing-port\r\nX-Pal-Reason: missing-port\r\n\r\n")
                 .await;
             return Ok(());
         }
@@ -686,7 +686,7 @@ async fn handle_connect(
     match decision {
         Decision::Deny(reason) => {
             let body = format!(
-                "HTTP/1.1 403 Forbidden\r\nX-Pal-Reason: {reason}\r\nX-Lantern-Reason: {reason}\r\n\r\n"
+                "HTTP/1.1 403 Forbidden\r\nX-Pal-Reason: {reason}\r\nX-Pal-Reason: {reason}\r\n\r\n"
             );
             let _ = write_half.write_all(body.as_bytes()).await;
             return Ok(());
@@ -702,7 +702,7 @@ async fn handle_connect(
     match ip_decision {
         Decision::Deny(reason) => {
             let body = format!(
-                "HTTP/1.1 403 Forbidden\r\nX-Pal-Reason: {reason}\r\nX-Lantern-Reason: {reason}\r\n\r\n"
+                "HTTP/1.1 403 Forbidden\r\nX-Pal-Reason: {reason}\r\nX-Pal-Reason: {reason}\r\n\r\n"
             );
             let _ = write_half.write_all(body.as_bytes()).await;
             return Ok(());
@@ -768,7 +768,7 @@ async fn handle_plain_http(
         parse_host_port_with_default(h, 80)
     } else {
         let _ = write_half
-            .write_all(b"HTTP/1.1 400 Bad Request\r\nX-Pal-Reason: missing-host\r\nX-Lantern-Reason: missing-host\r\n\r\n")
+            .write_all(b"HTTP/1.1 400 Bad Request\r\nX-Pal-Reason: missing-host\r\nX-Pal-Reason: missing-host\r\n\r\n")
             .await;
         return Ok(());
     };
@@ -778,7 +778,7 @@ async fn handle_plain_http(
     match decision {
         Decision::Deny(reason) => {
             let body = format!(
-                "HTTP/1.1 403 Forbidden\r\nX-Pal-Reason: {reason}\r\nX-Lantern-Reason: {reason}\r\n\r\n"
+                "HTTP/1.1 403 Forbidden\r\nX-Pal-Reason: {reason}\r\nX-Pal-Reason: {reason}\r\n\r\n"
             );
             let _ = write_half.write_all(body.as_bytes()).await;
             return Ok(());
@@ -795,7 +795,7 @@ async fn handle_plain_http(
             "egress: plain HTTP request rejected — method not permitted by rule"
         );
         let _ = write_half
-            .write_all(b"HTTP/1.1 403 Forbidden\r\nX-Pal-Reason: method-not-allowed\r\nX-Lantern-Reason: method-not-allowed\r\n\r\n")
+            .write_all(b"HTTP/1.1 403 Forbidden\r\nX-Pal-Reason: method-not-allowed\r\nX-Pal-Reason: method-not-allowed\r\n\r\n")
             .await;
         return Ok(());
     }
@@ -808,7 +808,7 @@ async fn handle_plain_http(
     match ip_decision {
         Decision::Deny(reason) => {
             let body = format!(
-                "HTTP/1.1 403 Forbidden\r\nX-Pal-Reason: {reason}\r\nX-Lantern-Reason: {reason}\r\n\r\n"
+                "HTTP/1.1 403 Forbidden\r\nX-Pal-Reason: {reason}\r\nX-Pal-Reason: {reason}\r\n\r\n"
             );
             let _ = write_half.write_all(body.as_bytes()).await;
             return Ok(());
@@ -952,7 +952,7 @@ fn parse_host_port(target: &str) -> Option<(String, u16)> {
 // REDIRECT preflight does not apply.
 // ---------------------------------------------------------------------------
 
-/// Pure: whether a `LANTERN_EGRESS_MODE` value selects broker mode.
+/// Pure: whether a `PAL_EGRESS_MODE` value selects broker mode.
 #[must_use]
 pub fn is_broker_mode(mode: Option<&str>) -> bool {
     mode.is_some_and(|m| m.trim().eq_ignore_ascii_case("broker"))
@@ -962,11 +962,11 @@ pub fn is_broker_mode(mode: Option<&str>) -> bool {
 /// `EGRESS_VSOCK_PORT`); `spawn.json` `vsock_egress_port` overrides.
 const DEFAULT_EGRESS_VSOCK_PORT: u32 = 3128;
 
-/// Run the broker-mode forwarder on `LANTERN_EGRESS_BIND` (default
+/// Run the broker-mode forwarder on `PAL_EGRESS_BIND` (default
 /// 127.0.0.1:3128), dialling the host broker over vsock per connection.
 pub async fn run_broker_forwarder() -> anyhow::Result<()> {
-    let bind = pal_env::var("PAL_EGRESS_BIND").unwrap_or_else(|_| "127.0.0.1:3128".into());
-    let port = pal_env::var("PAL_EGRESS_VSOCK_PORT")
+    let bind = std::env::var("PAL_EGRESS_BIND").unwrap_or_else(|_| "127.0.0.1:3128".into());
+    let port = std::env::var("PAL_EGRESS_VSOCK_PORT")
         .ok()
         .and_then(|p| p.trim().parse().ok())
         .unwrap_or(DEFAULT_EGRESS_VSOCK_PORT);
@@ -1022,11 +1022,11 @@ pub fn install_broker_ca(
     ])
 }
 
-/// `install_broker_ca` against `/run/lantern` and the real system bundles.
+/// `install_broker_ca` against `/run/pal` and the real system bundles.
 /// Where the broker CA lives in the guest (re-written on re-identify, so
 /// long-lived readers like `http_fetch` read it from here, not the boot env).
-pub const BROKER_CA_DIR: &str = "/run/lantern";
-pub const BROKER_CA_FILE: &str = "/run/lantern/egress-ca.crt";
+pub const BROKER_CA_DIR: &str = "/run/pal";
+pub const BROKER_CA_FILE: &str = "/run/pal/egress-ca.crt";
 
 pub fn install_broker_ca_default(pem: &str) -> std::io::Result<Vec<(String, String)>> {
     install_broker_ca(std::path::Path::new(BROKER_CA_DIR), pem, &SYSTEM_CA_BUNDLES)
@@ -1768,7 +1768,7 @@ mod tests {
     #[test]
     fn broker_ca_installed_world_readable_and_appended_to_bundle() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = std::env::temp_dir().join(format!("lantern-ca-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("pal-ca-{}", std::process::id()));
         let sys = dir.join("system.pem");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(&sys, "SYSTEM-ROOTS").unwrap();

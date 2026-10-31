@@ -5,7 +5,7 @@ package handlers
 //
 // Skipped automatically when DATABASE_URL is unset. Run with:
 //
-//	DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable \
+//	DATABASE_URL=postgres://pal:pal@localhost:5432/pal?sslmode=disable \
 //	  go test ./internal/handlers/ -run TestSessionVM -v -count=1 -p 1
 
 import (
@@ -16,9 +16,9 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/agentidentity"
-	"github.com/dshakes/lantern/services/control-plane/internal/db"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/agentidentity"
+	"github.com/dshakes/pal/services/control-plane/internal/db"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // newSessionVMHandler builds a RuntimeHandler with a real pool and a

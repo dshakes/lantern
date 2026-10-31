@@ -7,7 +7,7 @@ package handlers
 //
 // Skipped automatically when DATABASE_URL is unset. Run with:
 //
-//	DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable \
+//	DATABASE_URL=postgres://pal:pal@localhost:5432/pal?sslmode=disable \
 //	  go test ./internal/handlers/ -run Session -count=1 -v
 
 import (
@@ -23,7 +23,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // newSessionTestHandler builds a SessionHandler backed by a real pool. Redis is
@@ -141,7 +141,7 @@ func seedSessionTenant(t *testing.T, h *SessionHandler, slug string) string {
 	var id string
 	if err := h.srv.Pool.QueryRow(ctx, `
 		INSERT INTO tenants (slug, name, tier, k8s_namespace)
-		VALUES ($1, $1, 'personal', 'lantern-t-' || $1)
+		VALUES ($1, $1, 'personal', 'pal-t-' || $1)
 		RETURNING id
 	`, slug).Scan(&id); err != nil {
 		t.Fatalf("seed tenant %q: %v", slug, err)

@@ -7,7 +7,7 @@
 
 > **Status note (2026-07):** the decision holds — short-TTL, harness-vended, never
 > persisted. The **as-implemented delivery** (`services/harness/src/secrets.rs`,
-> P2-B7) is a **unix-socket vend** at `/run/lantern/secrets.sock` (override
+> P2-B7) is a **unix-socket vend** at `/run/pal/secrets.sock` (override
 > `PAL_SECRETS_SOCKET`) rather than the tmpfs-file-plus-env-var injection
 > sketched in steps 5–6. The worker/SDK connects and requests a value by
 > `env_name`; the harness vends from its `VendSecret` cache and re-vends before
@@ -17,7 +17,7 @@
 
 ## Context
 
-Agents need credentials: `OPENAI_API_KEY`, database URLs, vendor API tokens. The author declares them in `AgentSpec.secrets` (`runtime.proto:97`) as `SecretRef { env_name, secret_uri }`, where `secret_uri` is a `lantern.secret://tenant/<id>/key/<name>` reference resolved at execution time.
+Agents need credentials: `OPENAI_API_KEY`, database URLs, vendor API tokens. The author declares them in `AgentSpec.secrets` (`runtime.proto:97`) as `SecretRef { env_name, secret_uri }`, where `secret_uri` is a `pal.secret://tenant/<id>/key/<name>` reference resolved at execution time.
 
 Two questions:
 1. **Who resolves the URI to a value?** (control-plane secret store)
@@ -35,10 +35,10 @@ Secrets are **vended on demand at boot** via the harness, as short-TTL tokens. S
 1. The `AgentSpec` carries `SecretRef` entries — never values.
 2. On boot, the harness calls `RuntimeHarness.VendSecret(secret_uri, ttl)` for each declared secret over vsock to the local manager.
 3. The manager validates the request: the requested `secret_uri` MUST be in the workload's `AgentSpec.secrets` list. Otherwise: 401 PermissionDenied. (See `runtime.proto:342` comment.)
-4. The manager forwards to the control-plane secret store, which mints a **short-TTL bearer token** (default 5 min, hard cap 15 min). For provider keys that don't support delegation, the manager itself fronts the call — the worker gets a Lantern-issued token that the manager exchanges for the real key on each outbound request.
-5. The harness serves the vended token to the worker over a unix socket (`/run/lantern/secrets.sock`), keyed by `env_name`; the cached value lives only in tmpfs. (As originally sketched the harness wrote a tmpfs file per env var — the shipped design is the socket vend; see the status note above.)
+4. The manager forwards to the control-plane secret store, which mints a **short-TTL bearer token** (default 5 min, hard cap 15 min). For provider keys that don't support delegation, the manager itself fronts the call — the worker gets a PAL-issued token that the manager exchanges for the real key on each outbound request.
+5. The harness serves the vended token to the worker over a unix socket (`/run/pal/secrets.sock`), keyed by `env_name`; the cached value lives only in tmpfs. (As originally sketched the harness wrote a tmpfs file per env var — the shipped design is the socket vend; see the status note above.)
 6. The harness refreshes the token before expiry and re-vends the fresh value. The worker uses the SDK's secret client (or a direct socket read) on each use rather than caching a value past its TTL.
-7. Tokens are **never written to a disk that survives the VM**. `/run/lantern/secrets` is tmpfs.
+7. Tokens are **never written to a disk that survives the VM**. `/run/pal/secrets` is tmpfs.
 
 The signing key for short-TTL tokens is rotated daily; old tokens fail closed at expiry.
 
@@ -76,5 +76,5 @@ Means an emergency credential rotation requires every agent to redeploy. Pages o
 ## References
 
 - [`docs/architecture/04b-microvm-productionization.md`](../architecture/04b-microvm-productionization.md) — security boundaries
-- [`packages/proto/lantern/v1/runtime.proto`](../../packages/proto/lantern/v1/runtime.proto) — `SecretRef`, `VendSecret`
+- [`packages/proto/pal/v1/runtime.proto`](../../packages/proto/pal/v1/runtime.proto) — `SecretRef`, `VendSecret`
 - [`docs/architecture/04-runtime-isolation.md`](../architecture/04-runtime-isolation.md) — secrets-via-tmpfs hardening item

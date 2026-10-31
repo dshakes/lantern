@@ -59,7 +59,7 @@ spec:
             # Prod-like PAL_ENV makes the scheduler refuse to start without
             # the service token, node token and a real manager address.
             - name: PAL_ENV
-              value: {{ .Values.runtimeScheduler.env.PAL_ENV | default .Values.runtimeScheduler.env.LANTERN_ENV | default "production" | quote }}
+              value: {{ .Values.runtimeScheduler.env.PAL_ENV | default "production" | quote }}
             - name: PAL_GRPC_SERVICE_TOKEN
               valueFrom:
                 secretKeyRef:

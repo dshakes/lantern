@@ -12,14 +12,14 @@ import (
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/data-plane-agent/internal/tunnel"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/data-plane-agent/internal/tunnel"
 )
 
 // fakeRegion is one region's control plane: a real gRPC server on loopback
 // with the standard health service and a minimal DataPlaneService.
 type fakeRegion struct {
-	lanternv1.UnimplementedDataPlaneServiceServer
+	palv1.UnimplementedDataPlaneServiceServer
 	name      string
 	addr      string
 	health    *health.Server
@@ -36,7 +36,7 @@ func newFakeRegion(t *testing.T, name string, serving bool) *fakeRegion {
 	f := &fakeRegion{name: name, addr: lis.Addr().String(), health: health.NewServer(), srv: grpc.NewServer()}
 	f.setServing(serving)
 	healthpb.RegisterHealthServer(f.srv, f.health)
-	lanternv1.RegisterDataPlaneServiceServer(f.srv, f)
+	palv1.RegisterDataPlaneServiceServer(f.srv, f)
 	go func() { _ = f.srv.Serve(lis) }()
 	t.Cleanup(f.srv.Stop)
 	return f
@@ -47,23 +47,23 @@ func (f *fakeRegion) setServing(on bool) {
 	if on {
 		st = healthpb.HealthCheckResponse_SERVING
 	}
-	f.health.SetServingStatus("lantern.v1.DataPlaneService", st)
+	f.health.SetServingStatus("pal.v1.DataPlaneService", st)
 }
 
-func (f *fakeRegion) Register(context.Context, *lanternv1.DpRegisterRequest) (*lanternv1.DpRegisterResponse, error) {
+func (f *fakeRegion) Register(context.Context, *palv1.DpRegisterRequest) (*palv1.DpRegisterResponse, error) {
 	f.registers.Add(1)
-	return &lanternv1.DpRegisterResponse{PlaneId: "plane-" + f.name, SessionToken: "tok-" + f.name}, nil
+	return &palv1.DpRegisterResponse{PlaneId: "plane-" + f.name, SessionToken: "tok-" + f.name}, nil
 }
 
-func (f *fakeRegion) Heartbeat(context.Context, *lanternv1.DpHeartbeatRequest) (*lanternv1.DpHeartbeatAck, error) {
-	return &lanternv1.DpHeartbeatAck{}, nil
+func (f *fakeRegion) Heartbeat(context.Context, *palv1.DpHeartbeatRequest) (*palv1.DpHeartbeatAck, error) {
+	return &palv1.DpHeartbeatAck{}, nil
 }
 
-func (f *fakeRegion) ReportMetrics(context.Context, *lanternv1.DpMetricsReport) (*lanternv1.DpMetricsAck, error) {
-	return &lanternv1.DpMetricsAck{}, nil
+func (f *fakeRegion) ReportMetrics(context.Context, *palv1.DpMetricsReport) (*palv1.DpMetricsAck, error) {
+	return &palv1.DpMetricsAck{}, nil
 }
 
-func (f *fakeRegion) RunStream(stream lanternv1.DataPlaneService_RunStreamServer) error {
+func (f *fakeRegion) RunStream(stream palv1.DataPlaneService_RunStreamServer) error {
 	if _, err := stream.Recv(); err != nil { // DpHello
 		return err
 	}

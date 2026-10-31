@@ -33,8 +33,8 @@ func (d *DiscordDeliverer) Channel() Channel {
 
 // discordMessage represents the Discord webhook payload.
 type discordMessage struct {
-	Content string          `json:"content,omitempty"`
-	Embeds  []discordEmbed  `json:"embeds,omitempty"`
+	Content string         `json:"content,omitempty"`
+	Embeds  []discordEmbed `json:"embeds,omitempty"`
 }
 
 type discordEmbed struct {

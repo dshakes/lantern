@@ -799,16 +799,16 @@ CREATE INDEX IF NOT EXISTS runtime_vms_agent_instance_id_idx
 
 DO $$
 BEGIN
-	IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'lantern_app') THEN
-		CREATE ROLE lantern_app LOGIN;
+	IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pal_app') THEN
+		CREATE ROLE pal_app LOGIN;
 	END IF;
 END$$;
 
-GRANT USAGE ON SCHEMA public TO lantern_app;
+GRANT USAGE ON SCHEMA public TO pal_app;
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE agents TO lantern_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE agents TO pal_app;
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE runs TO lantern_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE runs TO pal_app;
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
 	tenants,
@@ -850,11 +850,11 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
 	people,
 	person_handles,
 	memory_events
-TO lantern_app;
+TO pal_app;
 
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO lantern_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO pal_app;
 
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO lantern_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO pal_app;
 
 CREATE TABLE IF NOT EXISTS runtime_vm_logs (
 	seq       BIGSERIAL PRIMARY KEY,
@@ -871,9 +871,9 @@ CREATE INDEX IF NOT EXISTS runtime_vm_logs_vm_at_idx
 CREATE INDEX IF NOT EXISTS runtime_vm_logs_tenant_at_idx
 	ON runtime_vm_logs (tenant_id, at DESC);
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE runtime_vm_logs TO lantern_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE runtime_vm_logs TO pal_app;
 
-GRANT USAGE, SELECT ON SEQUENCE runtime_vm_logs_seq_seq TO lantern_app;
+GRANT USAGE, SELECT ON SEQUENCE runtime_vm_logs_seq_seq TO pal_app;
 
 CREATE TABLE IF NOT EXISTS side_effect_receipts (
 	idem_key   TEXT        PRIMARY KEY,
@@ -886,7 +886,7 @@ CREATE TABLE IF NOT EXISTS side_effect_receipts (
 CREATE INDEX IF NOT EXISTS side_effect_receipts_run_idx
 	ON side_effect_receipts (run_id);
 
-GRANT SELECT, INSERT, DELETE ON TABLE side_effect_receipts TO lantern_app;
+GRANT SELECT, INSERT, DELETE ON TABLE side_effect_receipts TO pal_app;
 
 ALTER TABLE data_planes ADD COLUMN IF NOT EXISTS reg_token_hash TEXT;
 

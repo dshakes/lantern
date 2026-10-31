@@ -7,7 +7,7 @@ package handlers
 //   - TestLifeEvent_* : handler-level behaviour over a real pool (create, list,
 //     tenant-scoping, idempotency upsert, undo/dismiss transitions + cross-tenant
 //     404, prefs upsert/get).
-//   - TestRLSLifeEvents_* : the enforcement-on proof on the lantern_app-backed
+//   - TestRLSLifeEvents_* : the enforcement-on proof on the pal_app-backed
 //     harness — same-tenant read/write works, cross-tenant is blocked at Postgres.
 
 import (
@@ -22,8 +22,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/db"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/db"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // newTestLifeEventHandler builds a LifeEventHandler backed by a real pool (the
@@ -338,7 +338,7 @@ func TestLifeEvent_PrefsUpsertAndGet(t *testing.T) {
 }
 
 // TestRLSLifeEvents_Enforced is the catalog-gate companion: on the
-// lantern_app-backed harness (RLS genuinely enforced at Postgres), a same-tenant
+// pal_app-backed harness (RLS genuinely enforced at Postgres), a same-tenant
 // insert + read works and a cross-tenant read returns zero rows for both the
 // life_events and life_event_prefs tables.
 func TestRLSLifeEvents_Enforced(t *testing.T) {
