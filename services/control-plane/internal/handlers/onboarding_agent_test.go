@@ -632,6 +632,8 @@ func TestAllowedOnboardingTools_Matrix(t *testing.T) {
 		{"pal channels after consent", "pal", onbFacts{ProviderReady: true, Pal: consented}, true, "check_channels", true},
 		{"pal voice without live channel", "pal", onbFacts{ProviderReady: true, Pal: consented}, true, "learn_voice", false},
 		{"pal voice with live channel", "pal", onbFacts{ProviderReady: true, Pal: consented, ChannelsVerified: true}, false, "learn_voice", true},
+		{"pal skip voice without live channel", "pal", onbFacts{ProviderReady: true, Pal: consented}, true, "skip_voice", false},
+		{"pal skip voice with live channel", "pal", onbFacts{ProviderReady: true, Pal: consented, ChannelsVerified: true}, true, "skip_voice", true},
 		{"pal brief before profile", "pal", onbFacts{ProviderReady: true, Pal: consented}, true, "show_brief", false},
 		{"key form always", "pal", onbFacts{}, false, "collect_provider_key", true},
 	}

@@ -937,8 +937,10 @@ func allowedOnboardingTools(product string, f *onbFacts, userTurn bool) map[stri
 		default:
 			out["learn_voice"] = ""
 		}
-		gate("skip_voice", consented && !s.voiceDone() && userTurn,
-			map[bool]string{true: needUser, false: "needs consent, and voice not done yet"}[consented && !s.voiceDone()])
+		// Skipping voice moves on to trust, so it needs what entering the voice
+		// step needs (palCanEnter): a channel verified live this session.
+		gate("skip_voice", consented && f.ChannelsVerified && !s.voiceDone() && userTurn,
+			map[bool]string{true: needUser, false: "needs consent and a channel verified live this session (check channels first)"}[consented && f.ChannelsVerified && !s.voiceDone()])
 		gate("propose_trust", consented && s.voiceDone(), "finish voice (or skip it) first")
 		gate("confirm_trust", consented && s.voiceDone(), "finish voice (or skip it) first")
 		gate("extract_profile", consented && s.voiceDone() && s.trustDone(), "save trust settings first")
