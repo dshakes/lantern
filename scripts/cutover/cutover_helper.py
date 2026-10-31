@@ -197,6 +197,9 @@ def map_value(key: str, value: str, bucket_maps, cred_maps, exact_maps=()) -> st
     ) in exact_maps:  # well-known dev constants (e.g. the dev JWT secret), any key
         if value == old:
             return new
+    for old, new in bucket_maps:  # any key: an s3:// URI on an old bucket
+        if value.startswith("s3://" + old):
+            return "s3://" + new + value[len("s3://" + old) :]
     if BUCKET_KEY.search(key):
         for old, new in bucket_maps:
             if value.startswith(old):
@@ -226,6 +229,23 @@ def env_map_values(path: str, bucket_maps, cred_maps, dry: bool, exact_maps=()) 
     if changed and not dry:
         _write_atomic(path, "".join(out).encode("utf-8", "surrogateescape"), 0o600)
     return {"file": path, "changed": changed}
+
+
+def read_maps_stdin():
+    """Value maps / residue patterns arrive on STDIN, never argv (they can carry
+    the MinIO root password). One per line: kind<TAB>a[<TAB>b], kind in
+    bucket|cred|exact (a=old, b=new) or pattern (a=regex)."""
+    m = {"bucket": [], "cred": [], "exact": [], "pattern": []}
+    for line in sys.stdin.read().splitlines():
+        if not line:
+            continue
+        kind, _, rest = line.partition("\t")
+        if kind == "pattern":
+            m["pattern"].append(rest)
+        elif kind in m:
+            old, _, new = rest.partition("\t")
+            m[kind].append((old, new))
+    return m
 
 
 def residue(paths, patterns) -> list:
@@ -444,6 +464,11 @@ def main(argv: list[str]) -> int:
                 a["cred_maps"].append(tuple(next(it).split("=", 1)))
             elif flag == "--exact-map":
                 a["exact_maps"].append(tuple(next(it).split("=", 1)))
+            elif flag == "--maps-stdin":
+                m = read_maps_stdin()
+                a["bucket_maps"] += m["bucket"]
+                a["cred_maps"] += m["cred"]
+                a["exact_maps"] += m["exact"]
             else:
                 a[flag.lstrip("-").replace("-", "_")] = next(it)
         print(json.dumps(plist_convert(a)))
@@ -451,7 +476,12 @@ def main(argv: list[str]) -> int:
         path, bm, cm, em, dry = rest[0], [], [], [], False
         it = iter(rest[1:])
         for flag in it:
-            if flag == "--exact-map":
+            if flag == "--maps-stdin":
+                m = read_maps_stdin()
+                bm += m["bucket"]
+                cm += m["cred"]
+                em += m["exact"]
+            elif flag == "--exact-map":
                 em.append(tuple(next(it).split("=", 1)))
             elif flag == "--bucket-map":
                 bm.append(tuple(next(it).split("=", 1)))
@@ -461,8 +491,12 @@ def main(argv: list[str]) -> int:
                 dry = True
         print(json.dumps(env_map_values(path, bm, cm, dry, em)))
     elif cmd == "residue":
-        sep = rest.index("--")
-        hits = residue(rest[:sep], rest[sep + 1 :])
+        if "--patterns-stdin" in rest:
+            files = [r for r in rest if r != "--patterns-stdin"]
+            hits = residue(files, read_maps_stdin()["pattern"])
+        else:
+            sep = rest.index("--")
+            hits = residue(rest[:sep], rest[sep + 1 :])
         print("\n".join(hits))
         return 1 if hits else 0
     elif cmd == "plist-env-export":
@@ -481,8 +515,14 @@ def main(argv: list[str]) -> int:
             except ValueError:
                 continue
             if d.get("type") == "file":
-                rows.append(f"{d.get('key')} {d.get('size')} {d.get('etag', '')}")
+                rows.append(f"{d.get('key')}\t{d.get('size')}\t{d.get('etag', '')}")
         print("\n".join(sorted(rows)))
+    elif cmd == "urlenc":
+        # stdin lines -> percent-encoded lines (credentials for MC_HOST_*; never argv)
+        from urllib.parse import quote
+
+        for line in sys.stdin.read().splitlines():
+            print(quote(line, safe=""))
     elif cmd == "url-part":
         sys.stdout.write(url_part(rest[0], rest[1]))
     else:

@@ -43,7 +43,8 @@ q()    { "$REAL_DOCKER" exec -i "$PG_CONTAINER" psql -X -q -At -U "$1" -d "$2" -
 export STUB_MINIO_CONTAINER=pal-cutover-sandbox-minio-test STUB_MINIO_VOLUME=pal-cutover-sandbox-minio-test-data STUB_MINIO_IMAGE="$MINIO_IMAGE"
 mc_() {  # mc_ USER PASS args… against the sandbox MinIO
   local u="$1" p="$2"; shift 2
-  "$REAL_DOCKER" exec -e MC_HOST_s="http://$u:$p@localhost:9000" "$STUB_MINIO_CONTAINER" mc "$@"
+  local eu ep; eu="$(printf '%s' "$u" | python3 -I "$HERE/cutover_helper.py" urlenc)"; ep="$(printf '%s' "$p" | python3 -I "$HERE/cutover_helper.py" urlenc)"
+  "$REAL_DOCKER" exec -e MC_HOST_s="http://$eu:$ep@localhost:9000" "$STUB_MINIO_CONTAINER" mc "$@"
 }
 objs() { mc_ "$1" "$2" ls -r --json "s/$3" 2>/dev/null | python3 -I "$HERE/cutover_helper.py" objects; }
 
@@ -81,8 +82,9 @@ export STUB_ON_API_START="$HERE/sandbox/fake-migrate.sh"
 if [[ "$E2E" == 1 ]]; then export STUB_ON_API_START="$HERE/sandbox/real-migrate.sh" MIGRATE_MASTER MIGRATE_ZERO E2E_PORT; fi
 export HEALTH_TIMEOUT_SECS=10 DASHBOARD_TIMEOUT_SECS=10
 launchctl_s() { PATH="$HERE/sandbox:$PATH" launchctl "$@"; }
-export REAL_DOCKER PG_CONTAINER
+export REAL_DOCKER PG_CONTAINER HERE
 export -f q mc_ objs
+NEWPASS='pal@sec:ret/1%'   # URL-reserved characters: proves the credentials are percent-encoded for mc
 OLDJWT=lantern-dev-jwt-secret-do-not-use-in-production NEWJWT=pal-dev-jwt-secret-do-not-use-in-production
 
 # ------------------------------------------------------------------ throwaway Postgres at schema v35, old names
@@ -138,6 +140,10 @@ mc_ lantern lanternsecret cp -q /tmp/o/t1/a.tgz s/lantern-bundles/t1/a.tgz >/dev
 mc_ lantern lanternsecret cp -q /tmp/o/t1/b.tgz s/lantern-bundles/t1/b.tgz >/dev/null
 mc_ lantern lanternsecret cp -q /tmp/o/s1.json s/lantern-snapshots/s1.json >/dev/null
 mc_ lantern lanternsecret cp -q /tmp/o/s1.json "s/lantern-bundles-dev/x.tgz" >/dev/null
+# 70 MB -> multipart upload; the server-side mirror copy gets a different etag, so the
+# content-hash path runs — on a key with a space in it
+"$REAL_DOCKER" exec "$STUB_MINIO_CONTAINER" sh -c 'head -c 73400320 /dev/urandom > "/tmp/o/big bundle.bin"'
+mc_ lantern lanternsecret cp -q "/tmp/o/big bundle.bin" "s/lantern-bundles/t1/big bundle.bin" >/dev/null
 echo "  objects: bundles=$(objs lantern lanternsecret lantern-bundles | grep -c .) snapshots=$(objs lantern lanternsecret lantern-snapshots | grep -c .)"
 
 # ------------------------------------------------------------------ ~/.pal (post phase 1)
@@ -209,7 +215,7 @@ git add -A && git commit -qm "aeaaa3f3-like: pal labels, old DB/MinIO names" && 
 plutil -replace EnvironmentVariables.DATABASE_URL -string "postgres://$NU:pal@localhost:5432/$ND?sslmode=disable" scripts/launchd/dev.pal.api.plist
 plutil -replace EnvironmentVariables.BUNDLE_S3_BUCKET -string 'pal-bundles' scripts/launchd/dev.pal.runtime-manager.plist 2>/dev/null \
   || plutil -insert EnvironmentVariables.BUNDLE_S3_BUCKET -string 'pal-bundles' scripts/launchd/dev.pal.runtime-manager.plist
-sed -i '' -e 's/MINIO_ROOT_USER: lantern/MINIO_ROOT_USER: pal/' -e 's/MINIO_ROOT_PASSWORD: lanternsecret/MINIO_ROOT_PASSWORD: palsecret/' \
+sed -i '' -e 's/MINIO_ROOT_USER: lantern/MINIO_ROOT_USER: pal/' -e "s#MINIO_ROOT_PASSWORD: lanternsecret#MINIO_ROOT_PASSWORD: $NEWPASS#" \
   -e 's#lantern lanternsecret && mc mb local/lantern-dev#pal palsecret \&\& mc mb local/pal-dev#' \
   -e 's/POSTGRES_USER: lantern/POSTGRES_USER: pal/' infra/docker/docker-compose.yml
 if [[ "$E2E" == 1 ]]; then for f in "$MIGRATIONS_NEW_SRC"/*.up.sql; do echo "-- name only" > "services/control-plane/internal/db/migrations/$(basename "$f")"; done
@@ -233,6 +239,7 @@ for s in gateway runtime-scheduler; do
 done
 plutil -replace EnvironmentVariables.BUNDLE_S3_BUCKET -string lantern-bundles "$LA/dev.pal.runtime-manager.plist" 2>/dev/null || plutil -insert EnvironmentVariables.BUNDLE_S3_BUCKET -string lantern-bundles "$LA/dev.pal.runtime-manager.plist"
 plutil -insert EnvironmentVariables.PAL_SIGNAL_TOKEN -string fake-signal-token "$LA/dev.pal.api.plist"
+plutil -insert EnvironmentVariables.PAL_BUNDLE_URI -string 's3://lantern-bundles/t1/a.tgz' "$LA/dev.pal.api.plist"
 plutil -replace EnvironmentVariables.NEXT_PUBLIC_API_URL -string http://100.64.0.1:8080 "$LA/dev.pal.dashboard.plist"
 chmod 600 "$LA"/*.plist
 for f in "$LA"/dev.pal.*.plist; do launchctl_s bootstrap "gui/$(id -u)" "$f"; done
@@ -261,7 +268,7 @@ RELEASE_REF="$REL" "$CUT" plan > "$SB/plan.out" 2>&1; rc=$?
 grep -E 'FAIL|WARN|would (mirror|UPDATE|rewrite)|value-mapped\[[^]]|summary' "$SB/plan.out" | cut -c12-220 | sed 's/^/    /' | head -30
 check "plan exits 0" test "$rc" = 0
 snap "$SB/S0p"; check "plan changed nothing" same "$SB/S0" "$SB/S0p"
-check "plan prints no secret value" bash -c "! grep -qE 'fake-wa-token|fake im token|fake-signal-token|lanternsecret|palsecret|kkkkkkkk|apppw' '$SB/plan.out'"
+check "plan prints no secret value" bash -c "! grep -qE 'fake-wa-token|fake im token|fake-signal-token|lanternsecret|pal@sec|kkkkkkkk|apppw' '$SB/plan.out'"
 
 # ------------------------------------------------------------------ apply
 say "2. apply"
@@ -274,9 +281,12 @@ check "superuser password reset to the contract value (TCP login $NU/pal)" bash 
 check "app role kept its SCRAM password through the rename" bash -c "printf 'apppw-test\n' | $REAL_DOCKER exec -i $PG_CONTAINER sh -c 'IFS= read -r PGPASSWORD; export PGPASSWORD; psql -XAt -h 127.0.0.1 -U $NA -d $ND -c \"select 1\"' | grep -qx 1"
 check "migration ran on API start (schema v36) and found nothing to rename (no fight)" bash -c "[ \"\$(q $NU $ND 'select version from schema_migrations')\" = 36 ] && ! grep -q 'migration renamed the app role' '$STUB_STATE/api-start.log'"
 check "bundle_uri: s3://lantern-* rewritten (3 rows), others untouched" bash -c "[ \"\$(q $NU $ND \"select count(*) from agent_versions where bundle_uri like 's3://lantern-%'\")\" = 0 ] && [ \"\$(q $NU $ND \"select count(*) from agent_versions where bundle_uri like 's3://pal-bundles%'\")\" = 3 ] && [ \"\$(q $NU $ND \"select count(*) from agent_versions where bundle_uri = 's3://test/y.tgz'\")\" = 1 ]"
-check "MinIO now on pal/palsecret; old root creds rejected" bash -c "mc_() { $REAL_DOCKER exec -e MC_HOST_s=\"http://\$1:\$2@localhost:9000\" $STUB_MINIO_CONTAINER mc ls s/ >/dev/null 2>&1; }; mc_ pal palsecret && ! mc_ lantern lanternsecret"
-check "pal-* mirrors exist, old buckets kept" test "$(pal_buckets pal palsecret)" = "lantern-bundles lantern-bundles-dev lantern-dev lantern-snapshots pal-bundles pal-bundles-dev pal-dev pal-snapshots"
-A1="$(objs pal palsecret lantern-bundles)"; A2="$(objs pal palsecret pal-bundles)"
+check "MinIO now on the release creds (URL-reserved chars); old root creds rejected" bash -c "mc_ pal \"\$1\" ls s/ >/dev/null 2>&1 && ! mc_ lantern lanternsecret ls s/ >/dev/null 2>&1" _ "$NEWPASS"
+check "a live-only s3://lantern-* plist value is mapped to s3://pal-*" test "$(python3 -I "$STUB_HELPER" plist-get "$LA/dev.pal.api.plist" env:PAL_BUNDLE_URI)" = 's3://pal-bundles/t1/a.tgz'
+check "multipart object with a space in its key mirrored (content hash path)" bash -c "mc_ pal \"\$1\" stat 's/pal-bundles/t1/big bundle.bin' >/dev/null 2>&1" _ "$NEWPASS"
+check "static gate: no helper call passes a MinIO credential in argv" bash -c "! grep -nE 'helper [^|]*MINIO_(OLD|NEW)_(PASS|USER)' '$CUT'"
+check "pal-* mirrors exist, old buckets kept" test "$(pal_buckets pal "$NEWPASS")" = "lantern-bundles lantern-bundles-dev lantern-dev lantern-snapshots pal-bundles pal-bundles-dev pal-dev pal-snapshots"
+A1="$(objs pal "$NEWPASS" lantern-bundles)"; A2="$(objs pal "$NEWPASS" pal-bundles)"
 check "mirrored objects identical (key/size/etag), non-empty" bash -c "[ -n \"\$1\" ] && [ \"\$1\" = \"\$2\" ]" _ "$A1" "$A2"
 check "gateway + runtime-scheduler JWT_SECRET mapped to the NEW dev constant" bash -c "for s in gateway runtime-scheduler; do [ \"\$(python3 -I '$STUB_HELPER' plist-get '$LA/dev.pal.'\$s'.plist' env:JWT_SECRET)\" = '$NEWJWT' ] || exit 1; done"
 check "runtime-manager BUNDLE_S3_BUCKET → pal-bundles" test "$(python3 -I "$STUB_HELPER" plist-get "$LA/dev.pal.runtime-manager.plist" env:BUNDLE_S3_BUCKET)" = pal-bundles
@@ -288,7 +298,7 @@ check "dashboard built with its plist env (NEXT_PUBLIC_API_URL present at build)
 check "dashboard built under the plist-PATH node" grep -q 'npm run build (cwd=workspace/lantern/apps/web) node=fake-x64-bin/node' "$STUB_STATE/calls.log"
 check "WhatsApp auth_sessions untouched (no re-pair)" bash -c "diff <(grep -A3 'auth_sessions' '$SB/S0') <('$CUT' snapshot /dev/stdout old 2>/dev/null | grep -A3 'auth_sessions') >/dev/null"
 check "state dir untouched in place (no move, no nesting)" bash -c "[ -f '$HOME/.pal/state.key' ] && [ ! -e '$HOME/.pal/.pal' ] && [ -L '$HOME/.lantern' ]"
-check "apply prints no secret value" bash -c "! grep -qE 'fake-wa-token|fake im token|fake-signal-token|lanternsecret|palsecret|kkkkkkkk|apppw' '$SB/apply.out'"
+check "apply prints no secret value" bash -c "! grep -qE 'fake-wa-token|fake im token|fake-signal-token|lanternsecret|pal@sec|kkkkkkkk|apppw' '$SB/apply.out'"
 
 lastmig() { find "$1" -name '*.up.sql' -exec basename {} \; | sed -nE 's/^0*([0-9]+)_.*/\1/p' | sort -n | tail -1; }
 if [[ "$E2E" == 1 ]]; then

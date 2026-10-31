@@ -241,7 +241,8 @@ minio_creds_change() { [[ -n "$MINIO_NEW_USER" && ( "$MINIO_OLD_USER" != "$MINIO
 buckets_rename() { [[ "$OLD_BUCKET_PREFIX" != "$NEW_BUCKET_PREFIX" ]]; }
 mcx() {  # mcx USER PASS mc-args… — credentials travel on stdin, never argv
   local u="$1" pw="$2"; shift 2
-  printf '%s\n%s\n' "$u" "$pw" | docker exec -i "$MINIO_CONTAINER" sh -c 'IFS= read -r U; IFS= read -r P; export MC_HOST_m="http://$U:$P@localhost:9000"; exec mc "$@"' _ "$@"
+  # percent-encode (a password with @ : / # % would break the URL); stdin both ways, never argv
+  printf '%s\n%s\n' "$u" "$pw" | helper urlenc | docker exec -i "$MINIO_CONTAINER" sh -c 'IFS= read -r U; IFS= read -r P; export MC_HOST_m="http://$U:$P@localhost:9000"; exec mc "$@"' _ "$@"
 }
 minio_buckets() {  # minio_buckets USER PASS → bucket names
   mcx "$1" "$2" ls --json m/ 2>/dev/null | python3 -I -c 'import json,sys
@@ -255,15 +256,13 @@ for l in sys.stdin:
 minio_objects() { mcx "$1" "$2" ls -r --json "m/$3" 2>/dev/null | helper objects; }
 minio_login() { mcx "$1" "$2" ls m/ >/dev/null 2>&1; }
 
-VMAP=()
-value_map_args() {  # VMAP=(--bucket-map … --cred-map …) for the renames this contract performs
-  VMAP=()
+maps_text() {  # value maps for this contract, one "kind<TAB>old<TAB>new" per line — piped, never argv
   local e
-  for e in $EXACT_VALUE_MAP; do VMAP+=(--exact-map "$e"); done
-  buckets_rename && VMAP+=(--bucket-map "$OLD_BUCKET_PREFIX=$NEW_BUCKET_PREFIX")
+  for e in $EXACT_VALUE_MAP; do printf 'exact\t%s\t%s\n' "${e%%=*}" "${e#*=}"; done
+  buckets_rename && printf 'bucket\t%s\t%s\n' "$OLD_BUCKET_PREFIX" "$NEW_BUCKET_PREFIX"
   if minio_creds_change; then
-    [[ "$MINIO_OLD_USER" != "$MINIO_NEW_USER" ]] && VMAP+=(--cred-map "$MINIO_OLD_USER=$MINIO_NEW_USER")
-    [[ "$MINIO_OLD_PASS" != "$MINIO_NEW_PASS" ]] && VMAP+=(--cred-map "$MINIO_OLD_PASS=$MINIO_NEW_PASS")
+    [[ "$MINIO_OLD_USER" != "$MINIO_NEW_USER" ]] && printf 'cred\t%s\t%s\n' "$MINIO_OLD_USER" "$MINIO_NEW_USER"
+    [[ "$MINIO_OLD_PASS" != "$MINIO_NEW_PASS" ]] && printf 'cred\t%s\t%s\n' "$MINIO_OLD_PASS" "$MINIO_NEW_PASS"
   fi
   return 0
 }
@@ -276,11 +275,11 @@ residue_patterns() {  # values that still point at an old DB / MinIO credential 
   return 0
 }
 residue_check() {  # residue_check LABEL files… → FAIL naming file:KEY for any leftover old value
-  local label="$1" hits pats=()
+  local label="$1" hits
   shift
-  while IFS= read -r l; do [[ -n "$l" ]] && pats+=("$l"); done < <(residue_patterns)
-  [[ ${#pats[@]} -gt 0 && $# -gt 0 ]] || return 0
-  hits="$(helper residue "$@" -- ${pats[@]+"${pats[@]}"})"
+  [[ -n "$(residue_patterns)" && $# -gt 0 ]] || return 0
+  # patterns can contain the old MinIO password: stdin, never argv
+  hits="$(residue_patterns | sed 's/^/pattern\t/' | helper residue "$@" --patterns-stdin)"
   if [[ -n "$hits" ]]; then bad "$label still carry old DB/MinIO/bucket values in: $(echo "$hits" | tr '\n' ' ')"; return 1; fi
   ok "$label: no old DB/MinIO/bucket values left"
 }
@@ -298,9 +297,8 @@ rewrite_env_file() {  # rewrite_env_file FILE — key-prefix renames, then value
     s="$(printf '%s' "$s" | python3 -I -c 'import json,sys;print(" ".join(json.load(sys.stdin)["renamed"]))')"
     [[ -n "$s" ]] && log "  .     $f: renamed ${pair%%:*}* → ${pair#*:}*: $s"
   done
-  value_map_args
-  if [[ ${#VMAP[@]} -gt 0 ]]; then
-    s="$(helper env-map-values "$f" ${VMAP[@]+"${VMAP[@]}"} | python3 -I -c 'import json,sys;print(" ".join(json.load(sys.stdin)["changed"]))')" || { bad "$f: value mapping"; return 1; }
+  if [[ -n "$(maps_text)" ]]; then
+    s="$(maps_text | helper env-map-values "$f" --maps-stdin | python3 -I -c 'import json,sys;print(" ".join(json.load(sys.stdin)["changed"]))')" || { bad "$f: value mapping"; return 1; }
     [[ -n "$s" ]] && log "  .     $f: mapped values of $s"
   fi
   return 0
@@ -541,10 +539,9 @@ render() {
     args=(plist-convert --old "$f" --out "$WORK/plists/$NEW_LABEL_PREFIX.$svc.plist" --label "$NEW_LABEL_PREFIX.$svc"
           --old-env "$OLD_ENV_PREFIX" --new-env "$NEW_ENV_PREFIX" --template-wins "$TEMPLATE_WINS_KEYS"
           --map "$OLD_LOG_DIR=$NEW_LOG_DIR" --map "$OLD_STATE_DIR=$NEW_STATE_DIR" --map "$OLD_LABEL_PREFIX.=$NEW_LABEL_PREFIX.")
-    value_map_args; args+=(${VMAP[@]+"${VMAP[@]}"})
     tmpl="$WORK/templates/$svc.plist"
     render_template "$svc" "$tmpl" && args+=(--template "$tmpl")
-    summary="$(helper "${args[@]}")" || { bad "could not render $label"; continue; }
+    summary="$(maps_text | helper "${args[@]}" --maps-stdin)" || { bad "could not render $label"; continue; }
     printf '%s' "$summary" | python3 -I -c 'import json,sys; d=json.load(sys.stdin)
 print("  .     %-34s from %-14s env renamed[%s] carried-from-live[%s] template-wins[%s] live-override-kept[%s] value-mapped[%s]" % (d["label"], d["source"], " ".join(d["env_keys_renamed"]), " ".join(d["env_keys_carried_from_live"]), " ".join(d["env_keys_where_template_wins"]), " ".join(d["env_keys_live_override_kept"]), " ".join(d["env_values_mapped"])))'
   done
@@ -697,12 +694,14 @@ step_env() {
     return 1
   fi
   if [[ "$DRY" == 1 ]]; then
-    value_map_args
+    local mapped
     for f in $(env_files "$dir"); do
-      would "rewrite $(basename "$f") (0600): rename $OLD_ENV_PREFIX* [$(helper env-rename "$f" "$OLD_ENV_PREFIX" "$NEW_ENV_PREFIX" --dry | python3 -I -c 'import json,sys;print(" ".join(json.load(sys.stdin)["renamed"]))')]$([[ ${#VMAP[@]} -gt 0 ]] && echo "; map values [$(helper env-map-values "$f" ${VMAP[@]+"${VMAP[@]}"} --dry | python3 -I -c 'import json,sys;print(" ".join(json.load(sys.stdin)["changed"]))')]")"
+      mapped="$( [[ -n "$(maps_text)" ]] && maps_text | helper env-map-values "$f" --maps-stdin --dry | python3 -I -c 'import json,sys;print(" ".join(json.load(sys.stdin)["changed"]))')"
+      would "rewrite $(basename "$f") (0600): rename $OLD_ENV_PREFIX* [$(helper env-rename "$f" "$OLD_ENV_PREFIX" "$NEW_ENV_PREFIX" --dry | python3 -I -c 'import json,sys;print(" ".join(json.load(sys.stdin)["renamed"]))')]; map values [$mapped]"
     done
     for f in $(repo_env_files); do
-      would "rewrite checkout $f: $(for p in $EXTRA_ENV_RENAMES "$OLD_ENV_PREFIX:$NEW_ENV_PREFIX"; do [[ "${p%%:*}" != "${p#*:}" ]] && printf '%s* [%s] ' "${p%%:*}" "$(helper env-rename "$REPO_DIR/$f" "${p%%:*}" "${p#*:}" --dry | python3 -I -c 'import json,sys;print(" ".join(json.load(sys.stdin)["renamed"]))')"; done)"
+      mapped="$( [[ -n "$(maps_text)" ]] && maps_text | helper env-map-values "$REPO_DIR/$f" --maps-stdin --dry | python3 -I -c 'import json,sys;print(" ".join(json.load(sys.stdin)["changed"]))')"
+      would "rewrite checkout $f: $(for p in $EXTRA_ENV_RENAMES "$OLD_ENV_PREFIX:$NEW_ENV_PREFIX"; do [[ "${p%%:*}" != "${p#*:}" ]] && printf '%s* [%s] ' "${p%%:*}" "$(helper env-rename "$REPO_DIR/$f" "${p%%:*}" "${p#*:}" --dry | python3 -I -c 'import json,sys;print(" ".join(json.load(sys.stdin)["renamed"]))')"; done)map values [$mapped]"
     done
     return 0
   fi
@@ -838,13 +837,13 @@ step_minio() {
   for b in ${olds[@]+"${olds[@]}"}; do
     nb="$NEW_BUCKET_PREFIX${b#"$OLD_BUCKET_PREFIX"}"
     mcx "$MINIO_OLD_USER" "$MINIO_OLD_PASS" mb --ignore-existing "m/$nb" >/dev/null || { bad "mc mb $nb"; return 1; }
-    mcx "$MINIO_OLD_USER" "$MINIO_OLD_PASS" mirror --overwrite --preserve "m/$b" "m/$nb" >/dev/null 2>&1 || { bad "mc mirror $b → $nb"; return 1; }
+    mcx "$MINIO_OLD_USER" "$MINIO_OLD_PASS" mirror --overwrite --preserve "m/$b" "m/$nb" >> "$BK/minio-mirror.log" 2>&1 || { bad "mc mirror $b → $nb (see $BK/minio-mirror.log)"; return 1; }
     a1="$(minio_objects "$MINIO_OLD_USER" "$MINIO_OLD_PASS" "$b")"; a2="$(minio_objects "$MINIO_OLD_USER" "$MINIO_OLD_PASS" "$nb")"
     n="$(printf '%s' "$a1" | grep -c . || true)"
     if [[ "$a1" != "$a2" ]]; then
       # same key+size but a different etag (multipart copies) → compare content
-      if [[ "$(printf '%s\n' "$a1" | awk '{print $1, $2}')" == "$(printf '%s\n' "$a2" | awk '{print $1, $2}')" ]]; then
-        while read -r k _; do
+      if [[ "$(printf '%s\n' "$a1" | awk -F'\t' '{print $1 FS $2}')" == "$(printf '%s\n' "$a2" | awk -F'\t' '{print $1 FS $2}')" ]]; then
+        while IFS=$'\t' read -r k _; do
           [[ -n "$k" ]] || continue
           [[ "$(mcx "$MINIO_OLD_USER" "$MINIO_OLD_PASS" cat "m/$b/$k" | shasum -a 256)" == "$(mcx "$MINIO_OLD_USER" "$MINIO_OLD_PASS" cat "m/$nb/$k" | shasum -a 256)" ]] || { bad "$nb/$k content differs from $b/$k"; return 1; }
         done <<< "$a1"
