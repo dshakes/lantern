@@ -110,6 +110,7 @@ var getExempt = map[string]string{
 
 var routeRE = regexp.MustCompile(`HandleFunc\("((?:POST|PUT|PATCH|DELETE) [^"]+)",\s*(.*)$`)
 var getRouteRE = regexp.MustCompile(`HandleFunc\("(GET [^"]+)",\s*(.*)$`)
+
 // WithScopeOrAgent (ADR 0052) is WithScope for user callers; agent callers
 // are authorized by their policy inside the handler.
 var withScopeRE = regexp.MustCompile(`\bWithScope(OrAgent)?\(`)
