@@ -3,6 +3,9 @@ title: Examples
 description: Runnable end-to-end agents that work with no SaaS account and no model key.
 sidebar:
   order: 7
+next:
+  link: /pal/docs/runtime/
+  label: What PAL Runtime is
 ---
 
 Eight agents under `examples/` run **end to end with no SaaS account and no model key**. Each has a README and a test (`make test-e2e-examples`; the data analyst has its own target) that runs it against recorded GitHub, Sentry, PagerDuty, Calendar and Slack servers and a fixture model, plus the real surface gateway for chat. Only the Telegram and Twilio paths need real accounts.

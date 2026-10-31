@@ -163,5 +163,3 @@ Fixtures are exact method + path matches in `internal/connectorreplay/fixtures.j
 - **Overrides are refused in production.** With `PAL_ENV` set to `prod`, `production` or `staging`, the control plane exits if any `PAL_CONNECTOR_BASEURL_*` variable is set, because a bearer token must never go to an arbitrary host. The outbound transport also ignores overrides in prod at request time. A malformed value is fatal in every environment.
 - **No plug-in interface.** A new connector is a code change.
 - **Workspace-wide access.** There is no per-agent connector assignment.
-
-Next: [Triggers](/docs/build/triggers/).

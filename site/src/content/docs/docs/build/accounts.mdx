@@ -192,5 +192,3 @@ A workspace is one tenant. Sign-up creates its owner, and only the owner can exp
 - Invite codes cannot be listed or revoked. To cancel one, rotate `PAL_SIGNUP_INVITE_SECRET`, which invalidates all of them.
 - Rate limiting needs Redis. If Redis is absent or errors, the limiter fails open so an outage cannot lock owners out, and only the captcha and sign-up mode protect `/auth/*`.
 - Emailed links use `OAUTH_DASHBOARD_URL`, which defaults to localhost.
-
-Next: [Durable execution](/docs/runtime/durable-execution/).
