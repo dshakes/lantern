@@ -6,6 +6,7 @@ import {
   API_PORT, API_URL, CP_DIR, CP_LOG, GRPC_PORT, LLM_PORT, LLM_RULES, METRICS_PORT,
   PG_ADMIN_URL, REDIS_DB, REDIS_HOST, REDIS_PORT, RUN_DIR, WEB_PORT, WEB_URL,
 } from "./support/env";
+import { flushRedis } from "./support/redis";
 
 // Boots a private stack: fresh Postgres DB, control-plane, llm-replay, next dev.
 // Returns the teardown (Playwright calls it after the run).
@@ -58,18 +59,6 @@ function portFree(port: number): Promise<boolean> {
     const s = net.createServer();
     s.once("error", () => resolve(false));
     s.listen(port, "127.0.0.1", () => s.close(() => resolve(true)));
-  });
-}
-
-// Minimal RESP: FLUSHDB on the dedicated db index so rate-limit counters never leak between runs.
-function flushRedis() {
-  return new Promise<void>((resolve) => {
-    const s = net.connect(REDIS_PORT, REDIS_HOST);
-    s.setTimeout(2000, () => s.destroy());
-    s.on("error", () => resolve());
-    s.on("close", () => resolve());
-    s.resume(); // drain replies, or "close" never fires
-    s.write(`*2\r\n$6\r\nSELECT\r\n$${String(REDIS_DB).length}\r\n${REDIS_DB}\r\n*1\r\n$7\r\nFLUSHDB\r\n*1\r\n$4\r\nQUIT\r\n`);
   });
 }
 

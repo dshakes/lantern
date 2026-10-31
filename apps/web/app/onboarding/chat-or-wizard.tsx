@@ -11,14 +11,18 @@ import { AgentChat } from "./agent-chat";
 import type { ChatProduct } from "./agent-chat-logic";
 
 export function ChatOrWizard({ product, wizard }: { product: ChatProduct; wizard: ReactNode }) {
-  const [view, setView] = useState<{ kind: "chat" } | { kind: "wizard"; reason: string }>({ kind: "chat" });
+  // null until the URL is read, so ?mode=steps never mounts (and starts) the chat.
+  const [view, setView] = useState<{ kind: "chat" } | { kind: "wizard"; reason: string } | null>(null);
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("mode") === "steps") {
-      setView({ kind: "wizard", reason: "You opened the step-by-step setup." });
-    }
+    setView(
+      new URLSearchParams(window.location.search).get("mode") === "steps"
+        ? { kind: "wizard", reason: "You opened the step-by-step setup." }
+        : { kind: "chat" },
+    );
   }, []);
   const toWizard = useCallback((reason: string) => setView({ kind: "wizard", reason }), []);
 
+  if (!view) return <div className="min-h-screen bg-surface-0" aria-busy="true" />;
   if (view.kind === "chat") return <AgentChat key="chat" product={product} onUseWizard={toWizard} />;
   return (
     <div className="bg-surface-0">
