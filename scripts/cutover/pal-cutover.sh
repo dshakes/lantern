@@ -389,7 +389,9 @@ for k in d["values_with_old_state_path"]: print("PATHREF",k)' | while read -r ki
       for t in "$DB_OLD_USER:$DB_NEW_USER" "$DB_OLD_APP_ROLE:$DB_NEW_APP_ROLE"; do
         [[ "${t%%:*}" == "${t##*:}" ]] && continue
         role_exists "$DB_OLD_USER" "${t%%:*}" && ok "role ${t%%:*} present" || bad "role ${t%%:*} missing"
-        role_exists "$DB_OLD_USER" "${t##*:}" && bad "role ${t##*:} already exists" || ok "role name ${t##*:} free"
+        if role_exists "$DB_OLD_USER" "${t##*:}"; then
+          bad "role ${t##*:} already exists (objects in: $(pg1 "$DB_OLD_USER" postgres "select coalesce(string_agg(distinct coalesce(db.datname,'<cluster>'),' '),'none') from pg_shdepend d join pg_roles r on r.oid=d.refobjid left join pg_database db on db.oid=d.dbid where r.rolname=$(sql_lit "${t##*:}")")) — if it is a leftover from a test run, drop it (REASSIGN/DROP OWNED in those DBs, or drop the test DBs) before the cutover; the brand migration would also skip its rename"
+        else ok "role name ${t##*:} free"; fi
       done
       role_exists "$DB_OLD_USER" "$TMP_ROLE" && bad "leftover temp role $TMP_ROLE exists (from an aborted run?)"
     else ok "contract keeps DB/user/role names — DB step is a no-op"; fi

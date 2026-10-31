@@ -240,6 +240,11 @@ plutil -insert EnvironmentVariables.LEGACY_DB_URL -string "postgres://$OU:lanter
 RELEASE_REF="$REL" "$CUT" plan > "$SB/plan-residue.out" 2>&1; rc=$?
 plutil -remove EnvironmentVariables.LEGACY_DB_URL "$LA/dev.pal.api.plist"
 check "residue gate: plan fails on a live-only value that still names the old DB (key reported, value not)" bash -c "[ $rc != 0 ] && grep -q 'dev.pal.api.plist:LEGACY_DB_URL' '$SB/plan-residue.out' && ! grep -q ':lantern@localhost' '$SB/plan-residue.out'"
+# a stray target role (another run's leftover, as found on the live server) must stop the plan
+q "$OU" postgres "CREATE ROLE $NA LOGIN" >/dev/null
+RELEASE_REF="$REL" "$CUT" plan > "$SB/plan-stray.out" 2>&1; rc=$?
+q "$OU" postgres "DROP ROLE $NA" >/dev/null
+check "stray target role: plan fails and names it with a remedy" bash -c "[ $rc != 0 ] && grep -q 'role $NA already exists (objects in: none)' '$SB/plan-stray.out'"
 snap() { "$CUT" snapshot "$1" old >/dev/null 2>&1; }
 same() { diff -u "$1" "$2" > "$SB/last.diff"; }
 snap "$SB/S0"
