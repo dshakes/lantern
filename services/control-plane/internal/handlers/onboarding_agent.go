@@ -53,6 +53,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -726,7 +728,8 @@ func (h *OnboardingAgentHandler) fallbackReply(t *turnCtx) string {
 	var parts []string
 	for _, c := range t.toolCalls {
 		if !c.Refused && c.Summary != "" {
-			parts = append(parts, strings.ToUpper(c.Summary[:1])+c.Summary[1:]+".")
+			r, n := utf8.DecodeRuneInString(c.Summary)
+			parts = append(parts, string(unicode.ToUpper(r))+c.Summary[n:]+".")
 		}
 	}
 	parts = append(parts, onbPhaseText(t.product, t.facts))
@@ -1188,10 +1191,17 @@ func (h *OnboardingAgentHandler) toolRun(t *turnCtx, prompt string) {
 		if isRunTerminal(run.Status) || time.Now().After(deadline) || t.r.Context().Err() != nil {
 			break
 		}
-		time.Sleep(h.runPoll)
+		select {
+		case <-t.r.Context().Done():
+		case <-time.After(h.runPoll):
+		}
 	}
 	if !isRunTerminal(run.Status) {
-		t.record("start_run", false, false, fmt.Sprintf("run %s is still %s — check it again in a moment", created.ID, run.Status), map[string]string{"runId": created.ID})
+		status := run.Status
+		if status == "" {
+			status = "not finished"
+		}
+		t.record("start_run", false, false, fmt.Sprintf("run %s is still %s — check it again in a moment", created.ID, status), map[string]string{"runId": created.ID})
 		return
 	}
 	st.RunStatus = run.Status
