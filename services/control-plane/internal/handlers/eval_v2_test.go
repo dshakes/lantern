@@ -524,6 +524,25 @@ func TestGroundDraft(t *testing.T) {
 	}
 }
 
+func TestGroundDraft_LenientAndLongLiterals(t *testing.T) {
+	long := "You have 30 days to return your shoes, as long as they are unworn and in the original box."
+	ev := generateEvidence{Runs: map[string]evRun{"r1": {ID: "r1", Status: "succeeded", Output: long}}, Feedback: map[string]evFeedback{}, Tools: map[string]bool{}}
+	in := draftSuite{Cases: []draftCase{
+		{evalCase: evalCase{Name: "a", Input: "q", Expected: long, Assert: map[string]any{"faithfulness": true, "minLen": "ten", "notContains": "60 days"}}, Source: "run:r1"},
+	}}
+	out, prov, _ := groundDraft(in, ev, 5)
+	if len(out.Cases) != 1 {
+		t.Fatalf("case lost: %+v", prov)
+	}
+	c := out.Cases[0]
+	if c.Expected != "" || c.Assert["notContains"] != "60 days" || c.Assert["faithfulness"] == nil || c.Assert["minLen"] != nil {
+		t.Fatalf("lenient parse wrong: %+v", c.Assert)
+	}
+	if j, _ := c.Assert["judge"].(map[string]any); j == nil || j["reference"] != long {
+		t.Fatalf("long expected not moved to judge.reference: %+v", c.Assert)
+	}
+}
+
 // ---------- calibration ----------
 
 func TestCalibrate(t *testing.T) {

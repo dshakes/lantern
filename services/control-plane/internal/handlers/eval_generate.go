@@ -118,6 +118,40 @@ func (ev generateEvidence) knownSource(source string) bool {
 	return false
 }
 
+// maxGeneratedLiteral bounds a generated substring assertion; longer grounded
+// text becomes a judge reference.
+const maxGeneratedLiteral = 60
+
+// parseAssertLenient keeps every well-formed assertion key and drops (with a
+// note) only the malformed ones — one bad key must not discard the rest.
+// `faithfulness: true` is accepted as `{}` (models write it that way).
+func parseAssertLenient(raw map[string]any, notes *[]string) *evalAssertSpec {
+	if v, ok := raw["faithfulness"].(bool); ok {
+		if v {
+			raw["faithfulness"] = map[string]any{}
+		} else {
+			delete(raw, "faithfulness")
+		}
+	}
+	if spec, err := parseAssert(raw); err == nil {
+		return spec
+	}
+	good := map[string]any{}
+	for k, v := range raw {
+		if _, err := parseAssert(map[string]any{k: v}); err != nil {
+			*notes = append(*notes, fmt.Sprintf("dropped malformed assert.%s: %s", clip(k, 40), clip(err.Error(), 120)))
+			continue
+		}
+		good[k] = v
+	}
+	spec, err := parseAssert(good)
+	if err != nil { // a cross-key constraint (minLen > maxLen)
+		*notes = append(*notes, "dropped assert: "+clip(err.Error(), 120))
+		return &evalAssertSpec{}
+	}
+	return spec
+}
+
 var caseNameRe = regexp.MustCompile(`[^a-z0-9]+`)
 
 // groundDraft is the deterministic gate between the generator's output and
@@ -174,15 +208,23 @@ func groundDraft(d draftSuite, ev generateEvidence, maxCases int) (draftSuite, [
 				delete(m, "model")
 			}
 		}
-		spec, err := parseAssert(c.Assert)
-		if err != nil {
-			spec = &evalAssertSpec{}
-			p.Notes = append(p.Notes, "malformed assert replaced: "+clip(err.Error(), 120))
-		}
+		spec := parseAssertLenient(c.Assert, &p.Notes)
 		clean := map[string]any{}
 		expected := grounded("expected", c.Expected)
-		if v := grounded("assert.contains", spec.Contains); v != "" {
-			clean["contains"] = v
+		contains := grounded("assert.contains", spec.Contains)
+		// A long verbatim expectation is grounded but brittle as a substring
+		// match (any paraphrase fails it). Keep it as the judge's reference
+		// answer instead, which grades meaning, not wording.
+		var longRef string
+		for _, v := range []*string{&expected, &contains} {
+			if len([]rune(*v)) > maxGeneratedLiteral {
+				longRef = firstNonEmpty(longRef, *v)
+				*v = ""
+				p.Notes = append(p.Notes, "long verbatim expectation moved to judge.reference (substring matches are brittle)")
+			}
+		}
+		if contains != "" {
+			clean["contains"] = contains
 		}
 		if spec.Regex != "" {
 			p.Notes = append(p.Notes, "dropped assert.regex: generated patterns are not grounded")
@@ -205,9 +247,12 @@ func groundDraft(d draftSuite, ev generateEvidence, maxCases int) (draftSuite, [
 		if spec.MaxCostUsd > 0 {
 			clean["maxCostUsd"] = spec.MaxCostUsd
 		}
-		if j := spec.Judge; j != nil && strings.TrimSpace(j.Rubric) != "" {
+		if j := spec.Judge; (j != nil && strings.TrimSpace(j.Rubric) != "") || longRef != "" {
+			if j == nil {
+				j = &judgeSpec{Rubric: "States the same facts as the reference answer and contradicts none of them."}
+			}
 			jm := map[string]any{"rubric": clip(strings.TrimSpace(j.Rubric), 1500)}
-			if r := grounded("judge.reference", j.Reference); r != "" {
+			if r := firstNonEmpty(grounded("judge.reference", j.Reference), longRef); r != "" {
 				jm["reference"] = r
 			}
 			if j.Threshold > 0 && j.Threshold <= 1 {
@@ -286,8 +331,9 @@ const generateSystemPrompt = `You write evaluation suites for AI agents. You are
 
 Write test cases that would catch real regressions. Rules:
 - Cover the goal's core job, an edge case, and every thumbs-down run (a regression case using that run's input, with a judge rubric describing what the human objected to).
+- Keep "expected" / "assert.contains" to a short key fact (a few words, e.g. "30 days"); put a full answer in "assert.judge.reference".
 - "expected", "assert.contains" and "assert.judge.reference" are ONLY allowed when copied verbatim from the output of a cited run that SUCCEEDED and was not thumbs-downed, or from a feedback item's preferred output. Otherwise omit them and rely on a judge rubric. Never invent an expected value.
-- Every case needs at least one of: assert.judge {rubric}, assert.contains, assert.notContains, assert.trajectory, assert.faithfulness.
+- Every case needs at least one of: assert.judge {rubric}, assert.contains, assert.notContains, assert.trajectory, assert.faithfulness ({} — an object, not true).
 - assert.trajectory {expect:[{tool}], order:"any"|"in_order", forbid:[tool], maxCalls} may only name tools from the agent's tool list.
 - If the agent would call tools, add mocks: [{tool, result}] with a realistic fixture result for each tool it should call. Tools never really run in an eval.
 - source is "goal", "run:<id>" or "feedback:<id>" from the evidence.

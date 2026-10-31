@@ -432,7 +432,6 @@ func (j *evalJudge) pairwise(ctx context.Context, spec pairwiseSpec, input, cand
 	}, costUsd: cost}
 }
 
-
 // ---------- calibration against human labels (run_feedback) ----------
 
 type calibrationPair struct {
