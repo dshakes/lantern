@@ -28,6 +28,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/dshakes/pal/packages/agentpolicy"
 	"net/http"
 	"time"
 
@@ -179,15 +180,36 @@ func signInvocation(
 // Invoke handles POST /v1/marketplace/{slug}/invoke. The caller is the
 // buyer; the seller tenant is resolved from the marketplace entry.
 func (h *MarketplaceHandler) Invoke(w http.ResponseWriter, r *http.Request) {
-	ctx, buyerTenant, err := authCtx(h.auth, r)
-	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-		return
-	}
 	slug := r.PathValue("slug")
 	if slug == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "slug required"})
 		return
+	}
+	// Buyer = an agent acting as itself (token bound to pal:marketplace/<slug>,
+	// ADR 0055) or a human / API key.
+	z := currentAgentAuthz()
+	buyerAgent, aerr := z.agentCallerFromRequest(r, marketplaceAudPfx+slug)
+	var (
+		ctx         context.Context
+		buyerTenant string
+		err         error
+	)
+	switch {
+	case aerr != nil:
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"code": "agent_token_invalid", "error": "invalid agent token"})
+		return
+	case buyerAgent != nil:
+		buyerTenant = buyerAgent.TenantID
+		ctx = withAgentPrincipal(middleware.InjectTenantID(r.Context(), buyerTenant), buyerAgent)
+		if err := buyerAgent.Authorize(ctx, agentpolicy.Action{Kind: agentpolicy.KindA2A, Target: "marketplace:" + slug}, ""); err != nil {
+			writeAgentPolicyDenied(w, err)
+			return
+		}
+	default:
+		if ctx, buyerTenant, err = authCtx(h.auth, r); err != nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return
+		}
 	}
 	var body marketplaceInvokeRequest
 	_ = json.NewDecoder(r.Body).Decode(&body)
@@ -199,20 +221,34 @@ func (h *MarketplaceHandler) Invoke(w http.ResponseWriter, r *http.Request) {
 	// Also pull the seller agent's input schema (manifest.inputSchema) so we
 	// can validate the buyer's input before spending any resources. (M4)
 	var sellerTenant, agentName string
+	var seller agentRef
 	var manifestRaw []byte
 	// rls-exempt: marketplace commerce — resolves the SELLER tenant from a public
 	// catalog entry (marketplace_agents, RLS-exempt) for a BUYER caller; spans
 	// tenants by design (ADR 0011).
 	err = h.srv.Pool.QueryRow(ctx, `
 		SELECT m.source_tenant_id::text, COALESCE(a.name, m.slug),
-		       COALESCE(m.manifest, '{}'::jsonb)
+		       COALESCE(m.manifest, '{}'::jsonb), COALESCE(a.id::text, ''),
+		       COALESCE(a.current_version_id::text, ''), COALESCE(a.created_at, now())
 		FROM marketplace_agents m
 		LEFT JOIN agents a ON a.id = m.source_agent_id
 		WHERE m.slug = $1 AND m.unpublished_at IS NULL
-	`, slug).Scan(&sellerTenant, &agentName, &manifestRaw)
+	`, slug).Scan(&sellerTenant, &agentName, &manifestRaw, &seller.ID, &seller.VersionID, &seller.CreatedAt)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "marketplace agent not found"})
 		return
+	}
+	// The seller agent's inbound policy must admit this buyer (ADR 0055 §4).
+	if seller.ID != "" {
+		seller.Name, seller.TenantID = agentName, sellerTenant
+		callerID := "tenant:" + buyerTenant
+		if buyerAgent != nil {
+			callerID = buyerAgent.SpiffeID
+		}
+		if err := z.authorizeInbound(ctx, seller, callerID, buyerTenant, buyerAgent != nil); err != nil {
+			writeAgentPolicyDenied(w, err)
+			return
+		}
 	}
 
 	// M4 — validate buyer-supplied input against the seller's declared input

@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"errors"
+	"github.com/dshakes/pal/packages/cli/internal"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -42,6 +43,10 @@ func fakeAPI(t *testing.T, agentExists bool, status map[string]int) (*httptest.S
 				return
 			}
 			_, _ = w.Write([]byte(`{"id":"a1","name":"bot"}`))
+		case "POST /v1/agents/bot/policy/propose":
+			_, _ = w.Write([]byte(`{"proposal":{"mode":"enforce","tools":["read_file"],"version":1}}`))
+		case "PUT /v1/agents/bot/policy":
+			_, _ = w.Write([]byte(`{"policy":{"mode":"enforce","tools":["read_file"],"version":2}}`))
 		case "POST /v1/agents/bot/deploy":
 			w.WriteHeader(201)
 			_, _ = w.Write([]byte(`{"id":"d1","agentName":"bot","status":"live","url":"http://x/a2a"}`))
@@ -96,6 +101,9 @@ func TestDeploySequence(t *testing.T) {
 			{"GET", "/v1/agents/bot", nil},
 			{"POST", "/v1/agents", map[string]any{"name": "bot", "description": "d", "labels": map[string]any{"team": "x"}, "systemPrompt": "be nice", "model": "auto"}},
 			{"PUT", "/v1/agents/bot/workflow", map[string]any{"nodes": []any{}, "edges": []any{}}},
+			// New agents are default-deny (ADR 0055): apply the least-privilege proposal.
+			{"POST", "/v1/agents/bot/policy/propose", nil},
+			{"PUT", "/v1/agents/bot/policy", map[string]any{"mode": "enforce", "tools": []any{"read_file"}, "version": float64(1)}},
 			{"POST", "/v1/agents/bot/deploy", nil},
 		}},
 		{"update", true, []reqRec{
@@ -174,5 +182,27 @@ func TestDeployMissingManifestName(t *testing.T) {
 	root.SetArgs([]string{"deploy"})
 	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "name is required") {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+// A manifest-declared policy is applied (with the server's current version)
+// on create AND update; without one, an existing agent's policy is untouched.
+func TestApplyDeployPolicy_DeclaredAndExisting(t *testing.T) {
+	srv, recs := fakeAPI(t, true, nil)
+	c := internal.NewRESTClient(srv.URL, "k", "")
+	got, err := applyDeployPolicy(c, "/v1/agents/bot", map[string]any{"mode": "enforce", "tools": []any{"read_file"}}, false)
+	if err != nil || got == nil {
+		t.Fatalf("declared: %v %v", got, err)
+	}
+	want := []reqRec{
+		{"GET", "/v1/agents/bot/policy", nil},
+		{"PUT", "/v1/agents/bot/policy", map[string]any{"mode": "enforce", "tools": []any{"read_file"}, "version": nil}},
+	}
+	if !reflect.DeepEqual(*recs, want) {
+		t.Fatalf("requests:\n got %+v\nwant %+v", *recs, want)
+	}
+	*recs = nil
+	if got, err := applyDeployPolicy(c, "/v1/agents/bot", nil, false); err != nil || got != nil || len(*recs) != 0 {
+		t.Fatalf("existing agent without a declared policy must be left alone: %v %v %v", got, err, *recs)
 	}
 }

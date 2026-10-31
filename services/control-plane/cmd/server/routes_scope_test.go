@@ -102,11 +102,18 @@ var getExempt = map[string]string{
 
 	// Capability-URL download: auth is the signed token in the path.
 	"GET /dl/{token}": "capability token in URL (not JWT/API key scope)",
+
+	// Public verification key for agent tokens (ADR 0055): a JWKS, like
+	// /.well-known/pal-receipts — public by design, only the active key.
+	"GET /.well-known/pal-agent-keys/{agentId}": "public JWKS for agent-token verification (ADR 0055)",
 }
 
 var routeRE = regexp.MustCompile(`HandleFunc\("((?:POST|PUT|PATCH|DELETE) [^"]+)",\s*(.*)$`)
 var getRouteRE = regexp.MustCompile(`HandleFunc\("(GET [^"]+)",\s*(.*)$`)
-var withScopeRE = regexp.MustCompile(`\bWithScope\(`)
+
+// WithScopeOrAgent (ADR 0055) is WithScope for user callers; agent callers
+// are authorized by their policy inside the handler.
+var withScopeRE = regexp.MustCompile(`\bWithScope(OrAgent)?\(`)
 
 // TestEveryMutatingRouteHasScope fails when a POST/PUT/PATCH/DELETE route is
 // registered without WithScope and isn't on the exemption list — so flipping

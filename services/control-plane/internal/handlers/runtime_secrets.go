@@ -71,6 +71,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/dshakes/pal/packages/agentpolicy"
 	"net"
 	"net/http"
 	"os"
@@ -870,11 +871,27 @@ func (h *RuntimeSecretsHandler) ResolveSecrets(w http.ResponseWriter, r *http.Re
 		// NOTE: never log resolved values.
 	)
 
+	// --- Agent scoping (ADR 0055) ---
+	// A VM bound to an agent may only resolve the refs that agent's policy
+	// lists. Fail closed: if the binding cannot be read, nothing resolves.
+	vmAgent, agentErr := h.vmAgentPrincipal(ctx, req.TenantID, req.VmID)
+	if agentErr != nil {
+		h.logger().Error("secret relay: agent binding unavailable — refusing", zap.String("vm_id", req.VmID), zap.Error(agentErr))
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		return
+	}
+
 	// --- Resolve each ref ---
 	resolved := make([]resolvedRef, 0, len(req.Refs))
 	resolvedCount := 0
 
 	for _, ref := range req.Refs {
+		if vmAgent != nil {
+			if err := vmAgent.Authorize(ctx, agentpolicy.Action{Kind: agentpolicy.KindSecret, Target: ref}, "runtime.secret"); err != nil {
+				resolved = append(resolved, resolvedRef{Ref: ref, Error: "denied by agent policy"})
+				continue
+			}
+		}
 		p := parseRef(ref)
 		if p.scope == "" {
 			resolved = append(resolved, resolvedRef{Ref: ref, Error: "not found"})
@@ -913,4 +930,39 @@ func (h *RuntimeSecretsHandler) ResolveSecrets(w http.ResponseWriter, r *http.Re
 	)
 
 	writeJSON(w, http.StatusOK, resolveSecretsResponse{Resolved: resolved})
+}
+
+// vmAgentPrincipal returns the principal of the agent a VM runs as (from
+// runtime_vms.agent_id), or nil for a VM not bound to an agent.
+func (h *RuntimeSecretsHandler) vmAgentPrincipal(ctx context.Context, tenantID, vmID string) (*AgentPrincipal, error) {
+	z := currentAgentAuthz()
+	if z == nil {
+		return nil, nil
+	}
+	var a agentRef
+	var runID, boundAgent string
+	var agentCreated *time.Time
+	err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT COALESCE(v.agent_id::text, ''), COALESCE(a.id::text, ''), COALESCE(a.name, ''),
+			       COALESCE(a.current_version_id::text, ''), a.created_at, COALESCE(v.run_id::text, '')
+			FROM runtime_vms v LEFT JOIN agents a ON a.id = v.agent_id
+			WHERE v.vm_id = $1 AND v.tenant_id = $2`, vmID, tenantID).
+			Scan(&boundAgent, &a.ID, &a.Name, &a.VersionID, &agentCreated, &runID)
+	})
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && boundAgent == "") {
+		return nil, nil // not bound to an agent
+	}
+	if err != nil {
+		return nil, err
+	}
+	if a.ID == "" {
+		return nil, errors.New("VM's agent no longer exists")
+	}
+	a.TenantID = tenantID
+	if agentCreated != nil {
+		a.CreatedAt = *agentCreated
+	}
+	_, p, err := z.establishFor(ctx, a, runID, AudienceRuntime)
+	return p, err
 }

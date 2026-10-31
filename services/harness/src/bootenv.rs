@@ -94,8 +94,11 @@ pub struct SpawnContract {
 /// harness configuration — `PAL_ENV`, egress, workload uid, … — and only
 /// the manager's typed fields / own boot-args may set it. Keep in sync with
 /// the manager's `service::CALLER_PAL_KEYS`.
-pub const CALLER_PAL_KEYS: [&str; 4] = [
+pub const CALLER_PAL_KEYS: [&str; 6] = [
     "PAL_AGENT_INSTANCE_ID",
+    // The agent principal the VM runs as (ADR 0055): non-secret locators.
+    "PAL_AGENT_ID",
+    "PAL_AGENT_SPIFFE_ID",
     "PAL_AGENT_INSTANCE_TOKEN",
     "PAL_TRACE_PARENT",
     "PAL_RESUME",
@@ -1031,7 +1034,7 @@ mod tests {
              pal.env.PAL_HARNESS_EXEC_TOKEN=x pal.env.PAL_MANAGER_ADDR=10.0.0.1:50054 \
              pal.env.PAL_ENV=prod pal.env.PAL_WORKLOAD_UID=1000 \
              pal.env.PAL_AGENT_INSTANCE_ID=inst pal.env.FOO=bar \
-             pal.env.PAL_TENANT_ID=t-auth",
+             pal.env.PAL_TENANT_ID=t-auth pal.env.PAL_AGENT_SPIFFE_ID=spiffe://pal.local/a",
         );
         let names: Vec<&str> = cmd.iter().map(|(k, _)| k.as_str()).collect();
         assert_eq!(
@@ -1042,7 +1045,8 @@ mod tests {
                 "PAL_WORKLOAD_UID",
                 "PAL_AGENT_INSTANCE_ID",
                 "FOO",
-                "PAL_TENANT_ID"
+                "PAL_TENANT_ID",
+                "PAL_AGENT_SPIFFE_ID"
             ]
         );
 

@@ -398,6 +398,20 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 
 	isBridgeAgent := agentName == "whatsapp-assistant" || agentName == "imessage-assistant"
 
+	// Agent identity (ADR 0055): a registered agent acts as its own principal,
+	// so every tool it calls this turn is checked against its policy. An
+	// unregistered name (bridge personas) keeps the caller's authority.
+	if actx, _, aerr := currentAgentAuthz().Establish(ctx, tenantID, agentName, "session:"+sessionID); aerr != nil {
+		h.logger().Warn("session: agent identity unavailable — refusing turn", zap.String("agent", agentName), zap.Error(aerr))
+		msg := "This agent can't run right now: its identity is unavailable or revoked."
+		h.appendAssistantMessage(ctx, sessionID, msg)
+		h.publishEvent(sessionID, "agent.message", map[string]string{"content": msg})
+		h.publishEvent(sessionID, "session.status_idle", map[string]string{})
+		return
+	} else {
+		ctx = actx
+	}
+
 	genericDefault := fmt.Sprintf("You are the agent '%s'. You are in an interactive session. Respond helpfully and concisely.", agentName)
 	systemPrompt := genericDefault
 	if storedPrompt != nil && *storedPrompt != "" {
@@ -534,6 +548,9 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 	// loop can invoke connector actions without re-resolving credentials.
 	dispatch := func(dispatchCtx context.Context, name string, args map[string]any) (any, error) {
 		if handoffOn && name == handoffToolName {
+			if err := principalFrom(dispatchCtx).Authorize(dispatchCtx, toolAction(name), ""); err != nil {
+				return nil, err
+			}
 			return h.handoffDispatch(dispatchCtx, tenantID, sessionID, agentName, handoffSlack, args)
 		}
 		// rls-exempt: shared connector-dispatch helper takes a *Pool and

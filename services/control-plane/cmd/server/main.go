@@ -337,6 +337,13 @@ func main() {
 	connectorHandler := handlers.NewConnectorHandler(srv, authHandler)
 	connectorExecutor := handlers.NewConnectorExecutor(srv, authHandler)
 	llmProxyHandler := handlers.NewLlmProxyHandler(srv, authHandler)
+
+	// Agent identity + per-agent policy (ADR 0055): every registered agent is
+	// a principal; every tool/connector/A2A/microVM dispatch is authorized
+	// against its policy. Process-wide so the free dispatch helpers see it.
+	agentAuthz := handlers.NewAgentAuthz(srv, []byte(jwtSecret))
+	handlers.SetAgentAuthz(agentAuthz)
+	agentIdentityHandler := handlers.NewAgentIdentityHandler(srv, authHandler, agentAuthz, llmProxyHandler)
 	smsHandler := handlers.NewSMSHandler(logger, srv.Pool, llmProxyHandler)
 	messagingHandler := handlers.NewMessagingHandler(logger, srv.Pool, llmProxyHandler)
 	surfaceHandler := handlers.NewSurfaceHandler(srv, authHandler)
@@ -524,8 +531,8 @@ func main() {
 	// Connector executor — registered before {id} to avoid path conflict.
 	// Both GET (?action= style) and POST can invoke write-capable connector
 	// actions (send message, create event, etc.) so both require connectors:write.
-	httpMux.HandleFunc("GET /v1/connectors/{connectorId}/execute", authHandler.WithScope(handlers.ScopeConnectorsWrite, connectorExecutor.Execute))
-	httpMux.HandleFunc("POST /v1/connectors/{connectorId}/execute", authHandler.WithScope(handlers.ScopeRunsExecute, connectorExecutor.Execute))
+	httpMux.HandleFunc("GET /v1/connectors/{connectorId}/execute", authHandler.WithScopeOrAgent(handlers.ScopeConnectorsWrite, connectorExecutor.Execute))
+	httpMux.HandleFunc("POST /v1/connectors/{connectorId}/execute", authHandler.WithScopeOrAgent(handlers.ScopeRunsExecute, connectorExecutor.Execute))
 	// Twilio webhooks — owner's private agent channel. NO auth
 	// middleware (Twilio HMAC verification is done inside the handler).
 	httpMux.HandleFunc("POST /v1/sms/twilio/webhook", smsHandler.SMSWebhook)
@@ -665,7 +672,16 @@ func main() {
 
 	// A2A (Agent-to-Agent) protocol endpoints (Gap 4).
 	httpMux.HandleFunc("GET /v1/agents/{name}/card", a2aHandler.GetAgentCard)
-	httpMux.HandleFunc("POST /v1/agents/{name}/a2a/invoke", authHandler.WithScope(handlers.ScopeRunsExecute, a2aHandler.InvokeAgent))
+	httpMux.HandleFunc("POST /v1/agents/{name}/a2a/invoke", authHandler.WithScopeOrAgent(handlers.ScopeRunsExecute, a2aHandler.InvokeAgent))
+	httpMux.HandleFunc("GET /v1/agents/{name}/policy", authHandler.WithScope(handlers.ScopeAgentsRead, agentIdentityHandler.GetPolicy))
+	httpMux.HandleFunc("PUT /v1/agents/{name}/policy", authHandler.WithScope(handlers.ScopeAgentsWrite, agentIdentityHandler.PutPolicy))
+	httpMux.HandleFunc("POST /v1/agents/{name}/policy/propose", authHandler.WithScope(handlers.ScopeAgentsRead, agentIdentityHandler.ProposePolicy))
+	httpMux.HandleFunc("GET /v1/agents/{name}/identity", authHandler.WithScope(handlers.ScopeAgentsRead, agentIdentityHandler.GetIdentity))
+	httpMux.HandleFunc("POST /v1/agents/{name}/identity/rotate", authHandler.WithScope(handlers.ScopeAgentsWrite, agentIdentityHandler.RotateIdentity))
+	httpMux.HandleFunc("POST /v1/agents/{name}/identity/revoke", authHandler.WithScope(handlers.ScopeAgentsWrite, agentIdentityHandler.RevokeIdentity))
+	httpMux.HandleFunc("POST /v1/agents/{name}/identity/token", authHandler.WithScope(handlers.ScopeAdmin, agentIdentityHandler.MintToken))
+	httpMux.HandleFunc("GET /v1/agents/{name}/audit", authHandler.WithScope(handlers.ScopeAgentsRead, agentIdentityHandler.ListAudit))
+	httpMux.HandleFunc("GET /.well-known/pal-agent-keys/{agentId}", agentIdentityHandler.AgentJWKS)
 	httpMux.HandleFunc("GET /.well-known/agent.json", a2aHandler.AgentDirectory)
 
 	// Workflow persistence endpoints (visual editor).
@@ -763,7 +779,7 @@ func main() {
 	httpMux.HandleFunc("POST /v1/marketplace/{slug}/star", authHandler.WithScope(handlers.ScopeWrite, marketplaceHandler.Star))
 	httpMux.HandleFunc("DELETE /v1/marketplace/{slug}/star", authHandler.WithScope(handlers.ScopeWrite, marketplaceHandler.Star))
 	// W11c: cross-tenant invocations with HMAC-signed settlement.
-	httpMux.HandleFunc("POST /v1/marketplace/{slug}/invoke", authHandler.WithScope(handlers.ScopeRunsExecute, marketplaceHandler.Invoke))
+	httpMux.HandleFunc("POST /v1/marketplace/{slug}/invoke", authHandler.WithScopeOrAgent(handlers.ScopeRunsExecute, marketplaceHandler.Invoke))
 	httpMux.HandleFunc("GET /v1/marketplace/invocations", authHandler.WithScope(handlers.ScopeRunsRead, marketplaceHandler.ListInvocations))
 
 	// W11a: takeover handshake. Workflow approval nodes pause on these,

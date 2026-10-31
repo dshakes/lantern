@@ -101,6 +101,7 @@ func agentFromManifest(t *testing.T, k *e2ekit.Kit, name, dir string) *e2ekit.Ag
 			t.Fatalf("save workflow: HTTP %d: %s", st, raw)
 		}
 	}
+	applyProposedPolicy(t, k, name) // as `pal deploy` does for a new agent (ADR 0055)
 	return a
 }
 

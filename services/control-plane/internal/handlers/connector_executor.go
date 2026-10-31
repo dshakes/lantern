@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/dshakes/pal/packages/agentpolicy"
 	"io"
 	"net/http"
 	"net/url"
@@ -104,26 +105,45 @@ var httpClient = &http.Client{Timeout: 30 * time.Second, Transport: baseURLTrans
 // It loads credentials from connector_installs, then dispatches to the
 // appropriate connector implementation which makes real API calls.
 func (h *ConnectorExecutor) Execute(w http.ResponseWriter, r *http.Request) {
-	claims, err := h.auth.validateRequest(r)
-	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-		return
-	}
-	tenantID := claims.TenantID
-	// Inject the tenant into the context so WithTenant scopes the credential
-	// read (and best-effort token-refresh write) under RLS.
-	ctx := middleware.InjectTenantID(r.Context(), tenantID)
-
 	connectorID := r.PathValue("connectorId")
 	if connectorID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "connectorId is required"})
 		return
 	}
-
 	action := r.URL.Query().Get("action")
 	if action == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "action query parameter is required"})
 		return
+	}
+
+	// An agent calling as itself (ADR 0055) presents an agent token bound to
+	// pal:connectors; its tenant comes from the VERIFIED token and the action
+	// must be in its policy. Otherwise this is the user/API-key path.
+	var tenantID string
+	agent, aerr := currentAgentAuthz().agentCallerFromRequest(r, AudienceConnectors)
+	switch {
+	case aerr != nil:
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"code": "agent_token_invalid", "error": "invalid agent token"})
+		return
+	case agent != nil:
+		tenantID = agent.TenantID
+	default:
+		claims, err := h.auth.validateRequest(r)
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return
+		}
+		tenantID = claims.TenantID
+	}
+	// Inject the tenant into the context so WithTenant scopes the credential
+	// read (and best-effort token-refresh write) under RLS.
+	ctx := middleware.InjectTenantID(r.Context(), tenantID)
+	if agent != nil {
+		ctx = withAgentPrincipal(ctx, agent)
+		if err := agent.Authorize(ctx, agentpolicy.Action{Kind: agentpolicy.KindConnector, Target: connectorID, Sub: action}, ""); err != nil {
+			writeAgentPolicyDenied(w, err)
+			return
+		}
 	}
 
 	// Parse request body params (for POST requests or optional params).

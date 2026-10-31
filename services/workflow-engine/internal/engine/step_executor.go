@@ -72,6 +72,9 @@ type StepExecutor struct {
 	childRunner ChildRunner
 	// appPool: see Engine.appPool. nil => fall back to pool.
 	appPool *pgxpool.Pool
+	// authorizeTool gates every tool_call on the run's agent policy (ADR
+	// 0052). Defaults to authorizeToolCall; tests without a DB replace it.
+	authorizeTool func(ctx context.Context, state *RunState, stepID, tool string) error
 }
 
 // NewStepExecutor creates a new StepExecutor. modelClient may be nil; LLM steps
@@ -79,13 +82,15 @@ type StepExecutor struct {
 // runtimeClient may be nil; tool_call steps then return a typed
 // ErrRuntimeManagerUnavailable instead of executing.
 func NewStepExecutor(pool *pgxpool.Pool, streamer *EventStreamer, logger *zap.Logger, modelClient palv1.ModelServiceClient, runtimeClient palv1.RuntimeManagerClient) *StepExecutor {
-	return &StepExecutor{
+	se := &StepExecutor{
 		pool:          pool,
 		streamer:      streamer,
 		logger:        logger.Named("step_executor"),
 		modelClient:   modelClient,
 		runtimeClient: runtimeClient,
 	}
+	se.authorizeTool = se.authorizeToolCall
+	return se
 }
 
 // ExecuteStep runs a single step within the context of a run. The core logic:
@@ -377,6 +382,10 @@ func (se *StepExecutor) executeToolCall(ctx context.Context, state *RunState, st
 	}
 	if req.ToolName == "" {
 		return nil, fmt.Errorf("invalid tool_call payload: tool_name is required")
+	}
+	// Per-agent least privilege (ADR 0055) — before anything reaches a VM.
+	if err := se.authorizeTool(ctx, state, stepID, req.ToolName); err != nil {
+		return nil, err
 	}
 
 	// Decode the structured arguments into a protobuf Struct. An absent or null
