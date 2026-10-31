@@ -157,6 +157,12 @@ type Definition struct {
 // Fields are zero when the dep does not report them (e.g. the basic CallLLM
 // shim used in unit tests).
 type LLMStepUsage struct {
+	// ToolName / ToolArgs describe a tool or connector call for the trace tree
+	// (ADR 0056). ToolArgs is already redacted. They ride on the existing
+	// step_completed / step_failed payload: an extra journal event would shift
+	// the seq alignment that approval-park resume depends on.
+	ToolName  string
+	ToolArgs  map[string]any
 	TokensIn  int64
 	TokensOut int64
 	CostUSD   float64
@@ -459,10 +465,14 @@ func Run(ctx context.Context, runID string, deps Deps, def Definition, input map
 		}
 
 		if stepErr != nil {
-			emit("step_failed", node.ID, map[string]any{
+			failed := map[string]any{
 				"error": stepErr.Error(),
 				"type":  node.Type,
-			})
+			}
+			if stepUsage.ToolName != "" {
+				failed["tool"], failed["args"] = stepUsage.ToolName, stepUsage.ToolArgs
+			}
+			emit("step_failed", node.ID, failed)
 			res.Failed = true
 			res.FailedAt = node.ID
 			res.LastError = stepErr.Error()
@@ -491,6 +501,9 @@ func Run(ctx context.Context, runID string, deps Deps, def Definition, input map
 			if stepUsage.Model != "" {
 				completedPayload["model"] = stepUsage.Model
 			}
+		}
+		if stepUsage.ToolName != "" {
+			completedPayload["tool"], completedPayload["args"] = stepUsage.ToolName, stepUsage.ToolArgs
 		}
 		emit("step_completed", node.ID, completedPayload)
 
@@ -554,6 +567,12 @@ type emitFn func(kind, stepID string, payload map[string]any)
 // usageOut is an optional pointer filled with LLM token/cost metrics when the
 // node is an ai-step and CallLLMDetailed is wired; it is left at zero otherwise.
 // Callers pass nil when they don't care about usage (e.g. runSubgraph).
+// redactArgs is obs.Redact for a params map (never leaks a secret into the journal, invariant #10).
+func redactArgs(m map[string]any) map[string]any {
+	r, _ := obs.Redact(m).(map[string]any)
+	return r
+}
+
 func executeNode(ctx context.Context, runID string, deps Deps, emit emitFn, node Node, vars map[string]any, out map[string][]Edge, byID map[string]Node, usageOut *LLMStepUsage) (any, error) {
 	// Replay idempotency: before touching any side-effecting dep, check
 	// whether this node was already completed in a prior attempt. Pure
@@ -619,9 +638,9 @@ func executeNode(ctx context.Context, runID string, deps Deps, emit emitFn, node
 			return nil, fmt.Errorf("tool node requires a tool name")
 		}
 		params := parseParams(node.Data["parameters"], vars)
-		// Trace tree (ADR 0056): record the call's arguments, redacted at write
-		// time so a secret in a rendered template never lands in the journal.
-		emit("tool_call", node.ID, map[string]any{"tool": tool, "args": obs.Redact(params)})
+		if usageOut != nil {
+			usageOut.ToolName, usageOut.ToolArgs = tool, redactArgs(params)
+		}
 		return deps.CallTool(ctx, tool, params)
 
 	case "connector":
@@ -631,7 +650,9 @@ func executeNode(ctx context.Context, runID string, deps Deps, emit emitFn, node
 			return nil, fmt.Errorf("connector node requires connector + action")
 		}
 		params := parseParams(node.Data["inputMapping"], vars)
-		emit("tool_call", node.ID, map[string]any{"tool": connectorID + "." + action, "args": obs.Redact(params)})
+		if usageOut != nil {
+			usageOut.ToolName, usageOut.ToolArgs = connectorID+"."+action, redactArgs(params)
+		}
 		return deps.CallConnector(ctx, connectorID, action, params)
 
 	case "condition":

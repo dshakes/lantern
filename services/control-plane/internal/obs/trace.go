@@ -163,8 +163,6 @@ func BuildTrace(run RunInfo, events []Event, children []*Trace) *Trace {
 			}
 			n.startAt = e.At
 			n.StartMs = e.At.Sub(run.CreatedAt).Milliseconds()
-		case "tool_call":
-			n.Tool = &ToolInfo{Name: RedactString(str(p, "tool")), Args: Redact(p["args"])}
 		case "step_retrying":
 			n.Retries = append(n.Retries, Retry{Attempt: int(numF(p, "attempt")), Error: RedactString(str(p, "error"))})
 		case "policy_denied":
@@ -178,6 +176,7 @@ func BuildTrace(run RunInfo, events []Event, children []*Trace) *Trace {
 			n.Status = "waiting"
 		case "step_completed":
 			n.Status = "ok"
+			setTool(n, p)
 			n.DurationMs = e.At.Sub(n.startAt).Milliseconds()
 			out := str(p, "output")
 			if out == "" {
@@ -194,6 +193,7 @@ func BuildTrace(run RunInfo, events []Event, children []*Trace) *Trace {
 			}
 		case "step_failed":
 			n.Status = "failed"
+			setTool(n, p)
 			n.DurationMs = e.At.Sub(n.startAt).Milliseconds()
 			n.Error = RedactString(str(p, "error"))
 		}
@@ -224,4 +224,12 @@ func BuildTrace(run RunInfo, events []Event, children []*Trace) *Trace {
 func (t *Trace) Describe() string {
 	return fmt.Sprintf("run %s %s: %d steps, %d llm, %d tool, %d retries, $%.4f", t.RunID, t.Status,
 		t.Totals.Steps, t.Totals.LLMCalls, t.Totals.ToolCalls, t.Totals.Retries, t.CostUSD)
+}
+
+// setTool reads the tool name and redacted arguments the interpreter records on
+// the step's terminal event.
+func setTool(n *Node, p map[string]any) {
+	if name := str(p, "tool"); name != "" {
+		n.Tool = &ToolInfo{Name: RedactString(name), Args: Redact(p["args"])}
+	}
 }

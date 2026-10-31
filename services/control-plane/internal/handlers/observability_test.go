@@ -172,9 +172,8 @@ func TestObsTrace_TreeRedactionAndCrossTenant404(t *testing.T) {
 	f.journal(parent, 1, "step_started", "plan", map[string]any{"name": "Plan", "type": "ai-step"}, at(10))
 	f.journal(parent, 2, "step_completed", "plan", map[string]any{"output": "done", "tokens_in": 100, "tokens_out": 20, "cost_usd": 0.01, "model": "m", "provider": "p"}, at(510))
 	f.journal(parent, 3, "step_started", "fetch", map[string]any{"name": "Fetch", "type": "tool"}, at(520))
-	f.journal(parent, 4, "tool_call", "fetch", map[string]any{"tool": "http", "args": map[string]any{"url": "https://x.test", "api_key": obsFakeKey, "note": "Bearer abcdefgh12345678"}}, at(521))
 	f.journal(parent, 5, "step_retrying", "fetch", map[string]any{"attempt": 2, "error": "timeout"}, at(800))
-	f.journal(parent, 6, "step_failed", "fetch", map[string]any{"error": "boom " + obsFakeKey}, at(1000))
+	f.journal(parent, 6, "step_failed", "fetch", map[string]any{"error": "boom " + obsFakeKey, "tool": "http", "args": map[string]any{"url": "https://x.test", "api_key": obsFakeKey, "note": "Bearer abcdefgh12345678"}}, at(1000))
 	f.journal(parent, 7, "step_started", "sub", map[string]any{"name": "Sub", "type": "subagent"}, at(1100))
 
 	rr := f.do(f.h.GetRunTrace, "GET", "/v1/runs/"+parent+"/trace", f.tokA, nil, map[string]string{"id": parent})
@@ -479,12 +478,10 @@ func TestObsTrace_PolicyDeniedStepAndProdEvalInteraction(t *testing.T) {
 	t0 := time.Now().Add(-time.Minute)
 	at := func(ms int) time.Time { return t0.Add(time.Duration(ms) * time.Millisecond) }
 	f.journal(run, 1, "step_started", "lookup", map[string]any{"name": "Lookup", "type": "tool"}, at(1))
-	f.journal(run, 2, "tool_call", "lookup", map[string]any{"tool": "crm.lookup", "args": map[string]any{"order": "1"}}, at(2))
-	f.journal(run, 3, "step_completed", "lookup", map[string]any{"output": "ok"}, at(20))
+	f.journal(run, 3, "step_completed", "lookup", map[string]any{"output": "ok", "tool": "crm.lookup", "args": map[string]any{"order": "1"}}, at(20))
 	f.journal(run, 4, "step_started", "pay", map[string]any{"name": "Refund", "type": "connector"}, at(21))
-	f.journal(run, 5, "tool_call", "pay", map[string]any{"tool": "stripe.refund", "args": map[string]any{"authorization": obsFakeKey}}, at(22))
 	f.journal(run, 6, "policy_denied", "pay", map[string]any{"kind": "connector", "target": "stripe", "reason": "not allowed: " + obsFakeKey}, at(23))
-	f.journal(run, 7, "step_failed", "pay", map[string]any{"error": "agent policy denied connector stripe"}, at(24))
+	f.journal(run, 7, "step_failed", "pay", map[string]any{"error": "agent policy denied connector stripe", "tool": "stripe.refund", "args": map[string]any{"authorization": obsFakeKey}}, at(24))
 
 	rr := f.do(f.h.GetRunTrace, "GET", "/x", f.tokA, nil, map[string]string{"id": run})
 	if rr.Code != 200 || strings.Contains(rr.Body.String(), obsFakeKey) {

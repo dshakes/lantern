@@ -56,9 +56,8 @@ func TestBuildTrace(t *testing.T) {
 		{Seq: 2, Kind: "step_started", StepID: "a", Payload: map[string]any{"name": "Plan", "type": "ai-step"}, At: at(10)},
 		{Seq: 3, Kind: "step_completed", StepID: "a", Payload: map[string]any{"output": "ok", "tokens_in": 100.0, "tokens_out": 50.0, "cost_usd": 0.01, "model": "m1", "provider": "p"}, At: at(710)},
 		{Seq: 4, Kind: "step_started", StepID: "b", Payload: map[string]any{"name": "Fetch", "type": "tool"}, At: at(720)},
-		{Seq: 5, Kind: "tool_call", StepID: "b", Payload: map[string]any{"tool": "http", "args": map[string]any{"url": "x", "api_key": fakeAnthropic}}, At: at(721)},
 		{Seq: 6, Kind: "step_retrying", StepID: "b", Payload: map[string]any{"attempt": 2.0, "error": "timeout"}, At: at(900)},
-		{Seq: 7, Kind: "step_failed", StepID: "b", Payload: map[string]any{"error": "boom Bearer abcdefgh12345"}, At: at(1200)},
+		{Seq: 7, Kind: "step_failed", StepID: "b", Payload: map[string]any{"error": "boom Bearer abcdefgh12345", "tool": "http", "args": map[string]any{"url": "x", "api_key": fakeAnthropic}}, At: at(1200)},
 		{Seq: 8, Kind: "step_started", StepID: "c", Payload: map[string]any{"name": "Sub", "type": "subagent"}, At: at(1300)},
 	}
 	child := &Trace{RunID: "child"}
@@ -183,9 +182,8 @@ func TestBuildTracePolicyDenied(t *testing.T) {
 		{Seq: 1, Kind: "step_started", StepID: "ok", Payload: map[string]any{"name": "Allowed", "type": "tool"}, At: at(1)},
 		{Seq: 2, Kind: "step_completed", StepID: "ok", Payload: map[string]any{"output": "fine"}, At: at(5)},
 		{Seq: 3, Kind: "step_started", StepID: "bad", Payload: map[string]any{"name": "Refund", "type": "connector"}, At: at(6)},
-		{Seq: 4, Kind: "tool_call", StepID: "bad", Payload: map[string]any{"tool": "stripe.refund", "args": map[string]any{"api_key": fakeAnthropic}}, At: at(7)},
 		{Seq: 5, Kind: "policy_denied", StepID: "bad", Payload: map[string]any{"kind": "connector", "target": "stripe", "reason": "not in allowlist " + fakeAnthropic}, At: at(8)},
-		{Seq: 6, Kind: "step_failed", StepID: "bad", Payload: map[string]any{"error": "agent policy denied connector stripe"}, At: at(9)},
+		{Seq: 6, Kind: "step_failed", StepID: "bad", Payload: map[string]any{"error": "agent policy denied connector stripe", "tool": "stripe.refund", "args": map[string]any{"api_key": fakeAnthropic}}, At: at(9)},
 		{Seq: 7, Kind: "policy_denied", StepID: "policy", Payload: map[string]any{"kind": "tool", "target": "shell", "reason": "denied"}, At: at(10)},
 	}
 	tr := BuildTrace(RunInfo{ID: "r", Status: "failed", CreatedAt: t0}, ev, nil)

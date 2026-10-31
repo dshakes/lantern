@@ -14,9 +14,10 @@ missing is the product on top of them. No new database (CLAUDE.md).
 
 1. **Trace tree is a read-time fold of the journal.** `GET /v1/runs/{id}/trace` builds a tree
    (steps, LLM calls with model/tokens/cost/latency, tool calls with args and result, retries,
-   child runs) in `internal/obs`, a pure package. The only new journal fact is a `tool_call`
-   event (tool name + arguments) emitted by the workflow interpreter for `tool` and `connector`
-   nodes. Step latency is the delta of journal row timestamps.
+   child runs) in `internal/obs`, a pure package. The only new journal fact is the tool name and redacted
+   arguments carried on the `step_completed` / `step_failed` payload of `tool` and `connector` nodes.
+   (A separate event was tried and rejected: it shifts the journal seq alignment that approval-park
+   resume depends on, which the incident example e2e caught.) Step latency is the delta of journal row timestamps.
    *Tenant isolation:* `journal_events` is RLS-exempt (no `tenant_id`), so the run-row ownership
    check (`runs.id AND tenant_id`, inside `WithTenant`) is the gate. A run in another tenant,
    a missing run and a malformed id are all `404`. Child runs are fetched with the same filter.
@@ -50,7 +51,7 @@ missing is the product on top of them. No new database (CLAUDE.md).
    flat baseline cannot make noise infinite); a finding needs z >= 4 AND a rise of at least 50%.
    Score needs z <= -4 AND a drop of at least 0.15. Error rate is a one-sided proportion z >= 4 AND
    at least 15 points higher. Minimums: 20 baseline runs, 5 recent runs per version. A metric with a
-   zero baseline median is skipped (relative change undefined; this also keeps pre-`tool_call` history
+   zero baseline median is skipped (relative change undefined; this also keeps history from before tool arguments were journaled
    from flagging every new run). All thresholds live in `obs.DefaultThresholds`.
 5. **Incidents.** An anomaly or an SLO page/ticket alert opens one row in `agent_incidents`
    (unique per tenant + agent + kind while not resolved, so repeats are absorbed). It records the

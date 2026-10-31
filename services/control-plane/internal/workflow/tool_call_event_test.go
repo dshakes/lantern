@@ -9,7 +9,7 @@ import (
 
 // The journal must record a tool node's arguments (so the trace tree can show
 // them) but never a secret: invariant #10.
-func TestToolCallEventRecordsRedactedArgs(t *testing.T) {
+func TestToolStepRecordsRedactedArgsWithoutExtraEvent(t *testing.T) {
 	secret := "sk" + "-ant-api03-" + "QQQQQQQQQQQQQQQQ"
 	def := Definition{
 		Nodes: []Node{
@@ -25,12 +25,17 @@ func TestToolCallEventRecordsRedactedArgs(t *testing.T) {
 	}
 	var got *JournalEvent
 	for i := range stub.events {
-		if stub.events[i].Kind == "tool_call" {
+		if stub.events[i].Kind == "step_completed" && stub.events[i].StepID == "x" {
 			got = &stub.events[i]
 		}
 	}
-	if got == nil {
-		t.Fatalf("no tool_call event; kinds=%v", eventKinds(stub))
+	if got == nil || got.Payload["tool"] != "http" {
+		t.Fatalf("step_completed for the tool node must carry tool+args; kinds=%v", eventKinds(stub))
+	}
+	for _, k := range eventKinds(stub) {
+		if k == "tool_call" {
+			t.Fatal("no extra journal event: it would shift seq alignment on approval resume")
+		}
 	}
 	raw, _ := json.Marshal(got.Payload)
 	if strings.Contains(string(raw), secret) || !strings.Contains(string(raw), "a.test") {

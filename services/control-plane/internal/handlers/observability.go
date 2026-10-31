@@ -215,7 +215,7 @@ func loadStats(ctx context.Context, tx pgx.Tx, tenantID, agent string, from, to 
 	rows, err := tx.Query(ctx, `
 		SELECT r.id::text, COALESCE(v.version,''), r.created_at, r.cost_usd::float8,
 		       COALESCE(EXTRACT(EPOCH FROM (r.finished_at - COALESCE(r.started_at, r.created_at))) * 1000, 0)::float8,
-		       (SELECT COUNT(*) FROM journal_events j WHERE j.run_id = r.id AND j.kind = 'tool_call')::float8,
+		       (SELECT COUNT(*) FROM journal_events j WHERE j.run_id = r.id AND j.kind IN ('step_completed','step_failed') AND position('"tool":' in encode(j.payload,'escape')) > 0)::float8,
 		       r.status = 'failed', s.score::float8
 		FROM runs r JOIN agents a ON a.id = r.agent_id AND a.tenant_id = r.tenant_id
 		LEFT JOIN agent_versions v ON v.id = r.agent_version_id
