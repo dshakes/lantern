@@ -31,6 +31,54 @@ import (
 	"golang.org/x/term"
 )
 
+// stepLine describes a step_started / step_completed event. The server's
+// payload carries the step kind as "type" (inline LLM path and workflow
+// interpreter) and no duration, so only what is present is shown — never an
+// empty "(kind: )" or a made-up "(0ms)".
+func stepLine(ev *internal.SSEEvent) string {
+	p := ev.Payload
+	str := func(keys ...string) string {
+		for _, k := range keys {
+			if v, ok := p[k].(string); ok && v != "" {
+				return v
+			}
+		}
+		return ""
+	}
+	num := func(k string) float64 {
+		if v, ok := p[k].(float64); ok {
+			return v
+		}
+		return 0
+	}
+	id := str("step_id")
+	if id == "" {
+		id = ev.StepID
+	}
+	if id == "" {
+		id = str("name")
+	}
+	var details []string
+	if kind := str("type", "kind", "node_type"); kind != "" {
+		details = append(details, kind)
+	}
+	verb := "→ step started"
+	if ev.Kind == "step_completed" {
+		verb = "✓ step completed"
+		if ms := num("duration_ms"); ms > 0 {
+			details = append(details, fmt.Sprintf("%.0fms", ms))
+		}
+		if in, out := num("tokens_in"), num("tokens_out"); in > 0 || out > 0 {
+			details = append(details, fmt.Sprintf("%.0f→%.0f tokens", in, out))
+		}
+	}
+	line := verb + ": " + id
+	if len(details) > 0 {
+		line += " (" + strings.Join(details, ", ") + ")"
+	}
+	return line
+}
+
 // renderSSEEvent pretty-prints a single SSE event to stderr with colors.
 // This mirrors the gRPC stream renderer in runs.go but works on the REST
 // SSE event format (kind + payload map).
@@ -60,20 +108,12 @@ func renderSSEEvent(ev *internal.SSEEvent) {
 
 	prefix := "   "
 	switch ev.Kind {
-	case "step_started":
-		stepID := getString("step_id")
-		if stepID == "" {
-			stepID = ev.StepID
+	case "step_started", "step_completed":
+		color := colorBlue
+		if ev.Kind == "step_completed" {
+			color = colorGreen
 		}
-		fmt.Fprintf(os.Stderr, "%s%s→ step started: %s (kind: %s)%s\n",
-			prefix, colorBlue, stepID, getString("kind"), colorReset)
-	case "step_completed":
-		stepID := getString("step_id")
-		if stepID == "" {
-			stepID = ev.StepID
-		}
-		fmt.Fprintf(os.Stderr, "%s%s✓ step completed: %s (%.0fms)%s\n",
-			prefix, colorGreen, stepID, getFloat("duration_ms"), colorReset)
+		fmt.Fprintf(os.Stderr, "%s%s%s%s\n", prefix, color, stepLine(ev), colorReset)
 	case "step_failed":
 		stepID := getString("step_id")
 		if stepID == "" {

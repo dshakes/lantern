@@ -21,7 +21,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dshakes/lantern/packages/cli/internal"
+	"github.com/dshakes/pal/packages/cli/internal"
 )
 
 // errChatFallback: the conversation can't continue; run the step wizard.
