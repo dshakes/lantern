@@ -31,6 +31,21 @@ export default function IncidentDetailPage({ params }: { params: Promise<{ id: s
     void load();
   }, [load]);
 
+  const rollback = async () => {
+    if (!inc || !window.confirm(`Roll prod back from ${inc.rollback.fromVersion} to ${inc.rollback.toVersion}?`)) return;
+    setBusy("rollback");
+    try {
+      const r = await api.rollbackIncident(id);
+      setInc(r.incident);
+      toast.success(`Prod now serves ${r.rollback.version}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Rollback failed");
+      void load();
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const act = async (action: "acknowledge" | "resolve") => {
     setBusy(action);
     try {
@@ -90,8 +105,11 @@ export default function IncidentDetailPage({ params }: { params: Promise<{ id: s
                 <span className="font-mono">{inc.rollback.toVersion}</span>
               </p>
               <p className="mt-1 text-xs text-zinc-400">
-                The previous version was healthy before this shift. Rolling back is a promotion action and is not performed from here.
+                The previous version was healthy before this shift. The rollback runs through promotions and is audited in both places.
               </p>
+              <Button variant="danger" size="sm" className="mt-3" loading={busy === "rollback"} onClick={rollback}>
+                Roll back prod to {inc.rollback.toVersion}
+              </Button>
             </div>
           </div>
         )}

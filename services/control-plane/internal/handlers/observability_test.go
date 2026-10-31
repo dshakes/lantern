@@ -468,3 +468,38 @@ func TestSampledDeterministic(t *testing.T) {
 		t.Fatalf("sampling rate off: %d/2000 at 10%%", hits)
 	}
 }
+
+// A run in which one tool was approved by the agent's policy and one was
+// denied (journalDeny's exact payload shape): the trace shows both, the denial
+// is flagged and redacted, and the run is still sampled by production evals.
+func TestObsTrace_PolicyDeniedStepAndProdEvalInteraction(t *testing.T) {
+	f := newObsFixture(t)
+	agent, vers := f.agent(f.ten, "policy-agent", "v1")
+	run := f.run(f.ten, obsRunSeed{agent: agent, version: vers["v1"], status: "succeeded", output: `{"result":"GOOD partial answer"}`, age: time.Minute})
+	t0 := time.Now().Add(-time.Minute)
+	at := func(ms int) time.Time { return t0.Add(time.Duration(ms) * time.Millisecond) }
+	f.journal(run, 1, "step_started", "lookup", map[string]any{"name": "Lookup", "type": "tool"}, at(1))
+	f.journal(run, 2, "tool_call", "lookup", map[string]any{"tool": "crm.lookup", "args": map[string]any{"order": "1"}}, at(2))
+	f.journal(run, 3, "step_completed", "lookup", map[string]any{"output": "ok"}, at(20))
+	f.journal(run, 4, "step_started", "pay", map[string]any{"name": "Refund", "type": "connector"}, at(21))
+	f.journal(run, 5, "tool_call", "pay", map[string]any{"tool": "stripe.refund", "args": map[string]any{"authorization": obsFakeKey}}, at(22))
+	f.journal(run, 6, "policy_denied", "pay", map[string]any{"kind": "connector", "target": "stripe", "reason": "not allowed: " + obsFakeKey}, at(23))
+	f.journal(run, 7, "step_failed", "pay", map[string]any{"error": "agent policy denied connector stripe"}, at(24))
+
+	rr := f.do(f.h.GetRunTrace, "GET", "/x", f.tokA, nil, map[string]string{"id": run})
+	if rr.Code != 200 || strings.Contains(rr.Body.String(), obsFakeKey) {
+		t.Fatalf("trace: %d (leak=%v) %s", rr.Code, strings.Contains(rr.Body.String(), obsFakeKey), rr.Body)
+	}
+	var tr obs.Trace
+	_ = json.Unmarshal(rr.Body.Bytes(), &tr)
+	if len(tr.Steps) != 2 || tr.Steps[0].PolicyDenied != nil || tr.Steps[1].PolicyDenied == nil ||
+		tr.Steps[1].PolicyDenied.Target != "stripe" || tr.Steps[1].Status != "failed" {
+		t.Fatalf("policy denial not shown correctly: %s", rr.Body)
+	}
+
+	// The partial-denial run is a succeeded run: prod evals still score it.
+	f.do(f.h.PutProdEvals, "PUT", "/x", f.tokA, map[string]any{"enabled": true, "sampleRate": 1, "dailyBudgetUsd": 1}, map[string]string{"name": "policy-agent"})
+	if _, n := f.h.ScanTenant(injectTenant(context.Background(), f.ten), f.ten); n != 1 {
+		t.Fatalf("scored %d, want 1", n)
+	}
+}

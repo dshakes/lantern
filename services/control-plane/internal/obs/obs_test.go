@@ -175,3 +175,32 @@ func TestBurnRateAndFire(t *testing.T) {
 		t.Fatalf("quiet hour paged: %+v", al)
 	}
 }
+
+func TestBuildTracePolicyDenied(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	at := func(ms int) time.Time { return t0.Add(time.Duration(ms) * time.Millisecond) }
+	ev := []Event{
+		{Seq: 1, Kind: "step_started", StepID: "ok", Payload: map[string]any{"name": "Allowed", "type": "tool"}, At: at(1)},
+		{Seq: 2, Kind: "step_completed", StepID: "ok", Payload: map[string]any{"output": "fine"}, At: at(5)},
+		{Seq: 3, Kind: "step_started", StepID: "bad", Payload: map[string]any{"name": "Refund", "type": "connector"}, At: at(6)},
+		{Seq: 4, Kind: "tool_call", StepID: "bad", Payload: map[string]any{"tool": "stripe.refund", "args": map[string]any{"api_key": fakeAnthropic}}, At: at(7)},
+		{Seq: 5, Kind: "policy_denied", StepID: "bad", Payload: map[string]any{"kind": "connector", "target": "stripe", "reason": "not in allowlist " + fakeAnthropic}, At: at(8)},
+		{Seq: 6, Kind: "step_failed", StepID: "bad", Payload: map[string]any{"error": "agent policy denied connector stripe"}, At: at(9)},
+		{Seq: 7, Kind: "policy_denied", StepID: "policy", Payload: map[string]any{"kind": "tool", "target": "shell", "reason": "denied"}, At: at(10)},
+	}
+	tr := BuildTrace(RunInfo{ID: "r", Status: "failed", CreatedAt: t0}, ev, nil)
+	if len(tr.Steps) != 3 || tr.Steps[0].PolicyDenied != nil {
+		t.Fatalf("steps: %+v", tr.Steps)
+	}
+	bad, orphan := tr.Steps[1], tr.Steps[2]
+	if bad.PolicyDenied == nil || bad.PolicyDenied.Target != "stripe" || bad.Status != "failed" || bad.Tool == nil {
+		t.Fatalf("denied step: %+v", bad)
+	}
+	if orphan.Type != "policy" || orphan.Status != "failed" || orphan.PolicyDenied.Target != "shell" {
+		t.Fatalf("step-less denial must still render: %+v", orphan)
+	}
+	raw, _ := json.Marshal(tr)
+	if strings.Contains(string(raw), fakeAnthropic) {
+		t.Fatalf("secret leaked through policy denial: %s", raw)
+	}
+}

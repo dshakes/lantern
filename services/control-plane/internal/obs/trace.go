@@ -41,6 +41,14 @@ type LLMInfo struct {
 	LatencyMs int64   `json:"latencyMs"`
 }
 
+// PolicyDenial is an agent-policy refusal (ADR 0052 identity/policy): the step
+// did not run because the agent's policy does not allow this action.
+type PolicyDenial struct {
+	Kind   string `json:"kind"`
+	Target string `json:"target"`
+	Reason string `json:"reason"`
+}
+
 type ToolInfo struct {
 	Name   string `json:"name"`
 	Args   any    `json:"args,omitempty"`
@@ -58,9 +66,11 @@ type Node struct {
 	Retries    []Retry   `json:"retries,omitempty"`
 	LLM        *LLMInfo  `json:"llm,omitempty"`
 	Tool       *ToolInfo `json:"tool,omitempty"`
-	Output     string    `json:"output,omitempty"`
-	Error      string    `json:"error,omitempty"`
-	ChildRun   *Trace    `json:"childRun,omitempty"`
+	// PolicyDenied is set when the agent's policy refused this step.
+	PolicyDenied *PolicyDenial `json:"policyDenied,omitempty"`
+	Output       string        `json:"output,omitempty"`
+	Error        string        `json:"error,omitempty"`
+	ChildRun     *Trace        `json:"childRun,omitempty"`
 
 	startAt time.Time
 }
@@ -157,6 +167,13 @@ func BuildTrace(run RunInfo, events []Event, children []*Trace) *Trace {
 			n.Tool = &ToolInfo{Name: RedactString(str(p, "tool")), Args: Redact(p["args"])}
 		case "step_retrying":
 			n.Retries = append(n.Retries, Retry{Attempt: int(numF(p, "attempt")), Error: RedactString(str(p, "error"))})
+		case "policy_denied":
+			n.PolicyDenied = &PolicyDenial{Kind: RedactString(str(p, "kind")), Target: RedactString(str(p, "target")), Reason: RedactString(str(p, "reason"))}
+			if n.Type == "step" {
+				n.Type = "policy"
+				n.Name = "Policy check"
+			}
+			n.Status = "failed" // a denial is final for the step even if no step_failed follows
 		case "step_waiting":
 			n.Status = "waiting"
 		case "step_completed":

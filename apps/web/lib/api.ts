@@ -962,6 +962,11 @@ class PalAPI {
     });
   }
 
+  /** Roll prod back to the incident's last-good version via the promotion machinery. */
+  async rollbackIncident(id: string): Promise<{ rollback: { version: string; mode: string }; incident: Incident }> {
+    return this.request(`/v1/incidents/${encodeURIComponent(id)}/rollback`, { method: "POST" });
+  }
+
   async scanIncidents(): Promise<{ opened: number; scored: number }> {
     return this.request("/v1/incidents/scan", { method: "POST" });
   }

@@ -59,14 +59,20 @@ missing is the product on top of them. No new database (CLAUDE.md).
    evidence. A model may only write the summary: the text is accepted only if it cites runs as
    `[run:<id>]`, every cited id belongs to the incident and no other UUID appears; otherwise the
    deterministic summary stands (`summary_source` says which). Detection never calls a model.
-6. **Audit.** Acknowledge and resolve update the row and append to `agent_incident_events` in one
+6. **Policy denials.** An agent-policy refusal (journal `policy_denied`) is shown on its step in the trace
+   (`policyDenied`, redacted), and a denial with no step is rendered as a failed "Policy check" node.
+   Production evals only sample succeeded runs, so a run that handled a denial and still succeeded is scored normally.
+7. **Audit.** Acknowledge and resolve update the row and append to `agent_incident_events` in one
    transaction (actor, action, note); illegal transitions are `409` and write nothing. The same
    table is the timeline.
-7. **Rollback interface (wiring deferred).** An incident carries `rollback {suggested, fromVersion,
-   toVersion, reason}` and `ObsHandler.SetRollbackSink(RollbackSink)` is called once when a new incident
-   suggests one. Nothing here depends on the Phase 6 promotion code. **Follow-up:** the canary/rollback
-   controller implements `RollbackSink` (or polls `GET /v1/incidents`) and shows a one-click rollback.
-8. **Operations.** A background sweep (`PAL_OBS_INTERVAL`, default 5m, `off` disables; writer-only)
+8. **Rollback.** An incident carries `rollback {suggested, fromVersion, toVersion, reason}`.
+   `POST /v1/incidents/{id}/rollback` (agents:write) calls `PromotionHandler.rollbackTx` for prod, so the
+   revert, `agents.current_version_id` sync and promotion audit are Phase 6's own. It is human-initiated:
+   a statistical detector suggests, a person decides. Guards: the incident is live and has a suggestion, and
+   prod still serves the incident's first-bad version (else 409, nothing applied). The rollback and the
+   incident audit row commit in one transaction; the promotion audit carries the incident id. A
+   `RollbackSink` hook remains for a future automatic path, intentionally not wired.
+9. **Operations.** A background sweep (`PAL_OBS_INTERVAL`, default 5m, `off` disables; writer-only)
    scans tenants with recent runs; `POST /v1/incidents/scan` runs it on demand. The sweep lists
    tenant ids with the privileged pool (annotated `rls-exempt`); everything else is `WithTenant`.
    Tables: `agent_slos`, `prod_eval_config`, `prod_eval_scores`, `agent_incidents`,

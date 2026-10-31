@@ -93,6 +93,12 @@ function StepDetail({ node }: { node: TraceNode }) {
           </ul>
         </div>
       )}
+      {node.policyDenied && (
+        <p role="note" className="rounded bg-amber-500/10 p-2 text-[11px] text-amber-300 break-words">
+          Denied by agent policy: {node.policyDenied.kind} <span className="font-mono">{node.policyDenied.target}</span>
+          {node.policyDenied.reason ? ` (${node.policyDenied.reason})` : ""}
+        </p>
+      )}
       {node.error && (
         <p className="rounded bg-red-500/10 p-2 font-mono text-[11px] text-red-300 break-words">{node.error}</p>
       )}

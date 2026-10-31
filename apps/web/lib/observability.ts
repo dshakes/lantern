@@ -29,6 +29,7 @@ export interface TraceNode {
   retries?: TraceRetry[];
   llm?: TraceLLM;
   tool?: TraceTool;
+  policyDenied?: { kind: string; target: string; reason: string };
   output?: string;
   error?: string;
   childRun?: RunTrace;

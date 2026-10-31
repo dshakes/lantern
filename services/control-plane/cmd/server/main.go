@@ -414,6 +414,7 @@ func main() {
 	evalHandler.SetLLM(llmProxyHandler) // hermetic runner + LLM judge + suite generator (ADR 0052)
 	experimentHandler := handlers.NewExperimentHandler(srv, authHandler)
 	promotionHandler := handlers.NewPromotionHandler(srv, authHandler)
+	obsHandler.SetRollbacker(promotionHandler) // incident → prod rollback (ADR 0056)
 
 	// Frontier surface: verifiable receipts, RLHF feedback loop,
 	// rehearsal of past failures against new agent versions.
@@ -849,6 +850,7 @@ func main() {
 	httpMux.HandleFunc("POST /v1/incidents/scan", authHandler.WithScope(handlers.ScopeAgentsWrite, obsHandler.ScanNow))
 	httpMux.HandleFunc("GET /v1/incidents/{id}", authHandler.WithScope(handlers.ScopeRunsRead, obsHandler.GetIncident))
 	httpMux.HandleFunc("POST /v1/incidents/{id}/acknowledge", authHandler.WithScope(handlers.ScopeAgentsWrite, obsHandler.Acknowledge))
+	httpMux.HandleFunc("POST /v1/incidents/{id}/rollback", authHandler.WithScope(handlers.ScopeAgentsWrite, obsHandler.RollbackIncident))
 	httpMux.HandleFunc("POST /v1/incidents/{id}/resolve", authHandler.WithScope(handlers.ScopeAgentsWrite, obsHandler.Resolve))
 
 	// Eval observability (read-only): failure clustering + score/pass-rate trends.

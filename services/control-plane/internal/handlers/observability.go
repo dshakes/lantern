@@ -54,12 +54,13 @@ type RollbackSink interface {
 }
 
 type ObsHandler struct {
-	srv      *server.Server
-	auth     *AuthHandler
-	complete evalCompleteFn // judge + incident-summary seam; nil → both off
-	rollback RollbackSink
-	th       obs.Thresholds
-	now      func() time.Time
+	srv        *server.Server
+	auth       *AuthHandler
+	complete   evalCompleteFn // judge + incident-summary seam; nil → both off
+	rollback   RollbackSink
+	rollbacker ProdRollbacker // Phase 6 promotion rollback (observability_rollback.go)
+	th         obs.Thresholds
+	now        func() time.Time
 	// recent/baseline windows for anomaly detection.
 	recent, baseline time.Duration
 }
