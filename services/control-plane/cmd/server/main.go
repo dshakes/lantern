@@ -337,6 +337,13 @@ func main() {
 	connectorHandler := handlers.NewConnectorHandler(srv, authHandler)
 	connectorExecutor := handlers.NewConnectorExecutor(srv, authHandler)
 	llmProxyHandler := handlers.NewLlmProxyHandler(srv, authHandler)
+
+	// Agent identity + per-agent policy (ADR 0052): every registered agent is
+	// a principal; every tool/connector/A2A/microVM dispatch is authorized
+	// against its policy. Process-wide so the free dispatch helpers see it.
+	agentAuthz := handlers.NewAgentAuthz(srv, []byte(jwtSecret))
+	handlers.SetAgentAuthz(agentAuthz)
+	agentIdentityHandler := handlers.NewAgentIdentityHandler(srv, authHandler, agentAuthz, llmProxyHandler)
 	smsHandler := handlers.NewSMSHandler(logger, srv.Pool, llmProxyHandler)
 	messagingHandler := handlers.NewMessagingHandler(logger, srv.Pool, llmProxyHandler)
 	surfaceHandler := handlers.NewSurfaceHandler(srv, authHandler)
@@ -658,6 +665,15 @@ func main() {
 	// A2A (Agent-to-Agent) protocol endpoints (Gap 4).
 	httpMux.HandleFunc("GET /v1/agents/{name}/card", a2aHandler.GetAgentCard)
 	httpMux.HandleFunc("POST /v1/agents/{name}/a2a/invoke", authHandler.WithScopeOrAgent(handlers.ScopeRunsExecute, a2aHandler.InvokeAgent))
+	httpMux.HandleFunc("GET /v1/agents/{name}/policy", authHandler.WithScope(handlers.ScopeAgentsRead, agentIdentityHandler.GetPolicy))
+	httpMux.HandleFunc("PUT /v1/agents/{name}/policy", authHandler.WithScope(handlers.ScopeAgentsWrite, agentIdentityHandler.PutPolicy))
+	httpMux.HandleFunc("POST /v1/agents/{name}/policy/propose", authHandler.WithScope(handlers.ScopeAgentsRead, agentIdentityHandler.ProposePolicy))
+	httpMux.HandleFunc("GET /v1/agents/{name}/identity", authHandler.WithScope(handlers.ScopeAgentsRead, agentIdentityHandler.GetIdentity))
+	httpMux.HandleFunc("POST /v1/agents/{name}/identity/rotate", authHandler.WithScope(handlers.ScopeAgentsWrite, agentIdentityHandler.RotateIdentity))
+	httpMux.HandleFunc("POST /v1/agents/{name}/identity/revoke", authHandler.WithScope(handlers.ScopeAgentsWrite, agentIdentityHandler.RevokeIdentity))
+	httpMux.HandleFunc("POST /v1/agents/{name}/identity/token", authHandler.WithScope(handlers.ScopeAdmin, agentIdentityHandler.MintToken))
+	httpMux.HandleFunc("GET /v1/agents/{name}/audit", authHandler.WithScope(handlers.ScopeAgentsRead, agentIdentityHandler.ListAudit))
+	httpMux.HandleFunc("GET /.well-known/pal-agent-keys/{agentId}", agentIdentityHandler.AgentJWKS)
 	httpMux.HandleFunc("GET /.well-known/agent.json", a2aHandler.AgentDirectory)
 
 	// Workflow persistence endpoints (visual editor).
