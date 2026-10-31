@@ -106,7 +106,7 @@ export default defineConfig({
         './src/styles/diagrams.css',
             './src/styles/starlight.css',
       ],
-      components: { SiteTitle: './src/components/SiteTitle.astro' },
+      components: { SiteTitle: './src/components/SiteTitle.astro', Hero: './src/components/docs/Hero.astro' },
       // Halos-style IA: one "Start here" decision page, then getting started,
       // the personal agent, concepts, task guides, the deep dive and reference.
       // Starlight's Previous/Next links follow this order.

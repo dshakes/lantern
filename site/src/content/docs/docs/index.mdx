@@ -75,9 +75,12 @@ The whole platform on Docker, with recorded model answers. Each visitor gets a t
 
 ```console
 $ make demo
-…                    # Docker builds and starts the containers (slow the first time)
+…                                               # Docker builds the images (slow the first time)
+ Container pal-demo-control-plane-1  Healthy
+ Container pal-demo-dashboard-1  Starting
+ Container pal-demo-dashboard-1  Started
 demo: http://localhost:3001/kiosk
-$ make demo-down     # stop it and delete its volumes
+$ make demo-down                                # stop it and delete its volumes
 ```
 
 Next: [Try it: the demo](/docs/start/demo/).
@@ -85,7 +88,7 @@ Next: [Try it: the demo](/docs/start/demo/).
 </TabItem>
 <TabItem label="Use pal">
 
-Install and pair the two channel bridges first ([BOT-SETUP.md](repo:/blob/master/docs/personal/BOT-SETUP.md)). Then `pal setup` walks you through the rest, checking each step live. Lines in `<…>` depend on you.
+Install and pair the two channel bridges first ([BOT-SETUP.md](repo:/blob/master/docs/personal/BOT-SETUP.md)). Then `pal setup` walks you through the rest and checks each channel live. This is a real run on a Mac where neither bridge was started yet, so step 2 says how to fix it; lines in `<…>` come from your model.
 
 ```console
 $ pal dev            # the control plane and dashboard, on this Mac
@@ -94,29 +97,22 @@ pal setup
 ────────────────────────────────────────────────
 
 1. Meet pal
-   <what pal will touch, then it asks for your consent>
-
+   <pal introduces itself and says what it will touch>
+   Any questions first? (Enter to continue) >
+   pal may read your iMessage/WhatsApp on this Mac and reply as you, sending conversation text to your own model provider. Agree? [y/N] y
+   Optional: learn your voice from messages you've sent (read once, not stored)? [y/N] y
 2. Connect channels (checked live)
-   ✓ iMessage: connected
-   ✓ WhatsApp: connected
-
-3. Learn your voice
-   From <n> messages you sent: <register>, <sentence length>, <warmth>
-
-4. Set trust
-5. Your people and facts
-6. First Brief
-
-You're set.
-   Apply later with: pal setup --apply
+   • iMessage: the bridge isn't running — start it (`pal dev`), then re-check
+   • WhatsApp: the bridge isn't running — start it (`pal dev`), then re-check
+   [i] start iMessage + check permissions  [w] link WhatsApp  [Enter] re-check  [q] quit >
 ```
 
-`pal setup` resumes where you left off and never gives consent for you. Next: [How pal works](/docs/pal/), then [Connect your channels](/docs/pal/surfaces/).
+With a bridge running, its line reads `✓ iMessage: connected` (or `✓ WhatsApp: connected`) and setup moves on to your voice, trust, your people and facts, and a first Brief. `pal setup` resumes where you left off and never gives consent for you. Next: [How pal works](/docs/pal/), then [Connect your channels](/docs/pal/surfaces/).
 
 </TabItem>
 <TabItem label="Build on PAL Runtime">
 
-Start the stack, then let `pal onboard` design an agent from one sentence, test your provider key with a real call, and stream the first run.
+Start the stack, then let `pal onboard` design an agent from one sentence, test your provider key with a real call, and stream the first run. This is a real run against a fresh database; run ids are replaced with `<run-id>` and lines in `<…>` come from your model.
 
 ```console
 $ pal dev            # Postgres, Redis, MinIO, the API on :8080, the dashboard on :3001
@@ -124,14 +120,23 @@ $ pal onboard
 PAL onboard — let's get you set up.
 ────────────────────────────────────────────────
 1. Health check ... ✓
-2. Authentication ... ✓  <you>
-3. LLM provider ... ✓  <provider>
+2. Authentication ... ✓  dev login (<dev account>)
+3. LLM provider ... ✗  none configured
+  Configure an LLM provider to continue.
+  Provider (openai/anthropic): openai
+  API key:                                      # not echoed
+3. LLM provider ... ✓  openai
 4. Agent
    What do you want your agent to do? (one or two sentences; Enter for a general assistant)
    > Summarize any web page I paste into three bullets
    designing ... ✓
 
    Proposed agent: <name>
+   <one-line description>
+   Why: <why this design fits the goal>
+     1. <step> — <what it does>
+   First task: "<a first input that proves it works>"
+
    Create it? [Y/n]
    ✓ created <name>
 5. First run ... ✓  run <run-id> started
@@ -140,7 +145,18 @@ PAL onboard — let's get you set up.
 ────────────────────────────────────────────────
 You're set.
 
+Agent output:
+  <the agent's answer>
+
 Dashboard:  http://localhost:3001/runs/<run-id>
+
+Run it again:
+  pal runs create --agent <name> --input '{"prompt":"What can you do?"}'
+
+What just happened:
+  <a short explanation of the run>
+
+next: pal agent dev <name>   # edit locally; re-publishes and re-runs on every save
 ```
 
 Next: [Quickstart in 60 seconds](/docs/start/sixty-seconds/), then [Your first agent](/docs/start/quickstart/).

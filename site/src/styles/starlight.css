@@ -128,6 +128,14 @@ nav.sidebar a[aria-current='page'], nav.sidebar a[aria-current='page']:hover { b
 /* ---- docs landing (splash): halos-style story beats ---- */
 .hero h1 .grad, .sl-markdown-content .grad { background: var(--p-brand-grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
 [data-has-hero] .hero { padding-block: clamp(2.5rem, 7vw, 5rem) clamp(1.5rem, 4vw, 3rem); }
+/* Docs landing: copy left, the interactive two-product diagram right (halos uses the
+   whole hero width); stacked under the copy below 72rem. */
+.pal-hero { display: grid; gap: 1.5rem; align-items: center; }
+.pal-hero-ix .ix { margin: 0; }
+@media (min-width: 72rem) {
+  .pal-hero { grid-template-columns: minmax(0, 1fr) minmax(0, 34rem); gap: 3rem; }
+  .pal-hero .hero { grid-template-columns: 100%; }
+}
 [data-has-hero] .hero h1 { font-family: var(--p-display); letter-spacing: -0.045em; font-weight: 680; line-height: 1.05; }
 [data-has-hero] .hero .tagline { max-width: 40rem; font-size: clamp(1.05rem, 1.6vw, 1.25rem); color: var(--sl-color-gray-2); }
 .sl-markdown-content .kicker { margin: 4.5rem 0 0; font-size: 0.75rem; font-weight: 650; letter-spacing: 0.1em; text-transform: uppercase; color: var(--sl-color-accent); }

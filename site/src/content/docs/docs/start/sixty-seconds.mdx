@@ -26,9 +26,12 @@ This is the **fastest look** at PAL Runtime. Pick the **no-key demo** if you hav
    pal demo
    ```
 
-   ```text title="Expected output"
-   demo ready in <elapsed>: http://localhost:3001/kiosk
+   ```text title="Last lines of a real run"
+    Container lantern-demo-dashboard-1  Started
+   demo ready in 1m15s: http://localhost:3001/kiosk
    ```
+
+   The first run builds the images and takes minutes; later starts reuse them.
 
 2. Open `http://localhost:3001/kiosk`. You get a private workspace with sample agents.
 
@@ -38,7 +41,9 @@ This is the **fastest look** at PAL Runtime. Pick the **no-key demo** if you hav
    pal demo --down
    ```
 
-   ```text title="Expected output"
+   ```text title="Last lines of a real run"
+    Volume lantern-demo_pg-data  Removed
+    Network lantern-demo_default  Removed
    demo stopped, data deleted
    ```
 
@@ -62,9 +67,28 @@ This is the **fastest look** at PAL Runtime. Pick the **no-key demo** if you hav
      --description "Turn meeting notes into a summary with action items"
    ```
 
-   ```text title="Expected output (shape)"
-   ✓ step completed: <step> (<ms>ms)
-   ✓ llm complete (tokens_in=<n> tokens_out=<n>)
+   ```text title="A real run on a fresh database (model text in <…>)"
+   PAL onboard — let's get you set up.
+   ────────────────────────────────────────────────
+   1. Health check ... ✓
+   2. Authentication ... ✓  dev login (<dev account>)
+   3. LLM provider ... ✗  none configured
+   3. LLM provider ... ✓  anthropic
+   4. Agent ... ✓
+
+      Proposed agent: <name>
+      …
+      ✓ created <name>
+   5. First run ... ✓  run <run-id> started
+      streaming events:
+      …
+   ────────────────────────────────────────────────
+   You're set.
+
+   Agent output:
+     <the agent's answer>
+
+   Dashboard:  http://localhost:3001/runs/<run-id>
    ```
 
 3. Run it again with your own input.
@@ -129,11 +153,7 @@ Install notes for each SDK are in [SDKs](/docs/sdks/). Pass `baseUrl` explicitly
 pal doctor
 ```
 
-```text title="Expected output"
-doctor: all checks passed — stack is ready
-```
-
-Each check prints one pass or fail line and, for a failure, the fix.
+Each check prints one pass or fail line and, for a failure, the fix. When every check passes, the last line is `doctor: all checks passed — stack is ready` ([`doctor.go`](repo:/blob/master/packages/cli/internal/cli/doctor.go)).
 
 ## Troubleshooting
 
