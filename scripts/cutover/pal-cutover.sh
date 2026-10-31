@@ -21,6 +21,9 @@
 #   PAL_CUTOVER_ROLLBACK_REF=<ref>  commit rollback checks out instead of the pre-cutover HEAD
 #                                (needed when the DB schema is ahead of the pre-cutover code)
 #   PAL_CUTOVER_ROLL_FORWARD_ONLY=1  acknowledge that the rollback target cannot start the API
+#   PAL_CUTOVER_DROP_STRAY_ROLE=1  a target role that already exists (a test run's leftover) is
+#                                REASSIGN/DROP OWNED in the databases holding it, then dropped,
+#                                before the rename — refused if a live database depends on it
 #   PAL_CUTOVER_BACKUP_ROOT      where ~/pal-cutover-backup-<ts>/ is created (default $HOME)
 #
 # PRIVACY: this script never prints a secret value or file contents. Env files
@@ -43,6 +46,7 @@ AUTO_ROLLBACK="${PAL_CUTOVER_AUTO_ROLLBACK:-1}"
 STASH="${PAL_CUTOVER_STASH:-0}"
 BACKUP_ROOT="${PAL_CUTOVER_BACKUP_ROOT:-$HOME}"
 ROLLBACK_REF="${PAL_CUTOVER_ROLLBACK_REF:-}"
+DROP_STRAY_ROLE="${PAL_CUTOVER_DROP_STRAY_ROLE:-0}"
 ROLL_FORWARD_ONLY="${PAL_CUTOVER_ROLL_FORWARD_ONLY:-0}"
 RB_SHA=""
 LA_DIR="$HOME/Library/LaunchAgents"
@@ -183,6 +187,16 @@ startable() {  # startable LABEL REF USER DB [soft] — can REF's API boot again
   fi
   ok "$label: $4 schema v$v <= ${ref:0:9}'s newest migration $m"
 }
+
+role_dbs() {  # databases (or <cluster>) where role $2 owns objects or holds privileges
+  pg1 "$1" postgres "select coalesce(string_agg(distinct coalesce(db.datname,'<cluster>'),' '),'') from pg_shdepend d join pg_roles r on r.oid=d.refobjid left join pg_database db on db.oid=d.dbid where r.rolname=$(sql_lit "$2")"
+}
+stray_droppable() {  # a stray target role may be dropped only if no live DB (old/new name) depends on it
+  local d
+  for d in $(role_dbs "$1" "$2"); do [[ "$d" == "$DB_OLD_NAME" || "$d" == "$DB_NEW_NAME" ]] && return 1; done
+  return 0
+}
+STRAY_ROLES=""  # target roles found pre-existing at preflight and approved for dropping
 
 db_renaming() { [[ "$DB_OLD_NAME" != "$DB_NEW_NAME" || "$DB_OLD_USER" != "$DB_NEW_USER" || "$DB_OLD_APP_ROLE" != "$DB_NEW_APP_ROLE" ]]; }
 
@@ -390,7 +404,15 @@ for k in d["values_with_old_state_path"]: print("PATHREF",k)' | while read -r ki
         [[ "${t%%:*}" == "${t##*:}" ]] && continue
         role_exists "$DB_OLD_USER" "${t%%:*}" && ok "role ${t%%:*} present" || bad "role ${t%%:*} missing"
         if role_exists "$DB_OLD_USER" "${t##*:}"; then
-          bad "role ${t##*:} already exists (objects in: $(pg1 "$DB_OLD_USER" postgres "select coalesce(string_agg(distinct coalesce(db.datname,'<cluster>'),' '),'none') from pg_shdepend d join pg_roles r on r.oid=d.refobjid left join pg_database db on db.oid=d.dbid where r.rolname=$(sql_lit "${t##*:}")")) — if it is a leftover from a test run, drop it (REASSIGN/DROP OWNED in those DBs, or drop the test DBs) before the cutover; the brand migration would also skip its rename"
+          local holders; holders="$(role_dbs "$DB_OLD_USER" "${t##*:}")"
+          if [[ "$DROP_STRAY_ROLE" == 1 ]] && stray_droppable "$DB_OLD_USER" "${t##*:}"; then
+            STRAY_ROLES="$STRAY_ROLES ${t##*:}"
+            warn "stray role ${t##*:} (objects in: ${holders:-none}) will be dropped before the rename: REASSIGN OWNED → $DB_OLD_USER + DROP OWNED in those DBs, then DROP ROLE (PAL_CUTOVER_DROP_STRAY_ROLE=1)"
+          elif [[ "$DROP_STRAY_ROLE" == 1 ]]; then
+            bad "role ${t##*:} already exists and a LIVE database depends on it (objects in: $holders) — refusing to drop it"
+          else
+            bad "role ${t##*:} already exists (objects in: ${holders:-none}) — if it is a leftover from a test run, rerun with PAL_CUTOVER_DROP_STRAY_ROLE=1 (REASSIGN/DROP OWNED in those DBs, then DROP ROLE); the brand migration would also skip its rename"
+          fi
         else ok "role name ${t##*:} free"; fi
       done
       role_exists "$DB_OLD_USER" "$TMP_ROLE" && bad "leftover temp role $TMP_ROLE exists (from an aborted run?)"
@@ -725,6 +747,11 @@ step_db() {
   pw="$(new_db_password)"; rc=$?
   if [[ $rc == 2 ]]; then bad "rendered $DB_URL_AGENT plist DATABASE_URL does not name $DB_NEW_USER@$DB_NEW_NAME"; return 1; fi
   if [[ "$DRY" == 1 ]]; then
+    local sr sd
+    for sr in $STRAY_ROLES; do
+      for sd in $(role_dbs "$DB_OLD_USER" "$sr"); do [[ "$sd" == "<cluster>" ]] || would "in $sd: REASSIGN OWNED BY $sr TO $DB_OLD_USER; DROP OWNED BY $sr"; done
+      would "DROP ROLE $sr (stray; not recreated by rollback)"
+    done
     [[ "$DB_OLD_USER" != "$DB_NEW_USER" ]] && would "CREATE ROLE $TMP_ROLE SUPERUSER (a session cannot rename its own user)"
     would "terminate remaining sessions on $DB_OLD_NAME; ALTER DATABASE $DB_OLD_NAME RENAME TO $DB_NEW_NAME"
     would "ALTER ROLE $DB_OLD_USER RENAME TO $DB_NEW_USER; ALTER ROLE $DB_OLD_APP_ROLE RENAME TO $DB_NEW_APP_ROLE"
@@ -733,6 +760,17 @@ step_db() {
     return 0
   fi
   journal begin db
+  local sr sd
+  for sr in $STRAY_ROLES; do
+    stray_droppable "$DB_OLD_USER" "$sr" || { bad "stray role $sr gained a live dependency since preflight — refusing"; return 1; }
+    for sd in $(role_dbs "$DB_OLD_USER" "$sr"); do
+      [[ "$sd" == "<cluster>" ]] && continue
+      pg1 "$DB_OLD_USER" "$sd" "REASSIGN OWNED BY $sr TO $DB_OLD_USER; DROP OWNED BY $sr" >/dev/null || { bad "REASSIGN/DROP OWNED BY $sr in $sd"; return 1; }
+    done
+    pg1 "$DB_OLD_USER" postgres "DROP ROLE $sr" >/dev/null || { bad "DROP ROLE $sr"; return 1; }
+    journal end "stray-dropped:$sr"
+    ok "stray role $sr dropped (its objects now owned by $DB_OLD_USER)"
+  done
   if [[ "$DB_OLD_USER" != "$DB_NEW_USER" ]]; then
     pg1 "$DB_OLD_USER" postgres "CREATE ROLE $TMP_ROLE SUPERUSER LOGIN" || { bad "create temp role"; return 1; }
     admin="$TMP_ROLE"

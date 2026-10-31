@@ -321,6 +321,28 @@ if [[ "$E2E" == 1 ]]; then
   check "[e2e] REAL master migrate boots against the rolled-back DB" env DATABASE_URL="postgres://lantern:lantern@127.0.0.1:$E2E_PORT/lantern?sslmode=disable" "$MIGRATE_MASTER"
 fi
 
+# ------------------------------------------------------------------ live state: stray target role on the cluster
+say "4b. a stray $NA role already exists and owns a table in another test DB (the live finding)"
+SDB=cutover_test_stray; [[ "$E2E" == 1 ]] && SDB=p4_stray_test
+q "$OU" postgres "CREATE ROLE $NA LOGIN PASSWORD 'stray-test'" >/dev/null
+q "$OU" postgres "CREATE DATABASE $SDB" >/dev/null
+q "$OU" "$SDB" "CREATE TABLE leftover(id int); ALTER TABLE leftover OWNER TO $NA; INSERT INTO leftover VALUES (1)" >/dev/null
+sleep 1
+RELEASE_REF="$REL" "$CUT" plan > "$SB/plan-stray2.out" 2>&1; rc=$?
+check "[stray] plan refuses without the flag and names the holding DB" bash -c "[ $rc != 0 ] && grep -q 'role $NA already exists (objects in: $SDB)' '$SB/plan-stray2.out'"
+PAL_CUTOVER_DROP_STRAY_ROLE=1 RELEASE_REF="$REL" "$CUT" plan > "$SB/plan-stray3.out" 2>&1; rc=$?
+check "[stray] with PAL_CUTOVER_DROP_STRAY_ROLE=1 the plan passes and lists the REASSIGN/DROP" bash -c "[ $rc = 0 ] && grep -q 'in $SDB: REASSIGN OWNED BY $NA TO $OU; DROP OWNED BY $NA' '$SB/plan-stray3.out'"
+OLD_APP_OID="$(q "$OU" postgres "select oid from pg_roles where rolname='$OA'")"
+sleep 1
+PAL_CUTOVER_DROP_STRAY_ROLE=1 RELEASE_REF="$REL" "$CUT" apply > "$SB/apply-stray.out" 2>&1; rc=$?
+check "[stray] apply succeeds" test "$rc" = 0
+check "[stray] $NA is now the RENAMED live app role (same oid as $OA had), migration did not skip" test "$(q "$NU" postgres "select oid from pg_roles where rolname='$NA'")" = "$OLD_APP_OID"
+check "[stray] the leftover table survived, now owned by the superuser" test "$(q "$NU" "$SDB" "select tableowner from pg_tables where tablename='leftover'")" = "$NU"
+"$CUT" rollback > "$SB/rollback-stray.out" 2>&1; rc=$?
+check "[stray] rollback IDENTICAL" bash -c "[ $rc = 0 ] && grep -q 'snapshot IDENTICAL' '$SB/rollback-stray.out'"
+check "[stray] after rollback: $OA back, stray role not recreated" test "$(q "$OU" postgres "select string_agg(rolname,' ' order by rolname) from pg_roles where rolname in ('$OA','$NA')")" = "$OA"
+q "$OU" postgres "DROP DATABASE $SDB" >/dev/null
+
 # ------------------------------------------------------------------ failure injection
 inject() {
   local name="$1"; shift
