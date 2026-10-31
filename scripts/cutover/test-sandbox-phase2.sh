@@ -288,8 +288,9 @@ check "a live-only s3://lantern-* plist value is mapped to s3://pal-*" test "$(p
 check "multipart object with a space in its key mirrored (content hash path)" bash -c "mc_ pal \"\$1\" stat 's/pal-bundles/t1/big bundle.bin' >/dev/null 2>&1" _ "$NEWPASS"
 check "static gate: no helper call passes a MinIO credential in argv" bash -c "! grep -nE 'helper [^|]*MINIO_(OLD|NEW)_(PASS|USER)' '$CUT'"
 check "pal-* mirrors exist, old buckets kept" test "$(pal_buckets pal "$NEWPASS")" = "lantern-bundles lantern-bundles-dev lantern-dev lantern-snapshots pal-bundles pal-bundles-dev pal-dev pal-snapshots"
-A1="$(objs pal "$NEWPASS" lantern-bundles)"; A2="$(objs pal "$NEWPASS" pal-bundles)"
-check "mirrored objects identical (key/size/etag), non-empty" bash -c "[ -n \"\$1\" ] && [ \"\$1\" = \"\$2\" ]" _ "$A1" "$A2"
+# key + size must match; etags legitimately differ for a multipart object's server-side copy
+A1="$(objs pal "$NEWPASS" lantern-bundles | cut -f1,2)"; A2="$(objs pal "$NEWPASS" pal-bundles | cut -f1,2)"
+check "mirrored objects identical (key/size; content hash-verified by the tool), non-empty" bash -c "[ -n \"\$1\" ] && [ \"\$1\" = \"\$2\" ]" _ "$A1" "$A2"
 check "gateway + runtime-scheduler JWT_SECRET mapped to the NEW dev constant" bash -c "for s in gateway runtime-scheduler; do [ \"\$(python3 -I '$STUB_HELPER' plist-get '$LA/dev.pal.'\$s'.plist' env:JWT_SECRET)\" = '$NEWJWT' ] || exit 1; done"
 check "runtime-manager BUNDLE_S3_BUCKET → pal-bundles" test "$(python3 -I "$STUB_HELPER" plist-get "$LA/dev.pal.runtime-manager.plist" env:BUNDLE_S3_BUCKET)" = pal-bundles
 check "api DATABASE_URL = release template ($NU@$ND)" bash -c "python3 -I '$STUB_HELPER' plist-get '$LA/dev.pal.api.plist' env:DATABASE_URL | grep -q '$NU:pal@localhost:5432/$ND'"
