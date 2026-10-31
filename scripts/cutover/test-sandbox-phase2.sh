@@ -100,6 +100,8 @@ INSERT INTO agents (id, tenant_id, name) VALUES ('11111111-1111-1111-1111-111111
 INSERT INTO agent_versions (agent_id, version, digest, bundle_uri, manifest)
   SELECT '11111111-1111-1111-1111-111111111111', v, decode(md5(v), 'hex'), u, '{}'::jsonb
   FROM (VALUES ('1','s3://lantern-bundles/t1/a.tgz'), ('2','s3://lantern-bundles/t1/b.tgz'), ('3','s3://lantern-bundles-dev/x.tgz'), ('4','s3://test/y.tgz')) AS t(v,u);
+INSERT INTO connector_installs (tenant_id, connector_id, display_name, config)
+  VALUES ('00000000-0000-0000-0000-000000000001', 'e2e-conn', 'E2E', '{"token": {"__lantern_enc__": "ciphertext-fixture"}}'::jsonb);
 SQL
 echo "  real schema: v$(q lantern lantern 'select version from schema_migrations'), admin=$(q lantern lantern "select email from users where id='00000000-0000-0000-0000-000000000002'"), ns=$(q lantern lantern "select k8s_namespace from tenants where slug='dev'")"
 else
@@ -293,6 +295,7 @@ if [[ "$E2E" == 1 ]]; then
   check "[e2e] REAL brand migration ran: dev namespace pal-t-dev" test "$(q "$NU" "$ND" "select k8s_namespace from tenants where slug='dev'")" = pal-t-dev
   SEED_EMAIL="$(sed -nE "s/^[[:space:]]*'(admin@pal[.][a-z]+)',?$/\1/p" "$MIGRATIONS_NEW_SRC/../migrate.go" | head -1)"
   check "[e2e] REAL dev seed moved the admin to the branch's seed email ($SEED_EMAIL)" test "$(q "$NU" "$ND" "select email from users where id='00000000-0000-0000-0000-000000000002'")" = "$SEED_EMAIL"
+  check "[e2e] REAL brand migration rewrote the at-rest envelope marker (__lantern_enc__ -> __pal_enc__)" test "$(q "$NU" "$ND" "select config->'token' ? '__pal_enc__' and not (config->'token' ? '__lantern_enc__') from connector_installs where connector_id='e2e-conn'")" = t
   check "[e2e] schema at the zero-lantern newest migration" test "$(q "$NU" "$ND" 'select version from schema_migrations')" = "$(lastmig "$MIGRATIONS_NEW_SRC")"
 fi
 say "3. verify"
@@ -313,6 +316,7 @@ snap "$SB/S1"; check "byte-identical to the start" same "$SB/S0" "$SB/S1"
 check "checkout back at the old commit" test "$(git -C "$REPO_DIR" rev-parse HEAD)" = "$OLD_SHA"
 if [[ "$E2E" == 1 ]]; then
   check "[e2e] after rollback: lantern-t-dev namespace back (dump restored)" test "$(q "$OU" "$OD" "select k8s_namespace from tenants where slug='dev'")" = lantern-t-dev
+  check "[e2e] after rollback: envelope marker back to __lantern_enc__ (old code can decrypt)" test "$(q "$OU" "$OD" "select config->'token' ? '__lantern_enc__' from connector_installs where connector_id='e2e-conn'")" = t
   check "[e2e] after rollback: schema back at master's newest migration" test "$(q "$OU" "$OD" 'select version from schema_migrations')" = "$(lastmig "$MIGRATIONS_OLD_SRC")"
   check "[e2e] REAL master migrate boots against the rolled-back DB" env DATABASE_URL="postgres://lantern:lantern@127.0.0.1:$E2E_PORT/lantern?sslmode=disable" "$MIGRATE_MASTER"
 fi
