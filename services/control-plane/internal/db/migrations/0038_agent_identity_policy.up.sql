@@ -66,12 +66,18 @@ SELECT a.id, a.tenant_id, 'legacy_permissive',
 FROM agents a
 ON CONFLICT (agent_id) DO NOTHING;
 
--- Every agent created after this migration starts default-deny.
+-- Every agent created after this migration starts default-deny. The one
+-- grant made here is the capability the creator DECLARED in the agent's own
+-- labels: handoff=human means "this agent's only tool is handing off to a
+-- person" (session_handoff.go), so it gets exactly that and nothing else.
 CREATE OR REPLACE FUNCTION agent_policies_default_deny() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
 	INSERT INTO agent_policies (agent_id, tenant_id, mode, document, updated_by)
-	VALUES (NEW.id, NEW.tenant_id, 'enforce', '{}'::jsonb, 'system:default-deny')
+	VALUES (NEW.id, NEW.tenant_id, 'enforce',
+	        CASE WHEN COALESCE(NEW.labels->>'handoff', '') = 'human'
+	             THEN '{"tools":["handoff_to_human"]}'::jsonb ELSE '{}'::jsonb END,
+	        'system:default-deny')
 	ON CONFLICT (agent_id) DO NOTHING;
 	RETURN NEW;
 END

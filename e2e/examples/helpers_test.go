@@ -193,7 +193,33 @@ func (s *stack) setupAgent(t *testing.T, name, example string) *e2ekit.Agent {
 	if st != http.StatusOK && st != http.StatusNoContent {
 		t.Fatalf("save workflow: HTTP %d: %s", st, raw)
 	}
+	applyProposedPolicy(t, s.kit, name)
 	return a
+}
+
+// applyProposedPolicy grants a new (default-deny, ADR 0055) agent exactly what
+// its workflow needs: propose → apply → verify by read-back, the same flow a
+// user confirms in the dashboard Security tab (and `pal deploy` runs for a new agent).
+func applyProposedPolicy(t *testing.T, k *e2ekit.Kit, name string) {
+	t.Helper()
+	var prop struct {
+		Proposal map[string]any `json:"proposal"`
+	}
+	st, raw := k.DoAuth(t, http.MethodPost, "/v1/agents/"+name+"/policy/propose", nil, &prop)
+	if st != http.StatusOK {
+		t.Fatalf("propose policy: HTTP %d: %s", st, raw)
+	}
+	var got struct {
+		Policy map[string]any `json:"policy"`
+	}
+	st, raw = k.DoAuth(t, http.MethodPut, "/v1/agents/"+name+"/policy", prop.Proposal, &got)
+	if st != http.StatusOK {
+		t.Fatalf("apply policy: HTTP %d: %s", st, raw)
+	}
+	if fmt.Sprint(got.Policy["connectors"]) != fmt.Sprint(prop.Proposal["connectors"]) ||
+		fmt.Sprint(got.Policy["tools"]) != fmt.Sprint(prop.Proposal["tools"]) {
+		t.Fatalf("policy read-back %v != proposal %v", got.Policy, prop.Proposal)
+	}
 }
 
 type hook struct{ ID, Secret string }

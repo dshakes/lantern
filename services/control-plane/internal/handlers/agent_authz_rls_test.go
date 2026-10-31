@@ -628,3 +628,24 @@ func TestRLSAgentPolicyPropose_FromDefinitionUnderRLS(t *testing.T) {
 		t.Fatalf("apply+read-back mismatch: %d %s", rr.Code, rr.Body)
 	}
 }
+
+func TestRLSAgentPolicy_HandoffLabelGrantsOnlyHandoff(t *testing.T) {
+	a := newAuthzEnv(t)
+	tenant := seedEnforcedTenant(t, a.e, "am-"+uuid.NewString()[:8])
+	if _, err := a.e.superPool.Exec(context.Background(), `INSERT INTO agents (tenant_id, name, labels)
+		VALUES ($1, 'desk', '{"handoff":"human"}')`, tenant); err != nil {
+		t.Fatal(err)
+	}
+	ctx, p, err := a.z.Establish(injectTenant(context.Background(), tenant), tenant, "desk", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Authorize(ctx, toolAction(handoffToolName), ""); err != nil {
+		t.Fatalf("declared handoff must be granted: %v", err)
+	}
+	for _, tool := range []string{"web_search", "slack__post_message"} {
+		if err := p.Authorize(ctx, toolAction(tool), ""); err == nil {
+			t.Fatalf("%s must stay denied for a handoff agent", tool)
+		}
+	}
+}
