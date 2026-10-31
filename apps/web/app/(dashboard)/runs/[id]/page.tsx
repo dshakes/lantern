@@ -29,6 +29,7 @@ import { ReceiptCard } from "@/components/receipt-card";
 import { FlightRecorder } from "@/components/flight-recorder";
 import { ViewCode, snippetsForGetRun, snippetsForCreateRun } from "@/components/view-code";
 import { TakeoverPanel } from "@/components/takeover-panel";
+import { RunTrace } from "@/components/run-trace";
 
 export default function RunDetailPage() {
   const params = useParams();
@@ -248,6 +249,9 @@ export default function RunDetailPage() {
               )}
             </div>
           )}
+          <div className="max-h-[55vh] overflow-auto border-b border-zinc-800/40 p-4">
+            <RunTrace runId={run.id} refreshKey={effectiveStatus} />
+          </div>
           <div className="flex-shrink-0 border-b border-zinc-800/40 bg-surface-1/50 px-6 py-3">
             <h2 className="text-[12px] font-medium uppercase tracking-wide text-zinc-500">Output</h2>
           </div>

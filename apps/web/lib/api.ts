@@ -23,6 +23,36 @@ import type {
   ApiKey,
 } from "@/lib/mock-data";
 
+import type {
+  Incident,
+  RunTrace,
+  SliStatus,
+  VersionDrift,
+} from "./observability";
+export type { Incident, RunTrace, SliStatus, VersionDrift } from "./observability";
+
+export interface SloConfig {
+  objective: number;
+  latencyMs?: number;
+  costUsd?: number;
+  minScore?: number;
+  windowDays: number;
+}
+export interface ProdEvalConfig {
+  enabled: boolean;
+  sampleRate: number;
+  rubric: string;
+  judgeModel?: string;
+  dailyBudgetUsd: number;
+}
+export interface ProdEvals {
+  config: ProdEvalConfig;
+  versions: VersionDrift[];
+  scored: number;
+  spentTodayUsd: number;
+}
+
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -904,6 +934,57 @@ class PalAPI {
       notifySimulated("getFleetUsage", err);
       return null;
     }
+  }
+
+  // ---- Post-deployment observability (ADR 0056) -----------------------------
+
+  /** Run as a redacted step / LLM / tool / child-run tree. 404 for another tenant's run. */
+  async getRunTrace(runId: string): Promise<RunTrace> {
+    return this.request<RunTrace>(`/v1/runs/${encodeURIComponent(runId)}/trace`);
+  }
+
+  async listIncidents(params: { status?: string; agent?: string } = {}): Promise<Incident[]> {
+    const qs = new URLSearchParams();
+    if (params.status) qs.set("status", params.status);
+    if (params.agent) qs.set("agent", params.agent);
+    const res = await this.request<{ incidents: Incident[] }>(`/v1/incidents${qs.size ? `?${qs}` : ""}`);
+    return res.incidents;
+  }
+
+  async getIncident(id: string): Promise<Incident> {
+    return this.request<Incident>(`/v1/incidents/${encodeURIComponent(id)}`);
+  }
+
+  async transitionIncident(id: string, action: "acknowledge" | "resolve", note?: string): Promise<Incident> {
+    return this.request<Incident>(`/v1/incidents/${encodeURIComponent(id)}/${action}`, {
+      method: "POST",
+      body: JSON.stringify({ note }),
+    });
+  }
+
+  /** Roll prod back to the incident's last-good version via the promotion machinery. */
+  async rollbackIncident(id: string): Promise<{ rollback: { version: string; mode: string }; incident: Incident }> {
+    return this.request(`/v1/incidents/${encodeURIComponent(id)}/rollback`, { method: "POST" });
+  }
+
+  async scanIncidents(): Promise<{ opened: number; scored: number }> {
+    return this.request("/v1/incidents/scan", { method: "POST" });
+  }
+
+  async getSloStatus(agent: string): Promise<{ configured: boolean; slo?: SloConfig; slis?: SliStatus[] }> {
+    return this.request(`/v1/agents/${encodeURIComponent(agent)}/slo/status`);
+  }
+
+  async putSlo(agent: string, slo: SloConfig): Promise<void> {
+    await this.request(`/v1/agents/${encodeURIComponent(agent)}/slo`, { method: "PUT", body: JSON.stringify(slo) });
+  }
+
+  async getProdEvals(agent: string): Promise<ProdEvals> {
+    return this.request(`/v1/agents/${encodeURIComponent(agent)}/prod-evals`);
+  }
+
+  async putProdEvals(agent: string, cfg: ProdEvalConfig): Promise<void> {
+    await this.request(`/v1/agents/${encodeURIComponent(agent)}/prod-evals`, { method: "PUT", body: JSON.stringify(cfg) });
   }
 
   // ---- Billing (ADR 0049) ---------------------------------------------------

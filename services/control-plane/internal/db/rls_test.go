@@ -394,6 +394,7 @@ var rlsTenantTables = []string{
 	"agent_documents", "agent_document_chunks",
 	"dlp_policies",
 	"billing_accounts", "billing_meter_exports",
+	"agent_slos", "prod_eval_config", "prod_eval_scores", "agent_incidents", "agent_incident_events",
 	"agent_environments", "agent_promotions", "agent_promotion_audit",
 	"bridge_pairing_codes", "bridges", "device_signals",
 	"batches",

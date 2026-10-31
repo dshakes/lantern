@@ -409,9 +409,12 @@ func main() {
 	a2aHandler.SetExecutionDeps(runSvc, restHandler)
 	mcpHandler := handlers.NewMCPHandler(srv, authHandler)
 	evalHandler := handlers.NewEvalHandler(srv, authHandler)
+	obsHandler := handlers.NewObsHandler(srv, authHandler)
+	obsHandler.SetLLM(llmProxyHandler)  // production-eval judge + grounded incident summaries (ADR 0056)
 	evalHandler.SetLLM(llmProxyHandler) // hermetic runner + LLM judge + suite generator (ADR 0052)
 	experimentHandler := handlers.NewExperimentHandler(srv, authHandler)
 	promotionHandler := handlers.NewPromotionHandler(srv, authHandler)
+	obsHandler.SetRollbacker(promotionHandler) // incident → prod rollback (ADR 0056)
 
 	// Frontier surface: verifiable receipts, RLHF feedback loop,
 	// rehearsal of past failures against new agent versions.
@@ -835,6 +838,21 @@ func main() {
 	httpMux.HandleFunc("GET /v1/eval-runs/{id}", authHandler.WithScope(handlers.ScopeRunsRead, evalHandler.GetRun))
 	httpMux.HandleFunc("POST /v1/eval-baselines", authHandler.WithScope(handlers.ScopeAgentsWrite, evalHandler.SetBaseline))
 	httpMux.HandleFunc("GET /v1/eval-baselines", authHandler.WithScope(handlers.ScopeAgentsRead, evalHandler.GetBaseline))
+	// Post-deployment observability (ADR 0056): trace tree, per-agent SLOs,
+	// production evals, anomaly/SLO incidents (acknowledge/resolve are audited).
+	httpMux.HandleFunc("GET /v1/runs/{id}/trace", authHandler.WithScope(handlers.ScopeRunsRead, obsHandler.GetRunTrace))
+	httpMux.HandleFunc("GET /v1/agents/{name}/slo", authHandler.WithScope(handlers.ScopeAgentsRead, obsHandler.GetSLO))
+	httpMux.HandleFunc("PUT /v1/agents/{name}/slo", authHandler.WithScope(handlers.ScopeAgentsWrite, obsHandler.PutSLO))
+	httpMux.HandleFunc("GET /v1/agents/{name}/slo/status", authHandler.WithScope(handlers.ScopeAgentsRead, obsHandler.GetSLOStatus))
+	httpMux.HandleFunc("GET /v1/agents/{name}/prod-evals", authHandler.WithScope(handlers.ScopeAgentsRead, obsHandler.GetProdEvals))
+	httpMux.HandleFunc("PUT /v1/agents/{name}/prod-evals", authHandler.WithScope(handlers.ScopeAgentsWrite, obsHandler.PutProdEvals))
+	httpMux.HandleFunc("GET /v1/incidents", authHandler.WithScope(handlers.ScopeRunsRead, obsHandler.ListIncidents))
+	httpMux.HandleFunc("POST /v1/incidents/scan", authHandler.WithScope(handlers.ScopeAgentsWrite, obsHandler.ScanNow))
+	httpMux.HandleFunc("GET /v1/incidents/{id}", authHandler.WithScope(handlers.ScopeRunsRead, obsHandler.GetIncident))
+	httpMux.HandleFunc("POST /v1/incidents/{id}/acknowledge", authHandler.WithScope(handlers.ScopeAgentsWrite, obsHandler.Acknowledge))
+	httpMux.HandleFunc("POST /v1/incidents/{id}/rollback", authHandler.WithScope(handlers.ScopeAgentsWrite, obsHandler.RollbackIncident))
+	httpMux.HandleFunc("POST /v1/incidents/{id}/resolve", authHandler.WithScope(handlers.ScopeAgentsWrite, obsHandler.Resolve))
+
 	// Eval observability (read-only): failure clustering + score/pass-rate trends.
 	httpMux.HandleFunc("GET /v1/eval-observability/failures", authHandler.WithScope(handlers.ScopeAgentsRead, evalHandler.GetFailureClusters))
 	httpMux.HandleFunc("GET /v1/eval-observability/trends", authHandler.WithScope(handlers.ScopeAgentsRead, evalHandler.GetTrends))
@@ -1082,6 +1100,10 @@ func main() {
 		// Billing: dunning sweep + Stripe meter export (no-op unless Stripe is
 		// configured). Writer-only: never on a read-only standby.
 		handlers.RunBillingLoop(ctx, billingHandler, envDurationMain("PAL_BILLING_SYNC_INTERVAL", time.Hour))
+
+		// Post-deployment observability sweep: sampled production evals, anomaly
+		// + SLO burn detection → incidents (PAL_OBS_INTERVAL, default 5m; "off" disables).
+		handlers.RunObservabilityLoop(ctx, obsHandler, 0)
 
 		// Peer-service health sweep (PAL_HEALTH_SWEEP_INTERVAL, default 60s).
 		// Probes configured peer services via TCP dial; alerts the owner on

@@ -31,3 +31,4 @@ scope:^(services/control-plane/internal/handlers/signals(_test)?\.go|apps/web/ap
 # (a pre-cutover guest cert, signed by the same CA, must never pass as a
 # trusted service). Remove one release after the cutover.
 scope:^services/runtime-manager/src/tls\.rs$ LEGACY_VM_CERT_OU: &str = "lantern-vm" # refuse pre-cutover guest certs (deny-list only); one release
+path:^services/control-plane/internal/obs/redact\.go$ # must still redact the legacy lantern.secret/ ref form (ADR 0032 alias)
