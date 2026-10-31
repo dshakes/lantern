@@ -297,6 +297,7 @@ func TestExecuteToolCall_BuildsRequestAndMapsResult(t *testing.T) {
 	defer cleanup()
 
 	se := NewStepExecutor(nil, nil, zap.NewNop(), nil, client)
+	se.authorizeTool = allowAllTools
 	state := NewRunState("run-42", "tenant-99", "v3")
 	idempotencyKey := "run-42:step-7:1"
 
@@ -384,6 +385,7 @@ func TestExecuteToolCall_ErrorStatus(t *testing.T) {
 	defer cleanup()
 
 	se := NewStepExecutor(nil, nil, zap.NewNop(), nil, client)
+	se.authorizeTool = allowAllTools
 	state := NewRunState("run-1", "tenant-1", "v1")
 
 	_, err := se.executeToolCall(context.Background(), state, "step-1", "run-1:step-1:1", json.RawMessage(`{"tool_name":"search"}`))
@@ -409,6 +411,7 @@ func TestExecuteToolCall_UnavailableStatus(t *testing.T) {
 	defer cleanup()
 
 	se := NewStepExecutor(nil, nil, zap.NewNop(), nil, client)
+	se.authorizeTool = allowAllTools
 	state := NewRunState("run-1", "tenant-1", "v1")
 
 	_, err := se.executeToolCall(context.Background(), state, "step-1", "run-1:step-1:1", json.RawMessage(`{"tool_name":"search"}`))
@@ -425,6 +428,7 @@ func TestExecuteToolCall_MissingToolName(t *testing.T) {
 	defer cleanup()
 
 	se := NewStepExecutor(nil, nil, zap.NewNop(), nil, client)
+	se.authorizeTool = allowAllTools
 	state := NewRunState("run-1", "tenant-1", "v1")
 
 	if _, err := se.executeToolCall(context.Background(), state, "step-1", "k", json.RawMessage(`{"arguments":{"x":1}}`)); err == nil {
@@ -476,3 +480,7 @@ func TestOptimizeFromString(t *testing.T) {
 		}
 	}
 }
+
+// allowAllTools stands in for the agent-policy gate in DB-less tests; the gate
+// itself is covered by agent_policy_test.go.
+func allowAllTools(context.Context, *RunState, string, string) error { return nil }

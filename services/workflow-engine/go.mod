@@ -6,6 +6,7 @@ toolchain go1.26.6
 
 require (
 	github.com/dshakes/pal/gen/go v0.0.0
+	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.7.4
 	github.com/redis/go-redis/v9 v9.7.3
 	go.opentelemetry.io/otel v1.43.0
@@ -37,7 +38,6 @@ require (
 )
 
 replace github.com/dshakes/pal/gen/go => ../../gen/go
-
 
 replace github.com/dshakes/pal/packages/grpctls => ../../packages/grpctls
 
