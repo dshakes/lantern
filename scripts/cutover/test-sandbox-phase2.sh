@@ -339,7 +339,8 @@ check "[stray] apply succeeds" test "$rc" = 0
 check "[stray] $NA is now the RENAMED live app role (same oid as $OA had), migration did not skip" test "$(q "$NU" postgres "select oid from pg_roles where rolname='$NA'")" = "$OLD_APP_OID"
 check "[stray] the leftover table survived, now owned by the superuser" test "$(q "$NU" "$SDB" "select tableowner from pg_tables where tablename='leftover'")" = "$NU"
 "$CUT" rollback > "$SB/rollback-stray.out" 2>&1; rc=$?
-check "[stray] rollback IDENTICAL" bash -c "[ $rc = 0 ] && grep -q 'snapshot IDENTICAL' '$SB/rollback-stray.out'"
+SDIFF="$(sed -nE 's/.*see (.*snapshot\.diff).*/\1/p' "$SB/rollback-stray.out" | head -1)"
+check "[stray] rollback: the ONLY difference from pre-cutover is the dropped stray role" bash -c "[ $rc = 0 ] && [ -f '$SDIFF' ] && [ -z \"\$(grep -E '^[-+][^-+]' '$SDIFF' | grep -v 'role $NA ')\" ] && grep -qE '^-role $NA ' '$SDIFF'"
 check "[stray] after rollback: $OA back, stray role not recreated" test "$(q "$OU" postgres "select string_agg(rolname,' ' order by rolname) from pg_roles where rolname in ('$OA','$NA')")" = "$OA"
 q "$OU" postgres "DROP DATABASE $SDB" >/dev/null
 
