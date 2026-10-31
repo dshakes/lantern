@@ -5,7 +5,7 @@ package scheduler
 // Skipped automatically when DATABASE_URL is unset (same convention as the
 // handlers and db packages). Run against a real Postgres instance:
 //
-//	export DATABASE_URL="postgres://lantern:lantern@localhost:5432/lantern_ga2?sslmode=disable"
+//	export DATABASE_URL="postgres://pal:pal@localhost:5432/pal_ga2?sslmode=disable"
 //	go test -race -count=1 ./internal/scheduler/...
 
 import (
@@ -20,7 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/db"
+	"github.com/dshakes/pal/services/control-plane/internal/db"
 )
 
 // noopLogger returns a zap logger that discards all output.

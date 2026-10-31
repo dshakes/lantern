@@ -5,7 +5,7 @@ package handlers
 // DB-gated tests are skipped when DATABASE_URL is unset (same convention as
 // rest_subagent_test.go / runtime_test.go). Run with:
 //
-//	DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable \
+//	DATABASE_URL=postgres://pal:pal@localhost:5432/pal?sslmode=disable \
 //	  go test -race -run TestRunEvents ./internal/handlers/ -v -count=1
 
 import (
@@ -20,7 +20,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // ---------------------------------------------------------------------------
@@ -142,7 +142,7 @@ func TestRunEvents_Ownership(t *testing.T) {
 	ctx := context.Background()
 	_, _ = h.srv.Pool.Exec(ctx, `
 		INSERT INTO tenants (id, slug, name, tier, k8s_namespace)
-		VALUES ($1, 'other-events-test', 'Other', 'personal', 'lantern-t-other-evt')
+		VALUES ($1, 'other-events-test', 'Other', 'personal', 'pal-t-other-evt')
 		ON CONFLICT (id) DO NOTHING
 	`, otherTenantID)
 	t.Cleanup(func() {

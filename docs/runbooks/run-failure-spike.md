@@ -13,12 +13,12 @@ runtime) is degraded, or a bad agent version was promoted.
 ## Status of this alert (READ FIRST)
 
 `RunFailureRateHigh` is **not active yet**. It depends on
-`lantern_runs_completed_total{status="failed"}`, a counter that is **not emitted
+`pal_runs_completed_total{status="failed"}`, a counter that is **not emitted
 today**. The rule is parked, commented, in the
-`lantern-TODO-needs-instrumentation` group of
+`pal-TODO-needs-instrumentation` group of
 `infra/monitoring/prometheus/alerts.yml`.
 
-**To ship it:** emit `lantern_runs_completed_total{status}` (status =
+**To ship it:** emit `pal_runs_completed_total{status}` (status =
 `succeeded|failed|cancelled`) where the run terminal status is written — the
 workflow-engine journal (`KindRunFailed` / `KindRunCompleted`,
 `services/workflow-engine/internal/journal/event_kinds.go`) or the control-plane

@@ -9,8 +9,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/cluster"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/cluster"
 )
 
 // WriteThroughStore wraps an InMemoryStore and persists every mutation to
@@ -111,8 +111,8 @@ func (s *WriteThroughStore) loadVMs(ctx context.Context) error {
 		       snapshot_id, parent_vm_id, software_measurement
 		FROM sched_vms
 		WHERE state NOT IN ($1, $2)`,
-		int32(lanternv1.VmState_VM_STATE_TERMINATED),
-		int32(lanternv1.VmState_VM_STATE_FAILED),
+		int32(palv1.VmState_VM_STATE_TERMINATED),
+		int32(palv1.VmState_VM_STATE_FAILED),
 	)
 	if err != nil {
 		return fmt.Errorf("query sched_vms: %w", err)
@@ -135,10 +135,10 @@ func (s *WriteThroughStore) loadVMs(ctx context.Context) error {
 			return fmt.Errorf("scan sched_vms row: %w", err)
 		}
 
-		var spec lanternv1.AgentSpec
+		var spec palv1.AgentSpec
 		_ = json.Unmarshal(specJSON, &spec) // best-effort; nil fields are fine
 
-		handle := &lanternv1.VmHandle{
+		handle := &palv1.VmHandle{
 			VmId:                vmID,
 			Node:                nodeName,
 			AvailabilityZone:    az,
@@ -147,7 +147,7 @@ func (s *WriteThroughStore) loadVMs(ctx context.Context) error {
 		vm := &cluster.VM{
 			Handle:      handle,
 			Spec:        &spec,
-			State:       lanternv1.VmState(stateInt),
+			State:       palv1.VmState(stateInt),
 			TenantID:    tenantID,
 			NodeName:    nodeName,
 			Reason:      reason,
@@ -160,7 +160,7 @@ func (s *WriteThroughStore) loadVMs(ctx context.Context) error {
 		}
 		s.mem.CreateVM(vm)
 		// A PAUSED VM released its concurrent-VM slot when it was paused.
-		if vm.State != lanternv1.VmState_VM_STATE_PAUSED {
+		if vm.State != palv1.VmState_VM_STATE_PAUSED {
 			s.mem.IncrTenantVMs(tenantID, 1)
 		}
 		count++
@@ -308,7 +308,7 @@ func (s *WriteThroughStore) persistVM(ctx context.Context, v *cluster.VM) {
 }
 
 // UpdateVMState updates memory then syncs to Postgres.
-func (s *WriteThroughStore) UpdateVMState(vmID string, state lanternv1.VmState, reason string, usage *lanternv1.ResourceUsage, at time.Time) bool {
+func (s *WriteThroughStore) UpdateVMState(vmID string, state palv1.VmState, reason string, usage *palv1.ResourceUsage, at time.Time) bool {
 	if !s.mem.UpdateVMState(vmID, state, reason, usage, at) {
 		return false
 	}
@@ -318,7 +318,7 @@ func (s *WriteThroughStore) UpdateVMState(vmID string, state lanternv1.VmState, 
 
 // TransitionVMState applies the compare-and-set in memory (the source of truth
 // for the race) then syncs the winner's write to Postgres.
-func (s *WriteThroughStore) TransitionVMState(vmID string, from lanternv1.VmState, fromReason string, to lanternv1.VmState, reason string, at time.Time) bool {
+func (s *WriteThroughStore) TransitionVMState(vmID string, from palv1.VmState, fromReason string, to palv1.VmState, reason string, at time.Time) bool {
 	if !s.mem.TransitionVMState(vmID, from, fromReason, to, reason, at) {
 		return false
 	}
@@ -326,7 +326,7 @@ func (s *WriteThroughStore) TransitionVMState(vmID string, from lanternv1.VmStat
 	return true
 }
 
-func (s *WriteThroughStore) persistVMState(vmID string, state lanternv1.VmState, reason string, at time.Time) {
+func (s *WriteThroughStore) persistVMState(vmID string, state palv1.VmState, reason string, at time.Time) {
 	if s.pool == nil {
 		return
 	}
@@ -416,7 +416,7 @@ func (s *WriteThroughStore) PersistSnapshot(
 	ctx context.Context,
 	snapshotID, vmID, tenantID, nodeName string,
 	keepRunning bool,
-	resp *lanternv1.SnapshotResponse,
+	resp *palv1.SnapshotResponse,
 ) {
 	if s.pool == nil {
 		return

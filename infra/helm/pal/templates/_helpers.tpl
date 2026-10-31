@@ -2,12 +2,10 @@
 Chart name, truncated to 63 chars (K8s label limit).
 */}}
 {{/*
-Chart name used in names and selector labels. Releases whose name contains "lantern" (created before the
-PAL rename, ADR 0032) keep the old chart name so their object names, selectors and PVCs do not change.
+Chart name used in names and selector labels.
 */}}
 {{- define "pal.chartName" -}}
 {{- $n := default .Chart.Name .Values.nameOverride -}}
-{{- if contains "lantern" .Release.Name -}}{{- $n = regexReplaceAll "^pal" $n "lantern" -}}{{- end -}}
 {{- $n -}}
 {{- end }}
 
@@ -137,7 +135,7 @@ http://{{ include "pal.fullname" . }}-minio:9000
 {{/*
 Internal gRPC mTLS (ADR 0043). All emit nothing unless mtls.enabled.
 
-lantern.mtls.env — service-mesh identity env for a component.
+pal.mtls.env — service-mesh identity env for a component.
   include "pal.mtls.env" (dict "root" . "name" "model-router" "peers" (list "control-plane"))
 "peers" (optional) is the server-side allowlist, as service names.
 */}}
@@ -159,7 +157,7 @@ lantern.mtls.env — service-mesh identity env for a component.
 {{- end }}
 {{- end }}
 
-{{/* lantern.mtls.managerClientEnv — client identity for dialing the runtime-manager. */}}
+{{/* pal.mtls.managerClientEnv — client identity for dialing the runtime-manager. */}}
 {{- define "pal.mtls.managerClientEnv" -}}
 {{- if .Values.mtls.enabled }}
 - name: PAL_RUNTIME_MANAGER_TLS_CA
@@ -171,7 +169,7 @@ lantern.mtls.env — service-mesh identity env for a component.
 {{- end }}
 {{- end }}
 
-{{/* lantern.mtls.volumeMounts — (dict "root" . "manager" bool) */}}
+{{/* pal.mtls.volumeMounts — (dict "root" . "manager" bool) */}}
 {{- define "pal.mtls.volumeMounts" -}}
 {{- if .root.Values.mtls.enabled }}
 - name: pal-mtls
@@ -185,7 +183,7 @@ lantern.mtls.env — service-mesh identity env for a component.
 {{- end }}
 {{- end }}
 
-{{/* lantern.mtls.volumes — (dict "root" . "name" "control-plane" "manager" bool) */}}
+{{/* pal.mtls.volumes — (dict "root" . "name" "control-plane" "manager" bool) */}}
 {{- define "pal.mtls.volumes" -}}
 {{- if .root.Values.mtls.enabled }}
 - name: pal-mtls
@@ -200,7 +198,7 @@ lantern.mtls.env — service-mesh identity env for a component.
 {{- end }}
 
 {{/*
-lantern.mtls.podAnnotations — Rust services (tonic) load their cert once, so a
+pal.mtls.podAnnotations — Rust services (tonic) load their cert once, so a
 cert-manager renewal needs a rolling restart; stakater/Reloader does that when
 mtls.reloader is on. Go services hot-reload the leaf and need nothing.
 */}}

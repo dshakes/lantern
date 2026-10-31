@@ -17,7 +17,7 @@
 #   * COST OVER TIME: agent runs for ~minutes, not seconds — the
 #     cost-accumulator in ResourceUsage tracks the running total.
 
-apiVersion: lantern.dev/v1
+apiVersion: pal.dev/v1
 kind: AgentSpec
 
 metadata:
@@ -26,7 +26,7 @@ metadata:
     demo: "03"
 
 spec:
-  image_digest: lantern/demos/stateful-research@sha256:0000000000000000000000000000000000000000000000000000000000000003
+  image_digest: pal/demos/stateful-research@sha256:0000000000000000000000000000000000000000000000000000000000000003
   isolation: devcontainer
 
   limits:
@@ -45,7 +45,7 @@ spec:
 
   secrets:
     - env_name: OPENAI_API_KEY
-      secret_uri: lantern.secret://__tenant__/key/openai
+      secret_uri: pal.secret://__tenant__/key/openai
 
   # NON-idempotent: don't preempt + retry mid-workspace.
   idempotent: false

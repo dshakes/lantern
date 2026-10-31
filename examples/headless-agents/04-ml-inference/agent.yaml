@@ -11,7 +11,7 @@
 #     after each inference batch. Harness adds to ResourceUsage. Scheduler
 #     enforces max_cost_usd_per_day from the tenant's runtime_quotas row.
 #   * OTEL TRACING: workload emits OTLP spans through the unix socket at
-#     /run/lantern/otlp.sock. Harness batches + forwards. Spans show up
+#     /run/pal/otlp.sock. Harness batches + forwards. Spans show up
 #     in the dashboard's per-VM debug view (linked to the trace_id on
 #     each StatusEvent).
 #   * COLD-START SNAPSHOT: a tier-1 snapshot of the post-model-load VM
@@ -19,7 +19,7 @@
 #     that snapshot — model weights are already in memory, inference
 #     starts in ~150ms instead of ~12s.
 
-apiVersion: lantern.dev/v1
+apiVersion: pal.dev/v1
 kind: AgentSpec
 
 metadata:
@@ -29,7 +29,7 @@ metadata:
     pool: "gpu-t4"          # scheduler honors this as a label selector
 
 spec:
-  image_digest: lantern/demos/ml-inference@sha256:0000000000000000000000000000000000000000000000000000000000000004
+  image_digest: pal/demos/ml-inference@sha256:0000000000000000000000000000000000000000000000000000000000000004
   isolation: standard       # Firecracker; trusted base image
 
   limits:

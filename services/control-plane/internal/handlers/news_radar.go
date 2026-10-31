@@ -40,7 +40,7 @@ func defaultNewsHTTPGet(ctx context.Context, rawURL string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("news: http.NewRequest: %w", err)
 	}
-	req.Header.Set("User-Agent", "PAL-AIRadar/1.0 (+https://lantern.dev)")
+	req.Header.Set("User-Agent", "PAL-AIRadar/1.0 (+https://dshakes.github.io/pal)")
 	resp, err := newsHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("news: http.Do: %w", err)

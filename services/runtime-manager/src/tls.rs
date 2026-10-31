@@ -9,15 +9,15 @@
 //! Both run on the same tonic `Server`.  mTLS is enabled when all three env
 //! vars are present:
 //!
-//!   - `LANTERN_MANAGER_TLS_CA` — PEM CA cert; harness client certs must be
+//!   - `PAL_MANAGER_TLS_CA` — PEM CA cert; harness client certs must be
 //!     signed by this CA.
-//!   - `LANTERN_MANAGER_TLS_CERT` — PEM server cert for the manager.
-//!   - `LANTERN_MANAGER_TLS_KEY` — PEM private key for the manager cert.
+//!   - `PAL_MANAGER_TLS_CERT` — PEM server cert for the manager.
+//!   - `PAL_MANAGER_TLS_KEY` — PEM private key for the manager cert.
 //!
-//! **Prod gate** (`LANTERN_ENV` ∈ {prod, production, staging}):
+//! **Prod gate** (`PAL_ENV` ∈ {prod, production, staging}):
 //!   missing mTLS env vars → `eprintln!` + `std::process::exit(1)`.
 //!
-//! **Dev / unset `LANTERN_ENV`**: missing mTLS env vars → `WARN` log,
+//! **Dev / unset `PAL_ENV`**: missing mTLS env vars → `WARN` log,
 //!   returns `Ok(None)`, tonic server uses plain gRPC.
 //!
 //! ## vm_id ↔ cert-identity check
@@ -36,8 +36,8 @@
 //! At spawn the manager issues a short-lived client cert with CN=SAN=`vm_id`
 //! signed by the manager CA ([`generate_vm_client_cert`]), writes the cert +
 //! key to a per-VM directory mode 0700/0600 ([`write_vm_cert_files`]), and the
-//! schedule handler injects `LANTERN_VM_TLS_CERT`/`LANTERN_VM_TLS_KEY` +
-//! `LANTERN_MANAGER_TLS_CA` into the VM env (the Firecracker `VmConfig`
+//! schedule handler injects `PAL_VM_TLS_CERT`/`PAL_VM_TLS_KEY` +
+//! `PAL_MANAGER_TLS_CA` into the VM env (the Firecracker `VmConfig`
 //! boot-args already thread these paths).
 //!
 //! On each `VendSecret` the handler extracts the peer client cert from the
@@ -63,10 +63,10 @@ use tonic::transport::ServerTlsConfig;
 // Prod-env gate (shared with harness)
 // ---------------------------------------------------------------------------
 
-/// Returns `true` when `LANTERN_ENV` indicates a production-like environment.
+/// Returns `true` when `PAL_ENV` indicates a production-like environment.
 pub fn is_prod_env() -> bool {
     matches!(
-        pal_env::var("PAL_ENV")
+        std::env::var("PAL_ENV")
             .unwrap_or_default()
             .to_lowercase()
             .as_str(),
@@ -88,9 +88,9 @@ pub const ENV_KEY: &str = "PAL_MANAGER_TLS_KEY";
 /// `VM_ENV_CA` is the manager-CA cert the harness uses to verify the manager
 /// server; it shares the same logical CA as [`ENV_CA`] but is referenced from
 /// the VM's filesystem.
-pub const VM_ENV_CERT: &str = "LANTERN_VM_TLS_CERT";
-pub const VM_ENV_KEY: &str = "LANTERN_VM_TLS_KEY";
-pub const VM_ENV_CA: &str = "LANTERN_MANAGER_TLS_CA";
+pub const VM_ENV_CERT: &str = "PAL_VM_TLS_CERT";
+pub const VM_ENV_KEY: &str = "PAL_VM_TLS_KEY";
+pub const VM_ENV_CA: &str = "PAL_MANAGER_TLS_CA";
 
 /// Env-var names the manager reads to find its signing CA material (the CA
 /// that issues per-VM client certs).  Defaults to the server `ENV_CA`/`ENV_KEY`
@@ -102,7 +102,7 @@ pub const ENV_SIGNING_CA_KEY: &str = "PAL_VM_SIGNING_CA_KEY";
 /// Root directory under which per-VM cert material is written.  Overridable so
 /// tests (and the Firecracker boot-args contract) can target a known path.
 pub const ENV_VM_CERT_DIR: &str = "PAL_VM_CERT_DIR";
-pub const DEFAULT_VM_CERT_DIR: &str = "/run/lantern/certs";
+pub const DEFAULT_VM_CERT_DIR: &str = "/run/pal/certs";
 
 /// Short TTL for issued per-VM client certs.  A VM that outlives this must
 /// be re-issued; in practice runs are far shorter and certs are single-use.
@@ -111,11 +111,11 @@ const VM_CERT_TTL_DAYS: i64 = 1;
 /// Returns a tonic `ServerTlsConfig` when all three mTLS env vars are present,
 /// `None` in dev when they are absent.  Exits the process in production.
 ///
-/// The returned config requires client certs signed by `LANTERN_MANAGER_TLS_CA`.
+/// The returned config requires client certs signed by `PAL_MANAGER_TLS_CA`.
 pub fn build_server_tls_config() -> anyhow::Result<Option<ServerTlsConfig>> {
-    let ca_path = pal_env::var(ENV_CA).ok();
-    let cert_path = pal_env::var(ENV_CERT).ok();
-    let key_path = pal_env::var(ENV_KEY).ok();
+    let ca_path = std::env::var(ENV_CA).ok();
+    let cert_path = std::env::var(ENV_CERT).ok();
+    let key_path = std::env::var(ENV_KEY).ok();
 
     match (ca_path, cert_path, key_path) {
         (Some(ca), Some(cert), Some(key)) => {
@@ -134,14 +134,14 @@ pub fn build_server_tls_config() -> anyhow::Result<Option<ServerTlsConfig>> {
             if is_prod_env() {
                 eprintln!(
                     "FATAL: {ENV_CA}, {ENV_CERT}, {ENV_KEY} are required in production \
-                     (LANTERN_ENV={:?}). Refusing to start without mTLS.",
-                    pal_env::var("PAL_ENV").unwrap_or_default()
+                     (PAL_ENV={:?}). Refusing to start without mTLS.",
+                    std::env::var("PAL_ENV").unwrap_or_default()
                 );
                 std::process::exit(1);
             }
             tracing::warn!(
                 "mTLS env vars ({ENV_CA}/{ENV_CERT}/{ENV_KEY}) not set; \
-                 manager gRPC is PLAINTEXT. Set LANTERN_ENV=prod to make this fatal."
+                 manager gRPC is PLAINTEXT. Set PAL_ENV=prod to make this fatal."
             );
             Ok(None)
         }
@@ -242,9 +242,12 @@ pub fn verify_client_cert_vm_id(vm_id: &str, cert_der: &[u8]) -> Result<(), Stri
 /// Organizational-unit marker stamped on every per-VM client cert.
 pub const VM_CERT_OU: &str = "pal-vm";
 
-/// The pre-PAL marker (ADR 0032). VMs booted (or snapshotted) before the
-/// rename still hold certs carrying it, so it must keep marking a guest:
-/// dropping it would let those guests pass as trusted services.
+/// The marker VM certs carried before the rename (ADR 0032). It is only ever
+/// matched to REFUSE: a VM booted (or snapshotted) before the cutover still
+/// holds a cert carrying it, signed by the same CA, and must keep counting as
+/// a guest — dropping it would let that guest pass as a trusted service.
+/// Remove one release after the cutover (VM certs live a day; snapshots are
+/// re-identified on restore).
 pub const LEGACY_VM_CERT_OU: &str = "lantern-vm";
 
 /// True when `cert_der` is a per-VM (guest) client cert, i.e. carries the
@@ -463,16 +466,16 @@ fn set_dir_mode_0700(dir: &Path) -> anyhow::Result<()> {
 /// available — in that case per-VM cert issuance is skipped (dev plaintext;
 /// the prod gate in [`build_server_tls_config`] already forces mTLS on).
 pub fn load_signing_ca() -> anyhow::Result<Option<(String, String)>> {
-    let cert_path = pal_env::var(ENV_SIGNING_CA_CERT)
+    let cert_path = std::env::var(ENV_SIGNING_CA_CERT)
         .ok()
-        .or_else(|| pal_env::var(ENV_CA).ok());
+        .or_else(|| std::env::var(ENV_CA).ok());
     // The server cert env var holds the SERVER leaf, not a CA key, so we only
     // fall back to ENV_KEY when it is explicitly the CA key topology. To stay
     // safe we require an explicit signing-CA key unless ENV_CA doubles as a
     // self-signed CA whose key is in ENV_KEY.
-    let key_path = pal_env::var(ENV_SIGNING_CA_KEY)
+    let key_path = std::env::var(ENV_SIGNING_CA_KEY)
         .ok()
-        .or_else(|| pal_env::var(ENV_KEY).ok());
+        .or_else(|| std::env::var(ENV_KEY).ok());
 
     match (cert_path, key_path) {
         (Some(c), Some(k)) => {
@@ -628,8 +631,8 @@ mod tests {
 
     #[test]
     fn server_tls_config_built_from_valid_pem() {
-        let (ca_pem, _) = make_cert_for("ca.lantern.internal");
-        let (cert_pem, key_pem) = make_cert_for("manager.lantern.internal");
+        let (ca_pem, _) = make_cert_for("ca.pal.internal");
+        let (cert_pem, key_pem) = make_cert_for("manager.pal.internal");
 
         let result = build_server_tls_config_from_pem(&ca_pem, &cert_pem, &key_pem);
         assert!(result.is_ok(), "expected Ok, got {result:?}");
@@ -637,8 +640,8 @@ mod tests {
 
     #[test]
     fn server_tls_config_rejects_empty_cert_pem() {
-        let (ca_pem, _) = make_cert_for("ca.lantern.internal");
-        let (_, key_pem) = make_cert_for("manager.lantern.internal");
+        let (ca_pem, _) = make_cert_for("ca.pal.internal");
+        let (_, key_pem) = make_cert_for("manager.pal.internal");
 
         let result = build_server_tls_config_from_pem(&ca_pem, b"", &key_pem);
         assert!(result.is_err(), "expected error for empty cert PEM, got Ok");
@@ -646,7 +649,7 @@ mod tests {
 
     #[test]
     fn server_tls_config_rejects_empty_ca_pem() {
-        let (cert_pem, key_pem) = make_cert_for("manager.lantern.internal");
+        let (cert_pem, key_pem) = make_cert_for("manager.pal.internal");
 
         let result = build_server_tls_config_from_pem(b"", &cert_pem, &key_pem);
         assert!(result.is_err(), "expected error for empty CA PEM, got Ok");
@@ -712,7 +715,7 @@ mod tests {
             );
             assert_eq!(
                 result, expected,
-                "LANTERN_ENV={val:?} should be prod={expected}"
+                "PAL_ENV={val:?} should be prod={expected}"
             );
         };
 
@@ -796,8 +799,8 @@ mod tests {
         assert!(is_vm_client_cert(b"not a cert"));
     }
 
-    /// ADR 0032: new VM certs carry the PAL marker, and a cert carrying the
-    /// legacy marker (a VM booted before the rename) is still a guest.
+    /// New VM certs carry the PAL marker, and a cert carrying the pre-rename
+    /// marker (a VM booted before the cutover) is still refused as a guest.
     #[test]
     fn vm_cert_marker_pal_and_legacy_both_mark_a_guest() {
         let (ca_cert, ca_key) = make_ca("manager-ca-ou2");
@@ -954,7 +957,7 @@ mod tests {
         let vm_id = "vm-write-001";
         let issued = generate_vm_client_cert(vm_id, &ca_cert, &ca_key, None).unwrap();
 
-        let tmp = std::env::temp_dir().join(format!("lantern-tls-test-{}", uuid::Uuid::new_v4()));
+        let tmp = std::env::temp_dir().join(format!("pal-tls-test-{}", uuid::Uuid::new_v4()));
         let paths = write_vm_cert_files(&tmp, vm_id, &issued, &ca_cert).expect("write");
 
         assert_eq!(paths.cert_path, tmp.join(vm_id).join("tls.crt"));

@@ -7,7 +7,7 @@
 // ---------
 // `vend_secret` calls the real `RuntimeHarness.VendSecret` unary RPC over the
 // tonic channel to the manager. This is the H1 GA fix: the stub is gone from
-// the default path. `LANTERN_ALLOW_SECRET_STUB=1` re-enables the old fake
+// the default path. `PAL_ALLOW_SECRET_STUB=1` re-enables the old fake
 // value **only** for dev environments that have no manager running.
 //
 // Authentication assumption
@@ -67,7 +67,7 @@ pub struct ManagerClient {
     /// waiting for its next poll.
     restore_hint: Arc<tokio::sync::Notify>,
     /// Per-instance identity token minted by the control-plane at schedule
-    /// time and injected as `LANTERN_AGENT_INSTANCE_TOKEN`. Attached as
+    /// time and injected as `PAL_AGENT_INSTANCE_TOKEN`. Attached as
     /// `authorization: Bearer <token>` metadata on every `VendSecret` call
     /// so the control-plane relay can verify the caller's identity as an
     /// additive layer on top of the shared `X-Pal-Runtime-Token`.
@@ -100,7 +100,7 @@ impl ManagerClient {
     pub fn new(manager_addr: String, vm_id: String) -> Self {
         // Read the per-instance identity token once at construction. An empty
         // string is treated the same as absent — we never send a blank Bearer.
-        let agent_instance_token = pal_env::var("PAL_AGENT_INSTANCE_TOKEN")
+        let agent_instance_token = std::env::var("PAL_AGENT_INSTANCE_TOKEN")
             .ok()
             .filter(|t| !t.is_empty());
         Self {
@@ -110,7 +110,7 @@ impl ManagerClient {
             restore_hint: Arc::new(tokio::sync::Notify::new()),
             agent_instance_token: Arc::new(std::sync::RwLock::new(agent_instance_token)),
             exec_token: Arc::new(std::sync::RwLock::new(
-                pal_env::var("PAL_HARNESS_EXEC_TOKEN").unwrap_or_default(),
+                std::env::var("PAL_HARNESS_EXEC_TOKEN").unwrap_or_default(),
             )),
             inner: Arc::new(Mutex::new(Inner {
                 report_tx: None,
@@ -447,11 +447,11 @@ impl ManagerClient {
     }
 
     /// Build the clearly-marked stub response used when
-    /// `LANTERN_ALLOW_SECRET_STUB=1`. Extracted so tests can verify the
+    /// `PAL_ALLOW_SECRET_STUB=1`. Extracted so tests can verify the
     /// format without needing to mutate global env.
     fn stub_response(vm_id: &str, secret_uri: &str) -> VendSecretResponse {
         VendSecretResponse {
-            value: format!("LANTERN_STUB_NOT_A_REAL_SECRET::{vm_id}::{secret_uri}"),
+            value: format!("PAL_STUB_NOT_A_REAL_SECRET::{vm_id}::{secret_uri}"),
             expires_at_unix_ms: proto::now_unix_ms() + 60_000,
         }
     }
@@ -462,19 +462,19 @@ impl ManagerClient {
     /// registry (populated at spawn). It enforces the declared-secrets
     /// allowlist and returns a value with TTL ≤ 300 s.
     ///
-    /// Dev escape: set `LANTERN_ALLOW_SECRET_STUB=1` to skip the RPC and
+    /// Dev escape: set `PAL_ALLOW_SECRET_STUB=1` to skip the RPC and
     /// return a clearly-marked stub value. This is intended for local
     /// development where no manager process is running.
     pub async fn vend_secret(&self, req: VendSecretRequest) -> Result<VendSecretResponse> {
         // Dev stub escape-hatch — explicit opt-in only.
-        if pal_env::var("PAL_ALLOW_SECRET_STUB")
+        if std::env::var("PAL_ALLOW_SECRET_STUB")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false)
         {
             tracing::warn!(
                 vm_id = %self.vm_id(),
                 secret_uri = %req.secret_uri,
-                "vend_secret: STUB mode (LANTERN_ALLOW_SECRET_STUB=1) — \
+                "vend_secret: STUB mode (PAL_ALLOW_SECRET_STUB=1) — \
                  returning a fake value. Dev/test use only."
             );
             return Ok(Self::stub_response(&self.vm_id(), &req.secret_uri));
@@ -482,8 +482,8 @@ impl ManagerClient {
 
         // Real path: call the manager's RuntimeHarness.VendSecret RPC.
         //
-        // mTLS: when LANTERN_VM_TLS_CERT / LANTERN_VM_TLS_KEY /
-        // LANTERN_MANAGER_TLS_CA are present (injected by the manager at
+        // mTLS: when PAL_VM_TLS_CERT / PAL_VM_TLS_KEY /
+        // PAL_MANAGER_TLS_CA are present (injected by the manager at
         // spawn), use a TLS channel so the manager can verify this VM's
         // identity via its client cert.  Falls back to plaintext in dev.
         let tls_config = crate::tls::build_client_tls_config()
@@ -600,12 +600,12 @@ impl ManagerClient {
     }
 }
 
-/// `LANTERN_MANAGER_VSOCK_PORT` (broker egress mode, ADR 0026): the guest has
+/// `PAL_MANAGER_VSOCK_PORT` (broker egress mode, ADR 0026): the guest has
 /// no NIC, so the control channel rides vsock to the host, where the manager
 /// relays it to its own listener. mTLS is unchanged — tonic layers TLS over
 /// the custom connector, with the server name taken from the endpoint URI.
 fn manager_vsock_port() -> Option<u32> {
-    pal_env::var("PAL_MANAGER_VSOCK_PORT")
+    std::env::var("PAL_MANAGER_VSOCK_PORT")
         .ok()
         .and_then(|p| p.trim().parse().ok())
         .filter(|p| *p != 0)
@@ -701,13 +701,13 @@ mod tests {
         }
     }
 
-    /// When LANTERN_ALLOW_SECRET_STUB is not set, vend_secret must fail if
+    /// When PAL_ALLOW_SECRET_STUB is not set, vend_secret must fail if
     /// the manager is unreachable rather than returning any value.
     #[tokio::test]
     async fn vend_secret_fails_when_manager_unreachable_without_stub() {
         // Guard: do not accidentally pass when the env var is already set in
         // the test environment.
-        if pal_env::var("PAL_ALLOW_SECRET_STUB").is_ok() {
+        if std::env::var("PAL_ALLOW_SECRET_STUB").is_ok() {
             return; // skip — env already enables stub; different code path
         }
 
@@ -719,7 +719,7 @@ mod tests {
         let result = client
             .vend_secret(VendSecretRequest {
                 vm_id: "test-vm".to_string(),
-                secret_uri: "lantern.secret://tenant/t1/key/K".to_string(),
+                secret_uri: "pal.secret://tenant/t1/key/K".to_string(),
                 ttl_secs: 60,
             })
             .await;
@@ -732,9 +732,9 @@ mod tests {
     /// `stub_response` produces a clearly-marked value — no env mutation needed.
     #[test]
     fn stub_response_format_is_marked() {
-        let resp = ManagerClient::stub_response("vm-abc", "lantern.secret://t1/key/K");
+        let resp = ManagerClient::stub_response("vm-abc", "pal.secret://t1/key/K");
         assert!(
-            resp.value.starts_with("LANTERN_STUB_NOT_A_REAL_SECRET::"),
+            resp.value.starts_with("PAL_STUB_NOT_A_REAL_SECRET::"),
             "stub value must carry the STUB prefix, got: {}",
             resp.value
         );
@@ -743,7 +743,7 @@ mod tests {
             "stub value must embed the vm_id"
         );
         assert!(
-            resp.value.contains("lantern.secret://t1/key/K"),
+            resp.value.contains("pal.secret://t1/key/K"),
             "stub value must embed the secret_uri"
         );
         assert!(
@@ -769,7 +769,7 @@ mod tests {
         );
     }
 
-    /// An empty LANTERN_AGENT_INSTANCE_TOKEN must be treated as absent (None),
+    /// An empty PAL_AGENT_INSTANCE_TOKEN must be treated as absent (None),
     /// never forwarded as a blank `Bearer ` header. This test does not mutate
     /// env — it tests the filter logic by direct construction.
     ///

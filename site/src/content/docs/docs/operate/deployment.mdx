@@ -41,7 +41,7 @@ Control plane in one place (your own platform account, or hosted for you once th
 
 #### Tunnel RPCs
 
-Defined in `packages/proto/lantern/v1/dataplane.proto`, served on the control plane's `:50051` listener.
+Defined in `packages/proto/pal/v1/dataplane.proto`, served on the control plane's `:50051` listener.
 
 | RPC | Direction | Purpose |
 | --- | --- | --- |
@@ -99,7 +99,7 @@ PAL needs Postgres with the `pgvector` extension, an S3-compatible object store 
 **Postgres**
 
 - Dev / kind / evaluation (default): `postgresql.enabled=true`: one `pgvector/pgvector` StatefulSet with a PVC. Password is `secrets.postgresPassword`.
-- Production (`values-prod.yaml`): `postgresql.enabled=false` and `externalDatabase.host` (plus `port`, `sslmode`). User and database names still come from `postgresql.auth`. Provision `pgvector` and the `lantern_app` role yourself.
+- Production (`values-prod.yaml`): `postgresql.enabled=false` and `externalDatabase.host` (plus `port`, `sslmode`). User and database names still come from `postgresql.auth`. Provision `pgvector` and the `pal_app` role yourself.
 
 **Object store**
 
@@ -122,8 +122,8 @@ They are single replicas with no replication, point-in-time recovery or lifecycl
 `pal infra install --cloud aws|gcp|azure` generates Terraform for a data-plane cluster. Flags include `--tenant-id` (required), `--region`, `--cluster-name`, `--existing-cluster`, `--instance-type` and `--node-count`. The modules live in `infra/terraform/` and are not published to the Terraform Registry. Review the output, then apply.
 
 ```bash
-pal infra install --cloud aws --region us-east-1 --tenant-id <tenant-id>   # generates lantern-data-plane-aws/ (override with the output-dir flag)
-cd lantern-data-plane-aws
+pal infra install --cloud aws --region us-east-1 --tenant-id <tenant-id>   # generates pal-data-plane-aws/ (override with the output-dir flag)
+cd pal-data-plane-aws
 terraform init
 terraform plan
 terraform apply
@@ -137,7 +137,7 @@ Targets are RPO of 1 minute for Postgres and 15 minutes for S3 bundles, RTO of 3
 
 ## Namespace isolation
 
-Each tenant gets its own Kubernetes namespace: `lantern-t-<tenant_id>`. This provides network isolation, per-tenant resource quotas, and separate service accounts and secrets.
+Each tenant gets its own Kubernetes namespace: `pal-t-<tenant_id>`. This provides network isolation, per-tenant resource quotas, and separate service accounts and secrets.
 
 ## Monitoring
 

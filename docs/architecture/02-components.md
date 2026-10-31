@@ -4,7 +4,7 @@
 
 This document is the **canonical reference** for what each service does, what it owns, what it depends on, and what its API surface looks like.
 
-**Status legend.** Each service below describes its target contract. Where the code today is narrower, an *As built* note says so. The authoritative RPC surface is `packages/proto/lantern/v1/*.proto`; the authoritative REST surface is `services/control-plane/cmd/server/main.go`. Connectors, the visual builder and the credential store are **not** separate services today - they live in the control-plane and the dashboard (see sections 11-13).
+**Status legend.** Each service below describes its target contract. Where the code today is narrower, an *As built* note says so. The authoritative RPC surface is `packages/proto/pal/v1/*.proto`; the authoritative REST surface is `services/control-plane/cmd/server/main.go`. Connectors, the visual builder and the credential store are **not** separate services today - they live in the control-plane and the dashboard (see sections 11-13).
 
 ## Conventions
 
@@ -130,14 +130,14 @@ Enforces:
 - seccomp profile per class (deny-by-default for `untrusted` and `hostile`)
 - Egress allowlist: NetworkPolicy on the host plus the in-VM harness CONNECT proxy with an iptables REDIRECT (fail-closed in prod; see 04b)
 - Read-only rootfs for `untrusted`
-- Secrets vended by the harness over `/run/lantern/secrets.sock` via the control-plane relay ([ADR 0008](../adr/0008-runtime-secret-relay.md)); never baked into the image
+- Secrets vended by the harness over `/run/pal/secrets.sock` via the control-plane relay ([ADR 0008](../adr/0008-runtime-secret-relay.md)); never baked into the image
 - Resource limits from `agent.yaml.limits` translated to cgroups + Firecracker MMIO
 
 **Sandbox lifecycle (microVM tier, Firecracker).** `Snapshot` + `Stop` implement **pause**; a `Spawn` with `restore_snapshot_id` implements **resume** (same `vm_id`) and **fork** (N new `vm_id`s from one snapshot, up to `PAL_MAX_FORK_COUNT` (default 100, ceiling 1000) via `POST /v1/runtime/vms/{id}/fork`). A restore is a new identity: fresh cert, exec token, and network address, which the in-guest harness adopts (`re-identify`); the registry pins the current incarnation's cert so a snapshot-frozen cert is refused. Snapshots are tenant-owned; restoring another tenant's returns `NOT_FOUND`.
 
 **Spawn contract.** The manager writes `spawn.json` (workload command, env, egress rules, `workload_uid`/`gid`) onto the read-only cert drive; the harness reads it at boot and drops the workload to that uid. The manager, not the caller, chooses the uid.
 
-**Per-call authz.** Every `RuntimeManager` RPC requires `x-lantern-service-token` (`PAL_GRPC_SERVICE_TOKEN`, constant-time compare; the manager refuses to start in prod without it). A per-VM cert (`OU=lantern-vm`) is refused on all `RuntimeManager` methods and may reach only its own `RuntimeHarness` channel. `ExecTool` is scoped by `tenant_id`. Details: [ADR 0025](../adr/0025-sandbox-spawn-contract-and-manager-authz.md); diagrams: [`runtime-two-tier.svg`](../assets/diagrams/runtime-two-tier.svg), [`sandbox-lifecycle.svg`](../assets/diagrams/sandbox-lifecycle.svg).
+**Per-call authz.** Every `RuntimeManager` RPC requires `x-pal-service-token` (`PAL_GRPC_SERVICE_TOKEN`, constant-time compare; the manager refuses to start in prod without it). A per-VM cert (`OU=pal-vm`) is refused on all `RuntimeManager` methods and may reach only its own `RuntimeHarness` channel. `ExecTool` is scoped by `tenant_id`. Details: [ADR 0025](../adr/0025-sandbox-spawn-contract-and-manager-authz.md); diagrams: [`runtime-two-tier.svg`](../assets/diagrams/runtime-two-tier.svg), [`sandbox-lifecycle.svg`](../assets/diagrams/sandbox-lifecycle.svg).
 
 See [`04-runtime-isolation.md`](04-runtime-isolation.md) for the deep dive.
 
@@ -150,7 +150,7 @@ See [`04-runtime-isolation.md`](04-runtime-isolation.md) for the deep dive.
 | **Language** | Rust |
 | **State** | Redis (prompt cache, 24h TTL) |
 | **Depends on** | Upstream LLM providers (OpenAI and Anthropic wired today; others per `providers/`) |
-| **Public surface** | OpenAI Chat Completions–compatible HTTPS, plus Lantern-native streaming gRPC |
+| **Public surface** | OpenAI Chat Completions–compatible HTTPS, plus PAL-native streaming gRPC |
 | **Internal surface** | gRPC `ModelService`: `Complete`, `CompleteStream`, `Embed`, `Tokenize` |
 | **SLO** | p50 streaming TTFT overhead ≤ 30ms; failover transparent on 5xx/429 |
 
@@ -176,7 +176,7 @@ Capabilities (not models):
 
 **Generation IDs** are injected on the first token (Vercel pattern) so dashboard reconnects can resume mid-stream.
 
-**Auth.** The gRPC port is a trust boundary: callers must present `x-lantern-service-token` (`PAL_GRPC_SERVICE_TOKEN`, invariant #7).
+**Auth.** The gRPC port is a trust boundary: callers must present `x-pal-service-token` (`PAL_GRPC_SERVICE_TOKEN`, invariant #7).
 
 See [`06-model-router.md`](06-model-router.md).
 
@@ -272,7 +272,7 @@ The unified entry point for all **non-SDK** ways of driving an agent: mobile app
 - **Approval gates over chat**: an agent's `ctx.approval.request(...)` becomes an interactive Slack/iMessage card
 - **Live screen-share** for `computer-use` agents: the runtime manager streams desktop frames to the surface-gateway, which forwards to the mobile app
 - **Voice interface**: Twilio audio → Whisper → agent input; agent output → ElevenLabs → Twilio audio
-- **Email-as-an-interface**: a tenant gets a unique `<tenant>.lantern.email`; replying triggers a run
+- **Email-as-an-interface**: a tenant gets a unique `<tenant>.pal.email`; replying triggers a run
 
 See [`12-control-surfaces.md`](12-control-surfaces.md).
 
@@ -291,7 +291,7 @@ See [`12-control-surfaces.md`](12-control-surfaces.md).
 | **Internal surface** | gRPC: `Install`, `Invoke`, `IngestWebhook`, `Poll` |
 | **SLO** | Action latency overhead ≤ 100ms over upstream API |
 
-The Zapier-of-Lantern. A framework + library of pre-built integrations with major SaaS apps. Each connector is a typed package that implements:
+The Zapier-of-PAL. A framework + library of pre-built integrations with major SaaS apps. Each connector is a typed package that implements:
 
 ```go
 type Connector interface {
@@ -366,7 +366,7 @@ See [`14-visual-builder.md`](14-visual-builder.md).
 | **Internal surface** | gRPC: `Put`, `Get`, `Delete`, `Rotate`, `WrapForRuntime` |
 | **SLO** | p99 read ≤ 30ms; rotation success 100% |
 
-Stores OAuth tokens, API keys, and any personal credentials a user attaches to a workflow. **Per-user envelope encryption** with a tenant-scoped master key. Secrets are referenced in agent bundles by ref form `lantern.secret/...` (URI form `lantern.secret://<tenant>/key/<name>` in `agent.yaml`) and never appear in journals, logs, traces, or run state.
+Stores OAuth tokens, API keys, and any personal credentials a user attaches to a workflow. **Per-user envelope encryption** with a tenant-scoped master key. Secrets are referenced in agent bundles by ref form `pal.secret/...` (URI form `pal.secret://<tenant>/key/<name>` in `agent.yaml`) and never appear in journals, logs, traces, or run state.
 
 See [`10-security.md`](10-security.md).
 
@@ -437,7 +437,7 @@ control-plane    model-router    surface-gateway
 
   microVM path (headless runs): control-plane ─► runtime-scheduler (:50055)
   ─► runtime-manager (:50054) ─► Firecracker VM (harness PID 1). Each hop
-  presents x-lantern-service-token (control-plane ─► scheduler, scheduler ─►
+  presents x-pal-service-token (control-plane ─► scheduler, scheduler ─►
   manager, control-plane ─► model-router). The engine's ExecTool client to the
   manager still needs the token attached before prod enables it (ADR 0025 §2).
 ```

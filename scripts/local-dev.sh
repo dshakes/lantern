@@ -132,7 +132,7 @@ mode_docker() {
     header "Starting infrastructure (Postgres, Redis, MinIO)"
     ${COMPOSE_CMD} -f "${COMPOSE_FILE}" up -d postgres redis minio minio-init
 
-    wait_for_healthy "PostgreSQL" "docker exec \$(${COMPOSE_CMD} -f ${COMPOSE_FILE} ps -q postgres) pg_isready -U lantern" 30 2
+    wait_for_healthy "PostgreSQL" "docker exec \$(${COMPOSE_CMD} -f ${COMPOSE_FILE} ps -q postgres) pg_isready -U pal" 30 2
     wait_for_healthy "Redis"      "docker exec \$(${COMPOSE_CMD} -f ${COMPOSE_FILE} ps -q redis) redis-cli ping" 30 2
     wait_for_healthy "MinIO"      "curl -sf http://localhost:9000/minio/health/live" 30 2
 
@@ -156,7 +156,7 @@ mode_docker() {
     # -- Step 4: Seed sample data ------------------------------------------
     header "Seeding sample data"
     if command -v psql &>/dev/null; then
-        DATABASE_URL="postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable" \
+        DATABASE_URL="postgres://pal:pal@localhost:5432/pal?sslmode=disable" \
             "${REPO_ROOT}/scripts/seed-data.sh"
     else
         warn "psql not found -- skipping seed data. Run later: make seed"
@@ -194,9 +194,9 @@ print_docker_summary() {
     printf "  %-24s %s\n" "Dashboard:" "http://localhost:3001"
     echo ""
     printf "${BOLD}Infrastructure:${NC}\n"
-    printf "  %-24s %s\n" "PostgreSQL:" "localhost:5432 (lantern/lantern)"
+    printf "  %-24s %s\n" "PostgreSQL:" "localhost:5432 (pal/pal)"
     printf "  %-24s %s\n" "Redis:" "localhost:6379"
-    printf "  %-24s %s\n" "MinIO Console:" "http://localhost:9001 (lantern/lanternsecret)"
+    printf "  %-24s %s\n" "MinIO Console:" "http://localhost:9001 (pal/palsecret)"
     printf "  %-24s %s\n" "MinIO API:" "http://localhost:9000"
     echo ""
     printf "${BOLD}Useful commands:${NC}\n"
@@ -204,7 +204,7 @@ print_docker_summary() {
     printf "  %-40s %s\n" "make dev" "Restart all compose services"
     printf "  %-40s %s\n" "make dev-infra" "Start infra only"
     printf "  %-40s %s\n" "grpcurl -plaintext localhost:50051 list" "List gRPC services"
-    printf "  %-40s %s\n" "psql postgres://lantern:lantern@localhost:5432/lantern" "Connect to DB"
+    printf "  %-40s %s\n" "psql postgres://pal:pal@localhost:5432/pal" "Connect to DB"
     echo ""
     printf "${BOLD}Logs:${NC}\n"
     printf "  docker compose -f infra/docker/docker-compose.yml logs -f [service]\n"
@@ -342,7 +342,7 @@ mode_kind() {
         kubectl port-forward -n pal svc/pal-postgresql 5432:5432 &>/dev/null &
         PIDS+=($!)
         sleep 3
-        DATABASE_URL="postgres://lantern:lantern-dev@localhost:5432/lantern?sslmode=disable" \
+        DATABASE_URL="postgres://pal:pal-dev@localhost:5432/pal?sslmode=disable" \
             "${REPO_ROOT}/scripts/seed-data.sh"
     else
         warn "psql not found -- skipping seed data"

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" class="lx" role="img" aria-labelledby="runtime-security-layers-title runtime-security-layers-desc">
   <title id="runtime-security-layers-title">Five nested controls surround untrusted code, and each one fails closed</title>
-  <desc id="runtime-security-layers-desc">Concentric defense in depth around untrusted agent code. The outermost layer is your VPC or cluster, the data plane, where the control plane never touches user code and reaches the runtime-manager over service-token gRPC. Inside it sits a per-tenant namespace named lantern-t-tenant_id with tenant_id on every call and row-level security. Inside that is a default-deny network where the egress policy is created before the Job and only DNS is allowed. Inside that is the sandbox wall, a gVisor, Kata or Firecracker boundary chosen by the isolation gate. Inside the wall the trusted Rust harness runs as PID 1 with the egress allowlist proxy, a peer-checked secrets socket and short-lived secret vends, next to the untrusted workload, which runs as a non-root workload uid with a filtered environment. A denied strip lists what the harness refuses: off-allowlist egress, other processes reading the secrets socket, and in production a boot without the egress redirect rule.</desc>
+  <desc id="runtime-security-layers-desc">Concentric defense in depth around untrusted agent code. The outermost layer is your VPC or cluster, the data plane, where the control plane never touches user code and reaches the runtime-manager over service-token gRPC. Inside it sits a per-tenant namespace named pal-t-tenant_id with tenant_id on every call and row-level security. Inside that is a default-deny network where the egress policy is created before the Job and only DNS is allowed. Inside that is the sandbox wall, a gVisor, Kata or Firecracker boundary chosen by the isolation gate. Inside the wall the trusted Rust harness runs as PID 1 with the egress allowlist proxy, a peer-checked secrets socket and short-lived secret vends, next to the untrusted workload, which runs as a non-root workload uid with a filtered environment. A denied strip lists what the harness refuses: off-allowlist egress, other processes reading the secrets socket, and in production a boot without the egress redirect rule.</desc>
   <style class="lx-style">
     .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
     @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
@@ -43,7 +43,7 @@
   <text class="t-h" x="58" y="124">Your VPC or cluster: the data plane</text>
   <text class="t-s" x="58" y="142">The control plane never touches user code; it reaches the runtime-manager over gRPC with a service token.</text>
   <rect class="zone" x="70" y="158" width="1060" height="502" rx="18"/>
-  <text class="t-h" x="88" y="182">Per-tenant namespace: lantern-t-&lt;tenant_id&gt;</text>
+  <text class="t-h" x="88" y="182">Per-tenant namespace: pal-t-&lt;tenant_id&gt;</text>
   <text class="t-s" x="88" y="200">tenant_id on every gRPC call and every row; row-level security on tenant tables; no cross-tenant joins.</text>
   <rect class="zone" x="100" y="216" width="1000" height="414" rx="18"/>
   <text class="t-h" x="118" y="240">Default-deny network</text>
@@ -62,16 +62,16 @@
   <text class="t-b" x="646" y="384">untrusted user code</text>
   <text class="t-b" x="646" y="403">runs as the workload uid, not the harness</text>
   <text class="t-b" x="646" y="422">read-only rootfs, non-root, caps dropped</text>
-  <text class="t-b" x="646" y="441">sees only allowlisted LANTERN_* env keys</text>
+  <text class="t-b" x="646" y="441">sees only allowlisted PAL_* env keys</text>
   <rect class="node-deny" x="160" y="516" width="880" height="66" rx="10"/>
   <text class="t-h" x="176" y="540">Refused by the harness</text>
   <text class="t-b" x="176" y="560">off-allowlist egress, other processes on the secrets socket, and (in prod) booting without the egress redirect rule</text>
-  <!-- opt-in broker mode (LANTERN_EGRESS_MODE=broker, Firecracker only) -->
-  <text class="t-s" x="118" y="620">Opt-in broker mode: host egress broker over vsock injects credentials from lantern.secret refs; the VM has no network device (LANTERN_EGRESS_MODE=broker, Firecracker only).</text>
+  <!-- opt-in broker mode (PAL_EGRESS_MODE=broker, Firecracker only) -->
+  <text class="t-s" x="118" y="620">Opt-in broker mode: host egress broker over vsock injects credentials from pal.secret refs; the VM has no network device (PAL_EGRESS_MODE=broker, Firecracker only).</text>
   <g transform="translate(40 722)">
   <rect class="zone" x="0" width="14" height="14" rx="3"/><text class="t-s" x="22" y="11">Trust boundary</text>
   <rect class="wall" x="140" width="14" height="14" rx="3"/><text class="t-s" x="162" y="11">Sandbox wall</text>
-  <rect class="node-host" x="270" width="14" height="14" rx="3"/><text class="t-s" x="292" y="11">Trusted Lantern infrastructure</text>
+  <rect class="node-host" x="270" width="14" height="14" rx="3"/><text class="t-s" x="292" y="11">Trusted PAL infrastructure</text>
   <rect class="node-guest" x="502" width="14" height="14" rx="3"/><text class="t-s" x="524" y="11">Untrusted guest</text>
   <rect class="node-deny" x="652" width="14" height="14" rx="3"/><text class="t-s" x="674" y="11">Refused</text>
   </g>

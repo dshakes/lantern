@@ -15,14 +15,14 @@ import (
 
 // EmailDeliverer delivers notifications via SMTP or Resend API.
 type EmailDeliverer struct {
-	smtpHost string
-	smtpPort string
-	smtpUser string
-	smtpPass string
-	fromAddr string
+	smtpHost  string
+	smtpPort  string
+	smtpUser  string
+	smtpPass  string
+	fromAddr  string
 	resendKey string
-	client   *http.Client
-	logger   *zap.Logger
+	client    *http.Client
+	logger    *zap.Logger
 }
 
 // NewEmailDeliverer creates a new EmailDeliverer, using Resend if API key is set,
@@ -33,7 +33,7 @@ func NewEmailDeliverer(logger *zap.Logger) *EmailDeliverer {
 		smtpPort:  envOrDefault("SMTP_PORT", "587"),
 		smtpUser:  os.Getenv("SMTP_USER"),
 		smtpPass:  os.Getenv("SMTP_PASS"),
-		fromAddr:  envOrDefault("EMAIL_FROM", "noreply@lantern.dev"),
+		fromAddr:  envOrDefault("EMAIL_FROM", "noreply@pal.local"),
 		resendKey: os.Getenv("RESEND_API_KEY"),
 		client:    &http.Client{Timeout: 30 * time.Second},
 		logger:    logger.Named("email"),

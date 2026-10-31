@@ -1,10 +1,9 @@
 [package]
-name = "lantern-model-router"
+name = "pal-model-router"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-pal_env = { path = "../../packages/pal-env-rs" }
 tokio = { version = "1", features = ["full"] }
 tonic = { version = "0.12", features = ["tls"] }
 # Service-mesh mTLS on :50053 (ADR 0043), shared with gateway/surface-gateway.

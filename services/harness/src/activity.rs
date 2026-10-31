@@ -8,7 +8,7 @@
 // Two kinds of callers update the tracker:
 //
 //   1. The supervisor (supervisor.rs): tracks the main workload process.
-//   2. The exec server (exec.rs): tracks `lantern vm exec` children.
+//   2. The exec server (exec.rs): tracks `pal vm exec` children.
 //
 // Usage: call `child_started()` when a child is spawned; hold the returned
 // `ActiveGuard` until the child exits — drop automatically decrements.

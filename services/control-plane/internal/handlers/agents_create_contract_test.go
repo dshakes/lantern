@@ -13,7 +13,7 @@ package handlers
 // DB-gated: skipped when DATABASE_URL is unset (same convention as the rest of
 // this package). Run with:
 //
-//	DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable \
+//	DATABASE_URL=postgres://pal:pal@localhost:5432/pal?sslmode=disable \
 //	  go test ./internal/handlers/ -run Contract -v -count=1
 
 import (
@@ -26,7 +26,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // newRESTHandlerForContractTest builds a minimal RESTHandler backed by a real

@@ -7,7 +7,7 @@ code and data never leave the customer's VPC.
 
 ```bash
 helm install pal-dp infra/helm/pal-data-plane \
-  --namespace lantern-system --create-namespace \
+  --namespace pal-system --create-namespace \
   --set controlPlane.tenantId=<tenant> \
   --set controlPlane.agentToken=<token>
 ```
@@ -35,12 +35,12 @@ runtimes by `runtimeClassName`:
 2. **Label** those nodes so the manager's nodeSelector lands sandboxed pods only
    on capable hardware:
    ```bash
-   kubectl label node <node> lantern.dev/runtimeclass=gvisor   # or =kata
+   kubectl label node <node> pal.dev/runtimeclass=gvisor   # or =kata
    ```
 3. **Taint** them so nothing else schedules there (the manager adds the matching
    toleration to sandboxed pods):
    ```bash
-   kubectl taint node <node> lantern.dev/runtimeclass=gvisor:NoSchedule
+   kubectl taint node <node> pal.dev/runtimeclass=gvisor:NoSchedule
    ```
 4. Set the RuntimeClass **names** and enable rendering:
    ```yaml
@@ -81,7 +81,7 @@ handlers are installed.
 
 ### Tenant baseline (Kyverno) — `policies.enabled`
 
-The control-plane creates tenant namespaces (`lantern-t-<tenant_id>`) at
+The control-plane creates tenant namespaces (`pal-t-<tenant_id>`) at
 **runtime**, so they can't be shipped as static manifests. Instead this installs
 Kyverno `ClusterPolicy` objects that fire on namespace **create** and lock the
 namespace down before any agent pod lands:
@@ -95,7 +95,7 @@ The runtime-manager's per-pod NetworkPolicy layers an **additive** allow (DNS +
 manager) on top of this baseline deny, so the two compose: baseline denies all,
 the per-pod policy re-opens exactly DNS + the manager channel for that run's pod.
 
-Tune via `policies.namespaceSelector` (glob, default `lantern-t-*`),
+Tune via `policies.namespaceSelector` (glob, default `pal-t-*`),
 `policies.resourceQuota.*`, `policies.limitRange.*`, and
 `policies.generateExisting` (apply to namespaces that already exist).
 
@@ -122,7 +122,7 @@ Defense-in-depth **on top of** the runtime-manager's per-pod NetworkPolicy:
 - `egress.cilium.enabled` renders a `CiliumClusterwideNetworkPolicy` (or a
   namespaced `CiliumNetworkPolicy` when `egress.cilium.scope: namespaced`) that
   **default-denies egress** for agent pods (`egress.cilium.podSelector`,
-  default `lantern.dev/agent=true`), allowing only DNS, the manager/control-plane
+  default `pal.dev/agent=true`), allowing only DNS, the manager/control-plane
   (`:50054`), and — when the proxy is on — the egress proxy.
 - `egress.proxy.enabled` renders a minimal **authenticating forward proxy**
   (default `ubuntu/squid`, configurable via `egress.proxy.image` /
@@ -156,7 +156,7 @@ Renders a `SecretStore` (or `ClusterSecretStore` when
 
 > **Scope note.** PAL Runtime's **primary** secret path for *agent runtime* secrets
 > is the **in-VM mTLS vend** — the harness fetches short-TTL secrets at execution
-> time and `lantern.secret/...` refs **never land in pod env**. ESO is **not**
+> time and `pal.secret/...` refs **never land in pod env**. ESO is **not**
 > that path. ESO is for **operator-managed platform secrets** (postgres
 > password, agent token, registry pull creds) so they can live in
 > Vault/AWS/GCP instead of helm values. Adapt the example `ExternalSecret`'s

@@ -5,7 +5,7 @@
 //! its parameters on the **command line**, while every other harness module
 //! reads configuration from the **environment**.
 //!
-//! The manager encodes the spawn contract as `lantern.*` keys in boot-args
+//! The manager encodes the spawn contract as `pal.*` keys in boot-args
 //! (see runtime-manager `backends/firecracker.rs::build_boot_args`, whose
 //! comment says "so the init process can export them into the harness
 //! environment" — the harness *is* that init process). Nothing performed that
@@ -22,7 +22,7 @@ const CMDLINE_PATH: &str = "/proc/cmdline";
 
 /// In-guest mount point for the per-VM cert drive.
 #[cfg(target_os = "linux")]
-const CERT_MOUNT: &str = "/run/lantern/certs";
+const CERT_MOUNT: &str = "/run/pal/certs";
 
 /// Block devices to probe for the cert drive.
 ///
@@ -49,7 +49,7 @@ const SPAWN_FILE: &str = "spawn.json";
 /// the drive makes "the workload cannot read tls.key (or spawn.json's env)"
 /// true by construction instead of by image-builder convention.
 #[cfg(target_os = "linux")]
-const PRIVATE_DIR: &str = "/run/lantern/harness";
+const PRIVATE_DIR: &str = "/run/pal/harness";
 
 /// The manager→harness spawn contract (`spawn.json` on the cert drive).
 ///
@@ -73,11 +73,11 @@ pub struct SpawnContract {
     /// Point-to-point addressing; only used to re-address a restored guest
     /// (a cold boot is configured by the kernel's `ip=`).
     pub network: Option<GuestNetwork>,
-    /// Per-incarnation exec-server bearer (→ `LANTERN_HARNESS_EXEC_TOKEN`).
+    /// Per-incarnation exec-server bearer (→ `PAL_HARNESS_EXEC_TOKEN`).
     pub exec_token: Option<String>,
-    /// The manager's environment class (→ `LANTERN_ENV`). Typed, so it can
+    /// The manager's environment class (→ `PAL_ENV`). Typed, so it can
     /// never come from the caller-supplied `env` map.
-    pub lantern_env: Option<String>,
+    pub pal_env: Option<String>,
     /// `"broker"` → no NIC; egress is bridged over vsock to the host-side
     /// broker (ADR 0026). Absent → legacy in-guest proxy.
     pub egress_mode: Option<String>,
@@ -89,45 +89,36 @@ pub struct SpawnContract {
     pub vsock_manager_port: Option<u32>,
 }
 
-/// `LANTERN_*` keys a caller may legitimately put in the workload env (agent
-/// identity, trace parent, crash-resume marker). Any other `LANTERN_*` key is
-/// harness configuration — `LANTERN_ENV`, egress, workload uid, … — and only
+/// `PAL_*` keys a caller may legitimately put in the workload env (agent
+/// identity, trace parent, crash-resume marker). Any other `PAL_*` key is
+/// harness configuration — `PAL_ENV`, egress, workload uid, … — and only
 /// the manager's typed fields / own boot-args may set it. Keep in sync with
-/// the manager's `service::CALLER_LANTERN_KEYS`.
-pub const CALLER_LANTERN_KEYS: [&str; 4] = [
-    "LANTERN_AGENT_INSTANCE_ID",
-    "LANTERN_AGENT_INSTANCE_TOKEN",
-    "LANTERN_TRACE_PARENT",
-    "LANTERN_RESUME",
+/// the manager's `service::CALLER_PAL_KEYS`.
+pub const CALLER_PAL_KEYS: [&str; 4] = [
+    "PAL_AGENT_INSTANCE_ID",
+    "PAL_AGENT_INSTANCE_TOKEN",
+    "PAL_TRACE_PARENT",
+    "PAL_RESUME",
 ];
 
-/// `lantern.env.LANTERN_*` boot-args the MANAGER itself emits (not caller env;
-/// the manager strips caller `LANTERN_*` keys before building boot-args).
-const MANAGER_CMDLINE_KEYS: [&str; 3] = [
-    "LANTERN_MANAGER_ADDR",
-    "LANTERN_WORKLOAD_UID",
-    "LANTERN_ENV",
-];
+/// `pal.env.PAL_*` boot-args the MANAGER itself emits (not caller env;
+/// the manager strips caller `PAL_*` keys before building boot-args).
+const MANAGER_CMDLINE_KEYS: [&str; 3] = ["PAL_MANAGER_ADDR", "PAL_WORKLOAD_UID", "PAL_ENV"];
 
 /// Identity keys the MANAGER stamps into the free-form env from the request's
 /// authenticated typed fields, after stripping any caller-supplied value
 /// (runtime-manager `service::own_workload_env`). Accepted on the env channel
-/// (`spawn.json` `env` / `lantern.env.*`) because that is how the manager
+/// (`spawn.json` `env` / `pal.env.*`) because that is how the manager
 /// sends them; the harness itself never reads them — they are for the
 /// workload SDK.
-const MANAGER_IDENTITY_KEYS: [&str; 2] = ["LANTERN_TENANT_ID", "LANTERN_AGENT_VERSION_ID"];
+const MANAGER_IDENTITY_KEYS: [&str; 2] = ["PAL_TENANT_ID", "PAL_AGENT_VERSION_ID"];
 
-/// Whether a free-form env key may be applied: anything outside the
-/// `LANTERN_`/`PAL_` namespaces, an allowlisted caller key, or a
-/// manager-stamped identity key. EVERY `PAL_*` key is dropped (ADR 0032):
-/// nothing upstream stamps or replaces `PAL_` identity yet, so even the twin
-/// of a legitimate caller key (`PAL_AGENT_INSTANCE_TOKEN`) is caller-chosen.
-/// Relax only when the writers flip (rename plan step 4).
+/// Whether a free-form env key may be applied: anything outside the `PAL_`
+/// namespace, an allowlisted caller key, or a manager-stamped identity key.
 fn caller_key_allowed(key: &str) -> bool {
     !key.starts_with("PAL_")
-        && (!key.starts_with("LANTERN_")
-            || CALLER_LANTERN_KEYS.contains(&key)
-            || MANAGER_IDENTITY_KEYS.contains(&key))
+        || CALLER_PAL_KEYS.contains(&key)
+        || MANAGER_IDENTITY_KEYS.contains(&key)
 }
 
 /// `spawn.json` `network` — this VM's /30 (manager = `host_ip`).
@@ -151,44 +142,44 @@ pub fn contract_env_pairs(c: &SpawnContract) -> serde_json::Result<Vec<(String, 
     if let Some(argv) = c.workload_cmd.as_ref().filter(|a| !a.is_empty()) {
         // ARGV is authoritative (see main.rs::parse_env); CMD is kept for
         // logs and older readers.
-        pairs.push(("LANTERN_WORKLOAD_ARGV".into(), serde_json::to_string(argv)?));
-        pairs.push(("LANTERN_WORKLOAD_CMD".into(), argv.join(" ")));
+        pairs.push(("PAL_WORKLOAD_ARGV".into(), serde_json::to_string(argv)?));
+        pairs.push(("PAL_WORKLOAD_CMD".into(), argv.join(" ")));
     }
     if let Some(rules) = &c.egress_rules {
-        pairs.push(("LANTERN_EGRESS_RULES".into(), serde_json::to_string(rules)?));
+        pairs.push(("PAL_EGRESS_RULES".into(), serde_json::to_string(rules)?));
     }
     if let Some(uid) = c.workload_uid {
-        pairs.push(("LANTERN_WORKLOAD_UID".into(), uid.to_string()));
+        pairs.push(("PAL_WORKLOAD_UID".into(), uid.to_string()));
     }
     if let Some(gid) = c.workload_gid {
-        pairs.push(("LANTERN_WORKLOAD_GID".into(), gid.to_string()));
+        pairs.push(("PAL_WORKLOAD_GID".into(), gid.to_string()));
     }
     if let Some(t) = c.exec_token.as_ref().filter(|t| !t.is_empty()) {
-        pairs.push(("LANTERN_HARNESS_EXEC_TOKEN".into(), t.clone()));
+        pairs.push(("PAL_HARNESS_EXEC_TOKEN".into(), t.clone()));
     }
     if let Some(vm_id) = c.vm_id.as_ref().filter(|v| !v.is_empty()) {
-        pairs.push(("LANTERN_VM_ID".into(), vm_id.clone()));
+        pairs.push(("PAL_VM_ID".into(), vm_id.clone()));
     }
     if let Some(secrets) = c.declared_secrets.as_ref().filter(|s| !s.is_empty()) {
         pairs.push((
-            "LANTERN_DECLARED_SECRETS".into(),
+            "PAL_DECLARED_SECRETS".into(),
             serde_json::to_string(secrets)?,
         ));
     }
-    if let Some(env) = c.lantern_env.as_ref().filter(|e| !e.is_empty()) {
-        pairs.push(("LANTERN_ENV".into(), env.clone()));
+    if let Some(env) = c.pal_env.as_ref().filter(|e| !e.is_empty()) {
+        pairs.push(("PAL_ENV".into(), env.clone()));
     }
     if let Some(mode) = c.egress_mode.as_ref().filter(|m| !m.is_empty()) {
-        pairs.push(("LANTERN_EGRESS_MODE".into(), mode.clone()));
+        pairs.push(("PAL_EGRESS_MODE".into(), mode.clone()));
     }
     if let Some(pem) = c.egress_ca_pem.as_ref().filter(|p| !p.is_empty()) {
-        pairs.push(("LANTERN_EGRESS_CA_PEM".into(), pem.clone()));
+        pairs.push(("PAL_EGRESS_CA_PEM".into(), pem.clone()));
     }
     if let Some(port) = c.vsock_egress_port.filter(|p| *p != 0) {
-        pairs.push(("LANTERN_EGRESS_VSOCK_PORT".into(), port.to_string()));
+        pairs.push(("PAL_EGRESS_VSOCK_PORT".into(), port.to_string()));
     }
     if let Some(port) = c.vsock_manager_port.filter(|p| *p != 0) {
-        pairs.push(("LANTERN_MANAGER_VSOCK_PORT".into(), port.to_string()));
+        pairs.push(("PAL_MANAGER_VSOCK_PORT".into(), port.to_string()));
     }
     let typed = pairs.len();
     let mut dropped: Vec<&str> = Vec::new();
@@ -201,7 +192,7 @@ pub fn contract_env_pairs(c: &SpawnContract) -> serde_json::Result<Vec<(String, 
     }
     if !dropped.is_empty() {
         // Names only — values may be sensitive.
-        tracing::warn!(keys = ?dropped, "bootenv: ignored LANTERN_*/PAL_* keys in spawn.json env (harness config is manager-owned)");
+        tracing::warn!(keys = ?dropped, "bootenv: ignored PAL_* keys in spawn.json env (harness config is manager-owned)");
     }
     Ok(pairs)
 }
@@ -303,7 +294,7 @@ pub fn log_filter_from_cmdline(cmdline: &str) -> Option<String> {
 /// `EnvFilter::try_from_default_env` reads `RUST_LOG` once, at initialisation.
 /// The rest of the boot-args bridge runs after that — deliberately, so its work
 /// is visible in the log — which left no way to configure logging from
-/// boot-args at all: a `lantern.env.RUST_LOG=...` was applied long after the
+/// boot-args at all: a `pal.env.RUST_LOG=...` was applied long after the
 /// filter had been fixed. Diagnosing a guest therefore meant editing the
 /// harness's compiled-in default and rebuilding the image.
 ///
@@ -344,12 +335,9 @@ pub fn bootstrap() -> anyhow::Result<()> {
     // Decide prod-ness before the contract is applied (whether a malformed
     // contract is fatal cannot depend on that same contract) — but from the
     // boot-args too, which are not hydrated yet: on Firecracker that is where
-    // LANTERN_ENV arrives.
+    // PAL_ENV arrives.
     let cmdline = std::fs::read_to_string(CMDLINE_PATH).ok();
-    let prod = boot_is_prod(
-        std::env::var("LANTERN_ENV").ok().as_deref(),
-        cmdline.as_deref(),
-    );
+    let prod = boot_is_prod(std::env::var("PAL_ENV").ok().as_deref(), cmdline.as_deref());
     let contract = resolve_spawn_contract(spawn, prod)?;
     hydrate_env_from_cmdline(contract);
     assemble_declared_secrets();
@@ -371,12 +359,12 @@ pub fn boot_is_prod(process_env: Option<&str>, cmdline: Option<&str>) -> bool {
     };
     env_from_cmdline(cmdline)
         .iter()
-        .any(|(k, v)| k == "LANTERN_ENV" && crate::tls::is_prod_value(v))
+        .any(|(k, v)| k == "PAL_ENV" && crate::tls::is_prod_value(v))
 }
 
-/// Rebuild `LANTERN_DECLARED_SECRETS` from the per-secret boot-args keys.
+/// Rebuild `PAL_DECLARED_SECRETS` from the per-secret boot-args keys.
 ///
-/// The manager emits one `lantern.secret.<ENV_NAME>=<uri>` per declared secret
+/// The manager emits one `pal.secret.<ENV_NAME>=<uri>` per declared secret
 /// (a JSON blob cannot survive the kernel command line: args are
 /// whitespace-separated and quotes are stripped from values). The rest of the
 /// harness reads a JSON array, so assemble it here.
@@ -386,7 +374,7 @@ pub fn boot_is_prod(process_env: Option<&str>, cmdline: Option<&str>) -> bool {
 /// none — VendSecret is never reached.
 fn assemble_declared_secrets() {
     // An explicitly-provided value wins, as everywhere else in this module.
-    if std::env::var_os("LANTERN_DECLARED_SECRETS").is_some() {
+    if std::env::var_os("PAL_DECLARED_SECRETS").is_some() {
         return;
     }
     let Ok(cmdline) = std::fs::read_to_string(CMDLINE_PATH) else {
@@ -397,7 +385,7 @@ fn assemble_declared_secrets() {
         .split_whitespace()
         .filter_map(|token| token.split_once('='))
         .filter_map(|(key, uri)| {
-            key.strip_prefix("lantern.secret.")
+            key.strip_prefix("pal.secret.")
                 .filter(|name| !name.is_empty() && !uri.is_empty())
                 .map(|name| serde_json::json!({ "env_name": name, "secret_uri": uri }))
         })
@@ -410,7 +398,7 @@ fn assemble_declared_secrets() {
     match serde_json::to_string(&declared) {
         Ok(json) => {
             // SAFETY: single-threaded startup — see the contract on `main`.
-            unsafe { std::env::set_var("LANTERN_DECLARED_SECRETS", &json) };
+            unsafe { std::env::set_var("PAL_DECLARED_SECRETS", &json) };
             // Names only — a secret URI can identify sensitive material.
             tracing::info!(count, "bootenv: assembled declared secrets from boot-args");
         }
@@ -421,7 +409,7 @@ fn assemble_declared_secrets() {
 /// Name the manager is reached by from inside the guest.
 ///
 /// Must match a DNS SAN on the manager's server certificate.
-pub(crate) const MANAGER_HOSTNAME: &str = "manager.lantern.internal";
+pub(crate) const MANAGER_HOSTNAME: &str = "manager.pal.internal";
 
 /// Make the manager reachable by NAME rather than by address.
 ///
@@ -435,13 +423,13 @@ pub(crate) const MANAGER_HOSTNAME: &str = "manager.lantern.internal";
 /// Pin the name in `/etc/hosts` and dial that instead. The URI itself then
 /// carries a DNS name, so the TLS server name is correct by construction and
 /// does not depend on a library override taking effect. One certificate with a
-/// `DNS:manager.lantern.internal` SAN covers every VM.
+/// `DNS:manager.pal.internal` SAN covers every VM.
 ///
 /// Best-effort: if the address cannot be parsed or `/etc/hosts` cannot be
 /// written, the original address is left in place and the connection behaves
 /// exactly as before.
 fn pin_manager_hostname() {
-    let Ok(addr) = std::env::var("LANTERN_MANAGER_ADDR") else {
+    let Ok(addr) = std::env::var("PAL_MANAGER_ADDR") else {
         return;
     };
     // Only an IP literal needs pinning; a name already resolves.
@@ -468,7 +456,7 @@ fn pin_manager_hostname() {
 
     let named = format!("{MANAGER_HOSTNAME}:{port}");
     // SAFETY: single-threaded startup — see the contract on `main`.
-    unsafe { std::env::set_var("LANTERN_MANAGER_ADDR", &named) };
+    unsafe { std::env::set_var("PAL_MANAGER_ADDR", &named) };
     tracing::info!(
         manager_ip = host,
         manager_addr = %named,
@@ -623,7 +611,7 @@ pub fn load_cert_device(device: &str) -> Option<CertDriveLoad> {
 fn mount_cert_drive() -> std::io::Result<Option<Vec<u8>>> {
     // Already resolvable — a real environment was injected (docker/K8s), or
     // this ran once already. Never re-mount over working material.
-    if std::env::var_os("LANTERN_VM_TLS_CERT")
+    if std::env::var_os("PAL_VM_TLS_CERT")
         .map(|p| std::path::Path::new(&p).exists())
         .unwrap_or(false)
     {
@@ -644,9 +632,9 @@ fn mount_cert_drive() -> std::io::Result<Option<Vec<u8>>> {
             Some(private) => {
                 // SAFETY: single-threaded startup — see the contract on `main`.
                 unsafe {
-                    std::env::set_var("LANTERN_VM_TLS_CERT", &private[0]);
-                    std::env::set_var("LANTERN_VM_TLS_KEY", &private[1]);
-                    std::env::set_var("LANTERN_MANAGER_TLS_CA", &private[2]);
+                    std::env::set_var("PAL_VM_TLS_CERT", &private[0]);
+                    std::env::set_var("PAL_VM_TLS_KEY", &private[1]);
+                    std::env::set_var("PAL_MANAGER_TLS_CA", &private[2]);
                 }
                 tracing::info!(
                     device,
@@ -711,24 +699,24 @@ fn umount(target: &str) -> bool {
 /// Returns `None` for kernel parameters that are not part of the PAL
 /// contract (`console=`, `panic=`, `pci=off`, …).
 fn cmdline_key_to_env(key: &str) -> Option<String> {
-    // `lantern.env.FOO=bar` carries caller-supplied env through verbatim.
-    // `LANTERN_*` names are harness config: only the manager's own keys and
+    // `pal.env.FOO=bar` carries caller-supplied env through verbatim.
+    // `PAL_*` names are harness config: only the manager's own keys and
     // the caller allowlist are honoured (a caller value that slipped through an
     // older manager must not configure the harness).
-    if let Some(name) = key.strip_prefix("lantern.env.") {
+    if let Some(name) = key.strip_prefix("pal.env.") {
         let ok =
             !name.is_empty() && (caller_key_allowed(name) || MANAGER_CMDLINE_KEYS.contains(&name));
         return ok.then(|| name.to_string());
     }
     let mapped = match key {
-        "lantern.vm_id" => "LANTERN_VM_ID",
-        "lantern.run_id" => "LANTERN_RUN_ID",
-        "lantern.tls_cert" => "LANTERN_VM_TLS_CERT",
-        "lantern.tls_key" => "LANTERN_VM_TLS_KEY",
-        "lantern.manager_ca" => "LANTERN_MANAGER_TLS_CA",
+        "pal.vm_id" => "PAL_VM_ID",
+        "pal.run_id" => "PAL_RUN_ID",
+        "pal.tls_cert" => "PAL_VM_TLS_CERT",
+        "pal.tls_key" => "PAL_VM_TLS_KEY",
+        "pal.manager_ca" => "PAL_MANAGER_TLS_CA",
         // Not emitted by the manager yet; recognised so it can start sending
         // one without requiring a matching harness release.
-        "lantern.workload_cmd" => "LANTERN_WORKLOAD_CMD",
+        "pal.workload_cmd" => "PAL_WORKLOAD_CMD",
         _ => return None,
     };
     Some(mapped.to_string())
@@ -752,7 +740,7 @@ pub fn env_from_cmdline(cmdline: &str) -> Vec<(String, String)> {
 /// threads are spawned: `set_var` mutates process-global state and is unsound
 /// once other threads are running.
 ///
-/// Values are never logged — `lantern.env.*` carries caller-supplied data that
+/// Values are never logged — `pal.env.*` carries caller-supplied data that
 /// may be sensitive (invariant: secrets never appear in logs). Only the names
 /// that were set are traced.
 ///
@@ -808,7 +796,7 @@ pub fn hydrate_env_from_cmdline(contract: Vec<(String, String)>) {
 fn is_guest_path_var(name: &str) -> bool {
     matches!(
         name,
-        "LANTERN_VM_TLS_CERT" | "LANTERN_VM_TLS_KEY" | "LANTERN_MANAGER_TLS_CA"
+        "PAL_VM_TLS_CERT" | "PAL_VM_TLS_KEY" | "PAL_MANAGER_TLS_CA"
     )
 }
 
@@ -820,8 +808,8 @@ mod tests {
     fn log_filter_is_picked_out_of_boot_args() {
         // The whole point: a filter passed as a boot-arg must be findable
         // before tracing exists.
-        let cmdline = "console=ttyS0 lantern.vm_id=vm-1 \
-             lantern.env.RUST_LOG=info,rustls=trace lantern.env.OTHER=x";
+        let cmdline = "console=ttyS0 pal.vm_id=vm-1 \
+             pal.env.RUST_LOG=info,rustls=trace pal.env.OTHER=x";
         assert_eq!(
             log_filter_from_cmdline(cmdline).as_deref(),
             Some("info,rustls=trace")
@@ -830,17 +818,17 @@ mod tests {
 
     #[test]
     fn no_log_filter_in_boot_args_is_none() {
-        assert!(log_filter_from_cmdline("console=ttyS0 lantern.vm_id=vm-1").is_none());
+        assert!(log_filter_from_cmdline("console=ttyS0 pal.vm_id=vm-1").is_none());
         assert!(log_filter_from_cmdline("").is_none());
     }
 
     #[test]
     fn maps_the_documented_contract_keys() {
         let cmdline = "console=ttyS0 reboot=k panic=1 pci=off \
-             lantern.vm_id=vm-123 lantern.run_id=run-9 \
-             lantern.tls_cert=/run/lantern/certs/vm-123/tls.crt \
-             lantern.tls_key=/run/lantern/certs/vm-123/tls.key \
-             lantern.manager_ca=/run/lantern/certs/manager-ca.crt";
+             pal.vm_id=vm-123 pal.run_id=run-9 \
+             pal.tls_cert=/run/pal/certs/vm-123/tls.crt \
+             pal.tls_key=/run/pal/certs/vm-123/tls.key \
+             pal.manager_ca=/run/pal/certs/manager-ca.crt";
         let got = env_from_cmdline(cmdline);
 
         let lookup = |k: &str| {
@@ -849,25 +837,19 @@ mod tests {
                 .map(|(_, v)| v.as_str())
                 .unwrap_or_default()
         };
-        assert_eq!(lookup("LANTERN_VM_ID"), "vm-123");
-        assert_eq!(lookup("LANTERN_RUN_ID"), "run-9");
+        assert_eq!(lookup("PAL_VM_ID"), "vm-123");
+        assert_eq!(lookup("PAL_RUN_ID"), "run-9");
+        assert_eq!(lookup("PAL_VM_TLS_CERT"), "/run/pal/certs/vm-123/tls.crt");
+        assert_eq!(lookup("PAL_VM_TLS_KEY"), "/run/pal/certs/vm-123/tls.key");
         assert_eq!(
-            lookup("LANTERN_VM_TLS_CERT"),
-            "/run/lantern/certs/vm-123/tls.crt"
-        );
-        assert_eq!(
-            lookup("LANTERN_VM_TLS_KEY"),
-            "/run/lantern/certs/vm-123/tls.key"
-        );
-        assert_eq!(
-            lookup("LANTERN_MANAGER_TLS_CA"),
-            "/run/lantern/certs/manager-ca.crt"
+            lookup("PAL_MANAGER_TLS_CA"),
+            "/run/pal/certs/manager-ca.crt"
         );
     }
 
     #[test]
     fn ignores_ordinary_kernel_parameters() {
-        // Regression guard: only `lantern.*` keys may become environment.
+        // Regression guard: only `pal.*` keys may become environment.
         let got = env_from_cmdline("console=ttyS0 reboot=k panic=1 root=/dev/vda rw");
         assert!(
             got.is_empty(),
@@ -876,8 +858,8 @@ mod tests {
     }
 
     #[test]
-    fn passes_lantern_env_prefixed_vars_through_verbatim() {
-        let got = env_from_cmdline("lantern.env.MY_FLAG=on lantern.env.OTHER=2");
+    fn passes_pal_env_prefixed_vars_through_verbatim() {
+        let got = env_from_cmdline("pal.env.MY_FLAG=on pal.env.OTHER=2");
         assert!(got.contains(&("MY_FLAG".to_string(), "on".to_string())));
         assert!(got.contains(&("OTHER".to_string(), "2".to_string())));
     }
@@ -887,8 +869,8 @@ mod tests {
         // Bare flags (no '='), an empty suffix, and a trailing newline as read
         // from procfs must all be survivable — this runs before anything else
         // in the VM, so a panic here is an unbootable guest.
-        let got = env_from_cmdline("quiet lantern.env.= lantern.vm_id=vm-1 \n");
-        assert_eq!(got, vec![("LANTERN_VM_ID".to_string(), "vm-1".to_string())]);
+        let got = env_from_cmdline("quiet pal.env.= pal.vm_id=vm-1 \n");
+        assert_eq!(got, vec![("PAL_VM_ID".to_string(), "vm-1".to_string())]);
     }
 
     #[test]
@@ -903,18 +885,15 @@ mod tests {
         let get = |k: &str| pairs.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
         // Spaces survive — the whole point of the file.
         assert_eq!(
-            get("LANTERN_WORKLOAD_ARGV").as_deref(),
+            get("PAL_WORKLOAD_ARGV").as_deref(),
             Some(r#"["python","main.py"]"#)
         );
-        assert_eq!(
-            get("LANTERN_WORKLOAD_CMD").as_deref(),
-            Some("python main.py")
-        );
+        assert_eq!(get("PAL_WORKLOAD_CMD").as_deref(), Some("python main.py"));
         assert_eq!(get("K").as_deref(), Some("V"));
-        assert_eq!(get("LANTERN_WORKLOAD_UID").as_deref(), Some("1000"));
-        assert_eq!(get("LANTERN_WORKLOAD_GID").as_deref(), Some("1001"));
+        assert_eq!(get("PAL_WORKLOAD_UID").as_deref(), Some("1000"));
+        assert_eq!(get("PAL_WORKLOAD_GID").as_deref(), Some("1001"));
         let rules: Vec<crate::proto::EgressRule> =
-            serde_json::from_str(&get("LANTERN_EGRESS_RULES").unwrap_or_default())
+            serde_json::from_str(&get("PAL_EGRESS_RULES").unwrap_or_default())
                 .expect("egress JSON round-trips");
         assert_eq!(rules[0].pattern, "api.example.com");
         assert_eq!(rules[0].http_methods, vec!["GET".to_string()]);
@@ -925,19 +904,19 @@ mod tests {
         let c = parse_spawn_contract(
             br#"{"version":1,"egress_mode":"broker","egress_ca_pem":"-----BEGIN CERTIFICATE-----\nX\n",
                 "vsock_egress_port":3128,"vsock_manager_port":50054,
-                "egress_rules":[{"pattern":"api.openai.com","inject":[{"header":"Authorization","secret_uri":"lantern.secret://t/k"}]}]}"#,
+                "egress_rules":[{"pattern":"api.openai.com","inject":[{"header":"Authorization","secret_uri":"pal.secret://t/k"}]}]}"#,
         )
         .expect("broker contract");
         let pairs = contract_env_pairs(&c).expect("encodable");
         let get = |k: &str| pairs.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
-        assert_eq!(get("LANTERN_EGRESS_MODE").as_deref(), Some("broker"));
-        assert!(get("LANTERN_EGRESS_CA_PEM").is_some_and(|p| p.starts_with("-----BEGIN")));
-        assert_eq!(get("LANTERN_EGRESS_VSOCK_PORT").as_deref(), Some("3128"));
-        assert_eq!(get("LANTERN_MANAGER_VSOCK_PORT").as_deref(), Some("50054"));
+        assert_eq!(get("PAL_EGRESS_MODE").as_deref(), Some("broker"));
+        assert!(get("PAL_EGRESS_CA_PEM").is_some_and(|p| p.starts_with("-----BEGIN")));
+        assert_eq!(get("PAL_EGRESS_VSOCK_PORT").as_deref(), Some("3128"));
+        assert_eq!(get("PAL_MANAGER_VSOCK_PORT").as_deref(), Some("50054"));
         // An injection spec (should one ever arrive) is dropped, not parsed
         // into the guest's rules — the manager strips it anyway.
         assert!(
-            !get("LANTERN_EGRESS_RULES")
+            !get("PAL_EGRESS_RULES")
                 .unwrap_or_default()
                 .contains("secret")
         );
@@ -951,10 +930,10 @@ mod tests {
             .expect("legacy contract");
         let pairs = contract_env_pairs(&c).expect("encodable");
         for k in [
-            "LANTERN_EGRESS_MODE",
-            "LANTERN_EGRESS_CA_PEM",
-            "LANTERN_EGRESS_VSOCK_PORT",
-            "LANTERN_MANAGER_VSOCK_PORT",
+            "PAL_EGRESS_MODE",
+            "PAL_EGRESS_CA_PEM",
+            "PAL_EGRESS_VSOCK_PORT",
+            "PAL_MANAGER_VSOCK_PORT",
         ] {
             assert!(pairs.iter().all(|(n, _)| n != k), "{k} must be absent");
         }
@@ -972,46 +951,23 @@ mod tests {
     #[test]
     fn typed_contract_fields_beat_free_form_env() {
         // A user-supplied `env` entry must not override the manager's uid.
-        let c =
-            parse_spawn_contract(br#"{"env":{"LANTERN_WORKLOAD_UID":"0"},"workload_uid":1000}"#)
-                .expect("valid");
+        let c = parse_spawn_contract(br#"{"env":{"PAL_WORKLOAD_UID":"0"},"workload_uid":1000}"#)
+            .expect("valid");
         let pairs = contract_env_pairs(&c).expect("encodable");
         let uids: Vec<&str> = pairs
             .iter()
-            .filter(|(k, _)| k == "LANTERN_WORKLOAD_UID")
+            .filter(|(k, _)| k == "PAL_WORKLOAD_UID")
             .map(|(_, v)| v.as_str())
             .collect();
         // One entry per key (hydration keeps the first value it sees).
         assert_eq!(uids, vec!["1000"]);
     }
 
-    /// ADR 0032: every caller `PAL_*` key is dropped — harness config,
-    /// forged identity, and even the twin of a legitimate caller key, which
-    /// nothing upstream stamps or replaces under the `PAL_` name.
-    #[test]
-    fn caller_pal_keys_are_all_dropped() {
-        let c = parse_spawn_contract(
-            br#"{"env":{
-                "PAL_WORKLOAD_UID":"0","PAL_ENV":"dev","PAL_EGRESS_FAIL_CLOSED":"0",
-                "PAL_HARNESS_EXEC_TOKEN":"forged","PAL_TENANT_ID":"other-tenant",
-                "PAL_RESUME":"1","PAL_TRACE_PARENT":"00-abc-def-01",
-                "PAL_AGENT_INSTANCE_ID":"i","PAL_AGENT_INSTANCE_TOKEN":"caller-chosen",
-                "LANTERN_RESUME":"1",
-                "LANTERN_TENANT_ID":"t1","KEEP":"1"
-            }}"#,
-        )
-        .expect("valid");
-        let pairs = contract_env_pairs(&c).expect("encodable");
-        let mut keys: Vec<&str> = pairs.iter().map(|(k, _)| k.as_str()).collect();
-        keys.sort_unstable();
-        assert_eq!(keys, vec!["KEEP", "LANTERN_RESUME", "LANTERN_TENANT_ID"]);
-    }
-
     #[test]
     fn spawn_contract_takes_precedence_over_cmdline() {
         let cmdline = env_from_cmdline(
-            "lantern.vm_id=vm-1 lantern.workload_cmd=python \
-             lantern.env.LANTERN_WORKLOAD_UID=0 lantern.env.KEEP=1",
+            "pal.vm_id=vm-1 pal.workload_cmd=python \
+             pal.env.PAL_WORKLOAD_UID=0 pal.env.KEEP=1",
         );
         let c =
             parse_spawn_contract(br#"{"workload_cmd":["python","main.py"],"workload_uid":1000}"#)
@@ -1024,25 +980,25 @@ mod tests {
                 .collect()
         };
         // Exactly one value per contract key, and it is the contract's.
-        assert_eq!(all("LANTERN_WORKLOAD_CMD"), vec!["python main.py"]);
-        assert_eq!(all("LANTERN_WORKLOAD_UID"), vec!["1000"]);
+        assert_eq!(all("PAL_WORKLOAD_CMD"), vec!["python main.py"]);
+        assert_eq!(all("PAL_WORKLOAD_UID"), vec!["1000"]);
         // Keys the contract does not set still come from boot-args.
-        assert_eq!(all("LANTERN_VM_ID"), vec!["vm-1"]);
+        assert_eq!(all("PAL_VM_ID"), vec!["vm-1"]);
         assert_eq!(all("KEEP"), vec!["1"]);
     }
 
-    /// Caller env (spawn.json `env` / `lantern.env.*`) cannot set harness
-    /// config: LANTERN_ENV=dev from the caller on a prod manager stays prod;
+    /// Caller env (spawn.json `env` / `pal.env.*`) cannot set harness
+    /// config: PAL_ENV=dev from the caller on a prod manager stays prod;
     /// egress/proxy knobs are ignored; agent identity keys pass through.
     #[test]
     fn caller_env_cannot_set_harness_security_config() {
         let contract = parse_spawn_contract(
-            br#"{"lantern_env":"prod","env":{
-                "LANTERN_ENV":"dev","LANTERN_EGRESS_FAIL_CLOSED":"0",
-                "LANTERN_NO_PROXY":"*","LANTERN_EGRESS_RULES":"[]",
-                "LANTERN_WORKLOAD_UID":"0","LANTERN_AGENT_INSTANCE_ID":"inst",
-                "LANTERN_AGENT_INSTANCE_TOKEN":"tok","FOO":"bar",
-                "LANTERN_TENANT_ID":"t-auth","LANTERN_AGENT_VERSION_ID":"av-1"}}"#,
+            br#"{"pal_env":"prod","env":{
+                "PAL_ENV":"dev","PAL_EGRESS_FAIL_CLOSED":"0",
+                "PAL_NO_PROXY":"*","PAL_EGRESS_RULES":"[]",
+                "PAL_WORKLOAD_UID":"0","PAL_AGENT_INSTANCE_ID":"inst",
+                "PAL_AGENT_INSTANCE_TOKEN":"tok","FOO":"bar",
+                "PAL_TENANT_ID":"t-auth","PAL_AGENT_VERSION_ID":"av-1"}}"#,
         )
         .unwrap();
         let pairs = contract_env_pairs(&contract).unwrap();
@@ -1053,59 +1009,58 @@ mod tests {
                 .map(|(_, v)| v.as_str())
                 .collect::<Vec<_>>()
         };
-        assert_eq!(get("LANTERN_ENV"), ["prod"]);
+        assert_eq!(get("PAL_ENV"), ["prod"]);
         for k in [
-            "LANTERN_EGRESS_FAIL_CLOSED",
-            "LANTERN_NO_PROXY",
-            "LANTERN_EGRESS_RULES",
-            "LANTERN_WORKLOAD_UID",
+            "PAL_EGRESS_FAIL_CLOSED",
+            "PAL_NO_PROXY",
+            "PAL_EGRESS_RULES",
+            "PAL_WORKLOAD_UID",
         ] {
             assert!(get(k).is_empty(), "{k} must not come from caller env");
         }
-        assert_eq!(get("LANTERN_AGENT_INSTANCE_ID"), ["inst"]);
-        assert_eq!(get("LANTERN_AGENT_INSTANCE_TOKEN"), ["tok"]);
+        assert_eq!(get("PAL_AGENT_INSTANCE_ID"), ["inst"]);
+        assert_eq!(get("PAL_AGENT_INSTANCE_TOKEN"), ["tok"]);
         assert_eq!(get("FOO"), ["bar"]);
         // Manager-stamped identity (the manager strips any caller value first).
-        assert_eq!(get("LANTERN_TENANT_ID"), ["t-auth"]);
-        assert_eq!(get("LANTERN_AGENT_VERSION_ID"), ["av-1"]);
+        assert_eq!(get("PAL_TENANT_ID"), ["t-auth"]);
+        assert_eq!(get("PAL_AGENT_VERSION_ID"), ["av-1"]);
 
         // Boot-args: same rule; the manager's own keys still apply.
         let cmd = env_from_cmdline(
-            "lantern.env.LANTERN_EGRESS_FAIL_CLOSED=0 lantern.env.LANTERN_NO_PROXY=* \
-             lantern.env.LANTERN_HARNESS_EXEC_TOKEN=x lantern.env.LANTERN_MANAGER_ADDR=10.0.0.1:50054 \
-             lantern.env.LANTERN_ENV=prod lantern.env.LANTERN_WORKLOAD_UID=1000 \
-             lantern.env.LANTERN_AGENT_INSTANCE_ID=inst lantern.env.FOO=bar \
-             lantern.env.LANTERN_TENANT_ID=t-auth",
+            "pal.env.PAL_EGRESS_FAIL_CLOSED=0 pal.env.PAL_NO_PROXY=* \
+             pal.env.PAL_HARNESS_EXEC_TOKEN=x pal.env.PAL_MANAGER_ADDR=10.0.0.1:50054 \
+             pal.env.PAL_ENV=prod pal.env.PAL_WORKLOAD_UID=1000 \
+             pal.env.PAL_AGENT_INSTANCE_ID=inst pal.env.FOO=bar \
+             pal.env.PAL_TENANT_ID=t-auth",
         );
         let names: Vec<&str> = cmd.iter().map(|(k, _)| k.as_str()).collect();
         assert_eq!(
             names,
             [
-                "LANTERN_MANAGER_ADDR",
-                "LANTERN_ENV",
-                "LANTERN_WORKLOAD_UID",
-                "LANTERN_AGENT_INSTANCE_ID",
+                "PAL_MANAGER_ADDR",
+                "PAL_ENV",
+                "PAL_WORKLOAD_UID",
+                "PAL_AGENT_INSTANCE_ID",
                 "FOO",
-                "LANTERN_TENANT_ID"
+                "PAL_TENANT_ID"
             ]
         );
 
         // Prod manager, caller "dev" in spawn.json env only, no typed field
-        // (older manager): the manager's boot-arg LANTERN_ENV=prod wins.
-        let old = parse_spawn_contract(br#"{"env":{"LANTERN_ENV":"dev"}}"#).unwrap();
+        // (older manager): the manager's boot-arg PAL_ENV=prod wins.
+        let old = parse_spawn_contract(br#"{"env":{"PAL_ENV":"dev"}}"#).unwrap();
         let layered = layer_boot_env(
-            env_from_cmdline("lantern.env.LANTERN_ENV=prod"),
+            env_from_cmdline("pal.env.PAL_ENV=prod"),
             contract_env_pairs(&old).unwrap(),
         );
-        assert_eq!(layered, vec![("LANTERN_ENV".into(), "prod".into())]);
+        assert_eq!(layered, vec![("PAL_ENV".into(), "prod".into())]);
     }
 
-    /// LANTERN_ENV carried only in boot-args (the Firecracker path) must make
+    /// PAL_ENV carried only in boot-args (the Firecracker path) must make
     /// a malformed spawn.json fatal even though boot-args are hydrated later.
     #[test]
     fn prod_from_boot_args_makes_malformed_contract_fatal() {
-        let cmd =
-            |env: &str| format!("console=ttyS0 lantern.vm_id=v lantern.env.LANTERN_ENV={env}");
+        let cmd = |env: &str| format!("console=ttyS0 pal.vm_id=v pal.env.PAL_ENV={env}");
         assert!(boot_is_prod(None, Some(&cmd("prod"))));
         assert!(boot_is_prod(None, Some(&cmd("Staging"))));
         assert!(!boot_is_prod(None, Some(&cmd("dev"))));
@@ -1148,13 +1103,13 @@ mod tests {
         );
         let ok = resolve_spawn_contract(Ok(Some(br#"{"workload_uid":7}"#.to_vec())), true)
             .expect("valid in prod");
-        assert_eq!(ok, vec![("LANTERN_WORKLOAD_UID".into(), "7".into())]);
+        assert_eq!(ok, vec![("PAL_WORKLOAD_UID".into(), "7".into())]);
     }
 
     #[test]
     fn cert_material_is_stashed_harness_only() {
         use std::os::unix::fs::PermissionsExt;
-        let base = std::env::temp_dir().join(format!("lantern-stash-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("pal-stash-{}", std::process::id()));
         let src = base.join("drive");
         let dst = base.join("private");
         std::fs::create_dir_all(&src).expect("mk src");
@@ -1187,23 +1142,23 @@ mod tests {
         )
         .expect("valid");
         let got = layer_boot_env(
-            env_from_cmdline("lantern.vm_id=vm-old"),
+            env_from_cmdline("pal.vm_id=vm-old"),
             contract_env_pairs(&c).expect("encodable"),
         );
         let get = |k: &str| got.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
-        assert_eq!(get("LANTERN_VM_ID"), Some("vm-new"));
+        assert_eq!(get("PAL_VM_ID"), Some("vm-new"));
         assert_eq!(
-            get("LANTERN_DECLARED_SECRETS"),
+            get("PAL_DECLARED_SECRETS"),
             Some(r#"[{"env_name":"K","secret_uri":"u"}]"#)
         );
         let c = parse_spawn_contract(
-            br#"{"exec_token":"tok","env":{"LANTERN_HARNESS_EXEC_TOKEN":"forged"}}"#,
+            br#"{"exec_token":"tok","env":{"PAL_HARNESS_EXEC_TOKEN":"forged"}}"#,
         )
         .expect("valid");
         let pairs = contract_env_pairs(&c).expect("ok");
         let toks: Vec<&str> = pairs
             .iter()
-            .filter(|(k, _)| k == "LANTERN_HARNESS_EXEC_TOKEN")
+            .filter(|(k, _)| k == "PAL_HARNESS_EXEC_TOKEN")
             .map(|(_, v)| v.as_str())
             .collect();
         assert_eq!(toks, vec!["tok"], "typed token beats free-form env");
@@ -1216,7 +1171,7 @@ mod tests {
     fn keeps_values_containing_equals() {
         // split_once means only the FIRST '=' delimits; base64/query-ish
         // values must survive intact.
-        let got = env_from_cmdline("lantern.env.TOKEN=abc=def==");
+        let got = env_from_cmdline("pal.env.TOKEN=abc=def==");
         assert_eq!(got, vec![("TOKEN".to_string(), "abc=def==".to_string())]);
     }
 }

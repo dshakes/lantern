@@ -14,20 +14,20 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/scheduler/internal/cron"
-	"github.com/dshakes/lantern/services/scheduler/internal/middleware"
-	"github.com/dshakes/lantern/services/scheduler/internal/server"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/scheduler/internal/cron"
+	"github.com/dshakes/pal/services/scheduler/internal/middleware"
+	"github.com/dshakes/pal/services/scheduler/internal/server"
 )
 
-var tracer = otel.Tracer("lantern.scheduler")
+var tracer = otel.Tracer("pal.scheduler")
 
-// SchedulerService implements the lantern.v1.SchedulerService gRPC server.
+// SchedulerService implements the pal.v1.SchedulerService gRPC server.
 // Wire types come from gen/go (the proto is the source of truth); tenant is
 // read from gRPC metadata (invariant #7), never the request body. A fired
 // schedule creates a run via the control-plane RunService (invariant #2).
 type SchedulerService struct {
-	lanternv1.UnimplementedSchedulerServiceServer
+	palv1.UnimplementedSchedulerServiceServer
 
 	srv       *server.Server
 	createRun cron.RunCreator
@@ -51,7 +51,7 @@ func setRLSTenantID(ctx context.Context, tx pgx.Tx, tenantID string) error {
 }
 
 // RegisterSchedule creates a new cron schedule.
-func (s *SchedulerService) RegisterSchedule(ctx context.Context, req *lanternv1.RegisterScheduleRequest) (*lanternv1.RegisterScheduleResponse, error) {
+func (s *SchedulerService) RegisterSchedule(ctx context.Context, req *palv1.RegisterScheduleRequest) (*palv1.RegisterScheduleResponse, error) {
 	ctx, span := tracer.Start(ctx, "SchedulerService.RegisterSchedule")
 	defer span.End()
 
@@ -134,14 +134,14 @@ func (s *SchedulerService) RegisterSchedule(ctx context.Context, req *lanternv1.
 		zap.Time("next_fire_at", nextFire),
 	)
 
-	return &lanternv1.RegisterScheduleResponse{
+	return &palv1.RegisterScheduleResponse{
 		ScheduleId: scheduleID,
 		NextFireAt: timestamppb.New(nextFire),
 	}, nil
 }
 
 // ListSchedules returns all schedules for a tenant.
-func (s *SchedulerService) ListSchedules(ctx context.Context, _ *lanternv1.ListSchedulesRequest) (*lanternv1.ListSchedulesResponse, error) {
+func (s *SchedulerService) ListSchedules(ctx context.Context, _ *palv1.ListSchedulesRequest) (*palv1.ListSchedulesResponse, error) {
 	ctx, span := tracer.Start(ctx, "SchedulerService.ListSchedules")
 	defer span.End()
 
@@ -174,7 +174,7 @@ func (s *SchedulerService) ListSchedules(ctx context.Context, _ *lanternv1.ListS
 	}
 	defer rows.Close()
 
-	var schedules []*lanternv1.Schedule
+	var schedules []*palv1.Schedule
 	for rows.Next() {
 		var (
 			id, tenantIDCol, agentName, cronExpr, timezone string
@@ -196,7 +196,7 @@ func (s *SchedulerService) ListSchedules(ctx context.Context, _ *lanternv1.ListS
 			return nil, status.Errorf(codes.Internal, "decode input_template: %v", err)
 		}
 
-		schedules = append(schedules, &lanternv1.Schedule{
+		schedules = append(schedules, &palv1.Schedule{
 			Id:            id,
 			TenantId:      tenantIDCol,
 			AgentName:     agentName,
@@ -213,11 +213,11 @@ func (s *SchedulerService) ListSchedules(ctx context.Context, _ *lanternv1.ListS
 		return nil, status.Errorf(codes.Internal, "row iteration failed: %v", err)
 	}
 
-	return &lanternv1.ListSchedulesResponse{Schedules: schedules}, nil
+	return &palv1.ListSchedulesResponse{Schedules: schedules}, nil
 }
 
 // DeleteSchedule removes a schedule.
-func (s *SchedulerService) DeleteSchedule(ctx context.Context, req *lanternv1.DeleteScheduleRequest) (*lanternv1.DeleteScheduleResponse, error) {
+func (s *SchedulerService) DeleteSchedule(ctx context.Context, req *palv1.DeleteScheduleRequest) (*palv1.DeleteScheduleResponse, error) {
 	ctx, span := tracer.Start(ctx, "SchedulerService.DeleteSchedule")
 	defer span.End()
 
@@ -266,11 +266,11 @@ func (s *SchedulerService) DeleteSchedule(ctx context.Context, req *lanternv1.De
 		zap.String("schedule_id", req.ScheduleId),
 	)
 
-	return &lanternv1.DeleteScheduleResponse{Deleted: true}, nil
+	return &palv1.DeleteScheduleResponse{Deleted: true}, nil
 }
 
 // Trigger creates a one-shot trigger, optionally with a delay.
-func (s *SchedulerService) Trigger(ctx context.Context, req *lanternv1.TriggerRequest) (*lanternv1.TriggerResponse, error) {
+func (s *SchedulerService) Trigger(ctx context.Context, req *palv1.TriggerRequest) (*palv1.TriggerResponse, error) {
 	ctx, span := tracer.Start(ctx, "SchedulerService.Trigger")
 	defer span.End()
 
@@ -328,7 +328,7 @@ func (s *SchedulerService) Trigger(ctx context.Context, req *lanternv1.TriggerRe
 			zap.Time("fire_at", fireAt),
 		)
 
-		return &lanternv1.TriggerResponse{
+		return &palv1.TriggerResponse{
 			DelayedRunId: delayedRunID,
 			FireAt:       timestamppb.New(fireAt),
 		}, nil
@@ -350,7 +350,7 @@ func (s *SchedulerService) Trigger(ctx context.Context, req *lanternv1.TriggerRe
 		zap.String("run_id", runID),
 	)
 
-	return &lanternv1.TriggerResponse{RunId: runID}, nil
+	return &palv1.TriggerResponse{RunId: runID}, nil
 }
 
 // structToJSON converts an optional protobuf Struct into the JSONB bytes the

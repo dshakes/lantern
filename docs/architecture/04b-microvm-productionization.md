@@ -1,8 +1,8 @@
 # MicroVM Productionization — From Spike to Production Data Plane
 
-> **In one line:** control-plane gates and stamps, the Go `runtime-scheduler` places, the Rust `runtime-manager` spawns, and the Rust `harness` is PID 1 in the VM. **Try it:** `lantern run examples/headless-agents/01-hello/agent.yaml -f` ([guide](../guides/headless-agent-quickstart.md)).
+> **In one line:** control-plane gates and stamps, the Go `runtime-scheduler` places, the Rust `runtime-manager` spawns, and the Rust `harness` is PID 1 in the VM. **Try it:** `pal run examples/headless-agents/01-hello/agent.yaml -f` ([guide](../guides/headless-agent-quickstart.md)).
 >
-> **What this is:** the system-level overview of how a `Run` request becomes a running microVM, how the in-VM harness talks back, and how the three services defined in `packages/proto/lantern/v1/runtime.proto` collaborate.
+> **What this is:** the system-level overview of how a `Run` request becomes a running microVM, how the in-VM harness talks back, and how the three services defined in `packages/proto/pal/v1/runtime.proto` collaborate.
 >
 > **Companion to:** [`04-runtime-isolation.md`](04-runtime-isolation.md) — which classes exist and *why*. This doc is the *how*: the wiring between control-plane, scheduler, runtime-manager, and the in-VM harness.
 >
@@ -132,7 +132,7 @@ A request crosses these trust boundaries; each is a checkpoint:
 | Boundary | Trust transition | Enforced by |
 |---|---|---|
 | Caller → control-plane | external untrusted → tenant-authenticated | JWT verification, RBAC, tenant_id stamping |
-| control-plane → scheduler | gRPC, `x-lantern-service-token` (`PAL_GRPC_SERVICE_TOKEN`) | service-auth interceptor, fail-closed in prod |
+| control-plane → scheduler | gRPC, `x-pal-service-token` (`PAL_GRPC_SERVICE_TOKEN`) | service-auth interceptor, fail-closed in prod |
 | scheduler → manager | gRPC, service token + client TLS (`PAL_RUNTIME_MANAGER_TLS_*`) | manager interceptor ([ADR 0025](../adr/0025-sandbox-spawn-contract-and-manager-authz.md)) |
 | manager → harness | host → guest (vsock) | guest cannot reach manager except over vsock; no IP routing host↔guest |
 | harness → worker | guest PID 1 → guest user process | seccomp profile, dropped caps, read-only rootfs |
@@ -170,9 +170,9 @@ control-plane ── spans ─────────────────�
                                                             (run-detail waterfall)
 ```
 
-Control-plane spans carry the `lantern.*` attribute set (`lantern.tenant_id`, `lantern.run_id`, `lantern.step_id`, `lantern.isolation_class`). See the [observability guide](../guides/observability.md). The run-detail page in `apps/web/app/(dashboard)/runs/[id]` joins these with `journal_events` to produce the timeline.
+Control-plane spans carry the `pal.*` attribute set (`pal.tenant_id`, `pal.run_id`, `pal.step_id`, `pal.isolation_class`). See the [observability guide](../guides/observability.md). The run-detail page in `apps/web/app/(dashboard)/runs/[id]` joins these with `journal_events` to produce the timeline.
 
-Metrics on the same channel: `lantern_vm_boot_duration_seconds{class}`, `lantern_vm_running{node,class}`, `lantern_warm_pool_size{class,digest}`, `lantern_egress_denied_total{vm_id}`.
+Metrics on the same channel: `pal_vm_boot_duration_seconds{class}`, `pal_vm_running{node,class}`, `pal_warm_pool_size{class,digest}`, `pal_egress_denied_total{vm_id}`.
 
 ---
 
@@ -186,13 +186,13 @@ the read-only cert image the manager attaches to every Firecracker VM:
 byte-exact (the old kernel-cmdline path mangled spaces and quotes); the cmdline is
 kept only for harness builds that predate the file. The harness rejects unknown
 `version`s, drops the workload, exec and shell children to `workload_uid`/`gid`,
-and gives them an explicit env with `LANTERN_*` withheld except a non-secret
+and gives them an explicit env with `PAL_*` withheld except a non-secret
 allowlist. The uid is set by the manager (`PAL_WORKLOAD_UID_DEFAULT`); a
 caller-supplied `PAL_WORKLOAD_UID` is dropped.
 
-**Identity pinning.** Per-VM certs are CN = `vm_id` and carry `OU=lantern-vm`. The
+**Identity pinning.** Per-VM certs are CN = `vm_id` and carry `OU=pal-vm`. The
 manager's `RuntimeManager` interceptor refuses any such cert and requires
-`x-lantern-service-token` (`PAL_GRPC_SERVICE_TOKEN`), so a guest can reach only
+`x-pal-service-token` (`PAL_GRPC_SERVICE_TOKEN`), so a guest can reach only
 `RuntimeHarness`, where each message is bound to its own `vm_id`. `ExecTool`
 carries `tenant_id` and returns `NOT_FOUND` on mismatch. Snapshots record the
 owning tenant and agent version; restoring across tenants is `NOT_FOUND`.
@@ -405,7 +405,7 @@ The runtime-manager's `exec_tool` previously returned `TOOL_STATUS_UNAVAILABLE` 
 - **`read_file` / `write_file` / `list_dir`** — confined to `PAL_WORKSPACE` (default `/workspace`); these back the sandbox file API.
 - Unknown tool names return `TOOL_STATUS_ERROR` (typed, never `UNAVAILABLE`).
 
-Transport: the existing `RuntimeHarness.Exec` gRPC stream, with a `__lantern_tool_call__` sentinel in `argv[0]` followed by a JSON envelope. The harness intercepts the sentinel before the general exec audit path so serialized arguments never appear in audit logs (invariant #10). `TOOL_STATUS_UNAVAILABLE` now strictly means the VM is not found or the harness is unreachable.
+Transport: the existing `RuntimeHarness.Exec` gRPC stream, with a `__pal_tool_call__` sentinel in `argv[0]` followed by a JSON envelope. The harness intercepts the sentinel before the general exec audit path so serialized arguments never appear in audit logs (invariant #10). `TOOL_STATUS_UNAVAILABLE` now strictly means the VM is not found or the harness is unreachable.
 
 This unblocks the microVM tier as a real step executor for the two-tier routing described in [ADR 0022](../adr/0022-two-tier-agent-runtime.md) and [09-agent-runtime.md](09-agent-runtime.md).
 
@@ -439,7 +439,7 @@ Without the jailer each restored VM shares the same `rootfs.ext4` file on the
 host; the Linux page cache makes block-device writes visible across all VMs
 that loaded from the same snapshot.  The fix (`services/runtime-manager/src/
 backends/firecracker.rs`) copies the global image to
-`/run/lantern/rootfs/<vm_id>.ext4` during unjailed restores and issues a
+`/run/pal/rootfs/<vm_id>.ext4` during unjailed restores and issues a
 `PATCH /drives/rootfs` API call before `PATCH /vm Resumed`.  Jailed restores
 already get per-VM isolation through the chroot staging path.  The per-VM
 copy is removed by `cancel()` on teardown.

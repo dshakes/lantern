@@ -10,7 +10,7 @@ func TestDemoComposeArgs(t *testing.T) {
 	want := []string{"compose",
 		"-f", "/r/infra/docker/docker-compose.yml",
 		"-f", "/r/infra/docker/docker-compose.kiosk.yml",
-		"-p", "lantern-demo", "up", "-d"}
+		"-p", "pal-demo", "up", "-d"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v want %v", got, want)
 	}

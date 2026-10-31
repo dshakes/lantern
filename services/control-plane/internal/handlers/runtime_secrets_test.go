@@ -28,8 +28,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/secrets"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // ---------------------------------------------------------------------------
@@ -84,36 +84,36 @@ func TestParseRef_Grammar(t *testing.T) {
 		key      string
 	}{
 		// Valid LLM refs
-		{"lantern.secret/llm/anthropic", "llm", "anthropic", "", ""},
-		{"lantern.secret/llm/openai", "llm", "openai", "", ""},
-		{"lantern.secret/llm/gemini", "llm", "gemini", "", ""},
+		{"pal.secret/llm/anthropic", "llm", "anthropic", "", ""},
+		{"pal.secret/llm/openai", "llm", "openai", "", ""},
+		{"pal.secret/llm/gemini", "llm", "gemini", "", ""},
 		// Valid connector config refs
 		{
-			"lantern.secret/connector/11111111-1111-1111-1111-111111111111/apiKey",
+			"pal.secret/connector/11111111-1111-1111-1111-111111111111/apiKey",
 			"connector", "", "11111111-1111-1111-1111-111111111111", "apiKey",
 		},
 		{
-			"lantern.secret/connector/abc/myKey",
+			"pal.secret/connector/abc/myKey",
 			"connector", "", "abc", "myKey",
 		},
 		// Valid connector oauth ref (reserved key name)
 		{
-			"lantern.secret/connector/11111111-1111-1111-1111-111111111111/oauth",
+			"pal.secret/connector/11111111-1111-1111-1111-111111111111/oauth",
 			"connector", "", "11111111-1111-1111-1111-111111111111", "oauth",
 		},
 		// Missing prefix
 		{"", "", "", "", ""},
 		{"not-a-ref", "", "", "", ""},
-		{"lantern.secret/", "", "", "", ""},
+		{"pal.secret/", "", "", "", ""},
 		// LLM with no provider
-		{"lantern.secret/llm/", "", "", "", ""},
-		{"lantern.secret/llm", "", "", "", ""},
+		{"pal.secret/llm/", "", "", "", ""},
+		{"pal.secret/llm", "", "", "", ""},
 		// Connector with missing parts
-		{"lantern.secret/connector/only-id", "", "", "", ""},
-		{"lantern.secret/connector//key", "", "", "", ""},
-		{"lantern.secret/connector/id/", "", "", "", ""},
+		{"pal.secret/connector/only-id", "", "", "", ""},
+		{"pal.secret/connector//key", "", "", "", ""},
+		{"pal.secret/connector/id/", "", "", "", ""},
 		// Unknown scope
-		{"lantern.secret/vault/something", "", "", "", ""},
+		{"pal.secret/vault/something", "", "", "", ""},
 	}
 
 	for _, tc := range cases {
@@ -158,7 +158,7 @@ func TestResolveSecrets_RelayDisabled(t *testing.T) {
 	w := doResolve(h, "any-token", resolveSecretsRequest{
 		TenantID: "tenant-1",
 		VmID:     "vm-1",
-		Refs:     []string{"lantern.secret/llm/anthropic"},
+		Refs:     []string{"pal.secret/llm/anthropic"},
 	})
 
 	if w.Code != http.StatusForbidden {
@@ -179,7 +179,7 @@ func TestResolveSecrets_WrongToken(t *testing.T) {
 	w := doResolve(h, "wrong-token", resolveSecretsRequest{
 		TenantID: "tenant-1",
 		VmID:     "vm-1",
-		Refs:     []string{"lantern.secret/llm/anthropic"},
+		Refs:     []string{"pal.secret/llm/anthropic"},
 	})
 
 	if w.Code != http.StatusForbidden {
@@ -196,7 +196,7 @@ func TestResolveSecrets_NoTokenHeader(t *testing.T) {
 	w := doResolve(h, "", resolveSecretsRequest{
 		TenantID: "tenant-1",
 		VmID:     "vm-1",
-		Refs:     []string{"lantern.secret/llm/anthropic"},
+		Refs:     []string{"pal.secret/llm/anthropic"},
 	})
 
 	if w.Code != http.StatusForbidden {
@@ -213,7 +213,7 @@ func TestResolveSecrets_RateLimit(t *testing.T) {
 	body := resolveSecretsRequest{
 		TenantID: "tenant-1",
 		VmID:     "vm-1",
-		Refs:     []string{"lantern.secret/llm/anthropic"},
+		Refs:     []string{"pal.secret/llm/anthropic"},
 	}
 
 	// Fire secretAuthFailMax+1 requests with a wrong token.
@@ -244,7 +244,7 @@ func TestResolveSecrets_RateLimit_CorrectTokenStillWorks(t *testing.T) {
 	// tenant_id, not 429).
 	w := doResolve(h, testRuntimeSecretToken, map[string]any{
 		"vm_id": "vm-1",
-		"refs":  []string{"lantern.secret/llm/anthropic"},
+		"refs":  []string{"pal.secret/llm/anthropic"},
 		// tenant_id intentionally omitted → 400
 	})
 	if w.Code == http.StatusTooManyRequests {
@@ -297,7 +297,7 @@ func TestResolveSecrets_TooManyRefs(t *testing.T) {
 
 	refs := make([]string, secretMaxRefs+1)
 	for i := range refs {
-		refs[i] = "lantern.secret/llm/anthropic"
+		refs[i] = "pal.secret/llm/anthropic"
 	}
 	w := doResolve(h, testRuntimeSecretToken, map[string]any{
 		"tenant_id": "tenant-1",
@@ -319,7 +319,7 @@ func TestResolveSecrets_MissingTenantID(t *testing.T) {
 
 	w := doResolve(h, testRuntimeSecretToken, map[string]any{
 		"vm_id": "vm-1",
-		"refs":  []string{"lantern.secret/llm/anthropic"},
+		"refs":  []string{"pal.secret/llm/anthropic"},
 	})
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for missing tenant_id, got %d: %s", w.Code, w.Body.String())
@@ -336,7 +336,7 @@ func TestResolveSecrets_MissingVmID(t *testing.T) {
 
 	w := doResolve(h, testRuntimeSecretToken, map[string]any{
 		"tenant_id": "tenant-1",
-		"refs":      []string{"lantern.secret/llm/anthropic"},
+		"refs":      []string{"pal.secret/llm/anthropic"},
 	})
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for missing vm_id, got %d: %s", w.Code, w.Body.String())
@@ -509,7 +509,7 @@ func TestResolveSecrets_LLMRef_Resolves(t *testing.T) {
 	w := doResolve(h, testRuntimeSecretToken, resolveSecretsRequest{
 		TenantID: tenantID,
 		VmID:     "vm-llm-test",
-		Refs:     []string{"lantern.secret/llm/anthropic"},
+		Refs:     []string{"pal.secret/llm/anthropic"},
 	})
 
 	if w.Code != http.StatusOK {
@@ -552,7 +552,7 @@ func TestResolveSecrets_ConnectorConfigRef_Resolves(t *testing.T) {
 	t.Setenv(envRuntimeSecretToken, testRuntimeSecretToken)
 	h := newTestSecretsHandlerWithPool(t, pool)
 
-	ref := "lantern.secret/connector/" + installID + "/botToken"
+	ref := "pal.secret/connector/" + installID + "/botToken"
 	w := doResolve(h, testRuntimeSecretToken, resolveSecretsRequest{
 		TenantID: tenantID,
 		VmID:     "vm-conn-cfg-test",
@@ -601,7 +601,7 @@ func TestResolveSecrets_ConnectorOAuthRef_Resolves(t *testing.T) {
 	t.Setenv(envRuntimeSecretToken, testRuntimeSecretToken)
 	h := newTestSecretsHandlerWithPool(t, pool)
 
-	ref := "lantern.secret/connector/" + installID + "/oauth"
+	ref := "pal.secret/connector/" + installID + "/oauth"
 	w := doResolve(h, testRuntimeSecretToken, resolveSecretsRequest{
 		TenantID: tenantID,
 		VmID:     "vm-conn-oauth-test",
@@ -647,7 +647,7 @@ func TestResolveSecrets_ConnectorOAuth_NullColumn(t *testing.T) {
 	t.Setenv(envRuntimeSecretToken, testRuntimeSecretToken)
 	h := newTestSecretsHandlerWithPool(t, pool)
 
-	ref := "lantern.secret/connector/" + installID + "/oauth"
+	ref := "pal.secret/connector/" + installID + "/oauth"
 	w := doResolve(h, testRuntimeSecretToken, resolveSecretsRequest{
 		TenantID: tenantID,
 		VmID:     "vm-null-oauth",
@@ -689,8 +689,8 @@ func TestResolveSecrets_UnknownRef_ReturnsNotFound(t *testing.T) {
 		TenantID: tenantID,
 		VmID:     "vm-unknown",
 		Refs: []string{
-			"lantern.secret/llm/no-such-provider",
-			"lantern.secret/vault/something",
+			"pal.secret/llm/no-such-provider",
+			"pal.secret/vault/something",
 			"not-a-ref-at-all",
 		},
 	})
@@ -740,7 +740,7 @@ func TestResolveSecrets_TenantIsolation_LLM(t *testing.T) {
 	w := doResolve(h, testRuntimeSecretToken, resolveSecretsRequest{
 		TenantID: tenantA, // A's ID in body
 		VmID:     "vm-iso-llm",
-		Refs:     []string{"lantern.secret/llm/openai"},
+		Refs:     []string{"pal.secret/llm/openai"},
 	})
 
 	if w.Code != http.StatusOK {
@@ -783,7 +783,7 @@ func TestResolveSecrets_TenantIsolation_ConnectorConfig(t *testing.T) {
 	t.Setenv(envRuntimeSecretToken, testRuntimeSecretToken)
 	h := newTestSecretsHandlerWithPool(t, pool)
 
-	ref := "lantern.secret/connector/" + installID + "/apiKey"
+	ref := "pal.secret/connector/" + installID + "/apiKey"
 	w := doResolve(h, testRuntimeSecretToken, resolveSecretsRequest{
 		TenantID: tenantA,
 		VmID:     "vm-iso-cfg",
@@ -830,7 +830,7 @@ func TestResolveSecrets_TenantIsolation_ConnectorOAuth(t *testing.T) {
 	t.Setenv(envRuntimeSecretToken, testRuntimeSecretToken)
 	h := newTestSecretsHandlerWithPool(t, pool)
 
-	ref := "lantern.secret/connector/" + installID + "/oauth"
+	ref := "pal.secret/connector/" + installID + "/oauth"
 	w := doResolve(h, testRuntimeSecretToken, resolveSecretsRequest{
 		TenantID: tenantA,
 		VmID:     "vm-iso-oauth",
@@ -875,7 +875,7 @@ func TestResolveSecrets_AuditEventWritten(t *testing.T) {
 	t.Setenv(envRuntimeSecretToken, testRuntimeSecretToken)
 	h := newTestSecretsHandlerWithPool(t, pool)
 
-	ref := "lantern.secret/llm/anthropic"
+	ref := "pal.secret/llm/anthropic"
 
 	w := doResolve(h, testRuntimeSecretToken, resolveSecretsRequest{
 		TenantID: tenantID,
@@ -921,7 +921,7 @@ func TestResolveSecrets_AuditEventWritten(t *testing.T) {
 		}
 		return strings.Join(parts, ",")
 	}()
-	if !strings.Contains(refNamesStr, "lantern.secret/llm/anthropic") {
+	if !strings.Contains(refNamesStr, "pal.secret/llm/anthropic") {
 		t.Errorf("ref_names must contain the ref, got: %v", refNamesRaw)
 	}
 
@@ -955,9 +955,9 @@ func TestResolveSecrets_MixedRefs_PartialResolution(t *testing.T) {
 	h := newTestSecretsHandlerWithPool(t, pool)
 
 	refs := []string{
-		"lantern.secret/llm/anthropic",        // exists
-		"lantern.secret/llm/no-such-provider", // does not exist
-		"not-a-valid-ref",                     // bad format
+		"pal.secret/llm/anthropic",        // exists
+		"pal.secret/llm/no-such-provider", // does not exist
+		"not-a-valid-ref",                 // bad format
 	}
 	w := doResolve(h, testRuntimeSecretToken, resolveSecretsRequest{
 		TenantID: tenantID,
@@ -981,10 +981,10 @@ func TestResolveSecrets_MixedRefs_PartialResolution(t *testing.T) {
 		byRef[r.Ref] = r
 	}
 
-	if byRef["lantern.secret/llm/anthropic"].Value != "test-mixed-llm-key" {
-		t.Errorf("anthropic ref: expected value, got error=%q", byRef["lantern.secret/llm/anthropic"].Error)
+	if byRef["pal.secret/llm/anthropic"].Value != "test-mixed-llm-key" {
+		t.Errorf("anthropic ref: expected value, got error=%q", byRef["pal.secret/llm/anthropic"].Error)
 	}
-	if byRef["lantern.secret/llm/no-such-provider"].Error != "not found" {
+	if byRef["pal.secret/llm/no-such-provider"].Error != "not found" {
 		t.Errorf("no-such-provider: expected error=not found")
 	}
 	if byRef["not-a-valid-ref"].Error != "not found" {
@@ -1015,7 +1015,7 @@ func TestResolveSecrets_VMBinding_Success(t *testing.T) {
 	w := doResolve(h, testRuntimeSecretToken, resolveSecretsRequest{
 		TenantID: tenantID,
 		VmID:     "vm-binding-ok",
-		Refs:     []string{"lantern.secret/llm/anthropic"},
+		Refs:     []string{"pal.secret/llm/anthropic"},
 	})
 
 	if w.Code != http.StatusOK {
@@ -1055,7 +1055,7 @@ func TestResolveSecrets_VMBinding_WrongTenant(t *testing.T) {
 	w := doResolve(h, testRuntimeSecretToken, resolveSecretsRequest{
 		TenantID: tenantA, // mismatch
 		VmID:     "vm-binding-wrong-tenant",
-		Refs:     []string{"lantern.secret/llm/anthropic"},
+		Refs:     []string{"pal.secret/llm/anthropic"},
 	})
 
 	if w.Code != http.StatusNotFound {
@@ -1081,7 +1081,7 @@ func TestResolveSecrets_VMBinding_UnknownVM(t *testing.T) {
 	wUnknown := doResolve(h, testRuntimeSecretToken, resolveSecretsRequest{
 		TenantID: tenantID,
 		VmID:     "vm-does-not-exist-at-all",
-		Refs:     []string{"lantern.secret/llm/anthropic"},
+		Refs:     []string{"pal.secret/llm/anthropic"},
 	})
 	if wUnknown.Code != http.StatusNotFound {
 		t.Errorf("expected 404 for unknown vm, got %d: %s", wUnknown.Code, wUnknown.Body.String())
@@ -1097,7 +1097,7 @@ func TestResolveSecrets_VMBinding_UnknownVM(t *testing.T) {
 	wWrong := doResolve(h, testRuntimeSecretToken, resolveSecretsRequest{
 		TenantID: tenantID, // doesn't own the VM
 		VmID:     "vm-binding-other-tenant-novm",
-		Refs:     []string{"lantern.secret/llm/anthropic"},
+		Refs:     []string{"pal.secret/llm/anthropic"},
 	})
 	if wWrong.Code != http.StatusNotFound {
 		t.Errorf("expected 404 for wrong-tenant vm, got %d: %s", wWrong.Code, wWrong.Body.String())
@@ -1129,7 +1129,7 @@ func TestResolveSecrets_VMBinding_TerminatedVM(t *testing.T) {
 	w := doResolve(h, testRuntimeSecretToken, resolveSecretsRequest{
 		TenantID: tenantID,
 		VmID:     "vm-binding-terminated",
-		Refs:     []string{"lantern.secret/llm/anthropic"},
+		Refs:     []string{"pal.secret/llm/anthropic"},
 	})
 
 	if w.Code != http.StatusNotFound {
@@ -1160,7 +1160,7 @@ func TestResolveSecrets_VMBinding_PendingVM(t *testing.T) {
 	w := doResolve(h, testRuntimeSecretToken, resolveSecretsRequest{
 		TenantID: tenantID,
 		VmID:     "vm-binding-pending",
-		Refs:     []string{"lantern.secret/llm/anthropic"},
+		Refs:     []string{"pal.secret/llm/anthropic"},
 	})
 
 	if w.Code != http.StatusOK {
@@ -1193,7 +1193,7 @@ func TestResolveSecrets_VMBinding_DenialIncrementsRateLimiter(t *testing.T) {
 	body := resolveSecretsRequest{
 		TenantID: tenantID,
 		VmID:     "vm-does-not-exist-ratelimit",
-		Refs:     []string{"lantern.secret/llm/anthropic"},
+		Refs:     []string{"pal.secret/llm/anthropic"},
 	}
 
 	// Fire secretAuthFailMax+1 requests; all will hit the binding check.
@@ -1209,9 +1209,8 @@ func TestResolveSecrets_VMBinding_DenialIncrementsRateLimiter(t *testing.T) {
 	}
 }
 
-// ADR 0032: the runtime token is accepted under the PAL header and the legacy
-// header; a wrong PAL header is not rescued by a right legacy one.
-func TestAuthenticateRuntimeToken_PALAndLegacyHeaders(t *testing.T) {
+// The runtime token is accepted under the PAL header only when it matches.
+func TestAuthenticateRuntimeToken_Header(t *testing.T) {
 	t.Setenv(envRuntimeSecretToken, "rt-secret")
 	cases := []struct {
 		name string
@@ -1219,10 +1218,7 @@ func TestAuthenticateRuntimeToken_PALAndLegacyHeaders(t *testing.T) {
 		ok   bool
 	}{
 		{"pal", map[string]string{runtimeTokenHeader: "rt-secret"}, true},
-		{"legacy", map[string]string{legacyRuntimeTokenHeader: "rt-secret"}, true},
-		{"both", map[string]string{runtimeTokenHeader: "rt-secret", legacyRuntimeTokenHeader: "rt-secret"}, true},
-		{"legacy wrong", map[string]string{legacyRuntimeTokenHeader: "nope"}, false},
-		{"pal wrong legacy right", map[string]string{runtimeTokenHeader: "nope", legacyRuntimeTokenHeader: "rt-secret"}, false},
+		{"wrong", map[string]string{runtimeTokenHeader: "nope"}, false},
 		{"none", map[string]string{}, false},
 	}
 	for _, tc := range cases {

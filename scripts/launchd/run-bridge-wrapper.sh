@@ -21,12 +21,12 @@ cd "$BRIDGE_DIR" || { echo "[$(date +%T)] bridge dir missing: $BRIDGE_DIR" >&2; 
 
 # Optional env overrides. launchd only reloads plist EnvironmentVariables on a
 # full bootout/bootstrap (which has failed and left the bridge down before);
-# vars in ~/.lantern/bridge.env take effect on a plain `kickstart -k` because
+# vars in ~/.pal/bridge.env take effect on a plain `kickstart -k` because
 # this wrapper runs at every (re)start. Vars here override plist env.
-if [ -f "$HOME/.lantern/bridge.env" ]; then
+if [ -f "$HOME/.pal/bridge.env" ]; then
   set -a
   # shellcheck disable=SC1091
-  . "$HOME/.lantern/bridge.env"
+  . "$HOME/.pal/bridge.env"
   set +a
 fi
 # The pal state dir (written by `pal setup --apply`) wins over the legacy one.
@@ -38,9 +38,7 @@ if [ -f "$PAL_ENV_FILE" ]; then
   set +a
 fi
 
-# Self-heal a missing/broken tsx runner before boot.
-# Also covers a checkout still linked under the pre-rename package name (ADR
-# 0032: bridge-core is now @pal/bridge-core) — without it the bridge cannot boot.
+# Self-heal a missing/broken tsx runner (or an unlinked @pal/bridge-core) before boot.
 if [ ! -x node_modules/.bin/tsx ] || [ ! -f node_modules/tsx/dist/cli.mjs ] || [ ! -e node_modules/@pal/bridge-core ]; then
   echo "[$(date +%T)] bridge deps missing/broken in $BRIDGE_DIR — self-healing via npm install" >&2
   npm install --no-audit --no-fund || echo "[$(date +%T)] npm install failed; attempting boot anyway" >&2

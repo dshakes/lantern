@@ -15,7 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // reqModel returns the "model" field of a recorded provider request body.
@@ -463,7 +463,7 @@ func TestTemplateApply_PersistsPromptLabelsModel(t *testing.T) {
 	pool := openTestPool(t)
 	rest := newTwoTierRESTHandler(t, pool)
 	th := NewTemplateHandler(rest, rest.auth)
-	tpl := templates["lantern-guide"]
+	tpl := templates["pal-guide"]
 	name := fmt.Sprintf("agent-model-tpl-%d", time.Now().UnixNano())
 	t.Cleanup(func() {
 		bg := context.Background()
@@ -489,10 +489,10 @@ func TestInlineRun_BackfillPersistsPromptLabelsModel(t *testing.T) {
 	t.Setenv("PAL_USE_CLAUDE_CODE", "")
 	t.Setenv("ANTHROPIC_API_KEY", "sk-test-fake-key")
 	h, srv := newChaosHandler(t)
-	tpl := templates["lantern-guide"]
+	tpl := templates["pal-guide"]
 	f := insertDRFixture(t, srv.Pool, fmt.Sprintf("agent-model-backfill-%d", time.Now().UnixNano()), "queued")
 	if _, err := srv.Pool.Exec(context.Background(),
-		`UPDATE agents SET labels = jsonb_build_object('lantern.template', $1::text) WHERE id = $2`, tpl.ID, f.agentID); err != nil {
+		`UPDATE agents SET labels = jsonb_build_object('pal.template', $1::text) WHERE id = $2`, tpl.ID, f.agentID); err != nil {
 		t.Fatalf("seed labels: %v", err)
 	}
 	h.llmProxy = NewLlmProxyHandler(srv, NewAuthHandler(srv, testJWTSecret))
@@ -512,7 +512,7 @@ func assertAgentRestoredFromTemplate(t *testing.T, pool interface {
 	t.Helper()
 	var prompt, model, labelTemplate string
 	if err := pool.QueryRow(context.Background(), `
-		SELECT COALESCE(system_prompt, ''), COALESCE(model, ''), COALESCE(labels->>'lantern.template', '')
+		SELECT COALESCE(system_prompt, ''), COALESCE(model, ''), COALESCE(labels->>'pal.template', '')
 		FROM agents WHERE tenant_id = $1 AND name = $2`, recoveryTestDevTenantID, name).Scan(&prompt, &model, &labelTemplate); err != nil {
 		t.Fatalf("read agent: %v", err)
 	}
@@ -523,6 +523,6 @@ func assertAgentRestoredFromTemplate(t *testing.T, pool interface {
 		t.Errorf("model: got %q, want %q", model, tpl.Model)
 	}
 	if labelTemplate != tpl.ID {
-		t.Errorf("labels lantern.template: got %q, want %q", labelTemplate, tpl.ID)
+		t.Errorf("labels pal.template: got %q, want %q", labelTemplate, tpl.ID)
 	}
 }

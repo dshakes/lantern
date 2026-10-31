@@ -45,7 +45,7 @@ true. An audit on 2026-10-29 found:
      provenance under the expected identity. It also checks that a different
      identity fails to verify, so a verification that does not bind to the
      signer fails CI.
-   - `release.yml` (`cli-artifacts` job) builds the `lantern` CLI for
+   - `release.yml` (`cli-artifacts` job) builds the `pal` CLI for
      linux/darwin on amd64/arm64 and windows/amd64. It publishes `SHA256SUMS`
      with a keyless cosign bundle (`SHA256SUMS.sigstore.json`), checked before
      upload, plus SLSA provenance for every binary.
@@ -59,13 +59,13 @@ true. An audit on 2026-10-29 found:
    digest is accepted only when `AGENT_IMAGE` is itself pinned. When
    `PAL_IMAGE_ALLOWED_REPOS` (comma-separated repository prefixes, matched on
    path segments) is set, the image must also come from one of those repos.
-   - **Default:** on when `LANTERN_ENV`/`PAL_ENV` is prod, production or
+   - **Default:** on when `PAL_ENV` is prod, production or
      staging; off elsewhere.
    - An unparseable value stops the manager from starting.
    - An explicit `off` in prod is honoured, but logged at ERROR on every start.
 3. **Signature and identity are verified at cluster admission, not
    in-process.** `infra/k8s/supply-chain/verify-workload-images.yaml` is a
-   Kyverno `ClusterPolicy` for tenant namespaces (`lantern-t-*`, `pal-t-*`). It
+   Kyverno `ClusterPolicy` for tenant namespaces (`pal-t-*`, `pal-t-*`). It
    requires digest-pinned containers, init containers and ephemeral containers,
    and a cosign signature on **every** image (`imageReferences: ["*"]`) from
    the listed attestors. Both rules fail closed.
@@ -100,7 +100,7 @@ separate feature and needs its own ADR.
   - pin workload images (`image_digest: repo@sha256:...`, which is what
     `examples/headless-agents/*` already do);
   - pin `AGENT_IMAGE` if bare-digest requests rely on it. The built-in default
-    `ghcr.io/lantern/agent-runner:latest` is a tag, and it is not an image this
+    `ghcr.io/pal/agent-runner:latest` is a tag, and it is not an image this
     repo builds.
   - Temporary escape hatch: `PAL_VERIFY_SIGNATURES=off`, logged at ERROR.
 - Before applying the Kyverno policy, add an attestor for each identity that

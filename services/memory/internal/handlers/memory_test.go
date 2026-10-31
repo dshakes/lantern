@@ -11,9 +11,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/dshakes/lantern/services/memory/internal/db"
-	"github.com/dshakes/lantern/services/memory/internal/middleware"
-	"github.com/dshakes/lantern/services/memory/internal/server"
+	"github.com/dshakes/pal/services/memory/internal/db"
+	"github.com/dshakes/pal/services/memory/internal/middleware"
+	"github.com/dshakes/pal/services/memory/internal/server"
 )
 
 // Test UUIDs — arbitrary; memory_core has no FK to the tenants table.
@@ -28,7 +28,7 @@ func openTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		dsn = "postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable"
+		dsn = "postgres://pal:pal@localhost:5432/pal?sslmode=disable"
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

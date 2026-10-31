@@ -3,7 +3,7 @@ package scoring
 import (
 	"testing"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
 )
 
 // The warm-pool term carries the highest placement weight (0.40), and it only
@@ -18,13 +18,13 @@ import (
 func TestWarmPoolExactKey_ManagerParity(t *testing.T) {
 	cases := []struct {
 		image string
-		class lanternv1.IsolationClass
+		class palv1.IsolationClass
 		size  string
 		want  string
 	}{
-		{"demo:latest", lanternv1.IsolationClass_ISOLATION_TRUSTED, "500m/512Mi",
+		{"demo:latest", palv1.IsolationClass_ISOLATION_TRUSTED, "500m/512Mi",
 			"demo:latest@ISOLATION_TRUSTED@500m/512Mi"},
-		{"img@sha256:ab", lanternv1.IsolationClass_ISOLATION_UNTRUSTED, "1/1Gi",
+		{"img@sha256:ab", palv1.IsolationClass_ISOLATION_UNTRUSTED, "1/1Gi",
 			"img@sha256:ab@ISOLATION_UNTRUSTED@1/1Gi"},
 	}
 	for _, c := range cases {
@@ -42,7 +42,7 @@ func TestWarmPoolExactKey_ManagerParity(t *testing.T) {
 func TestWarmPoolMatch_UsesPublishedInventory(t *testing.T) {
 	wl := WorkloadSnapshot{
 		ImageDigest: "demo:latest",
-		Class:       lanternv1.IsolationClass_ISOLATION_TRUSTED,
+		Class:       palv1.IsolationClass_ISOLATION_TRUSTED,
 		SizeKey:     "500m/512Mi",
 	}
 	exact := NodeSnapshot{

@@ -34,10 +34,10 @@ Two Prometheus endpoints exist. The control plane serves `/metrics` on its own l
 
 ```bash
 kubectl -n pal port-forward deploy/pal-control-plane 9464:9464 &
-curl -s localhost:9464/metrics | grep -E '^(lantern_|http_server_request_duration_seconds_count)' | head
+curl -s localhost:9464/metrics | grep -E '^(pal_|http_server_request_duration_seconds_count)' | head
 ```
 
-You should see `lantern_run_total` (label `lantern_status`), `lantern_run_budget_blocks_total` and the `http_server_request_duration_seconds` series that the 5xx alert uses. Step-level series (duration, retries, replay skips, budget-check errors, onboarding steps) appear as the matching events happen. Deployment and CronJob names are prefixed with your release name; adjust them.
+You should see `pal_run_total` (label `pal_status`), `pal_run_budget_blocks_total` and the `http_server_request_duration_seconds` series that the 5xx alert uses. Step-level series (duration, retries, replay skips, budget-check errors, onboarding steps) appear as the matching events happen. Deployment and CronJob names are prefixed with your release name; adjust them.
 
 The gateway emits traces only, and the model-router and runtime-manager expose Prometheus metrics only when `PAL_METRICS_ADDR` is set, so gateway latency lives in your tracing backend. The 28-day SLOs and burn-rate alerts are described under [SLOs and error budgets](/docs/observability/#slos-and-error-budgets). See [Observability](/docs/observability/#gateway-and-model-router-traces).
 
@@ -59,9 +59,9 @@ The job names must match the ones in the rules. Gateway and model-router p99 rul
 **Production: use managed Postgres** (RDS, Cloud SQL, Azure Database) with automated backups and point-in-time recovery, and set `postgresql.enabled=false` with `externalDatabase.*`. The in-cluster Postgres is a single pod on a PVC for dev and evaluation. If you self-host it, enable the logical backup as a floor:
 
 ```bash
-# values: backup.enabled=true  (schedule "0 2 * * *", s3Bucket lantern-backups, retentionDays 14)
+# values: backup.enabled=true  (schedule "0 2 * * *", s3Bucket pal-backups, retentionDays 14)
 kubectl create job --from=cronjob/pal-postgres-backup backup-manual-1 -n pal   # dump on demand
-aws s3 ls s3://lantern-backups/postgres/                                              # newest object should be under 24 h old
+aws s3 ls s3://pal-backups/postgres/                                              # newest object should be under 24 h old
 ```
 
 The CronJob (`<release>-postgres-backup`) runs `pg_dump`, gzips it to `s3://<bucket>/postgres/pal-<ts>.sql.gz`, and prunes dumps older than `retentionDays`. A failed or empty dump fails the pod before anything is uploaded or pruned. With `backup.useChartMinio=true` (the default) it uploads to the release's own object store; for real durability point it at external S3 with `backup.existingSecret`.
@@ -71,14 +71,14 @@ The CronJob (`<release>-postgres-backup`) runs `pg_dump`, gzips it to `s3://<buc
 A backup you have never restored is a hope. The drill needs only Docker and touches no live database:
 
 ```bash
-aws s3 cp s3://lantern-backups/postgres/<newest>.sql.gz ./latest.sql.gz
+aws s3 cp s3://pal-backups/postgres/<newest>.sql.gz ./latest.sql.gz
 scripts/db-restore-drill.sh ./latest.sql.gz     # restores into a throwaway pgvector container
 scripts/db-restore-drill.sh --self-test         # exercises the script itself (CI runs this)
 ```
 
 It restores with `ON_ERROR_STOP`, so a corrupt gzip fails, and requires the tables in `DRILL_EXPECT_TABLES` (default `agents runs journal_events`) to exist. Empty tables pass; set `DRILL_REQUIRE_ROWS=1` when you know the source has data. `DRILL_PG_IMAGE` (default `pgvector/pgvector:pg16`) must match the server major version. A passing run exits 0; a failing one means the backups are not usable until it passes. Run it monthly and after any schema or major-version change.
 
-For a real restore, stop writes (scale the control plane to 0), restore into a *new* database, re-point the release, and scale back up. A dump contains no roles: recreate `lantern_app` and its password, then run `DATABASE_URL=... scripts/check-app-grants.sh` before enabling `PAL_RLS_ENFORCE=1`. The full procedure for both topologies is [db-restore.md](repo:/tree/master/docs/runbooks/db-restore.md).
+For a real restore, stop writes (scale the control plane to 0), restore into a *new* database, re-point the release, and scale back up. A dump contains no roles: recreate `pal_app` and its password, then run `DATABASE_URL=... scripts/check-app-grants.sh` before enabling `PAL_RLS_ENFORCE=1`. The full procedure for both topologies is [db-restore.md](repo:/tree/master/docs/runbooks/db-restore.md).
 
 ## Upgrading from the Bitnami-based chart
 
@@ -89,7 +89,7 @@ Postgres (pgvector) and the S3-compatible store (SeaweedFS) are now first-party 
 1. Take a dump from the old release and keep it off the cluster (`pg_dump`, or the backup CronJob if it was on).
 2. Copy any objects you need out of the old object store.
 3. `helm uninstall` the old release, then `helm install` the new chart.
-4. Restore the dump into the new database, recreate `lantern_app`, and verify with the drill above.
+4. Restore the dump into the new database, recreate `pal_app`, and verify with the drill above.
 
 On production values this does not apply to your data: `values-prod.yaml` uses external Postgres and S3, which the chart never owned. Plan the cutover for the in-cluster stores only.
 
@@ -108,7 +108,7 @@ For a public demo host the guard is strict: `PAL_KIOSK=1` refuses to start unles
 
 ## Node filesystem for snapshots and forks
 
-Pause, resume and fork stage each child's disk from the snapshot. On XFS (formatted with `reflink=1`) or btrfs the runtime manager clones it copy-on-write (`FICLONE`), so a fork costs metadata, not a copy of the disk. On ext4 or tmpfs it falls back to a full byte copy and logs a warning with `disk_staging="full_copy"`, the bytes copied and the time taken; everything still works, but fork cost grows with disk size. Once your nodes' snapshot directory (`/var/lib/lantern/snapshots`) and jail root are on XFS or btrfs, set `PAL_REQUIRE_REFLINK=1` on the runtime manager to turn the fallback into an error. It is off in every shipped values file.
+Pause, resume and fork stage each child's disk from the snapshot. On XFS (formatted with `reflink=1`) or btrfs the runtime manager clones it copy-on-write (`FICLONE`), so a fork costs metadata, not a copy of the disk. On ext4 or tmpfs it falls back to a full byte copy and logs a warning with `disk_staging="full_copy"`, the bytes copied and the time taken; everything still works, but fork cost grows with disk size. Once your nodes' snapshot directory (`/var/lib/pal/snapshots`) and jail root are on XFS or btrfs, set `PAL_REQUIRE_REFLINK=1` on the runtime manager to turn the fallback into an error. It is off in every shipped values file.
 
 ## Runbooks
 

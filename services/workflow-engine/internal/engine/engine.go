@@ -14,9 +14,9 @@ import (
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	paldb "github.com/dshakes/lantern/services/workflow-engine/internal/db"
-	"github.com/dshakes/lantern/services/workflow-engine/internal/journal"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	paldb "github.com/dshakes/pal/services/workflow-engine/internal/db"
+	"github.com/dshakes/pal/services/workflow-engine/internal/journal"
 )
 
 // ErrRunNotFound is returned when a run does not exist or belongs to a
@@ -52,7 +52,7 @@ type Engine struct {
 // runtimeClient is the runtime-manager gRPC client used by tool_call steps; it
 // may be nil when no runtime-manager address is configured, in which case
 // tool_call steps fail with a typed error.
-func NewEngine(pool *pgxpool.Pool, rdb *redis.Client, logger *zap.Logger, workerCount int, modelClient lanternv1.ModelServiceClient, runtimeClient lanternv1.RuntimeManagerClient) *Engine {
+func NewEngine(pool *pgxpool.Pool, rdb *redis.Client, logger *zap.Logger, workerCount int, modelClient palv1.ModelServiceClient, runtimeClient palv1.RuntimeManagerClient) *Engine {
 	eng := &Engine{
 		pool:    pool,
 		redis:   rdb,

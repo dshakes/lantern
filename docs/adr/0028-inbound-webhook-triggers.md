@@ -27,7 +27,7 @@ HMAC-SHA256 over the raw body with the trigger's secret in the provider's format
 
 | provider    | signature header                        | signed bytes        | delivery id                  |
 | ----------- | --------------------------------------- | ------------------- | ---------------------------- |
-| `generic`   | `X-Lantern-Signature: t=<unix>,v1=<hex>` | `<t>.<body>`        | `X-Lantern-Delivery`, else derived |
+| `generic`   | `X-Pal-Signature: t=<unix>,v1=<hex>` | `<t>.<body>`        | `X-Pal-Delivery`, else derived |
 | `github`    | `X-Hub-Signature-256: sha256=<hex>`     | body                | `X-GitHub-Delivery`          |
 | `sentry`    | `Sentry-Hook-Signature: <hex>`          | body                | `Request-ID`                 |
 | `pagerduty` | `X-PagerDuty-Signature: v1=<hex>[,v1=…]` | body                | `event.id` in the body       |

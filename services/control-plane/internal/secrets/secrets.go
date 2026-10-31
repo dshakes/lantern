@@ -7,16 +7,16 @@
 // Those columns must remain valid JSONB, so an encrypted value is wrapped in a
 // small JSON envelope rather than written as a raw base64 blob:
 //
-//	{"__lantern_enc__":1,"alg":"AES-256-GCM","ct":"<base64(nonce|ciphertext)>"}
+//	{"__pal_enc__":1,"alg":"AES-256-GCM","ct":"<base64(nonce|ciphertext)>"}
 //
 // Plaintext (legacy) rows are ordinary JSON objects without the
-// "__lantern_enc__" marker. Decrypt detects this and returns them unchanged, so
+// "__pal_enc__" marker. Decrypt detects this and returns them unchanged, so
 // the rollout is backward compatible and needs no data migration: existing
 // installs keep working, and the next write re-stores them encrypted.
 //
 // # Key management
 //
-// The master key comes from LANTERN_CREDENTIAL_KEY, a base64- or hex-encoded
+// The master key comes from PAL_CREDENTIAL_KEY, a base64- or hex-encoded
 // 32-byte (AES-256) key. When the variable is unset, Encrypt is a pass-through
 // that stores plaintext JSON and EncryptionEnabled reports false — this keeps
 // local dev frictionless while making production encryption a single env var
@@ -45,13 +45,13 @@ import (
 const EnvKey = "PAL_CREDENTIAL_KEY"
 
 const (
-	envelopeMarker = "__lantern_enc__"
+	envelopeMarker = "__pal_enc__"
 	algGCM         = "AES-256-GCM"
 )
 
 // envelope is the on-disk JSON shape for an encrypted value.
 type envelope struct {
-	Marker int    `json:"__lantern_enc__"`
+	Marker int    `json:"__pal_enc__"`
 	Alg    string `json:"alg"`
 	CT     string `json:"ct"`
 }

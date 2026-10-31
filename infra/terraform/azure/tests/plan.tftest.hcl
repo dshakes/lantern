@@ -18,7 +18,7 @@ mock_provider "azurerm" {
     }
   }
   mock_resource "azurerm_resource_group" {
-    defaults = { name = "lantern-data-plane-rg", location = "eastus" }
+    defaults = { name = "pal-data-plane-rg", location = "eastus" }
   }
   mock_resource "azurerm_subnet" {
     defaults = { id = "/subscriptions/00000000-0000-0000-0000-0000000000aa/resourceGroups/rg/providers/Microsoft.Network/virtualNetworks/v/subnets/s" }
@@ -40,8 +40,9 @@ mock_provider "kubernetes" {}
 mock_provider "helm" {}
 
 variables {
-  tenant_id   = "00000000-0000-0000-0000-000000000001"
-  agent_token = "example-token"
+  pal_control_plane_endpoint = "https://cp.pal.example.com"
+  tenant_id                  = "00000000-0000-0000-0000-000000000001"
+  agent_token                = "example-token"
 }
 
 run "new_cluster" {
@@ -56,7 +57,7 @@ run "new_cluster" {
     error_message = "blob containers must not be publicly readable"
   }
   assert {
-    condition     = azurerm_federated_identity_credential.data_plane.subject == "system:serviceaccount:lantern:pal-data-plane"
+    condition     = azurerm_federated_identity_credential.data_plane.subject == "system:serviceaccount:pal:pal-data-plane"
     error_message = "workload identity must federate the chart's service account"
   }
 }

@@ -162,7 +162,7 @@ func TestIsPublicCORSPath(t *testing.T) {
 	}{
 		{"/.well-known/pal-receipts", true},
 		{"/.well-known/pal-agent-identity", true},
-		{"/.well-known/lantern-receipts", true},
+		{"/.well-known/pal-receipts", true},
 		{"/.well-known/agent.json", true},
 		{"/proof", true},
 		{"/v1/runs/receipts/verify", true},
@@ -192,7 +192,7 @@ func TestCORSMiddleware_PublicPathGetsWildcard(t *testing.T) {
 	t.Setenv("PAL_CORS_ORIGINS", "http://localhost:3001")
 	h := CORSMiddleware(nopHandler)
 
-	req := httptest.NewRequest(http.MethodGet, "/.well-known/lantern-receipts", nil)
+	req := httptest.NewRequest(http.MethodGet, "/.well-known/pal-receipts", nil)
 	req.Header.Set("Origin", "https://evil.example.com")
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)

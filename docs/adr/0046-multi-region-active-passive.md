@@ -75,7 +75,7 @@ resource. Unset → NULL / no attribute.
 The check lives in the database (not Go) on purpose: the component we are
 fencing is the one whose behaviour we cannot trust after a partition.
 `SECURITY DEFINER` functions with a pinned `search_path` let the RLS role
-`lantern_app` evaluate the fence without a grant on `pal_region_fence`.
+`pal_app` evaluate the fence without a grant on `pal_region_fence`.
 
 The runtime-scheduler's advisory-lock leader election needs no epoch: advisory
 locks are session state on the primary and are not replicated, so a promoted
@@ -84,7 +84,7 @@ replica starts with no leader and the scheduler is region-local anyway.
 ### Data-plane failover
 
 `PAL_CONTROL_PLANE_ENDPOINTS` is an ordered list. The agent health-checks
-`lantern.v1.DataPlaneService` (standard gRPC health) and connects to the first
+`pal.v1.DataPlaneService` (standard gRPC health) and connects to the first
 `SERVING` endpoint; a read-only standby reports `NOT_SERVING` and refuses
 `Register`/`Heartbeat`/`RunStream` with `UNAVAILABLE`. On a fallback endpoint
 the agent probes higher-priority endpoints every

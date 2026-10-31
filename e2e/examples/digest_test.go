@@ -17,7 +17,7 @@ func TestDigest_ScheduleFiresAndPostsToSlack(t *testing.T) {
 	s := connect(t)
 	k := s.kit
 	db := openDB(t)
-	need(t, "LANTERN_E2E_REPLAY_URL")
+	need(t, "PAL_E2E_REPLAY_URL")
 
 	s.installConnector(t, "slack", "botToken")
 	s.installConnector(t, "github", "personalAccessToken")

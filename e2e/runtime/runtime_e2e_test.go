@@ -8,8 +8,8 @@
 // examples/headless-agents/MANUAL-TEST.md against the single-tier
 // (stub-scheduler) topology that works on macOS without KVM. On a
 // two-tier stack (scheduler + Docker-backend runtime-manager wired via
-// LANTERN_SCHEDULER_GRPC_ADDR) the real backend pulls the image, so set
-// LANTERN_E2E_IMAGE_DIGEST to a locally pullable image — the default
+// PAL_SCHEDULER_GRPC_ADDR) the real backend pulls the image, so set
+// PAL_E2E_IMAGE_DIGEST to a locally pullable image — the default
 // placeholder digest makes schedule return 500 there (verified).
 //
 // Preconditions (see e2e/README.md):
@@ -23,9 +23,9 @@
 //
 // Override the target / credentials with:
 //
-//	LANTERN_E2E_API_URL   (default http://localhost:8080)
-//	LANTERN_E2E_EMAIL     (default admin@lantern.dev)
-//	LANTERN_E2E_PASSWORD  (default lantern)
+//	PAL_E2E_API_URL   (default http://localhost:8080)
+//	PAL_E2E_EMAIL     (default admin@pal.local)
+//	PAL_E2E_PASSWORD  (default pal)
 package runtime_e2e
 
 import (
@@ -46,17 +46,17 @@ import (
 
 // ---------- config ----------
 
-// envOr reads a LANTERN_X key as PAL_X first, then the legacy name (ADR 0032).
+// envOr reads key, falling back to def.
 func envOr(key, def string) string {
-	return cmp.Or(os.Getenv("PAL_"+strings.TrimPrefix(key, "LANTERN_")), os.Getenv(key), def)
+	return cmp.Or(os.Getenv(key), def)
 }
 
 // baseURL returns the control-plane base URL.
 // Env var priority: PAL_E2E_API_URL (canonical) → PAL_API_URL (alias) → localhost:8080;
-// each also read under its legacy LANTERN_ name. Always set one explicitly — never rely on the :8080 default
+// Always set one explicitly — never rely on the :8080 default
 // in a non-dev environment; it silently points at the owner's live stack.
 func baseURL() string {
-	for _, key := range []string{"PAL_E2E_API_URL", "LANTERN_E2E_API_URL", "PAL_API_URL", "LANTERN_API_URL"} {
+	for _, key := range []string{"PAL_E2E_API_URL", "PAL_API_URL"} {
 		if v := os.Getenv(key); v != "" {
 			return strings.TrimRight(v, "/")
 		}
@@ -74,13 +74,13 @@ func TestMain(m *testing.M) {
 // testImageDigest is the image-digest form the Schedule handler accepts
 // (same shape as examples/headless-agents/01-hello/agent.yaml). The
 // default placeholder works on the single-tier (stub-scheduler) topology,
-// where nothing pulls it. On a two-tier stack (LANTERN_SCHEDULER_GRPC_ADDR
+// where nothing pulls it. On a two-tier stack (PAL_SCHEDULER_GRPC_ADDR
 // wired) the real Docker backend tries to pull the image and schedule
-// returns 500 for a non-existent one — set LANTERN_E2E_IMAGE_DIGEST to a
+// returns 500 for a non-existent one — set PAL_E2E_IMAGE_DIGEST to a
 // locally pullable image there.
 func testImageDigest() string {
-	return envOr("LANTERN_E2E_IMAGE_DIGEST",
-		"lantern/demos/hello@sha256:0000000000000000000000000000000000000000000000000000000000000001")
+	return envOr("PAL_E2E_IMAGE_DIGEST",
+		"pal/demos/hello@sha256:0000000000000000000000000000000000000000000000000000000000000001")
 }
 
 // ---------- stack probe (fatal when the stack is down, unless E2E_ALLOW_SKIP=1) ----------
@@ -142,8 +142,8 @@ func newClient(t *testing.T) *apiClient {
 func (c *apiClient) login() {
 	c.t.Helper()
 	body := map[string]string{
-		"email":    envOr("LANTERN_E2E_EMAIL", "admin@lantern.dev"),
-		"password": envOr("LANTERN_E2E_PASSWORD", "lantern"),
+		"email":    envOr("PAL_E2E_EMAIL", "admin@pal.local"),
+		"password": envOr("PAL_E2E_PASSWORD", "pal"),
 	}
 	var resp struct {
 		Token string `json:"token"`
@@ -420,7 +420,7 @@ func TestRuntime_Lifecycle(t *testing.T) {
 		})
 		vmID = resp.VmID // capture first so cleanup runs even on assert failure
 		if status != http.StatusCreated {
-			t.Fatalf("POST /v1/runtime/schedule: HTTP %d (want 201) — if 402, a leftover tight quota row exists; if 500 on a two-tier stack, set LANTERN_E2E_IMAGE_DIGEST to a pullable image", status)
+			t.Fatalf("POST /v1/runtime/schedule: HTTP %d (want 201) — if 402, a leftover tight quota row exists; if 500 on a two-tier stack, set PAL_E2E_IMAGE_DIGEST to a pullable image", status)
 		}
 		if resp.VmID == "" {
 			t.Fatalf("schedule returned empty vmId: %+v", resp)
@@ -653,16 +653,16 @@ func TestRuntime_QuotaHardFail402(t *testing.T) {
 //
 // It is SKIPPED by default and never fakes green: a confidential schedule against
 // the dev stub scheduler would fabricate a placement (node-stub), which the
-// fail-closed CC contract forbids proving that way. Set LANTERN_CC_E2E=1 ONLY
+// fail-closed CC contract forbids proving that way. Set PAL_CC_E2E=1 ONLY
 // when the runtime-scheduler is wired to a REAL cluster with a Kata-CC
 // RuntimeClass and CC-capable (SEV-SNP/TDX) nodes labeled
-// lantern.dev/confidential-compute. Attestation remains UNVERIFIED — this leg
+// pal.dev/confidential-compute. Attestation remains UNVERIFIED — this leg
 // proves placement + fail-closed refusal, not hardware attestation.
 func TestRuntime_ConfidentialCompute(t *testing.T) {
-	if cmp.Or(os.Getenv("PAL_CC_E2E"), os.Getenv("LANTERN_CC_E2E")) != "1" {
+	if os.Getenv("PAL_CC_E2E") != "1" {
 		t.Skip("SKIP: confidential-compute e2e requires a real SEV-SNP/TDX cluster — a " +
 			"confidential schedule against the dev stub scheduler would fake a green placement, " +
-			"which the fail-closed CC contract forbids. Set LANTERN_CC_E2E=1 with the " +
+			"which the fail-closed CC contract forbids. Set PAL_CC_E2E=1 with the " +
 			"runtime-scheduler pointed at a CC-capable cluster to run this leg.")
 	}
 	c := newClient(t)
@@ -689,7 +689,7 @@ func TestRuntime_ConfidentialCompute(t *testing.T) {
 		if resp.Node == "" || resp.Node == "node-stub" {
 			t.Fatalf("confidential schedule landed on the dev stub (node=%q) — not a real CC "+
 				"cluster; point the runtime-scheduler at a CC-capable cluster before setting "+
-				"LANTERN_CC_E2E=1", resp.Node)
+				"PAL_CC_E2E=1", resp.Node)
 		}
 		found := false
 		for _, vm := range c.listVMs() {

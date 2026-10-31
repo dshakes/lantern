@@ -21,8 +21,6 @@
 // JIDs are validated at the boundary — see validateJid. The rest of the
 // service trusts the validated JID shape.
 
-// FIRST import: mirrors PAL_X <-> LANTERN_X before any module reads the env (ADR 0032).
-import "@pal/bridge-core/env-compat";
 import express, { type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
 import { createServer } from "http";
@@ -37,7 +35,7 @@ import pino from "pino";
 const logger = pino({ level: process.env.LOG_LEVEL || "info" });
 
 // Initialize bridge → control-plane auth. Lazily logs in on first use
-// (using PAL_BRIDGE_EMAIL / PASSWORD, defaults to admin@lantern.dev
+// (using PAL_BRIDGE_EMAIL / PASSWORD, defaults to admin@pal.local
 // for dev). Survives JWT expiry + API restarts via auto-relogin on 401.
 import { initAuth, authEnabled } from "@pal/bridge-core/auth";
 import { buildLabel } from "@pal/bridge-core/build-info";
@@ -986,7 +984,7 @@ function autoResumeSessions(): void {
 // a WARN naming the ones that are off so they're visible in a grep.
 function logConfigCapabilities(): void {
   const has = (v: string | undefined) => !!(v && v.trim());
-  // Auth works via the dev default creds (admin@lantern.dev / lantern) baked
+  // Auth works via the dev default creds (admin@pal.local / pal) baked
   // into bridge-core even when no explicit env is set, so replies are NOT off
   // by default — only flag it when those defaults are the active path.
   const explicitAuth =

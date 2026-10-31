@@ -87,4 +87,4 @@ Brittle and dangerous. A static analyzer that misses one syscall is a security i
 
 - [`docs/architecture/04-runtime-isolation.md`](../architecture/04-runtime-isolation.md) — the class table
 - [`docs/architecture/04b-microvm-productionization.md`](../architecture/04b-microvm-productionization.md) — how the scheduler uses this
-- [`packages/proto/lantern/v1/runtime.proto`](../../packages/proto/lantern/v1/runtime.proto) — `IsolationClass`
+- [`packages/proto/pal/v1/runtime.proto`](../../packages/proto/pal/v1/runtime.proto) — `IsolationClass`

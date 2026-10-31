@@ -5,9 +5,9 @@ package handlers
 // attachment path (mcp_registry.go: AttachToAgent / ListAttachments /
 // DetachFromAgent).
 //
-// Runs against the lantern_app-backed harness (newEnforcedServer): every query
+// Runs against the pal_app-backed harness (newEnforcedServer): every query
 // the handlers route through s.srv.WithTenant — or through TenantPool().Begin +
-// setRLSTenantID for the runs CRUD — executes as the non-superuser lantern_app
+// setRLSTenantID for the runs CRUD — executes as the non-superuser pal_app
 // role with RLS genuinely enforced at Postgres. Proves the two properties the
 // cutover must guarantee:
 //
@@ -27,7 +27,7 @@ import (
 
 	"github.com/google/uuid"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
@@ -80,7 +80,7 @@ func seedEnforcedAgentWithVersion(t *testing.T, e *enforcedServer, tenantID, age
 func createRunID(t *testing.T, rs *RunService, tenantID, agentName string) string {
 	t.Helper()
 	input, _ := structpb.NewStruct(map[string]any{"message": "hello"})
-	run, err := rs.CreateRun(injectTenant(context.Background(), tenantID), &lanternv1.CreateRunRequest{
+	run, err := rs.CreateRun(injectTenant(context.Background(), tenantID), &palv1.CreateRunRequest{
 		AgentName: agentName,
 		Input:     input,
 	})
@@ -104,7 +104,7 @@ func TestRLSRuns_SameTenant_CreateListGet(t *testing.T) {
 	runID := createRunID(t, rs, tenant, agent)
 
 	// GET — the owner must see its own run.
-	got, err := rs.GetRun(injectTenant(context.Background(), tenant), &lanternv1.GetRunRequest{Id: runID})
+	got, err := rs.GetRun(injectTenant(context.Background(), tenant), &palv1.GetRunRequest{Id: runID})
 	if err != nil {
 		t.Fatalf("REGRESSION: same-tenant GetRun under RLS failed for its own run: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestRLSRuns_SameTenant_CreateListGet(t *testing.T) {
 	}
 
 	// LIST — the owner's run must appear.
-	list, err := rs.ListRuns(injectTenant(context.Background(), tenant), &lanternv1.ListRunsRequest{})
+	list, err := rs.ListRuns(injectTenant(context.Background(), tenant), &palv1.ListRunsRequest{})
 	if err != nil {
 		t.Fatalf("same-tenant ListRuns under RLS: %v", err)
 	}
@@ -145,12 +145,12 @@ func TestRLSRuns_CrossTenant_Blocked(t *testing.T) {
 
 	// (1) Tenant B GET of A's run → NotFound (RLS hides the row; the WHERE
 	// tenant_id filter and RLS both refuse it, surfaced as NotFound not denied).
-	if _, err := rs.GetRun(injectTenant(context.Background(), tenantB), &lanternv1.GetRunRequest{Id: runID}); err == nil {
+	if _, err := rs.GetRun(injectTenant(context.Background(), tenantB), &palv1.GetRunRequest{Id: runID}); err == nil {
 		t.Errorf("SECURITY VIOLATION: tenant B GetRun under RLS resolved tenant A's run %q", runID)
 	}
 
 	// (2) Tenant B LIST must not contain A's run.
-	list, err := rs.ListRuns(injectTenant(context.Background(), tenantB), &lanternv1.ListRunsRequest{})
+	list, err := rs.ListRuns(injectTenant(context.Background(), tenantB), &palv1.ListRunsRequest{})
 	if err != nil {
 		t.Fatalf("tenant B ListRuns under RLS: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestRLSRuns_CrossTenant_Blocked(t *testing.T) {
 	}
 
 	// (3) Positive control: tenant A still sees its own run.
-	if _, err := rs.GetRun(injectTenant(context.Background(), tenantA), &lanternv1.GetRunRequest{Id: runID}); err != nil {
+	if _, err := rs.GetRun(injectTenant(context.Background(), tenantA), &palv1.GetRunRequest{Id: runID}); err != nil {
 		t.Errorf("REGRESSION: tenant A GetRun its own run under RLS failed: %v", err)
 	}
 }

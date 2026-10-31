@@ -23,14 +23,14 @@
 | --------------------- | -------------------------------------- | ------------------------------------------ | -------------------------------------------- | -------------------------- |
 | **iOS app**           | Native (Swift) + PWA fallback          | Tap to start, voice, photo upload          | Push, in-app stream                          | Yes                        |
 | **Android app**       | Native (Kotlin) + PWA fallback         | Tap to start, voice, photo upload          | Push, in-app stream                          | Yes                        |
-| **Slack**             | Bot + slash commands + Block Kit cards | `/lantern run ...`, mention, message in DM | Card replies, status updates                 | Per workspace policy       |
-| **Discord**           | Bot + slash commands + components      | `/lantern run ...`, mention, DM            | Components, embeds                           | No (Discord constraint)    |
+| **Slack**             | Bot + slash commands + Block Kit cards | `/pal run ...`, mention, message in DM | Card replies, status updates                 | Per workspace policy       |
+| **Discord**           | Bot + slash commands + components      | `/pal run ...`, mention, DM            | Components, embeds                           | No (Discord constraint)    |
 | **Telegram**          | Bot                                    | `/start`, message, voice, photo            | Inline buttons, message edits                | Yes (Telegram E2E channel) |
 | **WhatsApp Business** | Cloud API                              | Message, voice, photo                      | Buttons, list messages                       | Per WhatsApp policy        |
 | **iMessage**          | Apple Business Chat                    | Message                                    | Rich messages, list pickers                  | Yes                        |
 | **SMS**               | Twilio                                 | Inbound message                            | Outbound message                             | No                         |
 | **Voice**             | Twilio (TwiML) or LiveKit (realtime)   | Inbound call                               | TwiML speech, or LiveKit Agents barge-in     | No                         |
-| **Email**             | Per-tenant `<id>.lantern.email`        | Reply to thread                            | New thread or reply, with attachments        | Optional PGP               |
+| **Email**             | Per-tenant `<id>.pal.email`        | Reply to thread                            | New thread or reply, with attachments        | Optional PGP               |
 | **Web Push**          | VAPID                                  | n/a                                        | Notification → opens dashboard or mobile app | n/a                        |
 
 ---
@@ -254,7 +254,7 @@ await ctx.screen.share({
 
 ## Mobile apps
 
-`apps/mobile-ios` (Swift, SwiftUI, MQTT for live updates) and `apps/mobile-android` (Kotlin, Jetpack Compose) — both thin shells over the surface-gateway. PWA fallback at `app.lantern.run` for first-time users on platforms without native installs.
+`apps/mobile-ios` (Swift, SwiftUI, MQTT for live updates) and `apps/mobile-android` (Kotlin, Jetpack Compose) — both thin shells over the surface-gateway. PWA fallback at `app.pal.example.com` for first-time users on platforms without native installs.
 
 Features at launch:
 

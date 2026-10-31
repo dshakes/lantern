@@ -10,10 +10,10 @@ since we don't load untrusted model weights at runtime).
 ## Run it
 
 ```bash
-docker build -t lantern/demos/ml-inference:latest examples/headless-agents/04-ml-inference
+docker build -t pal/demos/ml-inference:latest examples/headless-agents/04-ml-inference
 
 pal run examples/headless-agents/04-ml-inference/agent.yaml \
-  --input '{"texts": ["the quick brown fox", "lantern is a microvm runtime"]}'
+  --input '{"texts": ["the quick brown fox", "pal is a microvm runtime"]}'
 ```
 
 Expected response (truncated):
@@ -26,7 +26,7 @@ Expected response (truncated):
   "wall_ms": 312.5,
   "embeddings": [
     { "text": "the quick brown fox", "dim": 384, "sample": [...] },
-    { "text": "lantern is a microvm runtime", "dim": 384, "sample": [...] }
+    { "text": "pal is a microvm runtime", "dim": 384, "sample": [...] }
   ]
 }
 ```
@@ -57,6 +57,6 @@ Expected response (truncated):
   schedule call flows through scheduler → manager → harness → workload
   spans. One trace view per agent run, end-to-end.
 - **Cost accumulation**: the workload writes running cost to
-  `/run/lantern/cost.txt`. Harness reads it, reports via
+  `/run/pal/cost.txt`. Harness reads it, reports via
   `Heartbeat.ResourceUsage.cost_usd_accumulated`. Control-plane
   totals across the day, hits 402 when `max_cost_usd_per_day` exceeded.

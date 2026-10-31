@@ -396,7 +396,7 @@ Everything else registered in `services/control-plane/cmd/server/main.go`, with 
 | Evals | `/v1/eval-suites`, `/v1/eval-runs` (422 on regression), `/v1/eval-baselines`, `GET /v1/eval-observability/{failures,trends}`, `POST /v1/runs/rehearse` | [Evaluations](/docs/build/evaluations/) |
 | Experiments | `/v1/experiments`, `POST /v1/experiments/{id}/{record,conclude}` | [Evaluations](/docs/build/evaluations/) |
 | Takeover | `POST /v1/runs/{id}/takeover/request`, `GET .../takeover`, `POST .../takeover/{id}/{grant,deny,answer,release}` | [Trust and holds](/docs/pal/human-in-the-loop/) |
-| Receipts | `POST /v1/runs/{id}/receipt`, `POST /v1/runs/receipts/verify` (no auth), `GET /.well-known/lantern-receipts`, `GET /.well-known/lantern-agent-identity` | [Receipts](/docs/security/receipts/) |
+| Receipts | `POST /v1/runs/{id}/receipt`, `POST /v1/runs/receipts/verify` (no auth), `GET /.well-known/pal-receipts`, `GET /.well-known/pal-agent-identity` | [Receipts](/docs/security/receipts/) |
 | Knowledge and handoff | `/v1/agents/{name}/documents` (+ `/search`), `POST /v1/sessions/{id}/{handoff,operator-messages,resolve}` | [Knowledge and handoff](/docs/pal/knowledge/) |
 | Marketplace and MCP | `/v1/marketplace` (+ `publish`, `{slug}/{fork,star,invoke}`, `invocations`), `GET /v1/mcp/servers`, `/v1/agents/{name}/mcp-servers`, A2A: `GET /v1/agents/{name}/card`, `POST /v1/agents/{name}/a2a/invoke`, `GET /.well-known/agent.json` | [Marketplace](/docs/build/marketplace/) |
 | Agent extras | `PATCH /v1/agents/{name}`, `GET/PUT /v1/agents/{name}/workflow`, `POST /v1/agents/{generate-spec,generate-code,from-template,loop}`, `GET /v1/agents/templates`, `GET /v1/agents/{name}/feedback`, `GET /v1/agents/{name}/setup` | [Agents](/docs/build/agents/) |
@@ -407,7 +407,7 @@ Everything else registered in `services/control-plane/cmd/server/main.go`, with 
 | Memory and people | `/v1/people` (+ `resolve`, `merge`, `duplicates`, `relationship`), `/v1/memory/{events,context,search,distill,distillates}` | [pal internals](/docs/architecture/pal/) |
 | Settings and keys | `/v1/settings/llm-providers`, `/v1/api-keys`, `GET /v1/system/health` | [Quickstart](/docs/start/quickstart/) |
 | Onboarding | `GET/PUT/DELETE /v1/onboarding`, `POST /v1/onboarding/explain` | [Quickstart](/docs/start/quickstart/) |
-| Internal | `POST /internal/auth/introspect-key` (gateway, `x-lantern-service-token`) | [Security boundaries](/docs/architecture/security-boundaries/) |
+| Internal | `POST /internal/auth/introspect-key` (gateway, `x-pal-service-token`) | [Security boundaries](/docs/architecture/security-boundaries/) |
 
 The bridges also use endpoints that serve the personal agent only: `/v1/life-events`, `/v1/commitments`, `/v1/errands`, `/v1/whatsapp/{drafts,facts,vips}`, `/v1/jarvis/*`, `/v1/signals` (shared-token auth), `/v1/shortcuts/*`, `/v1/news`, `/v1/vision/ocr`, `/v1/audio/transcriptions`, `/v1/browser/*`. They are single-owner and not a stable public surface.
 

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/workflow"
+	"github.com/dshakes/pal/services/control-plane/internal/workflow"
 )
 
 // The confidence gate's default estimator is self-consistency (GA-AUDIT A4):

@@ -9,7 +9,7 @@ PAL enforces spend and concurrency as policy. Two distinct 402 paths exist:
 
 1. **Runtime quota** — `POST /v1/runtime/schedule` refuses a microVM when the
    tenant is over its max-concurrent-VM cap. Surfaced by the **real** metric
-   `lantern_scheduler_schedule_total{result="quota"}` from the runtime-scheduler.
+   `pal_scheduler_schedule_total{result="quota"}` from the runtime-scheduler.
 2. **Agent budget** — `POST /v1/runs`, `/v1/completions`, and voice refuse with
    402 when a hard-fail `agent_budgets` limit (cost/day, cost/run, tokens/day,
    runs/day, per-tool) is exceeded. This path has **no metric yet** (TODO).
@@ -23,9 +23,9 @@ concurrency count so legitimate runs are starved.
 ## What fired it
 
 - **`SchedulerQuotaRejectionSurge`** (real) —
-  `rate(lantern_scheduler_schedule_total{result="quota"}[15m]) > 0.2` for 15m.
+  `rate(pal_scheduler_schedule_total{result="quota"}[15m]) > 0.2` for 15m.
   Tenants are repeatedly hitting the per-tenant microVM cap.
-- **`BudgetDenied402Surge`** (TODO) — depends on `lantern_budget_denied_total`,
+- **`BudgetDenied402Surge`** (TODO) — depends on `pal_budget_denied_total`,
   a counter **not emitted yet**. Add it on the 402 branches of the budget
   enforcer in `services/control-plane/internal/handlers` (runs, completions,
   voice), expose on `/metrics`, then uncomment the rule in
@@ -42,9 +42,9 @@ concurrency count so legitimate runs are starved.
 curl -s -H "Authorization: Bearer <jwt>" http://<cp>:8080/v1/runtime/quota
 
 # How many VMs does the scheduler think are live?  A leak inflates this.
-#   lantern_scheduler_active_vms (gauge) on :8085/metrics.
+#   pal_scheduler_active_vms (gauge) on :8085/metrics.
 kubectl -n <ns> exec deploy/<runtime-scheduler> -- wget -qO- localhost:8085/metrics \
-  | grep lantern_scheduler_active_vms
+  | grep pal_scheduler_active_vms
 ```
 
 ```sql

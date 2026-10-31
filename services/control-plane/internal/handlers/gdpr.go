@@ -33,9 +33,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // GDPRHandler handles tenant self-erasure.
@@ -436,7 +436,7 @@ func (h *GDPRHandler) ExportTenant(w http.ResponseWriter, r *http.Request) {
 
 	h.logger().Info("GDPR tenant export",
 		zap.String("tenant_id", tenantID), zap.String("initiated_by_user", claims.Subject), zap.Int("tables", len(tables)))
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="lantern-export-%s.json"`, tenantID))
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="pal-export-%s.json"`, tenantID))
 	writeJSON(w, http.StatusOK, map[string]any{
 		"tenantId":   tenantID,
 		"exportedAt": time.Now().UTC().Format(time.RFC3339),

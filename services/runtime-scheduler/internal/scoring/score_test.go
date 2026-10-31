@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
 )
 
 const epsilon = 1e-9
@@ -16,7 +16,7 @@ func approxEqual(a, b float64) bool {
 func TestWarmPoolMatchScore_ExactHit(t *testing.T) {
 	wl := WorkloadSnapshot{
 		ImageDigest: "sha256:abc",
-		Class:       lanternv1.IsolationClass_ISOLATION_STANDARD,
+		Class:       palv1.IsolationClass_ISOLATION_STANDARD,
 		SizeKey:     "500m/512Mi",
 	}
 	key := WarmPoolExactKey(wl.ImageDigest, wl.Class, wl.SizeKey)
@@ -32,7 +32,7 @@ func TestWarmPoolMatchScore_ExactHit(t *testing.T) {
 func TestWarmPoolMatchScore_ImageOnly(t *testing.T) {
 	wl := WorkloadSnapshot{
 		ImageDigest: "sha256:abc",
-		Class:       lanternv1.IsolationClass_ISOLATION_STANDARD,
+		Class:       palv1.IsolationClass_ISOLATION_STANDARD,
 		SizeKey:     "500m/512Mi",
 	}
 	node := NodeSnapshot{
@@ -166,7 +166,7 @@ func TestScoreNode_DrainingIsZero(t *testing.T) {
 func TestScoreNode_WeightedSum(t *testing.T) {
 	wl := WorkloadSnapshot{
 		ImageDigest:   "sha256:abc",
-		Class:         lanternv1.IsolationClass_ISOLATION_STANDARD,
+		Class:         palv1.IsolationClass_ISOLATION_STANDARD,
 		SizeKey:       "500m/512Mi",
 		DataRegion:    "us-east-1",
 		DataContinent: "na",

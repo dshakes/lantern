@@ -23,12 +23,7 @@ export async function stageDownloadLink(o: StageLinkOptions): Promise<{ url: str
     "X-TTL-Seconds": String(o.ttlSeconds ?? 3600),
     "Content-Length": String(o.content.byteLength),
   };
-  // Both names (ADR 0032): x-pal-* for an upgraded control plane, the legacy
-  // x-lantern-* so a control plane not yet redeployed still authenticates us.
-  if (o.serviceToken) {
-    headers["x-pal-service-token"] = o.serviceToken;
-    headers["x-lantern-service-token"] = o.serviceToken;
-  }
+  if (o.serviceToken) headers["x-pal-service-token"] = o.serviceToken;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), o.timeoutMs ?? 15000);
   try {

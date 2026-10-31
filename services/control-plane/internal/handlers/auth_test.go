@@ -8,7 +8,7 @@ package handlers
 // Skipped automatically when DATABASE_URL is unset (same convention as the rest
 // of this package). Run with:
 //
-//	DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable \
+//	DATABASE_URL=postgres://pal:pal@localhost:5432/pal?sslmode=disable \
 //	  go test ./internal/handlers/ -run Auth -count=1 -v
 
 import (
@@ -23,7 +23,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // newAuthTestHandler builds an AuthHandler backed by a real pool, using the

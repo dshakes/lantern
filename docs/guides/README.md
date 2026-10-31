@@ -2,7 +2,7 @@
 
 The **headless agent runtime** is the execution kernel that runs your agents inside
 your own Kubernetes cluster. You declare an `AgentSpec` (image, isolation class,
-resources, secrets, egress rules), hand it to `lantern run`, and the platform takes
+resources, secrets, egress rules), hand it to `pal run`, and the platform takes
 it from there: quota gate, scheduler placement, hardened pod spawn, in-VM harness
 boot, short-TTL secret vending, OTel-traced execution, journal-backed crash replay,
 and a signed receipt at the end.
@@ -17,9 +17,9 @@ This directory contains practical guides for the runtime. Each guide gives what,
 | [Isolation classes](https://dshakes.github.io/pal/docs/runtime/isolation/) | Pick the right isolation class for your workload. Decision tree + fail-closed gate explanation. |
 | [Durable execution](https://dshakes.github.io/pal/docs/runtime/durable-execution/) | How crash-replay works: exactly-once completion, no re-spent tokens, recovery watchdog. |
 | [Observability](https://dshakes.github.io/pal/docs/runtime/observability/) | One trace per spawn, GenAI semconv, loop/retry anomaly events, `GET /v1/runtime/metrics`. |
-| [Identity and secrets](https://dshakes.github.io/pal/docs/runtime/identity/) | Per-instance Ed25519 identity, short-TTL secret vending over mTLS, the `lantern.secret/` ref form. |
+| [Identity and secrets](https://dshakes.github.io/pal/docs/runtime/identity/) | Per-instance Ed25519 identity, short-TTL secret vending over mTLS, the `pal.secret/` ref form. |
 | [Verifiable receipts](https://dshakes.github.io/pal/docs/runtime/receipts/) | Ed25519-signed receipts, offline verification, tamper-evidence. |
-| [CLI agent loop](cli-agent-loop.md) | `lantern onboard`, `lantern doctor`, `lantern agent dev`. |
+| [CLI agent loop](cli-agent-loop.md) | `pal onboard`, `pal doctor`, `pal agent dev`. |
 | [Self-service journey](self-service-e2e.md) | Develop, test, deploy, run, observe, improve - end to end. |
 | [Local to production](local-to-prod.md) | Laptop, Docker microVM tier, K8s data plane; promotion checklist. |
 

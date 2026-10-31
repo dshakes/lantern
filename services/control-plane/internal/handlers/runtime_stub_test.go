@@ -4,7 +4,7 @@ package handlers
 //
 // Without PAL_SCHEDULER_GRPC_ADDR the handler falls back to
 // stubSchedulerClient, which SYNTHESIZES a vm_id and spawns nothing. The
-// response was byte-identical to a real schedule, so `lantern run` printed
+// response was byte-identical to a real schedule, so `pal run` printed
 // "scheduled vm_id=..." and exited 0 against a stack that ran no workload.
 // Verified live before the fix: a vm_id the scheduler had never heard of and
 // zero containers. The response must now self-identify.
@@ -113,11 +113,11 @@ func TestSchedule_PersistedSpecHasNoInstanceToken(t *testing.T) {
 	if env == nil {
 		t.Fatal("stored spec should still carry env (only the token is redacted)")
 	}
-	if got := env["LANTERN_AGENT_INSTANCE_TOKEN"]; got != redactedValue {
+	if got := env["PAL_AGENT_INSTANCE_TOKEN"]; got != redactedValue {
 		t.Fatalf("instance token must be redacted at rest, got %v", got)
 	}
 	// The identifier is not a credential and must survive for correlation.
-	if id, _ := env["LANTERN_AGENT_INSTANCE_ID"].(string); id == "" {
+	if id, _ := env["PAL_AGENT_INSTANCE_ID"].(string); id == "" {
 		t.Fatal("instance id must be preserved")
 	}
 }

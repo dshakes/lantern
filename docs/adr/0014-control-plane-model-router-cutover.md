@@ -36,7 +36,7 @@ problem.
 ### 1. Request-scoped credential map (new trust boundary)
 
 Add `map<string,string> provider_credentials = 42;` to `CompleteRequest` (and
-`= 4` to `EmbedRequest`) in `packages/proto/lantern/v1/models.proto`. Keys are
+`= 4` to `EmbedRequest`) in `packages/proto/pal/v1/models.proto`. Keys are
 provider ids (`"openai"`, `"anthropic"`) → API key. The control-plane resolves
 the tenant's key per call and ships it in this map; the router builds a
 PER-REQUEST provider from it (`ModelRouter::providers_for_request`), falling back

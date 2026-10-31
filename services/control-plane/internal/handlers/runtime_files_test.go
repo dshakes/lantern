@@ -12,35 +12,35 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
 )
 
 // toolSched is a recScheduler that also serves ExecTool (the file API's path
 // to the runtime-manager), recording the last request.
 type toolSched struct {
 	recScheduler
-	resp *lanternv1.ExecToolResponse
+	resp *palv1.ExecToolResponse
 	err  error
-	got  *lanternv1.ExecToolRequest
+	got  *palv1.ExecToolRequest
 	node string
 }
 
-func (s *toolSched) ExecTool(_ context.Context, node string, req *lanternv1.ExecToolRequest) (*lanternv1.ExecToolResponse, error) {
+func (s *toolSched) ExecTool(_ context.Context, node string, req *palv1.ExecToolRequest) (*palv1.ExecToolResponse, error) {
 	s.got, s.node = req, node
 	return s.resp, s.err
 }
 
-func toolOK(t *testing.T, result map[string]any) *lanternv1.ExecToolResponse {
+func toolOK(t *testing.T, result map[string]any) *palv1.ExecToolResponse {
 	t.Helper()
 	st, err := structpb.NewStruct(result)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &lanternv1.ExecToolResponse{Status: lanternv1.ToolStatus_TOOL_STATUS_OK, Result: st}
+	return &palv1.ExecToolResponse{Status: palv1.ToolStatus_TOOL_STATUS_OK, Result: st}
 }
 
-func toolErr(st lanternv1.ToolStatus, msg string) *lanternv1.ExecToolResponse {
-	return &lanternv1.ExecToolResponse{Status: st, Error: msg}
+func toolErr(st palv1.ToolStatus, msg string) *palv1.ExecToolResponse {
+	return &palv1.ExecToolResponse{Status: st, Error: msg}
 }
 
 // doFiles fires a file-API request at the matching handler.
@@ -103,13 +103,13 @@ func TestFileToolErrStatus(t *testing.T) {
 func TestRunFileTool_StatusMapping(t *testing.T) {
 	cases := []struct {
 		name string
-		resp *lanternv1.ExecToolResponse
+		resp *palv1.ExecToolResponse
 		err  error
 		want int
 	}{
-		{"path escape", toolErr(lanternv1.ToolStatus_TOOL_STATUS_ERROR, "read_file: ../x: outside the workspace root"), nil, 400},
-		{"missing", toolErr(lanternv1.ToolStatus_TOOL_STATUS_ERROR, "read_file: x: No such file or directory (os error 2)"), nil, 404},
-		{"unavailable", toolErr(lanternv1.ToolStatus_TOOL_STATUS_UNAVAILABLE, "harness not connected"), nil, 503},
+		{"path escape", toolErr(palv1.ToolStatus_TOOL_STATUS_ERROR, "read_file: ../x: outside the workspace root"), nil, 400},
+		{"missing", toolErr(palv1.ToolStatus_TOOL_STATUS_ERROR, "read_file: x: No such file or directory (os error 2)"), nil, 404},
+		{"unavailable", toolErr(palv1.ToolStatus_TOOL_STATUS_UNAVAILABLE, "harness not connected"), nil, 503},
 		{"manager not found", nil, status.Error(grpccodes.NotFound, "vm x not found"), 404},
 		{"manager down", nil, status.Error(grpccodes.Unavailable, "dial"), 503},
 		{"manager internal", nil, status.Error(grpccodes.Internal, "boom"), 502},
@@ -212,8 +212,8 @@ func TestFiles_DB(t *testing.T) {
 	t.Run("read", func(t *testing.T) {
 		sched.resp = toolOK(t, map[string]any{"content": "hello" + harnessTruncatedMarker, "truncated": true})
 		w := doFiles(h, tok, http.MethodGet, "/content", vm, "a.txt", "")
-		if w.Code != http.StatusOK || w.Body.String() != "hello" || w.Header().Get("X-Lantern-Truncated") != "true" {
-			t.Errorf("read: %d %q truncated=%q", w.Code, w.Body.String(), w.Header().Get("X-Lantern-Truncated"))
+		if w.Code != http.StatusOK || w.Body.String() != "hello" || w.Header().Get("X-Pal-Truncated") != "true" {
+			t.Errorf("read: %d %q truncated=%q", w.Code, w.Body.String(), w.Header().Get("X-Pal-Truncated"))
 		}
 		if sched.got.GetToolName() != "read_file" || sched.got.GetTenantId() != tenant || sched.got.GetArgs().AsMap()["path"] != "a.txt" {
 			t.Errorf("ExecTool got %+v", sched.got)
@@ -235,14 +235,14 @@ func TestFiles_DB(t *testing.T) {
 	})
 
 	t.Run("path escape is 400", func(t *testing.T) {
-		sched.resp = toolErr(lanternv1.ToolStatus_TOOL_STATUS_ERROR, "write_file: ../x: parent: outside the workspace root")
+		sched.resp = toolErr(palv1.ToolStatus_TOOL_STATUS_ERROR, "write_file: ../x: parent: outside the workspace root")
 		if w := doFiles(h, tok, http.MethodPut, "/content", vm, "../x", "y"); w.Code != http.StatusBadRequest {
 			t.Errorf("escape: %d, want 400", w.Code)
 		}
 	})
 
 	t.Run("unavailable is 503", func(t *testing.T) {
-		sched.resp = toolErr(lanternv1.ToolStatus_TOOL_STATUS_UNAVAILABLE, "harness not connected")
+		sched.resp = toolErr(palv1.ToolStatus_TOOL_STATUS_UNAVAILABLE, "harness not connected")
 		if w := doFiles(h, tok, http.MethodGet, "/content", vm, "a.txt", ""); w.Code != http.StatusServiceUnavailable {
 			t.Errorf("unavailable: %d, want 503", w.Code)
 		}

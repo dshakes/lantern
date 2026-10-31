@@ -13,7 +13,7 @@ import { authedFetch } from "./auth.js";
 
 const EMAIL_DEDUP_MS = 30_000;
 const EMAIL_MIN_LEN = 8;
-const EMAIL_LABEL = "lantern";
+const EMAIL_LABEL = "pal";
 
 export interface EmailMirrorOptions {
   // Optional prefix to disambiguate which bridge a status came from

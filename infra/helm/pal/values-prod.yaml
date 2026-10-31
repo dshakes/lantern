@@ -25,7 +25,7 @@ global:
 # -- Row-Level Security + AuthZ: ON here, and only here --
 #
 # PAL_RLS_ENFORCE=1 makes tenant-scoped queries run as the non-superuser
-# `lantern_app` role, which the policies actually apply to. Without the second
+# `pal_app` role, which the policies actually apply to. Without the second
 # variable the pool is never built and the services fail closed at startup, so
 # the two must always travel together.
 #
@@ -182,7 +182,7 @@ networkPolicy:
 backup:
   enabled: false
   useChartMinio: false
-  existingSecret: lantern-backup-s3   # keys: access-key-id, secret-access-key
+  existingSecret: pal-backup-s3   # keys: access-key-id, secret-access-key
   s3Endpoint: ""                      # "" = AWS S3
   s3Bucket: ""                        # REQUIRED when enabled
 
@@ -208,7 +208,7 @@ dashboard:
 # Production runs managed Postgres (pgvector extension + point-in-time recovery)
 # and managed S3; the in-cluster single-pod dev stores are off. Set the endpoints
 # per environment (--set or an overlay); the chart fails to render without them.
-# Also provision the `lantern_app` role (infra/db/least-privilege.sql).
+# Also provision the `pal_app` role (infra/db/least-privilege.sql).
 postgresql:
   enabled: false
 externalDatabase:
@@ -221,14 +221,14 @@ externalS3:
   endpoint: ""        # REQUIRED, e.g. https://s3.us-west-2.amazonaws.com
   region: us-east-1   # set to the bucket region (e.g. us-west-2) or SigV4 requests are rejected
   accessKeyId: ""     # REQUIRED; secret key is secrets.minioPassword
-  bucket: lantern-prod
+  bucket: pal-prod
 
 secrets:
   # Also supplied at deploy time: jwtSecret, credentialKey, receiptSecret,
   # grpcServiceToken, schedulerNodeToken (the scheduler refuses to start without it).
   # Supplied at deploy time — never committed. See the runbook.
   #   --set secrets.appDbPassword="$PAL_APP_DB_PASSWORD"
-  # This is the credential for the lantern_app role that RLS policies apply to;
+  # This is the credential for the pal_app role that RLS policies apply to;
   # it is NOT the superuser postgres password and must not be set to it (a
   # superuser bypasses RLS, which would leave enforcement silently off).
   appDbPassword: ""

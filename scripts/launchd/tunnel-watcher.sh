@@ -1,5 +1,5 @@
 #!/bin/bash
-# tunnel-watcher — keep Twilio webhooks + LANTERN_PUBLIC_BASE_URL in
+# tunnel-watcher — keep Twilio webhooks + PAL_PUBLIC_BASE_URL in
 # sync with the current Cloudflare Tunnel URL.
 #
 # The quick-tunnel mode of cloudflared (`tunnel --url http://...`)
@@ -10,19 +10,14 @@
 # 15 seconds, detects the current URL, and re-points everything when
 # it changes.
 #
-# Wired in as a LaunchAgent via dev.lantern.tunnel-watcher.plist.
-# Logs to ~/Library/Logs/Lantern/tunnel-watcher.{out,err}.log.
+# Wired in as a LaunchAgent via dev.pal.tunnel-watcher.plist.
+# Logs to ~/Library/Logs/PAL/tunnel-watcher.{out,err}.log.
 #
 # Exits non-zero on irrecoverable errors so launchd restarts it.
 
 set -u
 
-# Works on either side of the PAL cutover (ADR 0032): once dev.pal.api is
-# installed, use the dev.pal.* label, PAL_* env keys, the PAL log dir and ~/.pal.
-LABEL_PREFIX=dev.lantern ENV_PREFIX=LANTERN LOG_DIR=~/Library/Logs/Lantern STATE_DIR=~/.lantern
-if [ -e ~/Library/LaunchAgents/dev.pal.api.plist ]; then
-  LABEL_PREFIX=dev.pal ENV_PREFIX=PAL LOG_DIR=~/Library/Logs/PAL STATE_DIR=~/.pal
-fi
+LABEL_PREFIX=dev.pal ENV_PREFIX=PAL LOG_DIR=~/Library/Logs/PAL STATE_DIR=~/.pal
 CFLOG=$LOG_DIR/cloudflared.err.log
 SECONDARY_LOG=$LOG_DIR/cloudflared.log  # legacy nohup path
 STATE_FILE=$STATE_DIR/tunnel-current-url
@@ -54,7 +49,7 @@ fetch_twilio_creds() {
   local jwt sid auth pn
   jwt=$(curl -s -m 5 -X POST http://127.0.0.1:8080/auth/login \
     -H 'content-type: application/json' \
-    -d '{"email":"admin@lantern.dev","password":"lantern"}' \
+    -d '{"email":"admin@pal.local","password":"pal"}' \
     | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
   [ -z "$jwt" ] && return 1
   local resp
@@ -102,7 +97,7 @@ if nums: print(nums[0]['sid'])
   log "✅ Twilio webhooks repointed to $new_url"
 }
 
-# Update LANTERN_PUBLIC_BASE_URL in the API plist + reload the API
+# Update PAL_PUBLIC_BASE_URL in the API plist + reload the API
 # so signature verification works against the new URL.
 update_api_plist() {
   local new_url="$1"

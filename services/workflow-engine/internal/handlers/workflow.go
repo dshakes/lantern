@@ -12,18 +12,18 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/workflow-engine/internal/engine"
-	"github.com/dshakes/lantern/services/workflow-engine/internal/middleware"
-	"github.com/dshakes/lantern/services/workflow-engine/internal/server"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/workflow-engine/internal/engine"
+	"github.com/dshakes/pal/services/workflow-engine/internal/middleware"
+	"github.com/dshakes/pal/services/workflow-engine/internal/server"
 )
 
 // Ensure time is used (stream event timestamps).
 var _ = time.Now
 
-// WorkflowService implements lanternv1.WorkflowEngineServiceServer.
+// WorkflowService implements palv1.WorkflowEngineServiceServer.
 type WorkflowService struct {
-	lanternv1.UnimplementedWorkflowEngineServiceServer
+	palv1.UnimplementedWorkflowEngineServiceServer
 	srv *server.Server
 }
 
@@ -38,7 +38,7 @@ func (s *WorkflowService) logger() *zap.Logger {
 
 // ExecuteRun accepts a run for execution. It validates the request, delegates
 // to the engine, and streams back events as they occur.
-func (s *WorkflowService) ExecuteRun(req *lanternv1.ExecuteRunRequest, stream lanternv1.WorkflowEngineService_ExecuteRunServer) error {
+func (s *WorkflowService) ExecuteRun(req *palv1.ExecuteRunRequest, stream palv1.WorkflowEngineService_ExecuteRunServer) error {
 	tenantID, err := middleware.MustTenantID(stream.Context())
 	if err != nil {
 		return err
@@ -122,7 +122,7 @@ func (s *WorkflowService) ExecuteRun(req *lanternv1.ExecuteRunRequest, stream la
 }
 
 // ResumeRun resumes a paused run and streams back events.
-func (s *WorkflowService) ResumeRun(req *lanternv1.ResumeRunRequest, stream lanternv1.WorkflowEngineService_ResumeRunServer) error {
+func (s *WorkflowService) ResumeRun(req *palv1.ResumeRunRequest, stream palv1.WorkflowEngineService_ResumeRunServer) error {
 	tenantID, err := middleware.MustTenantID(stream.Context())
 	if err != nil {
 		return err
@@ -188,7 +188,7 @@ func (s *WorkflowService) ResumeRun(req *lanternv1.ResumeRunRequest, stream lant
 }
 
 // SignalRun delivers an external signal to a running or paused run.
-func (s *WorkflowService) SignalRun(ctx context.Context, req *lanternv1.SignalRunRequest) (*lanternv1.SignalRunResponse, error) {
+func (s *WorkflowService) SignalRun(ctx context.Context, req *palv1.SignalRunRequest) (*palv1.SignalRunResponse, error) {
 	tenantID, err := middleware.MustTenantID(ctx)
 	if err != nil {
 		return nil, err
@@ -225,11 +225,11 @@ func (s *WorkflowService) SignalRun(ctx context.Context, req *lanternv1.SignalRu
 		return nil, status.Errorf(codes.Internal, "failed to signal run: %v", err)
 	}
 
-	return &lanternv1.SignalRunResponse{}, nil
+	return &palv1.SignalRunResponse{}, nil
 }
 
 // CancelRun cancels a running or paused run.
-func (s *WorkflowService) CancelRun(ctx context.Context, req *lanternv1.CancelRunRequest) (*lanternv1.CancelRunResponse, error) {
+func (s *WorkflowService) CancelRun(ctx context.Context, req *palv1.CancelRunRequest) (*palv1.CancelRunResponse, error) {
 	tenantID, err := middleware.MustTenantID(ctx)
 	if err != nil {
 		return nil, err
@@ -251,11 +251,11 @@ func (s *WorkflowService) CancelRun(ctx context.Context, req *lanternv1.CancelRu
 		return nil, status.Errorf(codes.Internal, "failed to cancel run: %v", err)
 	}
 
-	return &lanternv1.CancelRunResponse{}, nil
+	return &palv1.CancelRunResponse{}, nil
 }
 
 // QueryRun executes a synchronous query against a running workflow.
-func (s *WorkflowService) QueryRun(ctx context.Context, req *lanternv1.QueryRunRequest) (*lanternv1.QueryRunResponse, error) {
+func (s *WorkflowService) QueryRun(ctx context.Context, req *palv1.QueryRunRequest) (*palv1.QueryRunResponse, error) {
 	tenantID, err := middleware.MustTenantID(ctx)
 	if err != nil {
 		return nil, err
@@ -312,7 +312,7 @@ func (s *WorkflowService) QueryRun(ctx context.Context, req *lanternv1.QueryRunR
 		return nil, status.Errorf(codes.Internal, "failed to build result struct: %v", err)
 	}
 
-	return &lanternv1.QueryRunResponse{
+	return &palv1.QueryRunResponse{
 		Result: resultStruct,
 	}, nil
 }
@@ -320,8 +320,8 @@ func (s *WorkflowService) QueryRun(ctx context.Context, req *lanternv1.QueryRunR
 // --- helpers ---
 
 // streamEventToProto converts an internal StreamEvent to a proto StreamEvent.
-func streamEventToProto(event *engine.StreamEvent, seq uint64) *lanternv1.StreamEvent {
-	pe := &lanternv1.StreamEvent{
+func streamEventToProto(event *engine.StreamEvent, seq uint64) *palv1.StreamEvent {
+	pe := &palv1.StreamEvent{
 		RunId:  event.RunID,
 		StepId: event.StepID,
 		Seq:    seq,
@@ -335,8 +335,8 @@ func streamEventToProto(event *engine.StreamEvent, seq uint64) *lanternv1.Stream
 			Attempt int32  `json:"attempt"`
 		}
 		json.Unmarshal(event.Payload, &p) //nolint:errcheck
-		pe.Payload = &lanternv1.StreamEvent_StepStarted{
-			StepStarted: &lanternv1.StepStarted{
+		pe.Payload = &palv1.StreamEvent_StepStarted{
+			StepStarted: &palv1.StepStarted{
 				StepId:  event.StepID,
 				Attempt: p.Attempt,
 				Kind:    p.Kind,
@@ -349,8 +349,8 @@ func streamEventToProto(event *engine.StreamEvent, seq uint64) *lanternv1.Stream
 			DurationMs float64 `json:"duration_ms"`
 		}
 		json.Unmarshal(event.Payload, &p) //nolint:errcheck
-		pe.Payload = &lanternv1.StreamEvent_StepCompleted{
-			StepCompleted: &lanternv1.StepCompleted{
+		pe.Payload = &palv1.StreamEvent_StepCompleted{
+			StepCompleted: &palv1.StepCompleted{
 				StepId:     event.StepID,
 				Attempt:    p.Attempt,
 				DurationMs: p.DurationMs,
@@ -364,8 +364,8 @@ func streamEventToProto(event *engine.StreamEvent, seq uint64) *lanternv1.Stream
 			WillRetry    bool   `json:"will_retry"`
 		}
 		json.Unmarshal(event.Payload, &p) //nolint:errcheck
-		pe.Payload = &lanternv1.StreamEvent_StepFailed{
-			StepFailed: &lanternv1.StepFailed{
+		pe.Payload = &palv1.StreamEvent_StepFailed{
+			StepFailed: &palv1.StepFailed{
 				StepId:       event.StepID,
 				Attempt:      p.Attempt,
 				ErrorMessage: p.ErrorMessage,
@@ -374,8 +374,8 @@ func streamEventToProto(event *engine.StreamEvent, seq uint64) *lanternv1.Stream
 		}
 
 	case "run_started", "run_succeeded", "run_failed", "run_cancelled":
-		pe.Payload = &lanternv1.StreamEvent_Log{
-			Log: &lanternv1.LogLine{
+		pe.Payload = &palv1.StreamEvent_Log{
+			Log: &palv1.LogLine{
 				Level:   "info",
 				Message: event.Kind,
 			},
@@ -386,15 +386,15 @@ func streamEventToProto(event *engine.StreamEvent, seq uint64) *lanternv1.Stream
 			Reason string `json:"reason"`
 		}
 		json.Unmarshal(event.Payload, &p) //nolint:errcheck
-		pe.Payload = &lanternv1.StreamEvent_End{
-			End: &lanternv1.StreamEnd{
+		pe.Payload = &palv1.StreamEvent_End{
+			End: &palv1.StreamEnd{
 				Reason: p.Reason,
 			},
 		}
 
 	default:
-		pe.Payload = &lanternv1.StreamEvent_Log{
-			Log: &lanternv1.LogLine{
+		pe.Payload = &palv1.StreamEvent_Log{
+			Log: &palv1.LogLine{
 				Level:   "debug",
 				Message: event.Kind,
 			},

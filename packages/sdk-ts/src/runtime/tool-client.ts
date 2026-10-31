@@ -100,10 +100,10 @@ export class RuntimeToolClient implements ToolClient {
    */
   private async invokeWebSearch(query: string): Promise<SearchResult[]> {
     return traced("tool.web.search", { query: query.slice(0, 100) }, async () => {
-      const output = await this.invoke("lantern.web", { action: "search", query });
+      const output = await this.invoke("pal.web", { action: "search", query });
       const parsed = JSON.parse(output);
       if (!Array.isArray(parsed)) {
-        throw new PalToolError("lantern.web", `Expected array of search results, got: ${typeof parsed}`);
+        throw new PalToolError("pal.web", `Expected array of search results, got: ${typeof parsed}`);
       }
       return parsed as SearchResult[];
     });
@@ -118,7 +118,7 @@ export class RuntimeToolClient implements ToolClient {
    */
   private async invokeWebFetch(url: string): Promise<string> {
     return traced("tool.web.fetch", { url: url.slice(0, 200) }, async () => {
-      const output = await this.invoke("lantern.web", { action: "fetch", url });
+      const output = await this.invoke("pal.web", { action: "fetch", url });
       return output;
     });
   }
@@ -138,7 +138,7 @@ export class RuntimeToolClient implements ToolClient {
    */
   private async invokePythonExec(code: string): Promise<PythonResult> {
     return traced("tool.python.exec", {}, async () => {
-      const output = await this.invoke("lantern.python", { action: "exec", code });
+      const output = await this.invoke("pal.python", { action: "exec", code });
       const parsed = JSON.parse(output);
       return {
         stdout: parsed.stdout ?? "",
@@ -160,7 +160,7 @@ export class RuntimeToolClient implements ToolClient {
    */
   private async invokeFsRead(path: string): Promise<string> {
     return traced("tool.fs.read", { path }, async () => {
-      return this.invoke("lantern.fs", { action: "read", path });
+      return this.invoke("pal.fs", { action: "read", path });
     });
   }
 
@@ -173,7 +173,7 @@ export class RuntimeToolClient implements ToolClient {
    */
   private async invokeFsWrite(path: string, content: string): Promise<void> {
     return traced("tool.fs.write", { path }, async () => {
-      await this.invoke("lantern.fs", { action: "write", path, content });
+      await this.invoke("pal.fs", { action: "write", path, content });
     });
   }
 
@@ -182,7 +182,7 @@ export class RuntimeToolClient implements ToolClient {
   /**
    * Invoke a tool via the sidecar.
    *
-   * @param toolName - The tool identifier (e.g. "lantern.web").
+   * @param toolName - The tool identifier (e.g. "pal.web").
    * @param input - The tool input object.
    * @returns The raw output string from the sidecar.
    * @throws {PalToolError} If the tool invocation fails.

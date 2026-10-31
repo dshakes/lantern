@@ -210,7 +210,7 @@ export const TRACE_PROPAGATION: FlowDef = {
     { id: "gw", label: "Gateway", sub: "gateway.request", tone: "rt", x: 30, y: 20, detail: "One span per HTTP request, tagged with tenant_id, honoring an inbound W3C traceparent." },
     { id: "http", label: "otelhttp handler", sub: "span per route", tone: "rt", x: 220, y: 20, detail: "HTTP requests are wrapped by otelhttp, named by the low-cardinality route template.", src: [M(`${CP}/cmd/server/main.go`, 914)] },
     { id: "grpc", label: "gRPC interceptors", sub: "unary + stream", tone: "rt", x: 220, y: 200, detail: "gRPC methods get spans from the tracing interceptors.", src: [M(`${CP}/cmd/server/main.go`, 255)] },
-    { id: "enrich", label: "EnrichSpan", sub: "lantern.* attributes", tone: "rt", x: 410, y: 110, detail: "One helper stamps lantern.tenant_id, user_id, run_id and step_id, so HTTP, gRPC and step spans filter by the same keys.", src: [M(`${CP}/internal/middleware/span.go`, 32)] },
+    { id: "enrich", label: "EnrichSpan", sub: "pal.* attributes", tone: "rt", x: 410, y: 110, detail: "One helper stamps pal.tenant_id, user_id, run_id and step_id, so HTTP, gRPC and step spans filter by the same keys.", src: [M(`${CP}/internal/middleware/span.go`, 32)] },
     { id: "step", label: "Step spans", sub: "run_id · step_id", tone: "rt", x: 600, y: 110, detail: "The executor enriches each workflow step span with its run and step id.", src: [M(`${CP}/cmd/server/main.go`, 1405)] },
     { id: "mr", label: "Model router", sub: "model_used · tokens", tone: "rt", x: 410, y: 200, detail: "One span per routing call with tenant_id, run_id, step_id, model_used, tokens and cost_usd." },
     { id: "rm", label: "Runtime manager", sub: "traceparent", tone: "host", x: 600, y: 200, detail: "The scheduler and manager carry tenant_id and vm_id and pass the trace context on." },
@@ -234,8 +234,8 @@ export const TRACE_PROPAGATION: FlowDef = {
         { title: "The gateway opens the first span", note: "gateway.request is tagged with tenant_id and joins any inbound W3C traceparent.", nodes: ["gw"] },
         { title: "The control plane wraps it", note: "otelhttp names the span after the route template, for example GET /v1/runs/{id}/events.", edges: ["gw>http"] },
         { title: "Identifiers are stamped", note: "EnrichSpan adds tenant and user, and the run id when the path carries one.", edges: ["http>enrich"] },
-        { title: "Each step adds its own", note: "The executor adds lantern.step_id on every workflow step span.", edges: ["enrich>step"] },
-        { title: "Exported to the collector", note: "The spans leave over OTLP to your backend; a run is then one query on lantern.run_id.", edges: ["step>otlp"] },
+        { title: "Each step adds its own", note: "The executor adds pal.step_id on every workflow step span.", edges: ["enrich>step"] },
+        { title: "Exported to the collector", note: "The spans leave over OTLP to your backend; a run is then one query on pal.run_id.", edges: ["step>otlp"] },
       ],
     },
     {
@@ -281,7 +281,7 @@ export const SIGNED_RECEIPTS: FlowDef = {
     { id: "export", label: "Journal export", sub: "the run's event log", tone: "store", x: 220, y: 150, detail: "Checking that nothing changed after the fact needs the run's actual journal." },
     { id: "auditor", label: "Verifier", sub: "auditor · customer", tone: "client", x: 410, y: 150, detail: "Anyone holding a receipt. The public /proof page needs no sign-in." },
     { id: "verify", label: "…/receipts/verify", sub: "no auth required", tone: "rt", x: 600, y: 150, detail: "Checks a receipt signature.", src: [M(`${H}/receipts.go`, 237)] },
-    { id: "wk", label: "/.well-known/", sub: "lantern-receipts", tone: "rt", x: 790, y: 150, detail: "Publishes the signing algorithm, key fingerprint and, for Ed25519, the public key, so verification works without trusting your control plane." },
+    { id: "wk", label: "/.well-known/", sub: "pal-receipts", tone: "rt", x: 790, y: 150, detail: "Publishes the signing algorithm, key fingerprint and, for Ed25519, the public key, so verification works without trusting your control plane." },
   ],
   edges: [
     { from: "run", to: "journal" },
@@ -510,7 +510,7 @@ export const IDENTITY_SECRETS: FlowDef = {
   caption: "The spec holds a reference, never a value. A secret is vended at the last moment to a peer the kernel has authenticated.",
   vb: [980, 250],
   nodes: [
-    { id: "spec", label: "Agent spec", sub: "lantern.secret/ ref", tone: "client", x: 30, y: 30, detail: "Declares a name such as lantern.secret://__tenant__/key/scraper-user-agent. The raw value never appears in the image, logs, traces or run state." },
+    { id: "spec", label: "Agent spec", sub: "pal.secret/ ref", tone: "client", x: 30, y: 30, detail: "Declares a name such as pal.secret://__tenant__/key/scraper-user-agent. The raw value never appears in the image, logs, traces or run state." },
     { id: "mgr", label: "Runtime manager", sub: "binds vm_id to cert", tone: "host", x: 220, y: 30, detail: "Injects the workload uid at spawn and binds the vm_id on a vend request to the mTLS peer certificate, so a workload cannot claim to be another VM." },
     { id: "sock", label: "secrets.sock", sub: "harness, SO_PEERCRED", tone: "guest", x: 410, y: 30, detail: "A Unix socket in the VM. The kernel attests the connecting peer's uid and pid; there is nothing the workload can forge.", src: [M("services/harness/src/secrets.rs"), M("services/harness/src/secrets.rs")] },
     { id: "work", label: "Workload", sub: "agent code", tone: "guest", x: 600, y: 30, detail: "Runs as the workload uid and asks for the secret when it needs it." },
@@ -547,7 +547,7 @@ export const IDENTITY_SECRETS: FlowDef = {
       id: "relay", label: "Relay not configured",
       steps: [
         { title: "A valid peer asks", note: "The workload is authenticated as usual.", edges: ["work>sock", "sock>mgr"] },
-        { title: "The relay needs a token", note: "The manager authenticates with X-Lantern-Runtime-Token, set through PAL_RUNTIME_SECRET_TOKEN on both sides.", edges: ["mgr>cp"] },
+        { title: "The relay needs a token", note: "The manager authenticates with X-Pal-Runtime-Token, set through PAL_RUNTIME_SECRET_TOKEN on both sides.", edges: ["mgr>cp"] },
         { title: "Unset means 403", note: "With the token unset on the control plane the endpoint fails closed with 403 and nothing is vended.", nodes: ["cp"], deny: true },
       ],
     },

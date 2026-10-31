@@ -26,7 +26,7 @@ warn()    { printf "${YELLOW}[WARN]${NC}  %s\n" "$*"; }
 error()   { printf "${RED}[ERR]${NC}   %s\n" "$*"; exit 1; }
 
 # -- Config ----------------------------------------------------------------
-DATABASE_URL="${DATABASE_URL:-postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable}"
+DATABASE_URL="${DATABASE_URL:-postgres://pal:pal@localhost:5432/pal?sslmode=disable}"
 
 # -- Prerequisites ---------------------------------------------------------
 if ! command -v psql &>/dev/null; then
@@ -63,7 +63,7 @@ RUN_5_ID="e0000000-0000-0000-0000-000000000005"
 info "Creating test tenant..."
 run_sql <<SQL
 INSERT INTO tenants (id, slug, name, tier, k8s_namespace)
-VALUES ('${TENANT_ID}', 'dev-team', 'Development Team', 'team', 'lantern-t-dev-team')
+VALUES ('${TENANT_ID}', 'dev-team', 'Development Team', 'team', 'pal-t-dev-team')
 ON CONFLICT (id) DO NOTHING;
 SQL
 success "Tenant: dev-team (${TENANT_ID})"
@@ -71,10 +71,10 @@ success "Tenant: dev-team (${TENANT_ID})"
 info "Creating test user..."
 run_sql <<SQL
 INSERT INTO users (id, tenant_id, email, display_name, auth_provider, auth_subject)
-VALUES ('${USER_ID}', '${TENANT_ID}', 'dev@lantern.run', 'Dev User', 'local', 'dev-local-001')
+VALUES ('${USER_ID}', '${TENANT_ID}', 'dev@pal.local', 'Dev User', 'local', 'dev-local-001')
 ON CONFLICT (id) DO NOTHING;
 SQL
-success "User: dev@lantern.run (${USER_ID})"
+success "User: dev@pal.local (${USER_ID})"
 
 info "Creating agents..."
 run_sql <<SQL
@@ -98,16 +98,16 @@ run_sql <<SQL
 INSERT INTO agent_versions (id, agent_id, version, digest, bundle_uri, manifest)
 VALUES
     ('${VER_RESEARCH_1_ID}', '${AGENT_RESEARCH_ID}', '0.1.0',
-     E'\\\\xdeadbeef01', 's3://lantern-bundles/research-agent/0.1.0.tar.gz',
+     E'\\\\xdeadbeef01', 's3://pal-bundles/research-agent/0.1.0.tar.gz',
      '{"entrypoint": "index.ts", "model": "reasoning-large", "tools": ["web-search", "pdf-reader"]}'::jsonb),
     ('${VER_RESEARCH_2_ID}', '${AGENT_RESEARCH_ID}', '0.2.0',
-     E'\\\\xdeadbeef02', 's3://lantern-bundles/research-agent/0.2.0.tar.gz',
+     E'\\\\xdeadbeef02', 's3://pal-bundles/research-agent/0.2.0.tar.gz',
      '{"entrypoint": "index.ts", "model": "reasoning-large", "tools": ["web-search", "pdf-reader", "citation-formatter"]}'::jsonb),
     ('${VER_REVIEWER_1_ID}', '${AGENT_REVIEWER_ID}', '1.0.0',
-     E'\\\\xdeadbeef03', 's3://lantern-bundles/code-reviewer/1.0.0.tar.gz',
+     E'\\\\xdeadbeef03', 's3://pal-bundles/code-reviewer/1.0.0.tar.gz',
      '{"entrypoint": "review.ts", "model": "auto", "tools": ["git-diff", "ast-parser"]}'::jsonb),
     ('${VER_HELLO_1_ID}', '${AGENT_HELLO_ID}', '1.0.0',
-     E'\\\\xdeadbeef04', 's3://lantern-bundles/hello-world/1.0.0.tar.gz',
+     E'\\\\xdeadbeef04', 's3://pal-bundles/hello-world/1.0.0.tar.gz',
      '{"entrypoint": "hello.ts", "model": "fast-small"}'::jsonb)
 ON CONFLICT (id) DO NOTHING;
 SQL
@@ -186,7 +186,7 @@ printf "${GREEN} Seed data loaded successfully          ${NC}\n"
 printf "${GREEN}========================================${NC}\n"
 echo ""
 info "Tenant:  dev-team (${TENANT_ID})"
-info "User:    dev@lantern.run (${USER_ID})"
+info "User:    dev@pal.local (${USER_ID})"
 echo ""
 info "Agents:"
 info "  research-agent  -- 2 versions (0.1.0, 0.2.0), current: 0.2.0"
@@ -201,4 +201,4 @@ info "  ${RUN_4_ID}  code-reviewer   failed"
 info "  ${RUN_5_ID}  hello-world     queued"
 echo ""
 info "Connect to Postgres:  psql '${DATABASE_URL}'"
-info "List agents:          grpcurl -plaintext localhost:50051 lantern.v1.AgentService/ListAgents"
+info "List agents:          grpcurl -plaintext localhost:50051 pal.v1.AgentService/ListAgents"

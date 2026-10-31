@@ -9,16 +9,16 @@
 # fail-open isolation breach.
 #
 # The toleration matches the dedicated-pool taint the runtime-manager emits for
-# hostile workloads (lantern.dev/runtimeclass=kata:NoSchedule); the node
+# hostile workloads (pal.dev/runtimeclass=kata:NoSchedule); the node
 # affinity pins it onto the kata-labelled pool.
 apiVersion: v1
 kind: Pod
 metadata:
   name: hostile-kata-exec
-  namespace: lantern-t-validate
+  namespace: pal-t-validate
   labels:
-    lantern.dev/run-id: run-validate-kata
-    lantern.dev/isolation: hostile
+    pal.dev/run-id: run-validate-kata
+    pal.dev/isolation: hostile
 spec:
   runtimeClassName: kata
   restartPolicy: Never
@@ -28,11 +28,11 @@ spec:
       requiredDuringSchedulingIgnoredDuringExecution:
         nodeSelectorTerms:
           - matchExpressions:
-              - key: lantern.dev/runtimeclass
+              - key: pal.dev/runtimeclass
                 operator: In
                 values: ["kata"]
   tolerations:
-    - key: lantern.dev/runtimeclass
+    - key: pal.dev/runtimeclass
       operator: Equal
       value: kata
       effect: NoSchedule

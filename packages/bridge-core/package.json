@@ -8,7 +8,6 @@
     ".": "./src/index.ts",
     "./intent-router": "./src/intent-router.ts",
     "./build-info": "./src/build-info.ts",
-    "./env-compat": "./src/env-compat.ts",
     "./state-dir": "./src/state-dir.ts",
     "./natural": "./src/natural.ts",
     "./auth": "./src/auth.ts",

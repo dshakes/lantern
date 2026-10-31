@@ -17,10 +17,10 @@ use tonic::transport::Channel;
 use crate::error::AppError;
 
 // ---------------------------------------------------------------------------
-// Proto stubs — tags must match gen/go/lantern/v1/runs.pb.go
+// Proto stubs — tags must match gen/go/pal/v1/runs.pb.go
 // ---------------------------------------------------------------------------
 
-/// TRIGGER_KIND_SURFACE = 4 (see lantern/v1/runs.proto)
+/// TRIGGER_KIND_SURFACE = 4 (see pal/v1/runs.proto)
 const TRIGGER_KIND_SURFACE: i32 = 4;
 
 #[derive(Clone, PartialEq, Message)]
@@ -144,7 +144,7 @@ impl ControlPlaneClient {
         if service_token.is_empty() {
             tracing::warn!(
                 addr,
-                "LANTERN_GRPC_SERVICE_TOKEN is unset — no service token on control-plane \
+                "PAL_GRPC_SERVICE_TOKEN is unset — no service token on control-plane \
                  gRPC calls (acceptable in dev; required in production per invariant #7)"
             );
         }
@@ -161,15 +161,12 @@ impl ControlPlaneClient {
         if let Ok(val) = tenant_id.parse() {
             md.insert("tenant_id", val);
         }
-        // Sent under the PAL name and the pre-PAL name, so a control plane
-        // that has not upgraded still authenticates the call (ADR 0032).
         if !self.service_token.is_empty()
             && let Ok(val) = self
                 .service_token
                 .parse::<tonic::metadata::MetadataValue<_>>()
         {
-            md.insert("x-pal-service-token", val.clone());
-            md.insert("x-lantern-service-token", val);
+            md.insert("x-pal-service-token", val);
         }
     }
 
@@ -194,7 +191,7 @@ impl ControlPlaneClient {
         });
         self.inject_metadata(&mut request, tenant_id);
 
-        let path = http::uri::PathAndQuery::from_static("/lantern.v1.RunService/CreateRun");
+        let path = http::uri::PathAndQuery::from_static("/pal.v1.RunService/CreateRun");
         let mut grpc = tonic::client::Grpc::new(self.channel.clone());
         grpc.ready()
             .await
@@ -227,7 +224,7 @@ impl ControlPlaneClient {
         });
         self.inject_metadata(&mut request, tenant_id);
 
-        let path = http::uri::PathAndQuery::from_static("/lantern.v1.RunService/GetRun");
+        let path = http::uri::PathAndQuery::from_static("/pal.v1.RunService/GetRun");
         let mut grpc = tonic::client::Grpc::new(self.channel.clone());
         grpc.ready()
             .await
@@ -280,7 +277,7 @@ impl ControlPlaneClient {
         });
         self.inject_metadata(&mut request, tenant_id);
 
-        let path = http::uri::PathAndQuery::from_static("/lantern.v1.RunService/SignalRun");
+        let path = http::uri::PathAndQuery::from_static("/pal.v1.RunService/SignalRun");
         let mut grpc = tonic::client::Grpc::new(self.channel.clone());
         grpc.ready()
             .await

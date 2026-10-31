@@ -3,7 +3,7 @@ package handlers
 import (
 	"testing"
 
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/cluster"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/cluster"
 )
 
 // SchedulableNodeCount backs /readyz. The failure it guards against is a

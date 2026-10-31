@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/dshakes/lantern/services/workflow-engine/internal/engine"
-	"github.com/dshakes/lantern/services/workflow-engine/internal/journal"
+	"github.com/dshakes/pal/services/workflow-engine/internal/engine"
+	"github.com/dshakes/pal/services/workflow-engine/internal/journal"
 )
 
 // ---------------------------------------------------------------------------

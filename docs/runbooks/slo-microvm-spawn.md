@@ -12,7 +12,7 @@ burning at 14.4x (1h/5m) or 6x (6h/30m), i.e. 2% to 5% of the 28-day budget is g
 
 ## What the SLI measures
 
-Runtime-manager `:9466/metrics`, `lantern_manager_spawn_duration_seconds{kind,outcome}`: the time of the
+Runtime-manager `:9466/metrics`, `pal_manager_spawn_duration_seconds{kind,outcome}`: the time of the
 backend schedule/restore call inside `RuntimeManager.Spawn`. `kind=cold` (new boot, target 95% under 5s) and
 `kind=restore` (snapshot restore, 99% under 2s). Availability = outcome `ok`. Idempotent re-spawns of a live
 vm_id return before this timer and are not counted.
@@ -23,7 +23,7 @@ vm_id return before this timer and are not counted.
    KVM or jailer missing on the node, TAP/IP exhaustion, image pull failure, measurement gate refusing an
    image (ADR 0031), snapshot store unreachable (restore only).
 2. Cold-boot latency: image pull time (cold node), disk pressure, host CPU saturation, many concurrent forks
-   (`LANTERN_FORK_CONCURRENCY`).
+   (`PAL_FORK_CONCURRENCY`).
 3. Restore latency: snapshot store (S3/MinIO) latency or size growth; see the pause/resume notes in CLAUDE.md.
 4. Only one node? Compare per-instance rates; cordon the bad node so the scheduler stops placing there.
 

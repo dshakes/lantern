@@ -8,12 +8,11 @@ four runtime endpoints the sandbox integration needs.
 
 from __future__ import annotations
 
+import os
 import time
 from typing import Any
 
 import httpx
-
-from pal import _env
 
 from ..errors import PalApiError
 
@@ -31,8 +30,8 @@ class PalRuntimeClient:
         timeout: float = 120.0,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self.base_url = (base_url or _env.get("API_URL") or "https://api.lantern.run").rstrip("/")
-        self._api_key = api_key or _env.get("API_KEY") or ""
+        self.base_url = (base_url or os.environ.get("PAL_API_URL") or "http://localhost:8080").rstrip("/")
+        self._api_key = api_key or os.environ.get("PAL_API_KEY") or ""
         headers = {"Content-Type": "application/json"}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
@@ -115,6 +114,3 @@ class PalRuntimeClient:
             if time.monotonic() >= deadline:
                 raise TimeoutError(f"vm {vm_id} not running after {timeout}s (state={state!r})")
             time.sleep(poll_interval)
-
-
-LanternRuntimeClient = PalRuntimeClient  # deprecated alias, ADR 0032

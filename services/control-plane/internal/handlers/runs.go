@@ -15,14 +15,14 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
-// RunService implements lanternv1.RunServiceServer.
+// RunService implements palv1.RunServiceServer.
 type RunService struct {
-	lanternv1.UnimplementedRunServiceServer
+	palv1.UnimplementedRunServiceServer
 	srv *server.Server
 }
 
@@ -39,10 +39,10 @@ func (s *RunService) logger() *zap.Logger {
 // returns the Run proto. Workflow engine dispatch is not implemented yet.
 //
 // Uses TenantPool() — the RLS-enforcing pool when PAL_RLS_ENFORCE=1
-// (lantern_app role, subject to the tenant_isolation_runs policy); otherwise
+// (pal_app role, subject to the tenant_isolation_runs policy); otherwise
 // Pool (zero behaviour change). The WHERE tenant_id = $1 clause remains the
 // primary correctness guard; RLS is defence-in-depth.
-func (s *RunService) CreateRun(ctx context.Context, req *lanternv1.CreateRunRequest) (*lanternv1.Run, error) {
+func (s *RunService) CreateRun(ctx context.Context, req *palv1.CreateRunRequest) (*palv1.Run, error) {
 	tenantID, err := middleware.MustTenantID(ctx)
 	if err != nil {
 		return nil, err
@@ -52,7 +52,7 @@ func (s *RunService) CreateRun(ctx context.Context, req *lanternv1.CreateRunRequ
 		return nil, status.Error(codes.InvalidArgument, "agent_name is required")
 	}
 
-	// TenantPool: routes to lantern_app (non-superuser, RLS-enforced) when
+	// TenantPool: routes to pal_app (non-superuser, RLS-enforced) when
 	// PAL_RLS_ENFORCE=1, otherwise aliases to Pool (zero behaviour change).
 	tx, err := s.srv.TenantPool().Begin(ctx)
 	if err != nil {
@@ -136,12 +136,12 @@ func (s *RunService) CreateRun(ctx context.Context, req *lanternv1.CreateRunRequ
 		zap.String("agent_name", req.GetAgentName()),
 	)
 
-	run := &lanternv1.Run{
+	run := &palv1.Run{
 		Id:             runID,
 		TenantId:       tenantID,
 		AgentId:        agentID,
 		AgentVersionId: resolvedVersionID,
-		Status:         lanternv1.RunStatus_RUN_STATUS_QUEUED,
+		Status:         palv1.RunStatus_RUN_STATUS_QUEUED,
 		TriggerKind:    req.GetTriggerKind(),
 		TriggerMeta:    req.GetTriggerMeta(),
 		Input:          req.GetInput(),
@@ -158,7 +158,7 @@ func (s *RunService) CreateRun(ctx context.Context, req *lanternv1.CreateRunRequ
 //
 // Uses srv.TenantPool() (the RLS-enforcing pool when PAL_RLS_ENFORCE=1;
 // otherwise the privileged pool — zero behaviour change).
-func (s *RunService) GetRun(ctx context.Context, req *lanternv1.GetRunRequest) (*lanternv1.Run, error) {
+func (s *RunService) GetRun(ctx context.Context, req *palv1.GetRunRequest) (*palv1.Run, error) {
 	tenantID, err := middleware.MustTenantID(ctx)
 	if err != nil {
 		return nil, err
@@ -168,7 +168,7 @@ func (s *RunService) GetRun(ctx context.Context, req *lanternv1.GetRunRequest) (
 		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
 
-	// TenantPool: when PAL_RLS_ENFORCE=1 this is the lantern_app pool and RLS
+	// TenantPool: when PAL_RLS_ENFORCE=1 this is the pal_app pool and RLS
 	// is enforced at the DB level. Otherwise it aliases Pool — no change.
 	tx, err := s.srv.TenantPool().Begin(ctx)
 	if err != nil {
@@ -193,7 +193,7 @@ func (s *RunService) GetRun(ctx context.Context, req *lanternv1.GetRunRequest) (
 //
 // Uses srv.TenantPool() (the RLS-enforcing pool when PAL_RLS_ENFORCE=1;
 // otherwise the privileged pool — zero behaviour change).
-func (s *RunService) ListRuns(ctx context.Context, req *lanternv1.ListRunsRequest) (*lanternv1.ListRunsResponse, error) {
+func (s *RunService) ListRuns(ctx context.Context, req *palv1.ListRunsRequest) (*palv1.ListRunsResponse, error) {
 	tenantID, err := middleware.MustTenantID(ctx)
 	if err != nil {
 		return nil, err
@@ -204,7 +204,7 @@ func (s *RunService) ListRuns(ctx context.Context, req *lanternv1.ListRunsReques
 		pageSize = req.GetPageSize()
 	}
 
-	// TenantPool: when PAL_RLS_ENFORCE=1 this is the lantern_app pool and RLS
+	// TenantPool: when PAL_RLS_ENFORCE=1 this is the pal_app pool and RLS
 	// is enforced at the DB level. Otherwise it aliases Pool — no change.
 	tx, err := s.srv.TenantPool().Begin(ctx)
 	if err != nil {
@@ -247,7 +247,7 @@ func (s *RunService) ListRuns(ctx context.Context, req *lanternv1.ListRunsReques
 		argIdx++
 	}
 
-	if req.GetStatusFilter() != lanternv1.RunStatus_RUN_STATUS_UNSPECIFIED {
+	if req.GetStatusFilter() != palv1.RunStatus_RUN_STATUS_UNSPECIFIED {
 		query += fmt.Sprintf(" AND r.status = $%d", argIdx)
 		args = append(args, runStatusToString(req.GetStatusFilter()))
 		argIdx++
@@ -274,7 +274,7 @@ func (s *RunService) ListRuns(ctx context.Context, req *lanternv1.ListRunsReques
 	}
 	defer rows.Close()
 
-	var runs []*lanternv1.Run
+	var runs []*palv1.Run
 	for rows.Next() {
 		run, err := s.scanRunFromRow(rows)
 		if err != nil {
@@ -286,7 +286,7 @@ func (s *RunService) ListRuns(ctx context.Context, req *lanternv1.ListRunsReques
 		return nil, status.Errorf(codes.Internal, "row iteration failed: %v", err)
 	}
 
-	resp := &lanternv1.ListRunsResponse{}
+	resp := &palv1.ListRunsResponse{}
 
 	if int32(len(runs)) > pageSize {
 		runs = runs[:pageSize]
@@ -311,7 +311,7 @@ func (s *RunService) ListRuns(ctx context.Context, req *lanternv1.ListRunsReques
 //
 // Uses TenantPool() — the RLS-enforcing pool when PAL_RLS_ENFORCE=1;
 // otherwise Pool (zero behaviour change).
-func (s *RunService) CancelRun(ctx context.Context, req *lanternv1.CancelRunRequest) (*lanternv1.Run, error) {
+func (s *RunService) CancelRun(ctx context.Context, req *palv1.CancelRunRequest) (*palv1.Run, error) {
 	tenantID, err := middleware.MustTenantID(ctx)
 	if err != nil {
 		return nil, err
@@ -321,7 +321,7 @@ func (s *RunService) CancelRun(ctx context.Context, req *lanternv1.CancelRunRequ
 		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
 
-	// TenantPool: routes to lantern_app (non-superuser, RLS-enforced) when
+	// TenantPool: routes to pal_app (non-superuser, RLS-enforced) when
 	// PAL_RLS_ENFORCE=1, otherwise aliases to Pool (zero behaviour change).
 	tx, err := s.srv.TenantPool().Begin(ctx)
 	if err != nil {
@@ -378,7 +378,7 @@ func (s *RunService) CancelRun(ctx context.Context, req *lanternv1.CancelRunRequ
 // is purely the wire shape — each journal row is mapped to the proto
 // StreamEvent the SDK/dashboard gRPC client expects, and a Heartbeat is sent
 // as a keepalive between events.
-func (s *RunService) StreamRunEvents(req *lanternv1.StreamRunEventsRequest, stream lanternv1.RunService_StreamRunEventsServer) error {
+func (s *RunService) StreamRunEvents(req *palv1.StreamRunEventsRequest, stream palv1.RunService_StreamRunEventsServer) error {
 	ctx := stream.Context()
 
 	tenantID, err := middleware.MustTenantID(ctx)
@@ -444,11 +444,11 @@ func (s *RunService) StreamRunEvents(req *lanternv1.StreamRunEventsRequest, stre
 			return ctx.Err()
 
 		case <-heartbeat.C:
-			if err := stream.Send(&lanternv1.StreamEvent{
+			if err := stream.Send(&palv1.StreamEvent{
 				RunId:   runID,
 				Seq:     lastSeq,
 				Ts:      timestamppb.Now(),
-				Payload: &lanternv1.StreamEvent_Heartbeat{Heartbeat: &lanternv1.Heartbeat{}},
+				Payload: &palv1.StreamEvent_Heartbeat{Heartbeat: &palv1.Heartbeat{}},
 			}); err != nil {
 				return err
 			}
@@ -494,7 +494,7 @@ func (s *RunService) replayJournalEvents(
 	ctx context.Context,
 	runID string,
 	afterSeq uint64,
-	stream lanternv1.RunService_StreamRunEventsServer,
+	stream palv1.RunService_StreamRunEventsServer,
 ) (uint64, error) {
 	// rls-exempt: journal_events is an RLS-exempt child table (no tenant_id
 	// column; scoped by run_id). The caller already verified run ownership via
@@ -552,8 +552,8 @@ func journalRowToStreamEvent(
 	attempt int32,
 	payload []byte,
 	createdAt time.Time,
-) *lanternv1.StreamEvent {
-	ev := &lanternv1.StreamEvent{
+) *palv1.StreamEvent {
+	ev := &palv1.StreamEvent{
 		RunId: runID,
 		Seq:   seq,
 		Ts:    timestamppb.New(createdAt),
@@ -566,18 +566,18 @@ func journalRowToStreamEvent(
 
 	switch kind {
 	case "step_started":
-		ev.Payload = &lanternv1.StreamEvent_StepStarted{StepStarted: &lanternv1.StepStarted{
+		ev.Payload = &palv1.StreamEvent_StepStarted{StepStarted: &palv1.StepStarted{
 			StepId:  step,
 			Attempt: attempt,
 			Kind:    journalPayloadString(payload, "type"),
 		}}
 	case "step_completed":
-		ev.Payload = &lanternv1.StreamEvent_StepCompleted{StepCompleted: &lanternv1.StepCompleted{
+		ev.Payload = &palv1.StreamEvent_StepCompleted{StepCompleted: &palv1.StepCompleted{
 			StepId:  step,
 			Attempt: attempt,
 		}}
 	case "step_failed":
-		ev.Payload = &lanternv1.StreamEvent_StepFailed{StepFailed: &lanternv1.StepFailed{
+		ev.Payload = &palv1.StreamEvent_StepFailed{StepFailed: &palv1.StepFailed{
 			StepId:       step,
 			Attempt:      attempt,
 			ErrorMessage: journalPayloadString(payload, "error"),
@@ -586,7 +586,7 @@ func journalRowToStreamEvent(
 		// run_completed, run_failed, anomalies, and any other kind ride through
 		// as a structured Log so gRPC subscribers see the full journal, exactly
 		// like the SSE path forwards every row.
-		ev.Payload = &lanternv1.StreamEvent_Log{Log: &lanternv1.LogLine{
+		ev.Payload = &palv1.StreamEvent_Log{Log: &palv1.LogLine{
 			Level:   "info",
 			Message: kind,
 			Fields:  journalPayloadStruct(payload),
@@ -630,24 +630,24 @@ func journalPayloadStruct(payload []byte) *structpb.Struct {
 }
 
 // ReplayRun is not yet implemented for the spike.
-func (s *RunService) ReplayRun(ctx context.Context, req *lanternv1.ReplayRunRequest) (*lanternv1.Run, error) {
+func (s *RunService) ReplayRun(ctx context.Context, req *palv1.ReplayRunRequest) (*palv1.Run, error) {
 	return nil, status.Error(codes.Unimplemented, "ReplayRun not yet implemented")
 }
 
 // SignalRun is not yet implemented for the spike.
-func (s *RunService) SignalRun(ctx context.Context, req *lanternv1.SignalRunRequest) (*lanternv1.SignalRunResponse, error) {
+func (s *RunService) SignalRun(ctx context.Context, req *palv1.SignalRunRequest) (*palv1.SignalRunResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "SignalRun not yet implemented")
 }
 
 // QueryRun is not yet implemented for the spike.
-func (s *RunService) QueryRun(ctx context.Context, req *lanternv1.QueryRunRequest) (*lanternv1.QueryRunResponse, error) {
+func (s *RunService) QueryRun(ctx context.Context, req *palv1.QueryRunRequest) (*palv1.QueryRunResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "QueryRun not yet implemented")
 }
 
 // ---------- helpers ----------
 
 // scanRun executes a single-row query and returns a Run proto.
-func (s *RunService) scanRun(ctx context.Context, tx pgx.Tx, tenantID, query string, args ...any) (*lanternv1.Run, error) {
+func (s *RunService) scanRun(ctx context.Context, tx pgx.Tx, tenantID, query string, args ...any) (*palv1.Run, error) {
 	row := tx.QueryRow(ctx, query, args...)
 
 	var (
@@ -690,7 +690,7 @@ func (s *RunService) scanRun(ctx context.Context, tx pgx.Tx, tenantID, query str
 }
 
 // scanRunFromRow scans a Run from an already-iterated pgx.Rows.
-func (s *RunService) scanRunFromRow(rows pgx.Rows) (*lanternv1.Run, error) {
+func (s *RunService) scanRunFromRow(rows pgx.Rows) (*palv1.Run, error) {
 	var (
 		id             string
 		tid            string
@@ -736,8 +736,8 @@ func buildRunProto(
 	parentRunID *string,
 	labelsJSON []byte,
 	sessionID *string,
-) *lanternv1.Run {
-	run := &lanternv1.Run{
+) *palv1.Run {
+	run := &palv1.Run{
 		Id:             id,
 		TenantId:       tenantID,
 		AgentId:        agentID,
@@ -768,7 +768,7 @@ func buildRunProto(
 	run.Output = jsonToStruct(outputJSON)
 
 	if len(errorJSON) > 0 {
-		var re lanternv1.RunError
+		var re palv1.RunError
 		var raw map[string]any
 		if json.Unmarshal(errorJSON, &raw) == nil {
 			if c, ok := raw["code"].(string); ok {
@@ -814,80 +814,80 @@ func jsonToStruct(data []byte) *structpb.Struct {
 	return s
 }
 
-func parseRunStatus(s string) lanternv1.RunStatus {
+func parseRunStatus(s string) palv1.RunStatus {
 	switch s {
 	case "queued":
-		return lanternv1.RunStatus_RUN_STATUS_QUEUED
+		return palv1.RunStatus_RUN_STATUS_QUEUED
 	case "running":
-		return lanternv1.RunStatus_RUN_STATUS_RUNNING
+		return palv1.RunStatus_RUN_STATUS_RUNNING
 	case "paused":
-		return lanternv1.RunStatus_RUN_STATUS_PAUSED
+		return palv1.RunStatus_RUN_STATUS_PAUSED
 	case "succeeded":
-		return lanternv1.RunStatus_RUN_STATUS_SUCCEEDED
+		return palv1.RunStatus_RUN_STATUS_SUCCEEDED
 	case "failed":
-		return lanternv1.RunStatus_RUN_STATUS_FAILED
+		return palv1.RunStatus_RUN_STATUS_FAILED
 	case "cancelled":
-		return lanternv1.RunStatus_RUN_STATUS_CANCELLED
+		return palv1.RunStatus_RUN_STATUS_CANCELLED
 	default:
-		return lanternv1.RunStatus_RUN_STATUS_UNSPECIFIED
+		return palv1.RunStatus_RUN_STATUS_UNSPECIFIED
 	}
 }
 
-func runStatusToString(s lanternv1.RunStatus) string {
+func runStatusToString(s palv1.RunStatus) string {
 	switch s {
-	case lanternv1.RunStatus_RUN_STATUS_QUEUED:
+	case palv1.RunStatus_RUN_STATUS_QUEUED:
 		return "queued"
-	case lanternv1.RunStatus_RUN_STATUS_RUNNING:
+	case palv1.RunStatus_RUN_STATUS_RUNNING:
 		return "running"
-	case lanternv1.RunStatus_RUN_STATUS_PAUSED:
+	case palv1.RunStatus_RUN_STATUS_PAUSED:
 		return "paused"
-	case lanternv1.RunStatus_RUN_STATUS_SUCCEEDED:
+	case palv1.RunStatus_RUN_STATUS_SUCCEEDED:
 		return "succeeded"
-	case lanternv1.RunStatus_RUN_STATUS_FAILED:
+	case palv1.RunStatus_RUN_STATUS_FAILED:
 		return "failed"
-	case lanternv1.RunStatus_RUN_STATUS_CANCELLED:
+	case palv1.RunStatus_RUN_STATUS_CANCELLED:
 		return "cancelled"
 	default:
 		return "unspecified"
 	}
 }
 
-func parseTriggerKind(s string) lanternv1.TriggerKind {
+func parseTriggerKind(s string) palv1.TriggerKind {
 	switch s {
 	case "api":
-		return lanternv1.TriggerKind_TRIGGER_KIND_API
+		return palv1.TriggerKind_TRIGGER_KIND_API
 	case "schedule":
-		return lanternv1.TriggerKind_TRIGGER_KIND_SCHEDULE
+		return palv1.TriggerKind_TRIGGER_KIND_SCHEDULE
 	case "webhook":
-		return lanternv1.TriggerKind_TRIGGER_KIND_WEBHOOK
+		return palv1.TriggerKind_TRIGGER_KIND_WEBHOOK
 	case "surface":
-		return lanternv1.TriggerKind_TRIGGER_KIND_SURFACE
+		return palv1.TriggerKind_TRIGGER_KIND_SURFACE
 	case "a2a":
-		return lanternv1.TriggerKind_TRIGGER_KIND_A2A
+		return palv1.TriggerKind_TRIGGER_KIND_A2A
 	case "connector":
-		return lanternv1.TriggerKind_TRIGGER_KIND_CONNECTOR
+		return palv1.TriggerKind_TRIGGER_KIND_CONNECTOR
 	case "manual":
-		return lanternv1.TriggerKind_TRIGGER_KIND_MANUAL
+		return palv1.TriggerKind_TRIGGER_KIND_MANUAL
 	default:
-		return lanternv1.TriggerKind_TRIGGER_KIND_UNSPECIFIED
+		return palv1.TriggerKind_TRIGGER_KIND_UNSPECIFIED
 	}
 }
 
-func triggerKindToString(k lanternv1.TriggerKind) string {
+func triggerKindToString(k palv1.TriggerKind) string {
 	switch k {
-	case lanternv1.TriggerKind_TRIGGER_KIND_API:
+	case palv1.TriggerKind_TRIGGER_KIND_API:
 		return "api"
-	case lanternv1.TriggerKind_TRIGGER_KIND_SCHEDULE:
+	case palv1.TriggerKind_TRIGGER_KIND_SCHEDULE:
 		return "schedule"
-	case lanternv1.TriggerKind_TRIGGER_KIND_WEBHOOK:
+	case palv1.TriggerKind_TRIGGER_KIND_WEBHOOK:
 		return "webhook"
-	case lanternv1.TriggerKind_TRIGGER_KIND_SURFACE:
+	case palv1.TriggerKind_TRIGGER_KIND_SURFACE:
 		return "surface"
-	case lanternv1.TriggerKind_TRIGGER_KIND_A2A:
+	case palv1.TriggerKind_TRIGGER_KIND_A2A:
 		return "a2a"
-	case lanternv1.TriggerKind_TRIGGER_KIND_CONNECTOR:
+	case palv1.TriggerKind_TRIGGER_KIND_CONNECTOR:
 		return "connector"
-	case lanternv1.TriggerKind_TRIGGER_KIND_MANUAL:
+	case palv1.TriggerKind_TRIGGER_KIND_MANUAL:
 		return "manual"
 	default:
 		return "api"

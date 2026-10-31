@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 700" class="lx" role="img" aria-labelledby="isolation-ladder-title isolation-ladder-desc">
   <title id="isolation-ladder-title">Backends climb from shared kernel to microVM, and each class has a floor</title>
-  <desc id="isolation-ladder-desc">A ladder of five isolation backends under a fail-closed gate. From weakest to strongest: runc with a shared namespaced kernel, serving trusted; gVisor with a user-space kernel, serving standard and untrusted; Kata with its own kernel and hypervisor per pod, serving hostile and below; Firecracker, a microVM with the Lantern harness as PID 1, session VMs and an in-guest tool runner, serving every class. Wasmtime, a capability sandbox for wasm workloads, sits apart and refuses untrusted and hostile outright. The gate at the top, choose_backend and then build_job, refuses a node whose backend cannot satisfy the class. When the hardened class is missing the workload does not run.</desc>
+  <desc id="isolation-ladder-desc">A ladder of five isolation backends under a fail-closed gate. From weakest to strongest: runc with a shared namespaced kernel, serving trusted; gVisor with a user-space kernel, serving standard and untrusted; Kata with its own kernel and hypervisor per pod, serving hostile and below; Firecracker, a microVM with the PAL harness as PID 1, session VMs and an in-guest tool runner, serving every class. Wasmtime, a capability sandbox for wasm workloads, sits apart and refuses untrusted and hostile outright. The gate at the top, choose_backend and then build_job, refuses a node whose backend cannot satisfy the class. When the hardened class is missing the workload does not run.</desc>
   <style class="lx-style">
     .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
     @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
@@ -98,7 +98,7 @@
   <text class="t-h" x="952" y="452">Refuses</text>
   <text class="t-s" x="952" y="472">untrusted and hostile</text>
   <text class="t-s" x="60" y="418">Classes served at each rung</text>
-  <text class="t-b" x="40" y="586">Standard runs on gVisor; runc only if LANTERN_ALLOW_RUNC_STANDARD=1 is set. Untrusted needs a separate kernel (gVisor).</text>
+  <text class="t-b" x="40" y="586">Standard runs on gVisor; runc only if PAL_ALLOW_RUNC_STANDARD=1 is set. Untrusted needs a separate kernel (gVisor).</text>
   <text class="t-b" x="40" y="606">When the hardened class is missing from the cluster the workload does not run. That refusal is the feature.</text>
   <g transform="translate(40 650)">
   <rect class="node" x="0" width="14" height="14" rx="3"/><text class="t-s" x="22" y="11">Trust class or shared kernel</text>

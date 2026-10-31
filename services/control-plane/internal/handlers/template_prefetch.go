@@ -104,15 +104,15 @@ func prefetchInboxConcierge(
 	fctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	// Filters: -category:promotions -category:social drops marketing/
-	// social noise. -from:me + -label:lantern drop the user's own sent
+	// social noise. -from:me + -label:pal drop the user's own sent
 	// mail (sometimes appears unread on first sync) AND PAL's own
 	// status mirror mail (which lands in inbox until the user grants
 	// gmail.modify scope, otherwise the label/skip-inbox is a no-op).
-	// Without these two, the prefetch was returning 5 lantern-self
+	// Without these two, the prefetch was returning 5 pal-self
 	// emails as the "unread" set and the model concluded "nothing real
 	// to reply to".
 	res, err := executeConnectorAction(fctx, pool, tenantID, "gmail", "search", map[string]any{
-		"query": "is:unread newer_than:1d -category:promotions -category:social -from:me -label:lantern",
+		"query": "is:unread newer_than:1d -category:promotions -category:social -from:me -label:pal",
 		"limit": 25,
 	})
 	var b strings.Builder

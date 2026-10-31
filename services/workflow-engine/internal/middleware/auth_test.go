@@ -10,7 +10,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/dshakes/lantern/services/workflow-engine/internal/middleware"
+	"github.com/dshakes/pal/services/workflow-engine/internal/middleware"
 )
 
 func callUnaryAuth(t *testing.T, token, presentedToken, method string) error {
@@ -29,21 +29,21 @@ func callUnaryAuth(t *testing.T, token, presentedToken, method string) error {
 // TestServiceAuth_EmptyTokenAllowsAll verifies that an empty expected token
 // (dev mode) admits any caller without a token.
 func TestServiceAuth_EmptyTokenAllowsAll(t *testing.T) {
-	if err := callUnaryAuth(t, "", "", "/lantern.v1.WorkflowEngineService/ExecuteRun"); err != nil {
+	if err := callUnaryAuth(t, "", "", "/pal.v1.WorkflowEngineService/ExecuteRun"); err != nil {
 		t.Fatalf("expected no error with empty expected token, got %v", err)
 	}
 }
 
 // TestServiceAuth_ValidToken admits a caller with the correct token.
 func TestServiceAuth_ValidToken(t *testing.T) {
-	if err := callUnaryAuth(t, "secret", "secret", "/lantern.v1.WorkflowEngineService/ExecuteRun"); err != nil {
+	if err := callUnaryAuth(t, "secret", "secret", "/pal.v1.WorkflowEngineService/ExecuteRun"); err != nil {
 		t.Fatalf("expected no error with correct token, got %v", err)
 	}
 }
 
 // TestServiceAuth_WrongToken rejects an incorrect token with Unauthenticated.
 func TestServiceAuth_WrongToken(t *testing.T) {
-	err := callUnaryAuth(t, "secret", "wrong", "/lantern.v1.WorkflowEngineService/ExecuteRun")
+	err := callUnaryAuth(t, "secret", "wrong", "/pal.v1.WorkflowEngineService/ExecuteRun")
 	if err == nil {
 		t.Fatal("expected error for wrong token")
 	}
@@ -54,7 +54,7 @@ func TestServiceAuth_WrongToken(t *testing.T) {
 
 // TestServiceAuth_MissingToken rejects a caller that sends no token.
 func TestServiceAuth_MissingToken(t *testing.T) {
-	err := callUnaryAuth(t, "secret", "", "/lantern.v1.WorkflowEngineService/CancelRun")
+	err := callUnaryAuth(t, "secret", "", "/pal.v1.WorkflowEngineService/CancelRun")
 	if err == nil {
 		t.Fatal("expected error for missing token")
 	}
@@ -78,24 +78,20 @@ func TestServiceAuth_HealthCheckExempt(t *testing.T) {
 	}
 }
 
-// TestServiceAuth_LegacyAndPALNames (ADR 0032): the legacy header still
-// authenticates; a wrong PAL token is not rescued by a right legacy one.
-func TestServiceAuth_LegacyAndPALNames(t *testing.T) {
+// TestServiceAuth_Names: a matching token authenticates; a wrong one does not.
+func TestServiceAuth_Names(t *testing.T) {
 	interceptor := middleware.UnaryServiceAuthInterceptor(zap.NewNop(), "secret")
 	cases := []struct {
 		name string
 		md   map[string]string
 		ok   bool
 	}{
-		{"pal", map[string]string{middleware.ServiceTokenMetadataKey: "secret"}, true},
-		{"legacy", map[string]string{middleware.LegacyServiceTokenMetadataKey: "secret"}, true},
-		{"both", middleware.OutgoingServiceTokenMetadata("secret"), true},
-		{"legacy wrong", map[string]string{middleware.LegacyServiceTokenMetadataKey: "nope"}, false},
-		{"pal wrong legacy right", map[string]string{middleware.ServiceTokenMetadataKey: "nope", middleware.LegacyServiceTokenMetadataKey: "secret"}, false},
+		{"valid", middleware.OutgoingServiceTokenMetadata("secret"), true},
+		{"wrong", map[string]string{middleware.ServiceTokenMetadataKey: "nope"}, false},
 	}
 	for _, tc := range cases {
 		ctx := metadata.NewIncomingContext(context.Background(), metadata.New(tc.md))
-		_, err := interceptor(ctx, nil, &grpc.UnaryServerInfo{FullMethod: "/lantern.v1.WorkflowEngineService/ExecuteRun"},
+		_, err := interceptor(ctx, nil, &grpc.UnaryServerInfo{FullMethod: "/pal.v1.WorkflowEngineService/ExecuteRun"},
 			func(ctx context.Context, req any) (any, error) { return nil, nil })
 		if (err == nil) != tc.ok {
 			t.Errorf("%s: err=%v, want ok=%v", tc.name, err, tc.ok)

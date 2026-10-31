@@ -1,7 +1,7 @@
 package handlers
 
 // onboarding.go — server-side state + agent explanations for the agentic
-// onboarding flow (dashboard /onboarding, `lantern onboard`).
+// onboarding flow (dashboard /onboarding, `pal onboard`).
 //
 // State lives in tenants.settings->'onboarding' rather than a new table:
 // one small JSON document per tenant is all resume needs (YAGNI). `tenants`
@@ -26,8 +26,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // OnboardingHandler serves /v1/onboarding.

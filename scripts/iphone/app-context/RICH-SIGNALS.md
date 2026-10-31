@@ -12,7 +12,7 @@ each category from the last ~2 hours, and composes one owner-only sentence like:
 > On iPhone (last 2h): YouTube, LinkedIn — at Home, Work focus, charging, 6.2k
 > steps, playing Hardcore History.
 
-**This is owner-only and local.** Signals live in `~/.lantern/device-signals.jsonl`
+**This is owner-only and local.** Signals live in `~/.pal/device-signals.jsonl`
 (mode `0600`, your user only). The bot never reveals them to a contact — it only
 grounds replies to **you** in your own self-chat.
 
@@ -38,29 +38,29 @@ is a single fixed POST — no input variable — so they run reliably.
 
 | Shortcut | Posts | Attach to automation trigger |
 | --- | --- | --- |
-| `Lantern-Status-Busy` | `focus: Busy` | Action Button / home-screen tap / NFC tag |
-| `Lantern-Status-Available` | `focus: Available` | Action Button / tap (clears Busy) |
-| `Lantern-Status-DND` | `focus: DND` | tap, or Focus → "Do Not Disturb" turns On |
-| `Lantern-Status-Desk` | `focus: Desk` | NFC tag on your desk |
-| `Lantern-Driving` | `device: driving` | **CarPlay Connects** — or, for a car without CarPlay, **Bluetooth → your car Connects** (point both at this one shortcut) |
-| `Lantern-Sleep` | `focus: Sleep` | **Sleep** Focus turns On (or bedtime) |
-| `Lantern-Wake` | `focus: Available` | **Sleep** Focus turns Off / first alarm |
-| `Lantern-LowBattery` | `device: low_battery` | **Low Power Mode** turns On |
-| `Lantern-Location-Home` | `location: Home` | **Arrive** Home |
-| `Lantern-Location-Office` | `location: Office` | **Arrive** Office |
-| `Lantern-Location-Gym` | `location: Gym` | **Arrive** Gym |
-| `Lantern-Location-Airport` | `location: Airport` | **Arrive** Airport |
-| `Lantern-Traveling` | `location: Traveling` | **Airplane Mode** On, or boarding-pass |
+| `PAL-Status-Busy` | `focus: Busy` | Action Button / home-screen tap / NFC tag |
+| `PAL-Status-Available` | `focus: Available` | Action Button / tap (clears Busy) |
+| `PAL-Status-DND` | `focus: DND` | tap, or Focus → "Do Not Disturb" turns On |
+| `PAL-Status-Desk` | `focus: Desk` | NFC tag on your desk |
+| `PAL-Driving` | `device: driving` | **CarPlay Connects** — or, for a car without CarPlay, **Bluetooth → your car Connects** (point both at this one shortcut) |
+| `PAL-Sleep` | `focus: Sleep` | **Sleep** Focus turns On (or bedtime) |
+| `PAL-Wake` | `focus: Available` | **Sleep** Focus turns Off / first alarm |
+| `PAL-LowBattery` | `device: low_battery` | **Low Power Mode** turns On |
+| `PAL-Location-Home` | `location: Home` | **Arrive** Home |
+| `PAL-Location-Office` | `location: Office` | **Arrive** Office |
+| `PAL-Location-Gym` | `location: Gym` | **Arrive** Gym |
+| `PAL-Location-Airport` | `location: Airport` | **Arrive** Airport |
+| `PAL-Traveling` | `location: Traveling` | **Airplane Mode** On, or boarding-pass |
 
 > Attach a trigger: Shortcuts app → **Automation** tab → **+** → pick the trigger
 > (e.g. "When CarPlay Connects") → **Run Immediately** (turn OFF "Ask Before
-> Running") → action **Run Shortcut** → pick the matching `Lantern-…` shortcut.
+> Running") → action **Run Shortcut** → pick the matching `PAL-…` shortcut.
 
 > **More than one car?** Point **multiple** automations at the same
-> `Lantern-Driving` shortcut: one **CarPlay Connects** (for a car with CarPlay)
+> `PAL-Driving` shortcut: one **CarPlay Connects** (for a car with CarPlay)
 > and one **Bluetooth → \<your car\> Connects** (for a car without it). Both fire
 > the same `device: driving` signal. Optionally add the mirror automations —
-> **CarPlay Disconnects** and **Bluetooth Disconnects** → `Lantern-Status-Available`
+> **CarPlay Disconnects** and **Bluetooth Disconnects** → `PAL-Status-Available`
 > — so the bot knows you've parked (otherwise "driving" just ages out of the 2h
 > window on its own).
 
@@ -78,7 +78,7 @@ more of these you wire, the more accurate it is.
 
 | Header                   | Value                |
 | ------------------------ | -------------------- |
-| `x-lantern-signal-token` | `<your-token>`       |
+| `x-pal-signal-token` | `<your-token>`       |
 | `Content-Type`           | `application/json`   |
 
 In Shortcuts, the **Get Contents of URL** action needs **Method = POST**, both
@@ -281,7 +281,7 @@ iOS exposes it, otherwise a tap-to-run shortcut after exercising.
 ### Now playing
 
 **Generated for you:** `python3 scripts/iphone/app-context/generate-media-signal.py`
-signs `Lantern-NowPlaying.shortcut` (Get Current Song → POST `now_playing:<track>`,
+signs `PAL-NowPlaying.shortcut` (Get Current Song → POST `now_playing:<track>`,
 the variable already plumbed into the JSON body). AirDrop it or grab it from the
 install page, then attach a **"When [music app] opens"** automation. The manual
 build is below if you'd rather wire it yourself.
@@ -354,12 +354,12 @@ ask.
 After a few automations fire, from your Mac (replace host + token):
 
 ```bash
-curl -s -H "x-lantern-signal-token: <your-token>" \
+curl -s -H "x-pal-signal-token: <your-token>" \
   "https://<your-tailscale-host>/v1/signals?limit=20"
 ```
 
 You should see your recent `location` / `focus` / `device` / `health` /
-`now_playing` lines. Or open `~/.lantern/device-signals.jsonl` directly — one
+`now_playing` lines. Or open `~/.pal/device-signals.jsonl` directly — one
 JSON object per line. Then ask the bot in self-chat: "where am I / how many steps
 today / what am I listening to" — the bridge reads the signals file **on-demand**
 on every owner self-chat turn (zero lag), so a signal that just landed is already
@@ -368,7 +368,7 @@ fails.)
 
 ## Privacy recap
 
-- Signals are stored **only** on your Mac in `~/.lantern/device-signals.jsonl`
+- Signals are stored **only** on your Mac in `~/.pal/device-signals.jsonl`
   (mode `0600`). Auto-trimmed to the most recent lines.
 - The composite summary is injected **only** into your own self-chat context.
   The bot never volunteers it and never reveals it to a contact.

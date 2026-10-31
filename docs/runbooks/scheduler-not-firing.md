@@ -13,7 +13,7 @@ leader-elected tickers gated on a Postgres advisory lock:
    (`services/runtime-scheduler/internal/metrics/metrics.go`).
 2. **cron scheduler** — fires time-based agent runs from the `schedules` table
    (`next_fire_at`). No in-app metric yet; its health is observed via the
-   `lantern_schedules_overdue` postgres_exporter gauge.
+   `pal_schedules_overdue` postgres_exporter gauge.
 
 Both are designed so exactly **one** replica holds the lock and ticks; if leader
 election produces no leader, nothing fires.
@@ -22,14 +22,14 @@ election produces no leader, nothing fires.
 
 ## What fired it
 
-- **`SchedulerDown`** — `up{job="lantern-runtime-scheduler"} == 0` for 2m. The
+- **`SchedulerDown`** — `up{job="pal-runtime-scheduler"} == 0` for 2m. The
   scheduler `/metrics` (:8085) is unscrapable; the process is down.
-- **`SchedulerNoLeader`** — `sum(lantern_scheduler_is_leader) == 0` for 3m. No
+- **`SchedulerNoLeader`** — `sum(pal_scheduler_is_leader) == 0` for 3m. No
   replica holds the advisory lock. Standbys serve `result="standby"` and nothing
   is placed.
 - **`SchedulerScheduleErrorRateHigh`** — Schedule RPC error fraction > 10% over
   10m. Placement is reaching the scheduler but failing.
-- **`CronScheduleOverdue`** — `lantern_schedules_overdue > 0` for 5m: enabled
+- **`CronScheduleOverdue`** — `pal_schedules_overdue > 0` for 5m: enabled
   schedules whose `next_fire_at` is in the past beyond the grace window. The cron
   ticker has stalled (commonly: lost/contended advisory lock).
 
@@ -41,7 +41,7 @@ election produces no leader, nothing fires.
 # runtime-scheduler pods + its own metrics (leader, nodes, active VMs, errors).
 kubectl -n <ns> get pods -l app.kubernetes.io/name=runtime-scheduler
 kubectl -n <ns> exec deploy/<runtime-scheduler> -- wget -qO- localhost:8085/metrics \
-  | grep -E 'lantern_scheduler_(is_leader|nodes|active_vms|schedule_(total|errors_total))'
+  | grep -E 'pal_scheduler_(is_leader|nodes|active_vms|schedule_(total|errors_total))'
 
 # Logs — leader acquisition, lock contention, placement failures.
 kubectl -n <ns> logs deploy/<runtime-scheduler> --tail=200 \
@@ -69,7 +69,7 @@ Diagnose by signal:
   replicas are unhealthy. The `pg_locks` query shows a granted advisory lock
   held by a dead/zombie backend.
 - **`is_leader == 1` somewhere but errors high** → election is fine; placement is
-  failing. Check `lantern_scheduler_nodes` (0 → `data-plane-disconnected.md`) and
+  failing. Check `pal_scheduler_nodes` (0 → `data-plane-disconnected.md`) and
   the placement logs.
 - **Cron overdue but runtime-scheduler healthy** → the cron ticker specifically
   lost its lock or its pod is down; check the cron scheduler deployment.
@@ -94,8 +94,8 @@ Diagnose by signal:
    throws every tick, disable it (`PUT /v1/schedules/{id}` enabled=false) to
    unblock the rest, then fix it.
 
-Confirm recovery: `sum(lantern_scheduler_is_leader) == 1`, error rate back under
-threshold, `lantern_schedules_overdue` returns to 0, and a test schedule fires.
+Confirm recovery: `sum(pal_scheduler_is_leader) == 1`, error rate back under
+threshold, `pal_schedules_overdue` returns to 0, and a test schedule fires.
 
 ---
 

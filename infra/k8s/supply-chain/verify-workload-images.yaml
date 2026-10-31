@@ -40,7 +40,7 @@ spec:
         any:
           - resources:
               kinds: [Pod]
-              namespaces: ["lantern-t-*", "pal-t-*"]
+              namespaces: ["pal-t-*", "pal-t-*"]
       validate:
         failureAction: Enforce
         message: >-
@@ -59,7 +59,7 @@ spec:
         any:
           - resources:
               kinds: [Pod]
-              namespaces: ["lantern-t-*", "pal-t-*"]
+              namespaces: ["pal-t-*", "pal-t-*"]
       verifyImages:
         - imageReferences: ["*"]
           failureAction: Enforce

@@ -95,11 +95,11 @@ spec:
             # was silently dropped: the deployment came up healthy with RLS
             # completely off — a fail-open on the tenant-isolation control.
             - name: PAL_ENV
-              value: {{ .Values.controlPlane.env.PAL_ENV | default .Values.controlPlane.env.LANTERN_ENV | default "production" | quote }}
+              value: {{ .Values.controlPlane.env.PAL_ENV | default "production" | quote }}
             - name: PAL_RLS_ENFORCE
-              value: {{ .Values.controlPlane.env.PAL_RLS_ENFORCE | default .Values.controlPlane.env.LANTERN_RLS_ENFORCE | default "" | quote }}
+              value: {{ .Values.controlPlane.env.PAL_RLS_ENFORCE | default "" | quote }}
             - name: PAL_AUTHZ_ENFORCE
-              value: {{ .Values.controlPlane.env.PAL_AUTHZ_ENFORCE | default .Values.controlPlane.env.LANTERN_AUTHZ_ENFORCE | default "" | quote }}
+              value: {{ .Values.controlPlane.env.PAL_AUTHZ_ENFORCE | default "" | quote }}
             - name: PAL_APP_DB_PASSWORD
               valueFrom:
                 secretKeyRef:

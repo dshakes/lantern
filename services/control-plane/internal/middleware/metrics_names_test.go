@@ -11,10 +11,8 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
-// ADR 0032: every measurement lands under the PAL name with pal.* attributes
-// and, for one release, under the legacy name with lantern.* attributes —
-// lantern_run_total{lantern_status=...} alerts keep firing.
-func TestMetrics_DualEmitPALAndLegacyNames(t *testing.T) {
+// Every measurement lands under the PAL name with pal.* attributes.
+func TestMetrics_PALNames(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	prev := otel.GetMeterProvider()
 	otel.SetMeterProvider(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)))
@@ -35,18 +33,15 @@ func TestMetrics_DualEmitPALAndLegacyNames(t *testing.T) {
 				continue
 			}
 			for _, dp := range sum.DataPoints {
-				for _, key := range []string{"pal.status", "lantern.status"} {
-					if v, ok := dp.Attributes.Value(attributeKey(key)); ok {
-						found[m.Name+"|"+key] = v.AsString()
-					}
+				if v, ok := dp.Attributes.Value(attributeKey("pal.status")); ok {
+					found[m.Name+"|pal.status"] = v.AsString()
 				}
 			}
 		}
 	}
-	for _, want := range []string{"pal.run.total|pal.status", "lantern.run.total|lantern.status"} {
-		if found[want] != "failed" {
-			t.Errorf("%s: got %q (all: %v)", want, found[want], found)
-		}
+	const want = "pal.run.total|pal.status"
+	if found[want] != "failed" {
+		t.Errorf("%s: got %q (all: %v)", want, found[want], found)
 	}
 }
 

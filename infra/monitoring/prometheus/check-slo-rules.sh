@@ -10,7 +10,7 @@ out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
 
 [ -d "$chart/charts" ] || helm dependency build "$chart" >/dev/null
-helm template lantern "$chart" -f "$chart/values-prod.yaml" \
+helm template pal "$chart" -f "$chart/values-prod.yaml" \
   --set backup.s3Bucket=lint --set externalDatabase.host=db.example \
   --set externalS3.endpoint=https://s3.example --set externalS3.accessKeyId=k \
   --show-only templates/monitoring/prometheusrule.yaml |

@@ -5,14 +5,14 @@
 //
 //	go run ./e2e/internal/e2ekit/cmd/sweep
 //
-// Env vars: LANTERN_E2E_API_URL, LANTERN_E2E_EMAIL, LANTERN_E2E_PASSWORD
+// Env vars: PAL_E2E_API_URL, PAL_E2E_EMAIL, PAL_E2E_PASSWORD
 package main
 
 import (
 	"fmt"
 	"os"
 
-	"github.com/dshakes/lantern/e2e/internal/e2ekit"
+	"github.com/dshakes/pal/e2e/internal/e2ekit"
 )
 
 func main() {

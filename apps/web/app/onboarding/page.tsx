@@ -68,10 +68,10 @@ const GOAL_EXAMPLES = [
 
 // The smallest runnable demo workload (examples/headless-agents/01-hello).
 const SANDBOX_SPEC = {
-  imageDigest: "lantern/demos/hello:latest",
+  imageDigest: "pal/demos/hello:latest",
   isolation: "untrusted",
   limits: { vcpu: "100m", memory: "64Mi", timeout_secs: 30 },
-  env: { LANTERN_ONBOARDING: "1" },
+  env: { PAL_ONBOARDING: "1" },
 };
 
 interface Failure {

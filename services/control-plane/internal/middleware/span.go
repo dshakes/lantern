@@ -10,27 +10,12 @@ import (
 // Span attribute keys. Every service entry point (HTTP, gRPC, internal step)
 // stamps the same keys, so a trace can be filtered by tenant/run regardless of
 // which one created the span.
-//
-// The PAL keys are canonical. The pre-PAL "lantern.*" keys are dual-emitted
-// for one release (ADR 0032, rename plan step 15) so saved trace queries and
-// dashboards outside this repo keep matching while operators migrate them.
 const (
 	AttrTenantID = "pal.tenant_id"
 	AttrUserID   = "pal.user_id"
 	AttrRunID    = "pal.run_id"
 	AttrStepID   = "pal.step_id"
-
-	LegacyAttrTenantID = "lantern.tenant_id"
-	LegacyAttrUserID   = "lantern.user_id"
-	LegacyAttrRunID    = "lantern.run_id"
-	LegacyAttrStepID   = "lantern.step_id"
 )
-
-// IDAttrs returns the attribute under its PAL key and its legacy key. Use it
-// for ad-hoc span attributes so they stay filterable by both names.
-func IDAttrs(palKey, legacyKey, v string) []attribute.KeyValue {
-	return []attribute.KeyValue{attribute.String(palKey, v), attribute.String(legacyKey, v)}
-}
 
 // EnrichSpan stamps the well-known PAL identifiers onto whatever span is
 // active in ctx. Empty values are skipped so we never emit blank attributes.
@@ -50,18 +35,18 @@ func EnrichSpan(ctx context.Context, tenantID, userID, runID, stepID string) {
 		return
 	}
 
-	attrs := make([]attribute.KeyValue, 0, 8)
+	attrs := make([]attribute.KeyValue, 0, 4)
 	if tenantID != "" {
-		attrs = append(attrs, IDAttrs(AttrTenantID, LegacyAttrTenantID, tenantID)...)
+		attrs = append(attrs, attribute.String(AttrTenantID, tenantID))
 	}
 	if userID != "" {
-		attrs = append(attrs, IDAttrs(AttrUserID, LegacyAttrUserID, userID)...)
+		attrs = append(attrs, attribute.String(AttrUserID, userID))
 	}
 	if runID != "" {
-		attrs = append(attrs, IDAttrs(AttrRunID, LegacyAttrRunID, runID)...)
+		attrs = append(attrs, attribute.String(AttrRunID, runID))
 	}
 	if stepID != "" {
-		attrs = append(attrs, IDAttrs(AttrStepID, LegacyAttrStepID, stepID)...)
+		attrs = append(attrs, attribute.String(AttrStepID, stepID))
 	}
 	if len(attrs) > 0 {
 		span.SetAttributes(attrs...)

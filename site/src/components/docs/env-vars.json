@@ -3,7 +3,7 @@
   "name": "AGENT_IMAGE",
   "services": [],
   "group": "Runtime manager",
-  "default": "`ghcr.io/lantern/agent-runner:latest`",
+  "default": "`ghcr.io/pal/agent-runner:latest`",
   "description": "Default workload image (docker, kata).",
   "prod": false,
   "source": ""
@@ -39,7 +39,7 @@
   "name": "BUNDLE_S3_BUCKET",
   "services": [],
   "group": "Runtime manager",
-  "default": "`lantern-bundles`",
+  "default": "`pal-bundles`",
   "description": "Bundle bucket.",
   "prod": false,
   "source": ""
@@ -57,7 +57,7 @@
   "name": "DATABASE_URL",
   "services": [],
   "group": "Control plane: listeners, stores, process",
-  "default": "`postgres://localhost:5432/lantern?sslmode=disable`",
+  "default": "`postgres://localhost:5432/pal?sslmode=disable`",
   "description": "Postgres DSN (pgvector image). Also read by `cmd/migrate` and the cron scheduler.",
   "prod": false,
   "source": ""
@@ -93,7 +93,7 @@
   "name": "FC_KERNEL_PATH",
   "services": [],
   "group": "Runtime manager",
-  "default": "`/opt/lantern/vmlinux`",
+  "default": "`/opt/pal/vmlinux`",
   "description": "Guest kernel.",
   "prod": false,
   "source": ""
@@ -102,7 +102,7 @@
   "name": "FC_ROOTFS_PATH",
   "services": [],
   "group": "Runtime manager",
-  "default": "`/opt/lantern/rootfs.ext4`",
+  "default": "`/opt/pal/rootfs.ext4`",
   "description": "Base rootfs image.",
   "prod": false,
   "source": ""
@@ -590,7 +590,7 @@
   ],
   "group": "Control plane: auth, secrets, trust boundaries",
   "default": "unset",
-  "description": "Password of the non-superuser `lantern_app` role used when RLS is enforced. Setting it turns RLS on in production; if it is missing, startup is fatal unless `PAL_RLS_ENFORCE=0`. **Required in prod.**",
+  "description": "Password of the non-superuser `pal_app` role used when RLS is enforced. Setting it turns RLS on in production; if it is missing, startup is fatal unless `PAL_RLS_ENFORCE=0`. **Required in prod.**",
   "prod": true,
   "source": "infra/helm/pal/values-prod.yaml:7"
  },
@@ -2311,7 +2311,7 @@
    "control-plane"
   ],
   "group": "Control plane: sign-up, mail, OAuth",
-  "default": "`Lantern <no-reply@localhost>`",
+  "default": "`PAL <no-reply@localhost>`",
   "description": "From address for `smtp` and `http`.",
   "prod": false,
   "source": "services/control-plane/internal/mailer/mailer.go:58"
@@ -2379,7 +2379,7 @@
    "harness"
   ],
   "group": "In-VM harness",
-  "default": "`manager.lantern.internal`",
+  "default": "`manager.pal.internal`",
   "description": "TLS server name used to verify the manager.",
   "prod": false,
   "source": "services/harness/src/tls.rs:155"
@@ -2799,7 +2799,7 @@
    "bridge-core"
   ],
   "group": "pal: chat bridges (iMessage, WhatsApp)",
-  "default": "~/.lantern/owner-profile.md",
+  "default": "~/.pal/owner-profile.md",
   "description": "Owner profile markdown (facts, relationships, style lessons), hot-reloaded.",
   "prod": false,
   "source": "packages/bridge-core/src/owner-profile.ts:20"
@@ -3232,7 +3232,7 @@
   ],
   "group": "Control plane: auth, secrets, trust boundaries",
   "default": "on in production when `PAL_APP_DB_PASSWORD` is set",
-  "description": "Row-level security is on in production whenever `PAL_APP_DB_PASSWORD` is set. Without that password the control plane refuses to start unless you set `PAL_RLS_ENFORCE=0`. `1` enforces it elsewhere through the `lantern_app` pool.",
+  "description": "Row-level security is on in production whenever `PAL_APP_DB_PASSWORD` is set. Without that password the control plane refuses to start unless you set `PAL_RLS_ENFORCE=0`. `1` enforces it elsewhere through the `pal_app` pool.",
   "prod": true,
   "source": "services/control-plane/cmd/server/main.go:1050"
  },
@@ -3253,7 +3253,7 @@
    "harness"
   ],
   "group": "In-VM harness",
-  "default": "`/run/lantern`",
+  "default": "`/run/pal`",
   "description": "Directory for sockets (`secrets.sock`).",
   "prod": false,
   "source": "services/harness/src/init.rs:10"
@@ -3565,7 +3565,7 @@
    "harness"
   ],
   "group": "Service: harness",
-  "default": "/run/lantern/secrets.sock",
+  "default": "/run/pal/secrets.sock",
   "description": "Unix socket the workload asks for secrets on.",
   "prod": false,
   "source": "services/harness/src/secrets.rs:209"
@@ -3667,7 +3667,7 @@
   ],
   "group": "Control plane: auth, secrets, trust boundaries",
   "default": "unset",
-  "description": "Shared secret for `/v1/signals` (header `x-lantern-signal-token`). Unset: the endpoint is 401.",
+  "description": "Shared secret for `/v1/signals` (header `x-pal-signal-token`). Unset: the endpoint is 401.",
   "prod": false,
   "source": "apps/web/app/api/signals/route.ts:62"
  },
@@ -4428,7 +4428,7 @@
   "name": "S3_ACCESS_KEY",
   "services": [],
   "group": "Control plane: listeners, stores, process",
-  "default": "falls back to `AWS_ACCESS_KEY_ID`, then `lantern`",
+  "default": "falls back to `AWS_ACCESS_KEY_ID`, then `pal`",
   "description": "Object-store access key.",
   "prod": false,
   "source": ""
@@ -4437,7 +4437,7 @@
   "name": "S3_BUCKET",
   "services": [],
   "group": "Control plane: listeners, stores, process",
-  "default": "`lantern-bundles-dev`",
+  "default": "`pal-bundles-dev`",
   "description": "Bucket name.",
   "prod": false,
   "source": ""
@@ -4464,7 +4464,7 @@
   "name": "S3_SECRET",
   "services": [],
   "group": "Control plane: listeners, stores, process",
-  "default": "falls back to `AWS_SECRET_ACCESS_KEY`, then `lanternsecret`",
+  "default": "falls back to `AWS_SECRET_ACCESS_KEY`, then `palsecret`",
   "description": "Object-store secret. Set real values outside dev.",
   "prod": false,
   "source": ""
@@ -4572,7 +4572,7 @@
   "name": "SNAPSHOT_DIR",
   "services": [],
   "group": "Runtime manager",
-  "default": "`/var/lib/lantern/snapshots`",
+  "default": "`/var/lib/pal/snapshots`",
   "description": "Local snapshot store root.",
   "prod": false,
   "source": ""

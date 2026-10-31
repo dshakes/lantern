@@ -9,7 +9,7 @@
 Today a Firecracker guest has a TAP NIC. Egress is filtered **inside** the guest by
 the harness's CONNECT allowlist proxy on `127.0.0.1:3128`, made non-bypassable by an
 in-guest iptables REDIRECT, and workloads fetch short-TTL secret **values** over
-`/run/lantern/secrets.sock`. Two consequences:
+`/run/pal/secrets.sock`. Two consequences:
 
 1. The enforcement point lives in the same kernel as untrusted code. A guest kernel
    or harness compromise disables the allowlist.
@@ -36,7 +36,7 @@ In broker mode, for Firecracker cold boots:
   443), private/metadata IP denial on literals and on resolved addresses (resolve once,
   dial the checked address), `http_methods`, and `rate_bps`. It dials upstream from the
   host. Every decision is audited (`egress`, `egress_inject`) through the existing
-  report path, and logged locally first under `lantern_audit`.
+  report path, and logged locally first under `pal_audit`.
 - **Credential injection.** `EgressRule.inject` (new proto field 4, `CredentialInjection
   {header, secret_uri, value_prefix}`) names headers to set. The broker resolves
   `secret_uri` through the manager's `SecretResolver` (relay or env, ADR 0008) at request
@@ -57,7 +57,7 @@ In broker mode, for Firecracker cold boots:
   gRPC control channel to the manager (Report, Heartbeat, VendSecret) uses a vsock
   connector (port 50054). The manager relays `<vsock_uds>_50054` byte-for-byte to its
   own gRPC listener, so mTLS stays end-to-end and the server name is still
-  `manager.lantern.internal`.
+  `manager.pal.internal`.
 - **Injection specs never enter the guest.** `spawn.json` `egress_rules` have `inject`
   stripped, including the secret refs.
 
@@ -115,7 +115,7 @@ channel).
 - **End to end.**
   - `gen/go` is regenerated with the same protoc / protoc-gen-go versions.
   - Control-plane schedule accepts `egress[].inject {header, secretRef, valuePrefix}` and
-    returns 400 on anything that is not a `lantern.secret/...` ref, a bad header name, a
+    returns 400 on anything that is not a `pal.secret/...` ref, a bad header name, a
     CR/LF prefix, or an IP/CIDR pattern. Error messages never echo the ref.
   - The scheduler passes the spec through unchanged, including on fork respawns.
   - TS, Python and Go SDKs have `EgressRule` / `CredentialInjection` types.

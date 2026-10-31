@@ -1,7 +1,7 @@
 //go:build e2e
 
 // Package deploy_e2e drives the real `pal deploy` binary against a live
-// control plane (LANTERN_E2E_API_URL). No LLM is involved: deploy only
+// control plane (PAL_E2E_API_URL). No LLM is involved: deploy only
 // upserts the agent and POSTs /v1/agents/{name}/deploy, so there is no spend.
 //
 // Stack down + E2E_ALLOW_SKIP unset -> fail; E2E_ALLOW_SKIP=1 -> skip.
@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dshakes/lantern/e2e/internal/e2ekit"
+	"github.com/dshakes/pal/e2e/internal/e2ekit"
 )
 
 const agentName = "e2e-deploy-w2d"

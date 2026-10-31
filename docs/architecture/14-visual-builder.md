@@ -92,15 +92,15 @@ When the user hits **Save**, the canvas serializes to a `canvas.json`, then comp
 canvas.json ──► compiler ──► src/index.ts (generated TypeScript)
                                    │
                                    ▼
-                          lantern build ──► bundle.tar.zst
+                          pal build ──► bundle.tar.zst
 ```
 
 The generated TypeScript looks like the SDK code an engineer would write by hand:
 
 ```ts
 // generated from canvas.json — do not edit by hand
-import { agent, step, tool } from "@lantern/sdk";
-import { gmail, slack, linear } from "@lantern/connectors";
+import { agent, step, tool } from "@pal/sdk";
+import { gmail, slack, linear } from "@pal/connectors";
 
 export default agent({
   name: "boss-email-triage",
@@ -205,7 +205,7 @@ These defaults can be overridden, but only after confirmation.
 
 - **No general programming.** If you need a `while` loop with a complex condition, drop into a Code Block. The canvas isn't a programming language.
 - **No custom UIs.** The canvas builds workflows, not apps. If users want a UI, they build a Slack/iMessage interaction via Control Surfaces.
-- **No version control.** Bundles are versioned by the platform; the canvas exposes "history" and "diff" but not branching/merging. Engineers who want git can `lantern pull` to a repo and use git there.
+- **No version control.** Bundles are versioned by the platform; the canvas exposes "history" and "diff" but not branching/merging. Engineers who want git can `pal pull` to a repo and use git there.
 
 ---
 

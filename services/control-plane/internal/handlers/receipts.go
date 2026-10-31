@@ -8,10 +8,10 @@ package handlers
 //
 //   - Ed25519 (preferred, production): set PAL_RECEIPT_ED25519_SEED to a
 //     base64-std or hex-encoded 32-byte seed. The public key is published at
-//     /.well-known/lantern-receipts so external auditors can verify receipts
+//     /.well-known/pal-receipts so external auditors can verify receipts
 //     completely offline — no shared secret required.
 //
-//   - HMAC-SHA256 (legacy / dev fallback): set LANTERN_RECEIPT_SECRET, or omit
+//   - HMAC-SHA256 (legacy / dev fallback): set PAL_RECEIPT_SECRET, or omit
 //     both env vars to use the built-in dev constant. Existing stored receipts
 //     continue to verify unchanged.
 //
@@ -43,7 +43,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // ReceiptHandler exposes /v1/runs/{id}/receipt.
@@ -132,7 +132,7 @@ func loadEd25519Key(log *zap.Logger) ed25519State {
 		raw := os.Getenv("PAL_RECEIPT_ED25519_SEED")
 		if raw == "" {
 			log.Info("receipts: Ed25519 key not configured — using HMAC-SHA256 fallback",
-				zap.String("env", "LANTERN_RECEIPT_ED25519_SEED"))
+				zap.String("env", "PAL_RECEIPT_ED25519_SEED"))
 			return
 		}
 
@@ -214,7 +214,7 @@ func (h *ReceiptHandler) IssueReceipt(w http.ResponseWriter, r *http.Request) {
 
 // VerifyReceipt handles POST /v1/runs/receipts/verify. No auth required —
 // receipts are publicly verifiable. In Ed25519 mode the public key is
-// published at /.well-known/lantern-receipts so external tools can verify
+// published at /.well-known/pal-receipts so external tools can verify
 // entirely offline with no server involvement.
 //
 // Note on the request wire format: the incoming body is a signedReceipt (the
@@ -338,7 +338,7 @@ func (h *ReceiptHandler) VerifyReceipt(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// WellKnown handles GET /.well-known/pal-receipts (and the legacy /.well-known/lantern-receipts).
+// WellKnown handles GET /.well-known/pal-receipts.
 //
 // Ed25519 mode: publishes algorithm + base64-encoded public key + SHA-256
 // fingerprint of the public key. External verifiers can fetch this endpoint
@@ -355,7 +355,7 @@ func (h *ReceiptHandler) WellKnown(w http.ResponseWriter, _ *http.Request) {
 			"algorithm":      "Ed25519",
 			"publicKey":      base64.StdEncoding.EncodeToString(k.pub),
 			"keyFingerprint": hex.EncodeToString(fp[:8]),
-			"docs":           "https://docs.lantern.dev/receipts",
+			"docs":           "https://dshakes.github.io/pal/receipts",
 		})
 		return
 	}
@@ -365,7 +365,7 @@ func (h *ReceiptHandler) WellKnown(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"algorithm":      "HMAC-SHA256",
 		"keyFingerprint": hex.EncodeToString(digest[:8]),
-		"docs":           "https://docs.lantern.dev/receipts",
+		"docs":           "https://dshakes.github.io/pal/receipts",
 	})
 }
 
@@ -635,7 +635,7 @@ func getReceiptSecret() string {
 }
 
 // resetEd25519OnceForTest resets the package-level once so tests can inject
-// different LANTERN_RECEIPT_ED25519_SEED values via t.Setenv.
+// different PAL_RECEIPT_ED25519_SEED values via t.Setenv.
 // Only call from test code.
 func resetEd25519OnceForTest() {
 	ed25519Once = sync.Once{}

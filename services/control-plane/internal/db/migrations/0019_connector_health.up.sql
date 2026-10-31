@@ -2,8 +2,8 @@
 -- instead of being rediscovered once per scheduled run.
 --
 -- Observed live: the Gmail OAuth token was encrypted with a
--- LANTERN_CREDENTIAL_KEY that no longer exists, so every decrypt failed with
--- "credential is encrypted but LANTERN_CREDENTIAL_KEY is not set". The install
+-- PAL_CREDENTIAL_KEY that no longer exists, so every decrypt failed with
+-- "credential is encrypted but PAL_CREDENTIAL_KEY is not set". The install
 -- still said status='connected', so three scheduled agents (inbox-autopilot,
 -- domain-tracker, inbox-triage) re-attempted it every hour and failed
 -- identically — 124 failed runs in 7 days, each burning a run row and LLM

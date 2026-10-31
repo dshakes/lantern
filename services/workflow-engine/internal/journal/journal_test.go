@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/dshakes/lantern/services/workflow-engine/internal/journal"
+	"github.com/dshakes/pal/services/workflow-engine/internal/journal"
 )
 
 // TestJournalEntry_Marshal verifies that JournalEntry can be round-tripped

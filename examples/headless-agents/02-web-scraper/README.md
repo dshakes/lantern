@@ -10,7 +10,7 @@ allowlist + readonly rootfs).
 ## Run it
 
 ```bash
-docker build -t lantern/demos/web-scraper:latest examples/headless-agents/02-web-scraper
+docker build -t pal/demos/web-scraper:latest examples/headless-agents/02-web-scraper
 
 # Allowed: Wikipedia is on the allowlist (see agent.yaml egress_rules)
 pal run examples/headless-agents/02-web-scraper/agent.yaml \

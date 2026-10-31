@@ -39,13 +39,13 @@ Items marked (planned) are designed but not implemented. Do not rely on them for
 - **Per-endpoint API-key scopes.** Mutating endpoints are annotated with required scopes (`agents:write`, `runs:execute`, and so on). Scope enforcement is on by default in production (`PAL_ENV=production|staging`) and off in dev. Set `PAL_AUTHZ_ENFORCE=0` to opt out (logged as a warning) or `=1` to force it on in dev. A key missing the endpoint's scope gets 403; dashboard/owner JWT sessions and unscoped legacy keys keep full access.
 - **Service-token auth and mTLS on every internal gRPC port:** control plane `:50051`, workflow engine `:50052`, model router `:50053`, runtime manager `:50054` and runtime scheduler `:50055`. The token check is constant-time, runs before tenant extraction and is fail-closed in production. Hops are mutual TLS when `PAL_GRPC_TLS_CA`, `PAL_GRPC_TLS_CERT` and `PAL_GRPC_TLS_KEY` are set (ADR 0043); in production the control plane refuses to start without them unless `PAL_GRPC_INSECURE=1`, and dev falls back to plaintext with a warning.
 - **Runtime report binding.** Step events and exit reports from a microVM are bound to that VM's own run: a report carrying another run's `run_id` is rejected with 403, so a compromised harness cannot spoof another tenant's audit or log stream.
-- **Signed run receipts.** Issued on request for a completed run (`POST /v1/runs/{id}/receipt`). A SHA-256 of the run's full `journal_events` stream is signed with Ed25519 when `PAL_RECEIPT_ED25519_SEED` is set (verifiable with no PAL account at `/proof` against the key at `/.well-known/lantern-receipts`), with an HMAC-SHA256 dev fallback otherwise (verifiable only by the deployment).
+- **Signed run receipts.** Issued on request for a completed run (`POST /v1/runs/{id}/receipt`). A SHA-256 of the run's full `journal_events` stream is signed with Ed25519 when `PAL_RECEIPT_ED25519_SEED` is set (verifiable with no PAL account at `/proof` against the key at `/.well-known/pal-receipts`), with an HMAC-SHA256 dev fallback otherwise (verifiable only by the deployment).
 - **Fail-closed token gates.** The gateway's API-key introspection endpoint refuses (403) in production when `PAL_GRPC_SERVICE_TOKEN` is unset (dev allows it with a warning). The personal `/v1/signals` endpoint refuses (401) whenever `PAL_SIGNAL_TOKEN` is unset. Both gates use constant-time token comparisons when a token is set.
 - **A2A tenant isolation.** `GetAgentCard` / `InvokeAgent` gate on `is_public` OR caller tenant; private agents return 404 to cross-tenant callers.
 - **Surface-gateway tenant resolution.** The surface gateway resolves a real `PAL_TENANT_ID` instead of using platform IDs; unknown installs are rejected.
 - **LLM idempotency keys on all provider calls**, derived from `(run_id, step_id, attempt)` and reused across same-provider retries.
 - **Dependency vulnerability gate.** `govulncheck`, `cargo-audit`, and `npm audit` run on every CI build.
-- **OTel traces with tenant identity.** Every control-plane HTTP request and gRPC call carries a span enriched with `lantern.tenant_id`, `lantern.run_id` and `lantern.step_id`.
+- **OTel traces with tenant identity.** Every control-plane HTTP request and gRPC call carries a span enriched with `pal.tenant_id`, `pal.run_id` and `pal.step_id`.
 
 ## Privacy levels (planned)
 
@@ -111,7 +111,7 @@ User-supplied code, Python `exec`, browser automation, and anything that loads p
 
 ## Secret management
 
-Secrets (API keys, OAuth tokens, credentials) are referenced via the `lantern.secret/...` form and resolved at execution time by the runtime manager's secret resolver (via the control-plane relay). Stored credentials are AES-256-GCM encrypted when `PAL_CREDENTIAL_KEY` is configured. Resolved values never appear in:
+Secrets (API keys, OAuth tokens, credentials) are referenced via the `pal.secret/...` form and resolved at execution time by the runtime manager's secret resolver (via the control-plane relay). Stored credentials are AES-256-GCM encrypted when `PAL_CREDENTIAL_KEY` is configured. Resolved values never appear in:
 
 - Logs or traces
 - Run state or step outputs

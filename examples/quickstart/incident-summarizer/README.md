@@ -31,7 +31,7 @@ stack.
 ```bash
 export TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"email":"admin@lantern.dev","password":"lantern"}' | jq -r .token)
+  -d '{"email":"admin@pal.local","password":"pal"}' | jq -r .token)
 
 # 1. create the agent
 curl -s -X POST http://localhost:8080/v1/agents \
@@ -45,7 +45,7 @@ curl -s -X POST http://localhost:8080/v1/runs \
 # -> {"id":"<run-id>","status":"queued",...}; poll GET /v1/runs/<run-id>
 ```
 
-### lantern CLI equivalent
+### pal CLI equivalent
 
 ```bash
 cd packages/cli && go run ./cmd/pal runs create \
@@ -119,7 +119,7 @@ Real captured receipt:
 > `algorithm` is `HMAC-SHA256` here because this dev stack has no
 > `PAL_RECEIPT_ED25519_SEED` set; set the seed and receipts are signed with
 > Ed25519 and verifiable fully offline against the public key at
-> `/.well-known/lantern-receipts`.
+> `/.well-known/pal-receipts`.
 
 ### Verify (NO auth — publicly verifiable)
 
@@ -143,8 +143,8 @@ Tamper with the signature and verification fails (real captured response):
 The same receipt JSON can be pasted into the dashboard's public **`/proof`**
 verifier (no login) to get the same result. External tooling can verify
 entirely offline by fetching the algorithm + key fingerprint from
-`GET /.well-known/lantern-receipts`:
+`GET /.well-known/pal-receipts`:
 
 ```json
-{"algorithm":"HMAC-SHA256","docs":"https://docs.lantern.dev/receipts","keyFingerprint":"8bdbb2dacd05280b"}
+{"algorithm":"HMAC-SHA256","docs":"https://dshakes.github.io/pal/receipts","keyFingerprint":"8bdbb2dacd05280b"}
 ```

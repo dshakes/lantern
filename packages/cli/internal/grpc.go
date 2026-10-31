@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
@@ -19,8 +19,8 @@ type ClientConfig struct {
 
 // Clients bundles the typed gRPC service stubs.
 type Clients struct {
-	Agents lanternv1.AgentServiceClient
-	Runs   lanternv1.RunServiceClient
+	Agents palv1.AgentServiceClient
+	Runs   palv1.RunServiceClient
 	conn   *grpc.ClientConn
 }
 
@@ -47,8 +47,8 @@ func Dial(cfg ClientConfig) (*Clients, error) {
 	}
 
 	return &Clients{
-		Agents: lanternv1.NewAgentServiceClient(conn),
-		Runs:   lanternv1.NewRunServiceClient(conn),
+		Agents: palv1.NewAgentServiceClient(conn),
+		Runs:   palv1.NewRunServiceClient(conn),
 		conn:   conn,
 	}, nil
 }

@@ -1,8 +1,6 @@
 # Context is the repo root; ship only what the model-router build reads.
 *
-!packages/pal-env-rs
 !packages/pal-grpc-tls-rs
 !services/model-router
-packages/pal-env-rs/target
 packages/pal-grpc-tls-rs/target
 services/model-router/target

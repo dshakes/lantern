@@ -7,7 +7,7 @@ package handlers
 //   - TestCommitment_* : handler-level behaviour over a real pool (create, list,
 //     get, update, idempotency upsert, done/dismiss/snooze transitions, filter by
 //     status/tier, cross-tenant 404).
-//   - TestRLSCommitments_* : enforcement-on proof via the lantern_app-backed
+//   - TestRLSCommitments_* : enforcement-on proof via the pal_app-backed
 //     harness — same-tenant read/write works, cross-tenant is blocked at Postgres.
 
 import (
@@ -24,7 +24,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // newTestCommitmentHandler builds a CommitmentHandler backed by a real

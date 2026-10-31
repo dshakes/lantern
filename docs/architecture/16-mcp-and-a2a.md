@@ -48,13 +48,13 @@ mcp_servers:
   - id: my-postgres
     transport: http+sse
     url: https://mcp.example.com/postgres
-    auth: lantern.secret/pg_mcp_key
+    auth: pal.secret/pg_mcp_key
 
   - id: github
     transport: stdio
     command: ["npx", "-y", "@modelcontextprotocol/server-github"]
     env:
-      GITHUB_TOKEN: lantern.secret/github_pat
+      GITHUB_TOKEN: pal.secret/github_pat
 
 tools:
   - mcp:my-postgres/query
@@ -93,14 +93,14 @@ This means an engineer using Claude Code, Cursor, or any MCP-aware client can co
 
 | MCP primitive | PAL mapping |
 |---|---|
-| **Tools** | Each agent → one tool: `lantern__<agent_name>` with the agent's input schema. Calling it starts a real run and streams the result back. Sub-tools per saved entrypoint of multi-entry agents. |
+| **Tools** | Each agent → one tool: `pal__<agent_name>` with the agent's input schema. Calling it starts a real run and streams the result back. Sub-tools per saved entrypoint of multi-entry agents. |
 | **Resources** | Tenant memory entries: `mem://core/...`, `mem://recall/...`, `mem://archival/...`. Run history: `runs://<run_id>`. Bundle artifacts: `bundles://<agent>@<version>/...`. |
 | **Prompts** | Saved prompt templates from agents that ship them, parameterized. |
 
 ### Endpoint
 
 ```
-https://mcp.<tenant>.lantern.run
+https://mcp.<tenant>.pal.example.com
 ```
 
 Authenticated with a PAL MCP key (separate from API keys; scoped to MCP usage so revocation doesn't break the user's automations).
@@ -110,18 +110,18 @@ Authenticated with a PAL MCP key (separate from API keys; scoped to MCP usage so
 ```bash
 # In ~/.claude/mcp_servers.json
 {
-  "lantern": {
+  "pal": {
     "transport": "http+sse",
-    "url": "https://mcp.acme.lantern.run",
+    "url": "https://mcp.acme.pal.example.com",
     "auth": { "type": "bearer", "token": "${PAL_MCP_KEY}" }
   }
 }
 ```
 
 Now inside Claude Code:
-- `@lantern research-agent "compare X vs Y"` → spawns a run on PAL, streams the result back into the Claude Code conversation
+- `@pal research-agent "compare X vs Y"` → spawns a run on PAL, streams the result back into the Claude Code conversation
 - `Read mem://archival/customer/acme` → reads from the user's archival memory
-- `Use prompt lantern:summarize-pr params={...}` → renders a saved prompt
+- `Use prompt pal:summarize-pr params={...}` → renders a saved prompt
 
 This makes PAL a **shared brain** that every IDE and chat client can plug into.
 
@@ -136,7 +136,7 @@ A2A is how PAL agents talk to **other vendors' agents** — and how other vendor
 Every PAL agent automatically gets an Agent Card published at:
 
 ```
-https://a2a.<tenant>.lantern.run/.well-known/agent.json
+https://a2a.<tenant>.pal.example.com/.well-known/agent.json
 ```
 
 Example agent card:
@@ -147,9 +147,9 @@ Example agent card:
   "name": "research-agent",
   "displayName": "Research Agent",
   "description": "Plans, searches, and synthesizes research reports.",
-  "vendor": { "name": "Acme", "url": "https://acme.lantern.run" },
+  "vendor": { "name": "Acme", "url": "https://acme.pal.example.com" },
   "auth": [{ "scheme": "bearer", "scope": "agents:run" }],
-  "endpoint": "https://a2a.acme.lantern.run/v1/agents/research-agent",
+  "endpoint": "https://a2a.acme.pal.example.com/v1/agents/research-agent",
   "capabilities": {
     "streaming": true,
     "multi_turn": true,
@@ -216,7 +216,7 @@ The orchestrator runs in PAL; some workers are PAL agents, some are remote A2A p
 
 ## Discoverability and the registry
 
-PAL runs an **Agent Registry** at `https://registry.lantern.run` (post-launch) where users can publish their agents (with consent) and discover others'. Each registry entry includes:
+PAL runs an **Agent Registry** at `https://registry.pal.example.com` (post-launch) where users can publish their agents (with consent) and discover others'. Each registry entry includes:
 
 - The A2A agent card
 - The MCP server metadata (if exposed)

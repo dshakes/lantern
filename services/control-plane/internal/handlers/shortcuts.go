@@ -12,14 +12,14 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // ShortcutsHandler — endpoints designed for Apple Shortcuts.app +
 // Siri integration. Each route is a single-purpose action (pause,
 // resume, status, etc.) that maps to ONE Shortcut step:
 //
-//   "Hey Siri, pause Lantern"
+//   "Hey Siri, pause PAL"
 //      → triggers Shortcut "Pause PAL"
 //      → makes a POST to /v1/shortcuts/pause
 //      → bridges hear about it via the control-plane → mute
@@ -166,7 +166,7 @@ func (h *ShortcutsHandler) Pause(w http.ResponseWriter, r *http.Request) {
 		h.textResponse(w, http.StatusOK, fmt.Sprintf("PAL paused on %s for %s.", channel, durationStr))
 		return
 	}
-	h.textResponse(w, http.StatusOK, fmt.Sprintf("Lantern paused on %s. Say 'resume Lantern' when ready.", channel))
+	h.textResponse(w, http.StatusOK, fmt.Sprintf("PAL paused on %s. Say 'resume PAL' when ready.", channel))
 }
 
 // ---- POST /v1/shortcuts/resume?channel=both -------------------------------

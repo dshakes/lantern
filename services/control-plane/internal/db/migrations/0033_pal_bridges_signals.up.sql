@@ -83,7 +83,7 @@ CREATE POLICY tenant_isolation ON device_signals
 	USING (tenant_id::text = current_setting('app.tenant_id', true))
 	WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON bridge_pairing_codes TO lantern_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON bridges TO lantern_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON device_signals TO lantern_app;
-GRANT USAGE, SELECT ON SEQUENCE device_signals_id_seq TO lantern_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON bridge_pairing_codes TO pal_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON bridges TO pal_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON device_signals TO pal_app;
+GRANT USAGE, SELECT ON SEQUENCE device_signals_id_seq TO pal_app;

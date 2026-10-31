@@ -10,17 +10,17 @@ package handlers
 //
 // Three sub-types are supported:
 //
-//	lantern.secret/llm/<provider>
+//	pal.secret/llm/<provider>
 //	    Resolves api_key_encrypted from llm_provider_configs for the tenant +
 //	    provider. Provider examples: "anthropic", "openai", "gemini".
 //
-//	lantern.secret/connector/<install_id>/<config_key>
+//	pal.secret/connector/<install_id>/<config_key>
 //	    Resolves the string value at config_key inside the decrypted config JSONB
 //	    blob from connector_installs for the tenant + install UUID.
 //	    install_id must be a valid UUID; only top-level string values are
 //	    supported.
 //
-//	lantern.secret/connector/<install_id>/oauth
+//	pal.secret/connector/<install_id>/oauth
 //	    Resolves oauth_token_encrypted (JSONB) for the named connector install.
 //	    Returns the raw decrypted JSON string (the entire token blob).
 //	    The reserved key name "oauth" is distinguished from ordinary config keys
@@ -81,10 +81,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/agentidentity"
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/agentidentity"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/secrets"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 const (
@@ -95,16 +95,8 @@ const (
 	// runtimeTokenHeader is the HTTP header name carrying the service token.
 	runtimeTokenHeader = "X-Pal-Runtime-Token"
 
-	// legacyRuntimeTokenHeader is the pre-PAL name (ADR 0032), accepted so a
-	// runtime-manager that predates the rename still authenticates.
-	legacyRuntimeTokenHeader = "X-Lantern-Runtime-Token"
-
 	// secretRefPrefix is the PAL prefix for a secret ref.
 	secretRefPrefix = "pal.secret/"
-
-	// legacySecretRefPrefix is the pre-PAL prefix (ADR 0032). Refs are user
-	// data at rest, so both forms are accepted forever.
-	legacySecretRefPrefix = "lantern.secret/"
 
 	// secretBodyLimit caps the request body at 64 KiB to prevent DoS via
 	// unbounded body reads.
@@ -179,8 +171,8 @@ func tokenHash(s string) [32]byte {
 	return sha256.Sum256([]byte(s))
 }
 
-// authenticateRuntimeToken validates the X-Pal-Runtime-Token header (or the
-// legacy X-Lantern-Runtime-Token) against PAL_RUNTIME_SECRET_TOKEN. Both values are SHA-256-hashed before
+// authenticateRuntimeToken validates the X-Pal-Runtime-Token header
+// against PAL_RUNTIME_SECRET_TOKEN. Both values are SHA-256-hashed before
 // crypto/subtle.ConstantTimeCompare so the comparison is constant-time over
 // fixed-size inputs regardless of token length.
 //
@@ -192,12 +184,7 @@ func authenticateRuntimeToken(r *http.Request) (bool, error) {
 	if want == "" {
 		return false, errRelayDisabled
 	}
-	// PAL name first, legacy only when the PAL header is absent: exactly one
-	// value is compared, so two names never give a caller a second guess.
 	got := r.Header.Get(runtimeTokenHeader)
-	if got == "" {
-		got = r.Header.Get(legacyRuntimeTokenHeader)
-	}
 	wantH := tokenHash(want)
 	gotH := tokenHash(got)
 	if subtle.ConstantTimeCompare(wantH[:], gotH[:]) != 1 {
@@ -333,19 +320,7 @@ func (h *RuntimeSecretsHandler) recordAuthFailure(ip string) bool {
 
 // ---------- Ref parser ----------
 
-// canonicalSecretRef maps a pal.secret/ ref to its lantern.secret/ twin so two
-// spellings of one secret compare equal. Any check that compares refs (e.g.
-// "an injected ref must not also be vended") must compare canonical forms, or
-// the second spelling would slip past it.
-func canonicalSecretRef(ref string) string {
-	if tail, ok := strings.CutPrefix(ref, secretRefPrefix); ok {
-		return legacySecretRefPrefix + tail
-	}
-	return ref
-}
-
-// parsedRef holds the decomposed form of a pal.secret/... (or legacy
-// pal.secret/...) string.
+// parsedRef holds the decomposed form of a pal.secret/... string.
 type parsedRef struct {
 	raw   string
 	scope string // "llm" | "connector" | ""
@@ -362,7 +337,7 @@ type parsedRef struct {
 // Returns a parsedRef with scope="" when the ref is malformed or unknown.
 func parseRef(ref string) parsedRef {
 	p := parsedRef{raw: ref}
-	tail, ok := strings.CutPrefix(canonicalSecretRef(ref), legacySecretRefPrefix) // e.g. "llm/anthropic"
+	tail, ok := strings.CutPrefix(ref, secretRefPrefix) // e.g. "llm/anthropic"
 	if !ok {
 		return p
 	}
@@ -393,7 +368,7 @@ func parseRef(ref string) parsedRef {
 
 // ---------- Resolver helpers ----------
 
-// resolveLLMRef resolves a lantern.secret/llm/<provider> ref for the given
+// resolveLLMRef resolves a pal.secret/llm/<provider> ref for the given
 // tenant. Returns the decrypted API key or ("", false) when not found.
 // Errors are logged; the caller gets a "not found" response (no error oracle).
 func (h *RuntimeSecretsHandler) resolveLLMRef(ctx context.Context, tenantID, provider string) (string, bool) {
@@ -431,7 +406,7 @@ func (h *RuntimeSecretsHandler) resolveLLMRef(ctx context.Context, tenantID, pro
 	return string(dec), true
 }
 
-// resolveConnectorConfigRef resolves a lantern.secret/connector/<id>/<key>
+// resolveConnectorConfigRef resolves a pal.secret/connector/<id>/<key>
 // ref where key != "oauth". It decrypts the config JSONB and returns the
 // top-level string at config_key.
 func (h *RuntimeSecretsHandler) resolveConnectorConfigRef(ctx context.Context, tenantID, installID, configKey string) (string, bool) {
@@ -490,7 +465,7 @@ func (h *RuntimeSecretsHandler) resolveConnectorConfigRef(ctx context.Context, t
 }
 
 // resolveConnectorOAuthRef resolves the "oauth" sub-type:
-// lantern.secret/connector/<install_id>/oauth reads oauth_token_encrypted
+// pal.secret/connector/<install_id>/oauth reads oauth_token_encrypted
 // (a JSONB column) and returns its raw decrypted JSON string.
 func (h *RuntimeSecretsHandler) resolveConnectorOAuthRef(ctx context.Context, tenantID, installID string) (string, bool) {
 	// oauth_token_encrypted is JSONB in production (see internal/db/migrate.go).

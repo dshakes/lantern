@@ -14,10 +14,10 @@ import (
 func TestRequireServiceCert_Exemptions(t *testing.T) {
 	for method, allowed := range map[string]bool{
 		"/grpc.health.v1.Health/Check":                                   true,
-		"/lantern.v1.DataPlaneService/Register":                          true,
+		"/pal.v1.DataPlaneService/Register":                              true,
 		"/grpc.reflection.v1.ServerReflection/ServerReflectionInfo":      false,
 		"/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo": false,
-		"/lantern.v1.AgentService/ListAgents":                            false,
+		"/pal.v1.AgentService/ListAgents":                                false,
 	} {
 		err := requireServiceCert(context.Background(), zap.NewNop(), method)
 		if allowed != (err == nil) {

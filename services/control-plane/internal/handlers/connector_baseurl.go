@@ -2,7 +2,7 @@ package handlers
 
 // Test-mode base-URL override for connector HTTP calls.
 //
-// LANTERN_CONNECTOR_BASEURL_<NAME>=http://127.0.0.1:PORT re-points every outbound
+// PAL_CONNECTOR_BASEURL_<NAME>=http://127.0.0.1:PORT re-points every outbound
 // request a connector would send to that vendor's host at a recorded-fixture
 // server (e2e/connectorreplay), so examples and tests run without a real SaaS
 // account. Only scheme+host are replaced; the vendor path is preserved, so the

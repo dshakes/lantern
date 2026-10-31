@@ -25,7 +25,7 @@ import { TrustBoundaries, TenancyRls, EgressSequence, BrokerDemo } from '../../.
 
 ## Reference
 
-- Internal gRPC ports `:50051`–`:50055` require `x-lantern-service-token` and, with `PAL_GRPC_TLS_*` set, a client certificate (mutual TLS, ADR 0043); production refuses to start without either. The data-plane tunnel (`DataPlaneService`) is exempt from the certificate: it uses server-auth TLS plus a bootstrap token and session JWT.
+- Internal gRPC ports `:50051`–`:50055` require `x-pal-service-token` and, with `PAL_GRPC_TLS_*` set, a client certificate (mutual TLS, ADR 0043); production refuses to start without either. The data-plane tunnel (`DataPlaneService`) is exempt from the certificate: it uses server-auth TLS plus a bootstrap token and session JWT.
 - A per-VM certificate is refused on every `RuntimeManager` method.
 - Broker mode (`PAL_EGRESS_MODE=broker`, Firecracker only): no NIC in the guest; credentials are injected on the host and never enter the VM.
 - DLP (ADR 0030) inspects TLS-terminated injecting hosts and plain HTTP only; it is a guard rail and an audit trail, not the boundary.

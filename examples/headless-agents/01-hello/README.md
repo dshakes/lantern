@@ -3,14 +3,14 @@
 Smallest possible PAL Runtime headless agent. **One Python script** that echoes
 its input + emits a structured log line. Exits 0.
 
-**Isolation class:** `trusted` — Lantern-authored code, no untrusted package
+**Isolation class:** `trusted` — PAL-authored code, no untrusted package
 loading, no external network. K8s Job backend, ~100ms warm start.
 
 ## Run it
 
 ```bash
 # Build the OCI image
-docker build -t lantern/demos/hello:latest examples/headless-agents/01-hello
+docker build -t pal/demos/hello:latest examples/headless-agents/01-hello
 
 # Schedule via CLI
 pal run examples/headless-agents/01-hello/agent.yaml --input '{"name": "Ada"}'

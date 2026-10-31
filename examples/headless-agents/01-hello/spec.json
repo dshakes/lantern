@@ -1,5 +1,5 @@
 {
-  "imageDigest": "lantern/demos/hello:latest",
+  "imageDigest": "pal/demos/hello:latest",
   "isolation": "trusted",
   "limits": {
     "vcpu": "100m",
@@ -8,7 +8,7 @@
   },
   "command": ["sh", "-c", "echo '{\"name\":\"Ada\"}' | python /app/workload.py"],
   "env": {
-    "LANTERN_RUN_ID": "run-hello-local",
-    "LANTERN_VM_ID": "vm-hello-local"
+    "PAL_RUN_ID": "run-hello-local",
+    "PAL_VM_ID": "vm-hello-local"
   }
 }

@@ -17,17 +17,17 @@
 #      tears down the pod, scheduler marks runtime_vms.state=
 #      terminated.
 
-apiVersion: lantern.dev/v1
+apiVersion: pal.dev/v1
 kind: AgentSpec
 
 metadata:
   name: hello
   labels:
     demo: "01"
-    owner: lantern-team
+    owner: pal-team
 
 spec:
-  image_digest: lantern/demos/hello@sha256:0000000000000000000000000000000000000000000000000000000000000001
+  image_digest: pal/demos/hello@sha256:0000000000000000000000000000000000000000000000000000000000000001
   isolation: trusted
 
   limits:

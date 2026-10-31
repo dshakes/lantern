@@ -134,7 +134,7 @@ async with PalClient(base_url="http://localhost:8080") as client:
 </TabItem>
 <TabItem label="Go" icon="seti:go">
 ```go
-import pal "github.com/dshakes/lantern/packages/sdk-go" // module path predates the rename
+import pal "github.com/dshakes/pal/packages/sdk-go"
 
 c := pal.New(pal.WithBaseURL("http://localhost:8080"))
 r, err := c.CreateRun(ctx, pal.RunOptions{AgentName: "my-agent", Input: map[string]string{"notes": "..."}})
@@ -182,7 +182,7 @@ The CLI could not run `docker`. Start Docker Desktop (macOS) or the Docker servi
 <details>
 <summary>`waiting for http://localhost:8080/healthz` times out</summary>
 
-A container did not become healthy. The error names the compose project to inspect: `docker compose -p lantern-demo logs`. A port already in use is the usual cause; override with `KIOSK_API_PORT` or `KIOSK_WEB_PORT`.
+A container did not become healthy. The error names the compose project to inspect: `docker compose -p pal-demo logs`. A port already in use is the usual cause; override with `KIOSK_API_PORT` or `KIOSK_WEB_PORT`.
 </details>
 
 <details>

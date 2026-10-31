@@ -20,7 +20,7 @@ numbers to compare changes on the same host, not as production SLOs.
 | Hypervisor stack | Lima 2.1.2 (`vz`), nested virtualization → KVM in the Lima guest |
 | Lima VM (`firecracker-dev`) | 4 vCPU, 8 GiB, Ubuntu 24.04.4 LTS, kernel 6.8.0-136-generic, ext4 root (no reflink) |
 | Firecracker / jailer | v1.15.1 / v1.15.1, jailed mode (`/srv/jailer`, uid 123:100) |
-| microVM | 1 vCPU, 128 MiB, aarch64 guest kernel 5.10.245, 64 MiB rootfs, `lantern-harness` as PID 1 |
+| microVM | 1 vCPU, 128 MiB, aarch64 guest kernel 5.10.245, 64 MiB rootfs, `pal-harness` as PID 1 |
 | runtime-manager | release build from `perf/real-benchmarks` (master `ed00dc95` merged), mTLS on |
 
 ### Results (ms, wall clock, 20 iterations unless noted)
@@ -139,7 +139,7 @@ per-phase log:
   guest's re-identify (ext4 mount + two mTLS reconnects) all contend for the same
   4 vCPUs, so individual guests cannot finish re-identify inside the window. This
   is environmental, not a harness/manager bug; the levers are to stagger
-  concurrent resumes (lower `LANTERN_FORK_CONCURRENCY`), reflink the rootfs
+  concurrent resumes (lower `PAL_FORK_CONCURRENCY`), reflink the rootfs
   (XFS/btrfs), push the new identity over vsock to skip the per-fork ext4 mount,
   and confirm on bare-metal KVM. No code change is made for fork here.
 

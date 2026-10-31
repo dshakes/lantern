@@ -10,12 +10,12 @@
 #     A POST to non-allowlisted host gets denied at the harness proxy
 #     AND audited in runtime_audit_events.
 #   * SECRET VENDING: a `USER_AGENT` secret is vended to the workload
-#     via /run/lantern/secrets/USER_AGENT. The raw secret never appears
+#     via /run/pal/secrets/USER_AGENT. The raw secret never appears
 #     in env or in the image.
 #   * NETWORK POLICY: domain-based allowlist (NETWORK_ALLOWLIST_DOMAIN).
 #   * COST ACCOUNTING: bytes_in / bytes_out captured in ResourceUsage.
 
-apiVersion: lantern.dev/v1
+apiVersion: pal.dev/v1
 kind: AgentSpec
 
 metadata:
@@ -24,7 +24,7 @@ metadata:
     demo: "02"
 
 spec:
-  image_digest: lantern/demos/web-scraper@sha256:0000000000000000000000000000000000000000000000000000000000000002
+  image_digest: pal/demos/web-scraper@sha256:0000000000000000000000000000000000000000000000000000000000000002
   isolation: untrusted
 
   limits:
@@ -46,6 +46,6 @@ spec:
 
   secrets:
     - env_name: USER_AGENT
-      secret_uri: lantern.secret://__tenant__/key/scraper-user-agent
+      secret_uri: pal.secret://__tenant__/key/scraper-user-agent
 
   idempotent: true

@@ -9,7 +9,7 @@
 #   manager/  the runtime-manager CA (it also signs per-VM guest certs, so it
 #             is deliberately NOT the service CA) + the manager's server cert
 #             and a client cert for its callers.
-#             → LANTERN_MANAGER_TLS_* on the manager,
+#             → PAL_MANAGER_TLS_* on the manager,
 #               PAL_RUNTIME_MANAGER_TLS_* on its callers
 #
 # Usage: scripts/dev-certs.sh [out-dir]   (default .dev-certs; idempotent: it
@@ -47,11 +47,11 @@ mkleaf() { # cadir name san-ext
 
 mkca "$out/service" "PAL dev service CA"
 for s in "${services[@]}"; do
-  mkleaf "$out/service" "$s" "DNS:$s,DNS:lantern-$s,DNS:localhost,IP:127.0.0.1,URI:spiffe://$td/svc/$s"
+  mkleaf "$out/service" "$s" "DNS:$s,DNS:pal-$s,DNS:localhost,IP:127.0.0.1,URI:spiffe://$td/svc/$s"
 done
 
 mkca "$out/manager" "PAL dev runtime-manager CA"
-mkleaf "$out/manager" runtime-manager "DNS:runtime-manager,DNS:lantern-runtime-manager,DNS:localhost,IP:127.0.0.1"
+mkleaf "$out/manager" runtime-manager "DNS:runtime-manager,DNS:pal-runtime-manager,DNS:localhost,IP:127.0.0.1"
 mkleaf "$out/manager" manager-client "DNS:manager-client,URI:spiffe://$td/svc/manager-client"
 
 abs="$(cd "$out" && pwd)"

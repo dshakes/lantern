@@ -24,8 +24,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/agentidentity"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/agentidentity"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // ---------------------------------------------------------------------------
@@ -119,7 +119,7 @@ func TestResolveSecrets_BearerToken_InvalidFormat(t *testing.T) {
 		bytes.NewReader(mustMarshal(t, resolveSecretsRequest{
 			TenantID: "tenant-1",
 			VmID:     "vm-1",
-			Refs:     []string{"lantern.secret/llm/anthropic"},
+			Refs:     []string{"pal.secret/llm/anthropic"},
 		})))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(runtimeTokenHeader, testRuntimeSecretToken)
@@ -142,7 +142,7 @@ func TestResolveSecrets_BearerToken_EmptyToken(t *testing.T) {
 		bytes.NewReader(mustMarshal(t, resolveSecretsRequest{
 			TenantID: "tenant-1",
 			VmID:     "vm-1",
-			Refs:     []string{"lantern.secret/llm/anthropic"},
+			Refs:     []string{"pal.secret/llm/anthropic"},
 		})))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(runtimeTokenHeader, testRuntimeSecretToken)
@@ -164,7 +164,7 @@ func TestResolveSecrets_BearerToken_GarbageJWT(t *testing.T) {
 	w := doResolveWithBearer(h, testRuntimeSecretToken, "not.a.jwt", resolveSecretsRequest{
 		TenantID: "tenant-1",
 		VmID:     "vm-1",
-		Refs:     []string{"lantern.secret/llm/anthropic"},
+		Refs:     []string{"pal.secret/llm/anthropic"},
 	})
 	if w.Code != http.StatusForbidden {
 		t.Errorf("expected 403 for garbage JWT, got %d: %s", w.Code, w.Body.String())
@@ -191,7 +191,7 @@ func TestResolveSecrets_BearerToken_ExpiredToken(t *testing.T) {
 	w := doResolveWithBearer(h, testRuntimeSecretToken, tok, resolveSecretsRequest{
 		TenantID: "tenant-1",
 		VmID:     "vm-1",
-		Refs:     []string{"lantern.secret/llm/anthropic"},
+		Refs:     []string{"pal.secret/llm/anthropic"},
 	})
 	if w.Code != http.StatusForbidden {
 		t.Errorf("expected 403 for expired token, got %d: %s", w.Code, w.Body.String())
@@ -208,7 +208,7 @@ func TestResolveSecrets_NoBearer_SharedTokenStillWorks(t *testing.T) {
 
 	w := doResolve(h, testRuntimeSecretToken, map[string]any{
 		"vm_id": "vm-1",
-		"refs":  []string{"lantern.secret/llm/anthropic"},
+		"refs":  []string{"pal.secret/llm/anthropic"},
 		// tenant_id intentionally absent → 400 (auth passed, body invalid)
 	})
 	if w.Code != http.StatusBadRequest {
@@ -247,7 +247,7 @@ func TestResolveSecrets_BearerToken_ValidAttributed(t *testing.T) {
 	w := doResolveWithBearer(h, testRuntimeSecretToken, tok, resolveSecretsRequest{
 		TenantID: tenantID,
 		VmID:     vmID,
-		Refs:     []string{"lantern.secret/llm/anthropic"},
+		Refs:     []string{"pal.secret/llm/anthropic"},
 	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 for valid instance token, got %d: %s", w.Code, w.Body.String())
@@ -307,7 +307,7 @@ func TestResolveSecrets_BearerToken_WrongVM(t *testing.T) {
 	w := doResolveWithBearer(h, testRuntimeSecretToken, tok, resolveSecretsRequest{
 		TenantID: tenantID,
 		VmID:     otherVmID,
-		Refs:     []string{"lantern.secret/llm/anthropic"},
+		Refs:     []string{"pal.secret/llm/anthropic"},
 	})
 	if w.Code != http.StatusForbidden {
 		t.Errorf("expected 403 for wrong-vm instance token, got %d: %s", w.Code, w.Body.String())
@@ -345,7 +345,7 @@ func TestResolveSecrets_BearerToken_WrongTenant(t *testing.T) {
 	w := doResolveWithBearer(h, testRuntimeSecretToken, tok, resolveSecretsRequest{
 		TenantID: tenantA,
 		VmID:     vmID,
-		Refs:     []string{"lantern.secret/llm/anthropic"},
+		Refs:     []string{"pal.secret/llm/anthropic"},
 	})
 	if w.Code != http.StatusForbidden {
 		t.Errorf("expected 403 for wrong-tenant instance token, got %d: %s", w.Code, w.Body.String())
@@ -372,7 +372,7 @@ func TestResolveSecrets_BearerToken_NoBearer_SharedTokenPath(t *testing.T) {
 	w := doResolve(h, testRuntimeSecretToken, resolveSecretsRequest{
 		TenantID: tenantID,
 		VmID:     "vm-nobearer",
-		Refs:     []string{"lantern.secret/llm/anthropic"},
+		Refs:     []string{"pal.secret/llm/anthropic"},
 	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 for shared-token-only path, got %d: %s", w.Code, w.Body.String())
@@ -438,7 +438,7 @@ func TestResolveSecrets_BearerToken_SharedInstanceID_BindsToVM(t *testing.T) {
 		{vmC, http.StatusForbidden}, // not a row of this instance id
 	} {
 		w := doResolveWithBearer(h, testRuntimeSecretToken, tok, resolveSecretsRequest{
-			TenantID: tenantID, VmID: tc.vm, Refs: []string{"lantern.secret/llm/anthropic"},
+			TenantID: tenantID, VmID: tc.vm, Refs: []string{"pal.secret/llm/anthropic"},
 		})
 		if w.Code != tc.want {
 			t.Errorf("vm %s: got %d want %d: %s", tc.vm, w.Code, tc.want, w.Body.String())

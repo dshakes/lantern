@@ -6,8 +6,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "pal-run": "./dist/runner.js",
-    "lantern-run": "./dist/runner.js"
+    "pal-run": "./dist/runner.js"
   },
   "exports": {
     ".": {

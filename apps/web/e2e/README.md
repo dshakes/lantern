@@ -14,14 +14,14 @@ Prereqs: Go, `psql`, and a reachable Postgres + Redis (`make dev-infra` provides
 
 | Piece | Where |
 | --- | --- |
-| Postgres DB `lantern_e2e_<pid>` | created via `E2E_PG_ADMIN_URL` (default `lantern:lantern@localhost:5432/postgres`), dropped at the end |
+| Postgres DB `pal_e2e_<pid>` | created via `E2E_PG_ADMIN_URL` (default `pal:pal@localhost:5432/postgres`), dropped at the end |
 | Redis | db index `E2E_REDIS_DB` (default 13), flushed before and after so `/auth/*` rate limits (10 sign-ups/IP/hour) never leak between runs |
 | llm-replay | `:9412`, rules in `fixtures/llm-rules.json` |
 | control-plane | HTTP `:8411`, gRPC `:50411`, metrics `:9411`; `PAL_CORS_ORIGINS` = the dashboard origin (without it every API call fails CORS); `PAL_MAILER=log`; `PAL_LLM_BASEURL_*` -> llm-replay |
 | dashboard (`next dev`) | `:3411` with `NEXT_PUBLIC_API_URL` / `PAL_API_URL` -> the control-plane |
 
-Ports: `E2E_WEB_PORT`, `E2E_API_PORT`, `E2E_GRPC_PORT`, `E2E_METRICS_PORT`, `E2E_LLM_PORT`. Never use :8080/:3001 or the shared `lantern` DB.
-Logs, binaries and artifacts go to `$E2E_RUN_DIR` (default `$TMPDIR/lantern-e2e-run`) -- deliberately outside `apps/web`, because `next dev` watches the project and a growing log there causes endless rebuilds.
+Ports: `E2E_WEB_PORT`, `E2E_API_PORT`, `E2E_GRPC_PORT`, `E2E_METRICS_PORT`, `E2E_LLM_PORT`. Never use :8080/:3001 or the shared `pal` DB.
+Logs, binaries and artifacts go to `$E2E_RUN_DIR` (default `$TMPDIR/pal-e2e-run`) -- deliberately outside `apps/web`, because `next dev` watches the project and a growing log there causes endless rebuilds.
 `global-setup.ts` warms each route once; cold `next dev` compiles take tens of seconds.
 
 Iterating: boot the stack once yourself and run with `E2E_REUSE_STACK=1 npx playwright test <file>` to skip setup/teardown.

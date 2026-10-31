@@ -1,0 +1,33 @@
+# Brand allowlist (ADR 0032). One entry per line: `<perl regex> # <reason>`.
+# Plain entries are stripped from content lines and file paths; `scope:<path-regex> <regex>`
+# does the same only in matching files; `path:<regex>` excludes a whole file.
+#
+# The rename is complete: NOTHING belongs here unless it is impossible to write
+# without the old name. Every entry must say why it cannot be removed.
+
+# The gate has to name what it looks for.
+path:^scripts/brand-(check\.sh|allowlist\.txt)$ # the brand gate and this allowlist search for the old name
+
+# The codemod that performed the rename has to name its source. Delete the
+# directory once no in-flight PR needs it re-run; the gate keeps the tree clean.
+path:^scripts/zero-lantern/ # the rename codemod (ADR 0032) rewrites the old name, so it must spell it
+
+# Migrations are append-only: renaming a persisted object means naming it.
+path:^services/control-plane/internal/db/migrations/\d{4}_pal_brand_rename\.(up|down)\.sql$ # renames the RLS role, namespaces and persisted values that pre-rename databases still carry
+
+# The live-machine cutover tool migrates the owner's Mac FROM the old names (state
+# dir, launchd labels, env keys, DB user/role): it has to name them. Owned by
+# the cutover PR, not rewritten by the codemod; delete with the tool once the
+# cutover is done.
+path:^scripts/cutover/ # live-machine cutover tool: renames the old state dir, labels, env keys and DB names
+path:^docs/runbooks/pal-cutover\.md$ # the cutover runbook names what the cutover renames
+
+# The one kept legacy wire name: iPhone Shortcuts installed before the rename
+# send this header, and the owner re-points them by hand. Accepted for one
+# release on /v1/signals only (control plane + dashboard twin), then removed.
+scope:^(services/control-plane/internal/handlers/signals(_test)?\.go|apps/web/app/api/signals/route\.ts)$ \bx-lantern-signal-token\b # pre-rename iPhone Shortcuts send it; one release of grace (ADR 0032)
+
+# Security: the VM cert marker used before the rename. Matched ONLY to refuse
+# (a pre-cutover guest cert, signed by the same CA, must never pass as a
+# trusted service). Remove one release after the cutover.
+scope:^services/runtime-manager/src/tls\.rs$ LEGACY_VM_CERT_OU: &str = "lantern-vm" # refuse pre-cutover guest certs (deny-list only); one release

@@ -16,8 +16,8 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
 )
 
 // doLifecycle fires POST /v1/runtime/vms/{id}/{op} at the matching handler.
@@ -289,14 +289,14 @@ func TestManagerClient_SendsServiceToken(t *testing.T) {
 	got := make(chan string, 1)
 	srv := grpc.NewServer(grpc.UnaryInterceptor(func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, hd grpc.UnaryHandler) (any, error) {
 		md, _ := metadata.FromIncomingContext(ctx)
-		v := md.Get("x-lantern-service-token")
+		v := md.Get("x-pal-service-token")
 		if len(v) == 0 {
 			v = []string{""}
 		}
 		got <- v[0]
 		return hd(ctx, req)
 	}))
-	lanternv1.RegisterRuntimeManagerServer(srv, lanternv1.UnimplementedRuntimeManagerServer{})
+	palv1.RegisterRuntimeManagerServer(srv, palv1.UnimplementedRuntimeManagerServer{})
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -313,7 +313,7 @@ func TestManagerClient_SendsServiceToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _ = mgr.Stop(context.Background(), &lanternv1.StopRequest{VmId: "vm-1"})
+	_, _ = mgr.Stop(context.Background(), &palv1.StopRequest{VmId: "vm-1"})
 	if v := <-got; v != "s3cret" {
 		t.Errorf("manager saw token %q, want s3cret", v)
 	}
@@ -335,7 +335,7 @@ func TestFork_ChildrenGetFreshIdentities(t *testing.T) {
 	if _, err := pool.Exec(context.Background(), `
 		INSERT INTO runtime_vms (vm_id, tenant_id, node, state, spec, agent_instance_id, created_at)
 		VALUES ($1, $2, 'node-a', 'running',
-		        '{"env":{"LANTERN_AGENT_INSTANCE_ID":"inst-src","LANTERN_AGENT_INSTANCE_TOKEN":"[redacted]"}}', 'inst-src', now())
+		        '{"env":{"PAL_AGENT_INSTANCE_ID":"inst-src","PAL_AGENT_INSTANCE_TOKEN":"[redacted]"}}', 'inst-src', now())
 	`, src, tenant); err != nil {
 		t.Fatal(err)
 	}
@@ -355,7 +355,7 @@ func TestFork_ChildrenGetFreshIdentities(t *testing.T) {
 	for i, vm := range []string{c1, c2} {
 		var inst, envID string
 		if err := pool.QueryRow(context.Background(),
-			`SELECT agent_instance_id, spec->'env'->>'LANTERN_AGENT_INSTANCE_ID' FROM runtime_vms WHERE vm_id = $1`, vm,
+			`SELECT agent_instance_id, spec->'env'->>'PAL_AGENT_INSTANCE_ID' FROM runtime_vms WHERE vm_id = $1`, vm,
 		).Scan(&inst, &envID); err != nil {
 			t.Fatal(err)
 		}

@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dshakes/lantern/e2e/internal/e2ekit"
+	"github.com/dshakes/pal/e2e/internal/e2ekit"
 )
 
 // telegramFixture stands in for api.telegram.org (the gateway is started with
@@ -26,7 +26,7 @@ type telegramFixture struct {
 
 func startTelegramFixture(t *testing.T) *telegramFixture {
 	t.Helper()
-	ln, err := net.Listen("tcp", need(t, "LANTERN_E2E_TELEGRAM_FIXTURE_ADDR"))
+	ln, err := net.Listen("tcp", need(t, "PAL_E2E_TELEGRAM_FIXTURE_ADDR"))
 	if err != nil {
 		t.Fatalf("listen telegram fixture: %v", err)
 	}
@@ -56,7 +56,7 @@ func (f *telegramFixture) messages() []map[string]any {
 
 func postTelegram(t *testing.T, secret string, update string) int {
 	t.Helper()
-	req, _ := http.NewRequest(http.MethodPost, need(t, "LANTERN_E2E_GATEWAY_URL")+"/webhooks/telegram", bytes.NewReader([]byte(update)))
+	req, _ := http.NewRequest(http.MethodPost, need(t, "PAL_E2E_GATEWAY_URL")+"/webhooks/telegram", bytes.NewReader([]byte(update)))
 	req.Header.Set("Content-Type", "application/json")
 	if secret != "" {
 		req.Header.Set("X-Telegram-Bot-Api-Secret-Token", secret)
@@ -74,8 +74,8 @@ func postTelegram(t *testing.T, secret string, update string) int {
 func TestTelegram_SignedWebhookGetsAReply(t *testing.T) {
 	s := connect(t)
 	k := s.kit
-	secret := e2ekit.EnvOr("LANTERN_E2E_TELEGRAM_SECRET", "e2e-telegram-secret")
-	need(t, "LANTERN_E2E_REPLAY_URL")
+	secret := e2ekit.EnvOr("PAL_E2E_TELEGRAM_SECRET", "e2e-telegram-secret")
+	need(t, "PAL_E2E_REPLAY_URL")
 	fx := startTelegramFixture(t)
 
 	s.installConnector(t, "google-calendar", "accessToken")
@@ -118,7 +118,7 @@ func TestTelegram_SignedWebhookGetsAReply(t *testing.T) {
 	}
 
 	// The gateway creates the run over gRPC; the control plane's recovery sweep
-	// (LANTERN_RECOVERY_INTERVAL in the stack script) drives it; the gateway
+	// (PAL_RECOVERY_INTERVAL in the stack script) drives it; the gateway
 	// polls it to completion and replies.
 	var reply map[string]any
 	waitUntil(t, 60*time.Second, "Telegram sendMessage", func() bool {

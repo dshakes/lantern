@@ -1,4 +1,4 @@
-module github.com/dshakes/lantern/gen/go
+module github.com/dshakes/pal/gen/go
 
 go 1.25.0
 

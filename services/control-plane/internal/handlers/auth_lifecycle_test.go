@@ -22,8 +22,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/mailer"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/mailer"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // captureMailer records sent mail; sends happen on a goroutine, so wait() polls.
@@ -648,7 +648,7 @@ func TestExportTenant(t *testing.T) {
 	}
 }
 
-// TestRLSExportTenant runs the export through the lantern_app pool with RLS
+// TestRLSExportTenant runs the export through the pal_app pool with RLS
 // genuinely enforced: every tenant table must be readable (grants) and the
 // export must contain this tenant's rows only.
 func TestRLSExportTenant(t *testing.T) {

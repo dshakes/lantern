@@ -6,7 +6,7 @@ package handlers
 // DATABASE_URL database): arming the fence is cluster-global state and would
 // fence every other DB test running against the same database.
 //
-//	DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable \
+//	DATABASE_URL=postgres://pal:pal@localhost:5432/pal?sslmode=disable \
 //	    go test ./internal/handlers/ -run TestRegionFence -count=1 -v
 
 import (
@@ -23,8 +23,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/db"
-	"github.com/dshakes/lantern/services/control-plane/internal/region"
+	"github.com/dshakes/pal/services/control-plane/internal/db"
+	"github.com/dshakes/pal/services/control-plane/internal/region"
 )
 
 // freshFenceDB creates a brand-new database, migrates it, and returns its

@@ -1,6 +1,6 @@
 package handlers
 
-// Eval suites, runs, and baselines — the foundation for "lantern test --against=last-green".
+// Eval suites, runs, and baselines — the foundation for "pal test --against=last-green".
 //
 // An eval suite is a set of test cases (input -> expected) defined per agent.
 // An eval run executes the suite against a specific agent version/commit and
@@ -21,8 +21,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/grounding"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/grounding"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 type EvalHandler struct {

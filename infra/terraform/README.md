@@ -3,11 +3,11 @@
 One root module per cloud. Each provisions (or attaches to) a managed Kubernetes
 cluster, a node pool, object storage for agent bundles, a workload identity for
 the data plane, and installs `infra/helm/pal-data-plane` into namespace
-`lantern` (docs/architecture/17-deployment-model.md, customer-cloud mode).
+`pal` (docs/architecture/17-deployment-model.md, customer-cloud mode).
 
 | Module | Creates when `existing_cluster_name` is empty | Workload identity |
 |---|---|---|
-| `aws/` | VPC (3 private + 3 public subnets, NAT), EKS, IAM OIDC provider | IRSA role trusted for `system:serviceaccount:lantern:pal-data-plane` |
+| `aws/` | VPC (3 private + 3 public subnets, NAT), EKS, IAM OIDC provider | IRSA role trusted for `system:serviceaccount:pal:pal-data-plane` |
 | `gcp/` | VPC + subnet (pods/services ranges), Cloud NAT, private GKE | GSA bound via Workload Identity; nodes run as a separate logs/metrics-only GSA |
 | `azure/` | resource group, VNet + subnet, NAT gateway, AKS (OIDC + WI on) | user-assigned identity + federated credential (new **and** existing clusters) |
 
@@ -26,7 +26,7 @@ terraform plan \
 ```
 
 `kubernetes_version` defaults to `null` (the cloud's current default) — pin it
-explicitly for production. `pal_version` (deprecated alias `lantern_version`) sets the data-plane image tag.
+explicitly for production. `pal_version` sets the data-plane image tag.
 
 ## What is verified (and what is not)
 

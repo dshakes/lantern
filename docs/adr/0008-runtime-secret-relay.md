@@ -9,7 +9,7 @@
 
 ADR 0005 established that secrets are vended to workers at boot via the harness,
 which calls the runtime-manager over vsock. The manager must therefore resolve
-`lantern.secret/...` refs to plaintext values before forwarding them to the harness.
+`pal.secret/...` refs to plaintext values before forwarding them to the harness.
 
 In the current dev-mode implementation
 (`services/runtime-manager/src/secret_resolver.rs`) the manager reads values
@@ -36,22 +36,22 @@ belong to the specified tenant.
 
 ### Ref grammar
 
-A ref is a string of the form `lantern.secret/<scope>/<path>`. Three sub-types are
+A ref is a string of the form `pal.secret/<scope>/<path>`. Three sub-types are
 supported today:
 
 ```
-lantern.secret/llm/<provider>
+pal.secret/llm/<provider>
     → decrypted api_key_encrypted from llm_provider_configs
       for the request's tenant_id and the named provider
       (e.g. "anthropic", "openai", "gemini").
 
-lantern.secret/connector/<install_id>/<config_key>
+pal.secret/connector/<install_id>/<config_key>
     → the value at config_key inside the decrypted config JSONB blob
       from connector_installs for the request's tenant_id and the
       named install UUID. Top-level string values only; nested
       objects are not supported and return "not found".
 
-lantern.secret/connector/<install_id>/oauth
+pal.secret/connector/<install_id>/oauth
     → the raw decrypted JSON string from oauth_token_encrypted (JSONB)
       for the named connector install. The reserved key name "oauth"
       reads a separate column from the ordinary config blob and returns
@@ -65,7 +65,7 @@ Unknown scope prefixes and refs that do not match these patterns return a per-re
 
 ### Authentication (service-to-service)
 
-The caller supplies the header `X-Lantern-Runtime-Token: <token>`. The
+The caller supplies the header `X-Pal-Runtime-Token: <token>`. The
 control-plane reads `PAL_RUNTIME_SECRET_TOKEN` from its environment at
 request time. Both the expected and supplied tokens are SHA-256-hashed to
 fixed-size 32-byte arrays before `crypto/subtle.ConstantTimeCompare`, eliminating
@@ -105,8 +105,8 @@ values; sending these over an unencrypted connection exposes them on the wire.
   "tenant_id": "00000000-0000-0000-0000-000000000001",
   "vm_id":     "vm-abc123",
   "refs": [
-    "lantern.secret/llm/anthropic",
-    "lantern.secret/connector/11111111-1111-1111-1111-111111111111/apiKey"
+    "pal.secret/llm/anthropic",
+    "pal.secret/connector/11111111-1111-1111-1111-111111111111/apiKey"
   ]
 }
 ```
@@ -118,8 +118,8 @@ values; sending these over an unencrypted connection exposes them on the wire.
 ```json
 {
   "resolved": [
-    {"ref": "lantern.secret/llm/anthropic",          "value": "sk-ant-..."},
-    {"ref": "lantern.secret/connector/11.../apiKey", "error": "not found"}
+    {"ref": "pal.secret/llm/anthropic",          "value": "sk-ant-..."},
+    {"ref": "pal.secret/connector/11.../apiKey", "error": "not found"}
   ]
 }
 ```
@@ -192,7 +192,7 @@ Every request (successful or not, after auth) inserts one row into
   `resolved_count` (how many were found)
 
 Secret **values** are never written to the audit log, the Zap logger, or any trace.
-Only ref names (e.g. `"lantern.secret/llm/anthropic"`) are recorded.
+Only ref names (e.g. `"pal.secret/llm/anthropic"`) are recorded.
 
 ### No server-side caching
 
@@ -270,4 +270,4 @@ as an optional future hardening step with reduced urgency.
 - [`docs/adr/0005-secret-vending-via-short-jwt.md`](0005-secret-vending-via-short-jwt.md) — harness-side vend contract
 - [`services/control-plane/internal/secrets/secrets.go`](../../services/control-plane/internal/secrets/secrets.go) — AES-256-GCM envelope
 - [`services/control-plane/internal/handlers/runtime_secrets.go`](../../services/control-plane/internal/handlers/runtime_secrets.go) — implementation
-- [`packages/proto/lantern/v1/runtime.proto`](../../packages/proto/lantern/v1/runtime.proto) — `SecretRef`, `VendSecret`
+- [`packages/proto/pal/v1/runtime.proto`](../../packages/proto/pal/v1/runtime.proto) — `SecretRef`, `VendSecret`

@@ -28,7 +28,7 @@ What we explicitly do NOT defend against:
 
 1. **mTLS between every internal service.** Every gRPC call. Every internal HTTP call. Every database connection. Cert rotation every 90 days; revocation supported.
 2. **Multi-tenant by every datum.** Every row, every span, every log, every K8s namespace, every S3 prefix is tagged with `tenant_id`. Postgres RLS is the second line of defense.
-3. **Secrets never appear in logs, traces, journals, or run state.** Reference form `lantern.secret/<alias>` is the only thing that propagates; resolution happens at exec time inside the sandbox.
+3. **Secrets never appear in logs, traces, journals, or run state.** Reference form `pal.secret/<alias>` is the only thing that propagates; resolution happens at exec time inside the sandbox.
 4. **Untrusted code runs in a microVM, never in a bare pod.** No exceptions.
 5. **Egress is deny-by-default for `untrusted` and `hostile` classes.** Allowlist required.
 6. **Bundles are signed before they execute.** Cosign signatures verified by control plane against tenant-trusted keys.
@@ -91,13 +91,13 @@ A leaked SDK key can do less than a leaked admin key. Keys are hashed in the DB 
 - Cross-tenant queries (analytics, billing rollup) run as a **separate role** that explicitly bypasses RLS, in a **dedicated read-only replica**, with audit logging.
 
 ### Kubernetes
-- One namespace per tenant: `lantern-t-<uuid_short>`.
+- One namespace per tenant: `pal-t-<uuid_short>`.
 - NetworkPolicies deny all ingress/egress except to the runtime manager and control plane endpoints.
 - ResourceQuotas + LimitRanges enforce the tenant's tier quotas.
 - PodSecurityPolicy / PSA pinned to `restricted`.
 
 ### S3
-- One prefix per tenant: `s3://lantern-runs-prod/tenants/<uuid>/`.
+- One prefix per tenant: `s3://pal-runs-prod/tenants/<uuid>/`.
 - IAM policies forbid cross-prefix reads.
 - Presigned URLs are scoped to single objects with short TTLs.
 
@@ -115,7 +115,7 @@ A leaked SDK key can do less than a leaked admin key. Keys are hashed in the DB 
 - Audit log on every read.
 
 ### Resolution at exec time
-- Agent bundle references secrets by alias: `lantern.secret/openai_api_key`.
+- Agent bundle references secrets by alias: `pal.secret/openai_api_key`.
 - The control plane validates the agent has access to that alias (per-user, per-tenant, per-agent ACLs).
 - The runtime manager fetches the wrapped data key, asks KMS to unwrap, decrypts the secret in-process, and **injects it into the agent sandbox via a tmpfs mount** at exec time.
 - The secret is **never written to a log, never appears in journals, never appears in traces, never crosses a service boundary in plaintext**.
@@ -143,10 +143,10 @@ A leaked SDK key can do less than a leaked admin key. Keys are hashed in the DB 
 - Enforced two ways:
   1. **Network-layer:** per-pod NetworkPolicy + Cilium L7-aware policy (where supported) + a per-tenant CNI ACL.
   2. **Application-layer:** the SDK's HTTP client wraps `fetch` and validates host against the allowlist before sending. Belt and suspenders.
-- DNS resolution goes through a Lantern-controlled resolver that only answers for allowlisted hosts.
+- DNS resolution goes through a PAL-controlled resolver that only answers for allowlisted hosts.
 
 ### Egress for built-in tools
-- `lantern.web` (web search + fetch) has its own approved egress list managed by PAL. Users can extend it per agent.
+- `pal.web` (web search + fetch) has its own approved egress list managed by PAL. Users can extend it per agent.
 - The model router has its own egress list for LLM providers, managed centrally and rotated as new providers are added.
 
 ### SSRF defense
@@ -159,7 +159,7 @@ A leaked SDK key can do less than a leaked admin key. Keys are hashed in the DB 
 ### mTLS internally
 - Every internal gRPC and HTTP call uses mTLS.
 - Certs issued by our internal CA, rotated every 90 days, revocation list distributed via Redis.
-- SPIFFE/SPIRE-style identity, with `spiffe://lantern.run/<service>/<tenant>` URIs.
+- SPIFFE/SPIRE-style identity, with `spiffe://pal.run/<service>/<tenant>` URIs.
 
 ### TLS externally
 - TLS 1.3 only at the edge.
@@ -238,10 +238,10 @@ We do NOT rely on prompt-level "Ignore previous instructions" defenses. Those do
 
 - `cargo-audit`, `govulncheck`, `npm audit`, and `pip-audit` run on every CI build.
 - `Trivy` scans every container image we ship.
-- `Semgrep` SAST runs on every PR with the OWASP top 10 ruleset + Lantern-specific rules.
+- `Semgrep` SAST runs on every PR with the OWASP top 10 ruleset + PAL-specific rules.
 - Dependabot for routine updates.
-- Security advisories at `security.lantern.run/advisories`.
-- Coordinated disclosure: `security@lantern.run`, GPG-signed responses, 90-day disclosure window.
+- Security advisories at [GitHub private vulnerability reporting](https://github.com/dshakes/pal/security/advisories/new).
+- Coordinated disclosure: GitHub private vulnerability reporting, GPG-signed responses, 90-day disclosure window.
 
 ---
 

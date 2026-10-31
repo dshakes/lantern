@@ -1,7 +1,7 @@
 //! RuntimeClass preflight check (Task 4, ADR-0009).
 //!
 //! At startup the manager verifies that any hardened RuntimeClass names
-//! configured via `LANTERN_RUNTIMECLASS_GVISOR` / `LANTERN_RUNTIMECLASS_KATA`
+//! configured via `PAL_RUNTIMECLASS_GVISOR` / `PAL_RUNTIMECLASS_KATA`
 //! actually EXIST as `node.k8s.io/v1 RuntimeClass` objects in the cluster.
 //!
 //! If a configured hardened class is ABSENT from the cluster:
@@ -150,10 +150,10 @@ pub async fn check_and_resolve(
 
     let api: Api<RuntimeClass> = Api::all(client.clone());
     // Index by metadata.name — this is what a pod's `runtimeClassName` field
-    // references, and therefore what `LANTERN_RUNTIMECLASS_*` env vars must
+    // references, and therefore what `PAL_RUNTIMECLASS_*` env vars must
     // match.  The `handler` field is the *node-level* runtime binary name
     // (e.g. `runsc` for gVisor) and is NOT what operators configure in
-    // LANTERN_RUNTIMECLASS_*.  We also include the handler in the set for
+    // PAL_RUNTIMECLASS_*.  We also include the handler in the set for
     // operators who (incorrectly but understandably) configure the handler
     // name — belt-and-suspenders so neither interpretation false-clears.
     let present: HashSet<String> = match api.list(&ListParams::default()).await {
@@ -281,11 +281,11 @@ mod tests {
         assert!(resolved.allow_runc_standard, "flag passed through");
     }
 
-    /// The authoritative match for `LANTERN_RUNTIMECLASS_*` is the RuntimeClass
+    /// The authoritative match for `PAL_RUNTIMECLASS_*` is the RuntimeClass
     /// object's `metadata.name` (what a pod's `runtimeClassName` references).
     /// The `handler` field is different (e.g. `metadata.name=gvisor`,
     /// `handler=runsc`).  A cluster with that object must be treated as having
-    /// gVisor available when `LANTERN_RUNTIMECLASS_GVISOR=gvisor` is set —
+    /// gVisor available when `PAL_RUNTIMECLASS_GVISOR=gvisor` is set —
     /// NOT cleared because "runsc" is not in the configured names.
     #[test]
     fn name_vs_handler_divergence_uses_metadata_name() {

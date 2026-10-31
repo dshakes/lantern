@@ -12,7 +12,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var tracer = otel.Tracer("lantern.scheduler.cron")
+var tracer = otel.Tracer("pal.scheduler.cron")
 
 const maxAttempts = 5
 

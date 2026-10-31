@@ -22,8 +22,8 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/packages/grpctls"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/packages/grpctls"
 )
 
 // tenantMetadataKey is the gRPC metadata key the control-plane's tenant
@@ -35,17 +35,12 @@ const tenantMetadataKey = "tenant_id"
 // scheduler doesn't take a build dependency on the control-plane module.
 const serviceTokenMetadataKey = "x-pal-service-token"
 
-// legacyServiceTokenMetadataKey is the pre-PAL name (ADR 0032). The token is
-// sent under both names so a control-plane that predates the PAL name still
-// authenticates the call.
-const legacyServiceTokenMetadataKey = "x-lantern-service-token"
-
 // Client holds a long-lived gRPC connection to the control-plane and creates
 // runs on its RunService. One Client is shared by the cron ticker and the
 // delayed-run processor for the whole process lifetime.
 type Client struct {
 	conn         *grpc.ClientConn
-	rpc          lanternv1.RunServiceClient
+	rpc          palv1.RunServiceClient
 	logger       *zap.Logger
 	serviceToken string
 }
@@ -75,7 +70,7 @@ func New(addr, serviceToken string, logger *zap.Logger) (*Client, error) {
 	}
 	return &Client{
 		conn:         conn,
-		rpc:          lanternv1.NewRunServiceClient(conn),
+		rpc:          palv1.NewRunServiceClient(conn),
 		logger:       logger.Named("run_client"),
 		serviceToken: serviceToken,
 	}, nil
@@ -130,7 +125,7 @@ func (c *Client) CreateRun(ctx context.Context, tenantID, agentName string, inpu
 func outgoingContext(ctx context.Context, tenantID, serviceToken string) context.Context {
 	pairs := []string{tenantMetadataKey, tenantID}
 	if serviceToken != "" {
-		pairs = append(pairs, serviceTokenMetadataKey, serviceToken, legacyServiceTokenMetadataKey, serviceToken)
+		pairs = append(pairs, serviceTokenMetadataKey, serviceToken)
 	}
 	return metadata.AppendToOutgoingContext(ctx, pairs...)
 }
@@ -138,10 +133,10 @@ func outgoingContext(ctx context.Context, tenantID, serviceToken string) context
 // buildCreateRunRequest constructs a schedule-triggered CreateRunRequest. The
 // schedule's input_template is a JSON object; it is decoded into a structpb
 // Struct for the run input. An empty/null template yields a nil input.
-func buildCreateRunRequest(agentName string, input json.RawMessage) (*lanternv1.CreateRunRequest, error) {
-	req := &lanternv1.CreateRunRequest{
+func buildCreateRunRequest(agentName string, input json.RawMessage) (*palv1.CreateRunRequest, error) {
+	req := &palv1.CreateRunRequest{
 		AgentName:   agentName,
-		TriggerKind: lanternv1.TriggerKind_TRIGGER_KIND_SCHEDULE,
+		TriggerKind: palv1.TriggerKind_TRIGGER_KIND_SCHEDULE,
 	}
 
 	inputStruct, err := inputToStruct(input)
