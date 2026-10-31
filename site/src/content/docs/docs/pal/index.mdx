@@ -1,6 +1,9 @@
 ---
 title: How pal works
 description: "pal answers your iMessage and WhatsApp threads as you, from your Mac. Ordinary replies go out on their own; anything that commits you is held for your yes."
+prev:
+  link: /pal/docs/
+  label: Start here
 ---
 
 import CapabilityGrid from '../../../../components/CapabilityGrid.astro';
@@ -24,7 +27,7 @@ You talk to pal in your **self-chat** (a message to yourself, or a dedicated bot
 
 1. **It arrives.** The iMessage bridge reads `chat.db` (including RCS and newer messages whose text lives in `attributedBody`); the WhatsApp bridge holds the WhatsApp session.
 2. **The bridge decides whether to act.** The killswitch stops everything. Mute means "don't send": pal still drafts and hands you each reply instead. Quiet hours (01:00 to 06:00 by default) queue messages and replay them in the morning.
-3. **The control plane drafts.** Each contact has its own session. Side calls (gate judges, voice refinement, ranking) use a **purpose-keyed session** such as `<contact>::refine`, so they can't leak into the contact's live thread. The bridge asks for `model: "auto"` and the model router picks the concrete model.
+3. **The control plane drafts.** Each contact has its own session. Side calls (gate judges, voice refinement, ranking) use a **purpose-keyed session** such as `<contact>::refine`, so they can't leak into the contact's live thread. The bridge asks for `model: "auto"`, and the control plane maps it to a concrete model on your provider chain.
 4. **The check stack runs.** It catches stock phrases and replies that don't sound like you, holds money, promises and unverifiable claims, and rewrites "I sent it" into "I'll send it" unless the bridge really did. [Holds and trust](/docs/pal/human-in-the-loop/) covers each check.
 5. **It is sent, or held.** Sent replies wait a delay drawn from your real reply times to that contact and are logged, encrypted, on the Mac. Held replies are paged to your self-chat.
 

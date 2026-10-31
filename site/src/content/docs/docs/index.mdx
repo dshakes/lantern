@@ -164,6 +164,38 @@ Next: [Quickstart in 60 seconds](/docs/start/sixty-seconds/), then [Your first a
 </TabItem>
 </Tabs>
 
+<p class="kicker">Measured, not claimed</p>
+
+## Every number links to its source.
+
+Real Firecracker microVMs, median of 20 runs, from the committed [runtime latency benchmark](repo:/blob/master/docs/benchmarks/runtime-latency.md). They were measured under nested virtualization on a laptop, so compare changes with them; they are not production SLOs.
+
+| Operation | p50 |
+| --- | --: |
+| Spawn a microVM (RPC returns) | 143 ms |
+| Exec round trip in a warm VM | 115 ms |
+| Restore a paused VM (RPC returns) | 131 ms |
+| Restore, then first exec answered | 2,491 ms |
+| Egress request refused by the broker | 32 ms |
+
+How the numbers move a sandbox through pause, resume and fork: [Sandbox lifecycle](/docs/runtime/sandbox-lifecycle/).
+
+<p class="kicker">For the people who say no</p>
+
+## In production, a missing guard stops the service.
+
+The chart sets the environment to `production`. From then on these refuse to start, rather than run without the guard:
+
+| Missing | What refuses |
+| --- | --- |
+| Shared service token (`PAL_GRPC_SERVICE_TOKEN`) | The control plane, and every internal gRPC service that checks it |
+| Encryption key for stored credentials (`PAL_CREDENTIAL_KEY`) | The control plane |
+| Restricted database role for row-level security (`PAL_APP_DB_PASSWORD`) | The control plane, unless you opt out with `PAL_RLS_ENFORCE=0` |
+| TLS certificate and key (`PAL_TLS_CERT`, `PAL_TLS_KEY`) | The gateway |
+| The firewall rule that forces sandbox egress through the allowlist, when egress rules are declared | The workload inside the microVM |
+
+Each boundary and what it demands: [Security model](/docs/security/) and [Security boundaries](/docs/architecture/security-boundaries/).
+
 <p class="kicker">Pick your path</p>
 
 ## Read the docs in order, or jump to your part.
@@ -175,5 +207,3 @@ Next: [Quickstart in 60 seconds](/docs/start/sixty-seconds/), then [Your first a
 | Build an agent | [Quickstart in 60 seconds](/docs/start/sixty-seconds/) → [Your first agent](/docs/start/quickstart/) → [How PAL Runtime works](/docs/architecture/overview/) → [Agents](/docs/build/agents/) |
 | Run it in production | [Security model](/docs/security/) → [Production deployment](/docs/operate/deployment/) → [Observability](/docs/observability/) → [Operations](/docs/operate/operations/) |
 | Look something up | [REST API](/docs/reference/api/) · [CLI](/docs/reference/cli/) · [SDKs](/docs/sdks/) · [Environment variables](/docs/reference/env-vars/) |
-
-In production the chart defaults the environment to `production`, and a service missing its trust-boundary configuration (service token, scheduler address, runtime manager) refuses to start instead of falling back to a stub. The data plane can run in your own VPC with no inbound ports: see [Production deployment](/docs/operate/deployment/).

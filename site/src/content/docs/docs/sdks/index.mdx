@@ -321,7 +321,7 @@ export default agent<{ query: string }>({
     // Durable step: journaled, idempotent, resumable after a crash
     const data = await step("fetch-data", () => ctx.tools.web.search(input.query));
 
-    // Addressed by capability; the model router picks the vendor model
+    // Addressed by capability; PAL maps it to a vendor model
     const summary = await step("summarize", () =>
       ctx.llm.complete({
         messages: [{ role: "user", content: `Summarize: ${data}` }],
