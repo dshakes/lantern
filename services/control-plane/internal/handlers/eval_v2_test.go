@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 	"strings"
 	"testing"
@@ -530,7 +531,14 @@ func TestGroundDraft_LenientAndLongLiterals(t *testing.T) {
 	in := draftSuite{Cases: []draftCase{
 		{evalCase: evalCase{Name: "a", Input: "q", Expected: long, Assert: map[string]any{"faithfulness": true, "minLen": "ten", "notContains": "60 days"}}, Source: "run:r1"},
 	}}
-	out, prov, _ := groundDraft(in, ev, 5)
+	out, prov, dropped := groundDraft(in, ev, 5)
+	// Empty lists must serialise as [] — the dashboard crashed on null.
+	if b, _ := json.Marshal(dropped); string(b) != "[]" {
+		t.Fatalf("dropped serialises as %s", b)
+	}
+	if b, _ := json.Marshal(caseDeltas(nil, nil, nil)); string(b) != "[]" {
+		t.Fatalf("caseDeltas serialises as %s", b)
+	}
 	if len(out.Cases) != 1 {
 		t.Fatalf("case lost: %+v", prov)
 	}

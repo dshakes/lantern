@@ -446,8 +446,9 @@ func (h *EvalHandler) RunSuite(w http.ResponseWriter, r *http.Request) {
 	total := len(res.results)
 	allPassed := passed == total
 
-	var deltas []caseDelta
-	var regressedCases, flakyCases []string
+	// Non-nil so clients always get JSON arrays, never null.
+	deltas := []caseDelta{}
+	regressedCases, flakyCases := []string{}, []string{}
 	var baselineScore *float64
 	regressed := false
 	if baseline != nil {
@@ -600,7 +601,7 @@ func (h *EvalHandler) executeSuite(ctx context.Context, tenantID string, agent *
 	}
 	wg.Wait()
 
-	ex := suiteExecution{stopped: stopped}
+	ex := suiteExecution{stopped: stopped, agentModels: []string{}}
 	for i, c := range cases {
 		cr := foldSamples(c, samples[i])
 		for k := range judgeCost[i] {

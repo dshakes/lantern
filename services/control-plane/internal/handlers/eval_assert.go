@@ -509,7 +509,7 @@ func caseDeltas(now, base []evalCaseResult, flaky map[string]bool) []caseDelta {
 	for _, b := range base {
 		bm[b.Name] = b
 	}
-	var out []caseDelta
+	out := []caseDelta{}
 	for _, c := range now {
 		b, ok := bm[c.Name]
 		if !ok {

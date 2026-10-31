@@ -2164,10 +2164,12 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
     goal?: string;
     maxCases?: number;
   }): Promise<GeneratedEvalSuite> {
-    return this.request(`/v1/eval-suites/generate`, {
+    const g = await this.request<GeneratedEvalSuite>(`/v1/eval-suites/generate`, {
       method: "POST",
       body: JSON.stringify(body),
     });
+    // Older servers may send null for empty lists.
+    return { ...g, provenance: g.provenance ?? [], dropped: g.dropped ?? [] };
   }
 
   /** Hermetic server-side run. 422 means "regressed" and carries the SAME

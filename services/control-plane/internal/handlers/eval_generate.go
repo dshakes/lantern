@@ -164,8 +164,8 @@ func groundDraft(d draftSuite, ev generateEvidence, maxCases int) (draftSuite, [
 	if out.Name == "" {
 		out.Name = "generated"
 	}
-	var prov []caseProvenance
-	var dropped []droppedCase
+	prov := []caseProvenance{}
+	dropped := []droppedCase{}
 	seen := map[string]bool{}
 	for _, c := range d.Cases {
 		name := strings.Trim(caseNameRe.ReplaceAllString(strings.ToLower(c.Name), "-"), "-")
@@ -532,7 +532,7 @@ func (h *EvalHandler) GenerateSuite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	draft, prov, dropped := groundDraft(raw, ev, req.MaxCases)
-	dropped = append(decodeDropped, dropped...)
+	dropped = append(append([]droppedCase{}, decodeDropped...), dropped...) // never null in JSON
 	if len(draft.Cases) == 0 {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "every generated case failed grounding", "code": "bad_suite", "dropped": dropped})
 		return
@@ -629,7 +629,7 @@ func (h *EvalHandler) CalibrateJudge(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = RecordUsageSpend(ctx, h.srv.Pool, tenantID, req.AgentName, 0, 0, cost)
 	st := calibrate(pairs)
-	verdict := "insufficient labels (need human scores other than 3)"
+	verdict := fmt.Sprintf("insufficient labels: need at least 5 runs with a thumbs-up or thumbs-down (have %d)", st.Labeled)
 	switch {
 	case st.Labeled >= 5 && st.Kappa >= 0.6:
 		verdict = "judge agrees with your users — safe to gate on"
