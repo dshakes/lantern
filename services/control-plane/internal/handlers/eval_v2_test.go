@@ -543,6 +543,23 @@ func TestGroundDraft_LenientAndLongLiterals(t *testing.T) {
 	}
 }
 
+func TestDeclaredToolRe(t *testing.T) {
+	got := declaredToolRe.FindAllString("Always call shop__get_policy, then github__list_issues. Not a__ or __b or snake_case.", -1)
+	if strings.Join(got, ",") != "shop__get_policy,github__list_issues" {
+		t.Fatalf("got %v", got)
+	}
+}
+
+func TestDecodeDraft_PerCase(t *testing.T) {
+	d, dropped, err := decodeDraft("```json\n" + `{"name":"s","cases":[{"name":"ok","input":"q"},{"name":"bad","input":{"x":1}},{"name":"bad2","samples":"three"}]}` + "\n```")
+	if err != nil || len(d.Cases) != 1 || d.Cases[0].Name != "ok" || len(dropped) != 2 || dropped[0].Name != "bad" {
+		t.Fatalf("got %+v %+v %v", d, dropped, err)
+	}
+	if _, _, err := decodeDraft("no json here"); err == nil {
+		t.Fatal("garbage accepted")
+	}
+}
+
 // ---------- calibration ----------
 
 func TestCalibrate(t *testing.T) {

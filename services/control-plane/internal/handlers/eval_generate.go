@@ -152,6 +152,9 @@ func parseAssertLenient(raw map[string]any, notes *[]string) *evalAssertSpec {
 	return spec
 }
 
+// declaredToolRe matches connector-style tool names (<connector>__<action>).
+var declaredToolRe = regexp.MustCompile(`\b[a-z][a-z0-9]*(?:_[a-z0-9]+)*__[a-z0-9_]+\b`)
+
 var caseNameRe = regexp.MustCompile(`[^a-z0-9]+`)
 
 // groundDraft is the deterministic gate between the generator's output and
@@ -340,6 +343,39 @@ Write test cases that would catch real regressions. Rules:
 
 Respond with ONLY JSON: {"name":"<suite-name>","description":"...","cases":[{"name":"...","input":"...","source":"...","expected":"","assert":{...},"mocks":[...],"rationale":"why this case matters"}]}`
 
+// decodeDraft parses the generator's reply case by case, so one case with a
+// wrongly-typed field is dropped with a reason instead of sinking the suite.
+func decodeDraft(text string) (draftSuite, []droppedCase, error) {
+	m, err := extractVerdictJSON(text)
+	if err != nil {
+		return draftSuite{}, nil, err
+	}
+	var shell struct {
+		Name        string            `json:"name"`
+		Description string            `json:"description"`
+		Cases       []json.RawMessage `json:"cases"`
+	}
+	b, _ := json.Marshal(m)
+	if err := json.Unmarshal(b, &shell); err != nil {
+		return draftSuite{}, nil, err
+	}
+	d := draftSuite{Name: shell.Name, Description: shell.Description}
+	var dropped []droppedCase
+	for i, rc := range shell.Cases {
+		var c draftCase
+		if err := json.Unmarshal(rc, &c); err != nil {
+			var named struct {
+				Name string `json:"name"`
+			}
+			_ = json.Unmarshal(rc, &named)
+			dropped = append(dropped, droppedCase{firstNonEmpty(named.Name, fmt.Sprintf("case-%d", i+1)), "malformed case: " + clip(err.Error(), 160)})
+			continue
+		}
+		d.Cases = append(d.Cases, c)
+	}
+	return d, dropped, nil
+}
+
 type generateRequest struct {
 	AgentName string `json:"agentName"`
 	Goal      string `json:"goal,omitempty"`
@@ -453,6 +489,12 @@ func (h *EvalHandler) GenerateSuite(w http.ResponseWriter, r *http.Request) {
 	for _, n := range toolNames(baseTools) {
 		ev.Tools[n] = true
 	}
+	// Tools the owner names in the agent's own instructions are declared
+	// surface too (e.g. "use shop__get_policy"), even when not installed here:
+	// a hermetic eval mocks them anyway.
+	for _, n := range declaredToolRe.FindAllString(agent.SystemPrompt, -1) {
+		ev.Tools[n] = true
+	}
 	if strings.TrimSpace(req.Goal) == "" && len(runs) == 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "nothing to ground cases in: pass a goal or run the agent first", "code": "no_evidence"})
 		return
@@ -482,17 +524,15 @@ func (h *EvalHandler) GenerateSuite(w http.ResponseWriter, r *http.Request) {
 	if recErr := RecordUsageSpend(ctx, h.srv.Pool, tenantID, req.AgentName, comp.TokensIn, comp.TokensOut, comp.CostUsd); recErr != nil {
 		h.logger().Warn("eval generate: RecordUsageSpend failed", zap.Error(recErr))
 	}
-	m, err := extractVerdictJSON(comp.Text)
-	var raw draftSuite
-	if err == nil {
-		b, _ := json.Marshal(m)
-		err = json.Unmarshal(b, &raw)
-	}
+	raw, decodeDropped, err := decodeDraft(comp.Text)
 	if err != nil {
+		// The error names a JSON position/type only — never generated content.
+		h.logger().Warn("eval generate: unusable generator output", zap.Error(err), zap.Int("chars", len(comp.Text)))
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "generator returned no usable suite", "code": "bad_suite"})
 		return
 	}
 	draft, prov, dropped := groundDraft(raw, ev, req.MaxCases)
+	dropped = append(decodeDropped, dropped...)
 	if len(draft.Cases) == 0 {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "every generated case failed grounding", "code": "bad_suite", "dropped": dropped})
 		return
