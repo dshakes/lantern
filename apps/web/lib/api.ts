@@ -1,3 +1,5 @@
+"use client";
+
 import type {
   AgentAuditLog,
   AgentIdentity,
@@ -5,7 +7,6 @@ import type {
   AgentPolicyDocument,
   AgentPolicyProposal,
 } from "./agent-policy";
-"use client";
 
 // Types only — we intentionally don't import any mock data runtime here.
 // Every method below either returns real API data, returns empty/null, or

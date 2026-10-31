@@ -645,7 +645,7 @@ export function SecurityTab({ name }: { name: string }) {
               <dt className="mb-1 text-[11px] font-medium uppercase tracking-wide text-zinc-500">Public keys (JWKS)</dt>
               <dd>
                 <a
-                  href={identity.jwksUri}
+                  href={`${api.apiBaseUrl}${identity.jwksUri}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex max-w-full items-center gap-1 break-all text-pal-300 hover:underline"

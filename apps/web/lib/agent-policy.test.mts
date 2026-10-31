@@ -97,3 +97,11 @@ test("normalizePolicy fills nulls from the server", () => {
   assert.deepEqual(n.tools, []);
   assert.equal(n.version, 2);
 });
+
+// Regression: a type import added above "use client" in lib/api.ts made Next
+// reject the module and 500 every dashboard page. The directive must lead.
+test('lib/api.ts keeps "use client" as its first statement', async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("./api.ts", import.meta.url), "utf8");
+  assert.match(src, /^"use client";/);
+});
