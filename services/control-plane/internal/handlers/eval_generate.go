@@ -167,6 +167,13 @@ func groundDraft(d draftSuite, ev generateEvidence, maxCases int) (draftSuite, [
 			return ""
 		}
 
+		// The generator never picks the judge model (operator policy): drop
+		// any it chose before validation so one bad field can't sink the case.
+		for _, k := range []string{"judge", "faithfulness", "pairwise"} {
+			if m, ok := c.Assert[k].(map[string]any); ok {
+				delete(m, "model")
+			}
+		}
 		spec, err := parseAssert(c.Assert)
 		if err != nil {
 			spec = &evalAssertSpec{}

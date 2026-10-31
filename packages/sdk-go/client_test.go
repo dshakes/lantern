@@ -343,3 +343,75 @@ func TestReadFile_TruncatedHeaderNames(t *testing.T) {
 		}
 	}
 }
+
+func TestRunEvalSuite(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     int
+		body       string
+		wantErr    bool
+		wantStatus int
+		wantNil    bool
+		regressed  bool
+	}{
+		{"ok", 200, `{"id":"r1","passed":true,"score":1,"casesTotal":1,"casesPassed":1,"caseResults":[{"name":"a","passed":true,"score":1,"passRate":1,"assertions":[{"kind":"judge","passed":true,"score":1}]}]}`, false, 0, false, false},
+		{"regression 422 returns parsed result and error", 422, `{"id":"r2","passed":false,"score":0.4,"regressed":true,"regressedCases":["a"],"caseResults":[]}`, true, 422, false, true},
+		{"422 unparseable body", 422, `nope`, true, 422, true, false},
+		{"402 budget", 402, `{"error":"budget exceeded","code":"budget_exceeded"}`, true, 402, true, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotPath string
+			var gotBody RunEvalSuiteRequest
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPath = r.URL.Path
+				_ = json.NewDecoder(r.Body).Decode(&gotBody)
+				w.WriteHeader(tc.status)
+				w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+			res, err := New(WithBaseURL(srv.URL)).RunEvalSuite(context.Background(), "s1", RunEvalSuiteRequest{Branch: "main", Samples: 2})
+			if gotPath != "/v1/eval-suites/s1/run" || gotBody.Branch != "main" || gotBody.Samples != 2 {
+				t.Fatalf("bad request: %s %+v", gotPath, gotBody)
+			}
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
+			}
+			if tc.wantStatus != 0 {
+				var apiErr *APIError
+				if !errors.As(err, &apiErr) || apiErr.Status != tc.wantStatus {
+					t.Fatalf("want APIError %d, got %v", tc.wantStatus, err)
+				}
+			}
+			if (res == nil) != tc.wantNil {
+				t.Fatalf("res nil = %v, want %v", res == nil, tc.wantNil)
+			}
+			if res != nil && res.Regressed != tc.regressed {
+				t.Fatalf("regressed = %v", res.Regressed)
+			}
+		})
+	}
+}
+
+func TestGenerateAndCalibrateEval(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/eval-suites/generate":
+			w.Write([]byte(`{"draft":{"agentName":"a","name":"s","cases":[{"name":"c","input":"hi","samples":2,"mocks":[{"tool":"t","result":{"x":1},"synthetic":true}]}]},"provenance":[{"case":"c","source":"run:1","grounding":"rubric-only"}],"dropped":[{"name":"d","reason":"x"}],"requiresApproval":true}`))
+		case "/v1/eval-judge/calibrate":
+			w.Write([]byte(`{"stats":{"n":5,"labeled":4,"agreement":0.75,"kappa":0.5,"mae":0.1},"pairs":[{"runId":"r","humanScore":5,"judgeScore":0.9,"judgePassed":true}],"verdict":"v","rubric":"r","costUsd":0.01}`))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	c := New(WithBaseURL(srv.URL))
+	g, err := c.GenerateEvalSuite(context.Background(), GenerateEvalSuiteRequest{AgentName: "a", MaxCases: 3})
+	if err != nil || !g.RequiresApproval || g.Draft.Cases[0].Samples != 2 || !g.Draft.Cases[0].Mocks[0].Synthetic || len(g.Dropped) != 1 {
+		t.Fatalf("generate: %+v %v", g, err)
+	}
+	cal, err := c.CalibrateEvalJudge(context.Background(), CalibrateEvalJudgeRequest{AgentName: "a"})
+	if err != nil || cal.Stats.Kappa != 0.5 || cal.Pairs[0].HumanScore != 5 {
+		t.Fatalf("calibrate: %+v %v", cal, err)
+	}
+}
