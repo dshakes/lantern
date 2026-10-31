@@ -749,3 +749,26 @@ func TestOnboardingAgentRoutes_ScopeEnforcement(t *testing.T) {
 		t.Errorf("DELETE with read-only key: got %d, want 403", c)
 	}
 }
+
+// A redesign ("also list action items") edits the same agent: the name the user
+// already saw stays, even when the design model invents a new one.
+func TestOnboardingAgent_RedesignKeepsTheName(t *testing.T) {
+	ah := newAgentHarness(t,
+		`{"say":"Designing it.","tool":{"name":"design_agent","args":{"goal":"summarize standups"}}}`,
+		`{"say":"Here it is.","tool":null}`,
+		`{"say":"Updating it.","tool":{"name":"design_agent","args":{"goal":"summarize standups, plus action items per person"}}}`,
+		`{"say":"Updated.","tool":null}`,
+	)
+	ah.turn(t, map[string]any{"product": "runtime", "message": "an agent that summarizes my standups"})
+	ah.api.specName = "standup-cleaner" // the model renames on the second design
+	ah.turn(t, map[string]any{"product": "runtime", "message": "also list action items per person"})
+	if ah.api.count("POST /v1/agents/generate-spec") != 2 {
+		t.Fatalf("design ran %d times, want 2", ah.api.count("POST /v1/agents/generate-spec"))
+	}
+	if got := ah.api.runtimeDoc.Spec.Name; got != "standup-summarizer" {
+		t.Fatalf("redesign renamed the agent to %q, want the original standup-summarizer", got)
+	}
+	if !strings.Contains(ah.api.runtimeDoc.Goal, "action items") {
+		t.Errorf("redesign goal not saved: %q", ah.api.runtimeDoc.Goal)
+	}
+}

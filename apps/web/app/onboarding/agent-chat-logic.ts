@@ -197,9 +197,10 @@ function runtimeDone(id: string, f: Facts): boolean {
   return false;
 }
 
-/** The rail row the server's phase maps to. */
+/** The rail row the server's phase maps to. A proposed design waits on the
+ * user's approval ("create" phase), so the design row is the current one. */
 export function railCurrent(product: ChatProduct, phase: string): string {
-  if (product === "runtime") return phase === "finish" ? "done" : phase;
+  if (product === "runtime") return phase === "finish" ? "done" : phase === "create" ? "spec" : phase;
   return phase;
 }
 
@@ -210,7 +211,8 @@ export function railStatuses(product: ChatProduct, facts: Facts | null | undefin
   const done = product === "pal" ? palDone : runtimeDone;
   return RAIL[product].map((s) => ({
     ...s,
-    status: done(s.id, f) && s.id !== current ? "done" : s.id === current ? "current" : "todo",
+    // Once setup is done every finished row is done, including the last.
+    status: done(s.id, f) && (s.id !== current || f.phase === "done") ? "done" : s.id === current ? "current" : "todo",
   }));
 }
 
