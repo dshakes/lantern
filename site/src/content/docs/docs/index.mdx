@@ -74,13 +74,13 @@ git clone https://github.com/dshakes/pal.git && cd pal
 The whole platform on Docker, with recorded model answers. Each visitor gets a throwaway workspace that expires after 30 minutes.
 
 ```console
-$ make demo
-…                                               # Docker builds the images (slow the first time)
- Container pal-demo-control-plane-1  Healthy
- Container pal-demo-dashboard-1  Starting
- Container pal-demo-dashboard-1  Started
-demo: http://localhost:3001/kiosk
-$ make demo-down                                # stop it and delete its volumes
+$ pal demo                                      # Docker builds the images (slow the first time)
+…
+ Container lantern-demo-dashboard-1  Started
+demo ready in 1m15s: http://localhost:3001/kiosk
+$ pal demo --down                               # stop it and delete its volumes
+…
+demo stopped, data deleted
 ```
 
 Next: [Try it: the demo](/docs/start/demo/).
@@ -141,7 +141,7 @@ PAL onboard — let's get you set up.
    ✓ created <name>
 5. First run ... ✓  run <run-id> started
    streaming events:
-   …
+   …                                            # one started/completed line per step
 ────────────────────────────────────────────────
 You're set.
 
@@ -168,7 +168,7 @@ Next: [Quickstart in 60 seconds](/docs/start/sixty-seconds/), then [Your first a
 
 ## Every number links to its source.
 
-Real Firecracker microVMs, median of 20 runs, from the committed [runtime latency benchmark](repo:/blob/master/docs/benchmarks/runtime-latency.md). They were measured under nested virtualization on a laptop, so compare changes with them; they are not production SLOs.
+Real Firecracker microVMs, medians of 20 or more runs, from the committed [runtime latency benchmark](repo:/blob/master/docs/benchmarks/runtime-latency.md). They were measured under nested virtualization on a laptop, so compare changes with them; they are not production SLOs.
 
 | Operation | p50 |
 | --- | --: |
