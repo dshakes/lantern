@@ -1186,7 +1186,7 @@ func (h *ObsHandler) openIncident(ctx context.Context, tenantID, agent string, c
 		}
 		return false
 	}
-	h.logger().Warn("incident opened", zap.String("tenant_id", tenantID), zap.String("agent", agent), zap.String("kind", c.kind), zap.String("incident_id", id))
+	h.logger().Info("incident opened", zap.String("tenant_id", tenantID), zap.String("agent", agent), zap.String("kind", c.kind), zap.String("incident_id", id))
 	h.summarize(ctx, tenantID, id, agent, c)
 	if rollback && h.rollback != nil {
 		if e := h.rollback.SuggestRollback(ctx, tenantID, RollbackSuggestion{Suggested: true, Agent: agent,
@@ -1196,6 +1196,8 @@ func (h *ObsHandler) openIncident(ctx context.Context, tenantID, agent string, c
 	}
 	return true
 }
+
+var anyUUIDRe = regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`)
 
 var runRefRe = regexp.MustCompile(`\[run:([0-9a-fA-F-]{36})\]`)
 
@@ -1221,7 +1223,7 @@ func groundedSummary(text string, affected []string) (string, bool) {
 			return "", false
 		}
 	}
-	for _, u := range regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`).FindAllString(text, -1) {
+	for _, u := range anyUUIDRe.FindAllString(text, -1) {
 		if !ok[strings.ToLower(u)] {
 			return "", false
 		}

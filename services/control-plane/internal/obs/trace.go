@@ -167,6 +167,9 @@ func BuildTrace(run RunInfo, events []Event, children []*Trace) *Trace {
 				out = str(p, "result")
 			}
 			n.Output = RedactString(out)
+			if n.Tool != nil {
+				n.Tool.Result = n.Output
+			}
 			if numF(p, "tokens_in")+numF(p, "tokens_out")+numF(p, "cost_usd") > 0 || str(p, "model") != "" {
 				n.LLM = &LLMInfo{Provider: str(p, "provider"), Model: str(p, "model"),
 					TokensIn: int64(numF(p, "tokens_in")), TokensOut: int64(numF(p, "tokens_out")),
