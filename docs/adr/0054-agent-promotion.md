@@ -86,6 +86,14 @@ refused), waits for `running`, executes the command via `/v1/runtime/vms/{id}/ex
 records VM id / exit code / output hash as sandbox evidence (the VM must belong to
 the tenant), and terminates the VM.
 
+Measured (Lima/Firecracker, jailed, mTLS manager, own scheduler on :8585, 2026-10-31):
+`pal sandbox run hello --exec "/bin/sh -c uname"` -> promoted to sandbox, real microVM booted,
+exec returned `Linux`, exit 0, 6.9 s end to end including promote, schedule, boot and exec; evidence
+and audit row recorded. Lima dev tooling fixes made on the way: `lima.sh runtime` forwards
+`SCHEDULER_URL`, mints a throwaway VM signing CA (a real boot failed without one), and accepts
+`DEV_TLS_DIR` for an mTLS manager (the harness heartbeat is TLS; a plaintext manager made exec
+impossible: "harness not connected"). The guest rootfs is minimal: exec needs `/bin/sh -c ...`, not `echo`.
+
 ## Threat notes
 - Approval cannot be reached by API keys, kiosk sessions or agents; the check uses
   signed claims, never a header or body field.
