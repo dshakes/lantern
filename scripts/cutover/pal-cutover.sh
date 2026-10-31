@@ -90,9 +90,12 @@ guard_mode() {
     for t in launchctl docker cargo go npm; do
       [[ "$(command -v "$t")" == "$PAL_CUTOVER_STUB_BIN/$t" ]] || die "sandbox: $t does not resolve to the stub"
     done
-    for t in "$DB_OLD_NAME" "$DB_NEW_NAME" "$DB_OLD_USER" "$DB_NEW_USER" "$DB_OLD_APP_ROLE" "$DB_NEW_APP_ROLE"; do
-      [[ "$t" == *test* ]] || die "sandbox: DB name '$t' must contain 'test' (refusing to touch real objects)"
-    done
+    # real names are allowed only on a throwaway *test* Postgres container (never the shared server)
+    if [[ "$DB_CONTAINER" != *test* ]]; then
+      for t in "$DB_OLD_NAME" "$DB_NEW_NAME" "$DB_OLD_USER" "$DB_NEW_USER" "$DB_OLD_APP_ROLE" "$DB_NEW_APP_ROLE"; do
+        [[ "$t" == *test* ]] || die "sandbox: DB name '$t' must contain 'test' (refusing to touch real objects)"
+      done
+    fi
     [[ "$REPO_DIR" == "$HOME"/* ]] || die "sandbox: REPO_DIR must live under the sandbox HOME"
     # MinIO steps run on a bucket rename or a credential change; then the container must be a throwaway
     if [[ "$OLD_BUCKET_PREFIX" != "$NEW_BUCKET_PREFIX" || -n "${STUB_MINIO_CONTAINER:-}" ]]; then

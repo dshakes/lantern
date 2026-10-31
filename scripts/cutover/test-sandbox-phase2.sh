@@ -23,6 +23,16 @@ PG_ADMIN="${PG_ADMIN:-lantern}"   # used ONLY by this harness to create/drop the
 MINIO_IMAGE="${MINIO_IMAGE:-minio/minio:latest}"
 SB="$(mktemp -d /private/tmp/pal-cutover-p2.XXXXXX)"
 PASS=0; FAILS=0
+# E2E_REAL_MIGRATIONS=1: a throwaway Postgres CONTAINER (never the shared server: the brand
+# migration renames cluster-global roles), the REAL names, and the REAL master / zero-lantern
+# `migrate` binaries (MIGRATE_MASTER / MIGRATE_ZERO, built from those commits) run on API start.
+E2E="${E2E_REAL_MIGRATIONS:-0}"
+OU=lantern_test NU=pal_test OD=cutover_test ND=cutover_test_pal OA=lantern_app_test NA=pal_app_test
+if [[ "$E2E" == 1 ]]; then
+  : "${MIGRATE_MASTER:?}" "${MIGRATE_ZERO:?}" "${MIGRATIONS_OLD_SRC:?}" "${MIGRATIONS_NEW_SRC:?}"
+  PG_CONTAINER=pal-cutover-e2e-pg-test; PG_ADMIN=lantern; E2E_PORT="${E2E_PORT:-55432}"
+  OU=lantern NU=pal OD=lantern ND=pal OA=lantern_app NA=pal_app
+fi
 say()  { printf '\n######## %s\n' "$*"; }
 pass() { printf '  PASS  %s\n' "$*"; PASS=$((PASS + 1)); }
 fail() { printf '  FAIL  %s\n' "$*"; FAILS=$((FAILS + 1)); }
@@ -38,6 +48,11 @@ mc_() {  # mc_ USER PASS args… against the sandbox MinIO
 objs() { mc_ "$1" "$2" ls -r --json "s/$3" 2>/dev/null | python3 -I "$HERE/cutover_helper.py" objects; }
 
 cleanup() {
+  if [[ "$E2E" == 1 ]]; then
+    "$REAL_DOCKER" rm -f "$PG_CONTAINER" >/dev/null 2>&1
+    "$REAL_DOCKER" rm -f "$STUB_MINIO_CONTAINER" >/dev/null 2>&1; "$REAL_DOCKER" volume rm "$STUB_MINIO_VOLUME" >/dev/null 2>&1
+    return 0
+  fi
   apg <<'SQL' >/dev/null 2>&1
 SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname LIKE 'cutover\_test%';
 SQL
@@ -59,10 +74,11 @@ export STUB_OLD_ENV_PREFIX=PAL_ STUB_OLD_STATE="$SB/home/.pal"
 export STUB_TENANT=00000000-0000-0000-0000-000000000001
 export REPO_DIR="$HOME/workspace/lantern" REPO_REMOTE_URL="$SB/remote/pal.git"
 export STUB_WA_CREDS="$REPO_DIR/services/whatsapp-bridge/auth_sessions"
-export DB_CONTAINER="$PG_CONTAINER" DB_OLD_NAME=cutover_test DB_NEW_NAME=cutover_test_pal
-export DB_OLD_USER=lantern_test DB_NEW_USER=pal_test DB_OLD_APP_ROLE=lantern_app_test DB_NEW_APP_ROLE=pal_app_test
+export DB_CONTAINER="$PG_CONTAINER" DB_OLD_NAME="$OD" DB_NEW_NAME="$ND"
+export DB_OLD_USER="$OU" DB_NEW_USER="$NU" DB_OLD_APP_ROLE="$OA" DB_NEW_APP_ROLE="$NA"
 export MINIO_CONTAINER="$STUB_MINIO_CONTAINER" MINIO_RECREATE_CMD="$HERE/sandbox/minio-recreate.sh"
 export STUB_ON_API_START="$HERE/sandbox/fake-migrate.sh"
+if [[ "$E2E" == 1 ]]; then export STUB_ON_API_START="$HERE/sandbox/real-migrate.sh" MIGRATE_MASTER MIGRATE_ZERO E2E_PORT; fi
 export HEALTH_TIMEOUT_SECS=10 DASHBOARD_TIMEOUT_SECS=10
 launchctl_s() { PATH="$HERE/sandbox:$PATH" launchctl "$@"; }
 export REAL_DOCKER PG_CONTAINER
@@ -70,6 +86,23 @@ export -f q mc_ objs
 OLDJWT=lantern-dev-jwt-secret-do-not-use-in-production NEWJWT=pal-dev-jwt-secret-do-not-use-in-production
 
 # ------------------------------------------------------------------ throwaway Postgres at schema v35, old names
+if [[ "$E2E" == 1 ]]; then
+say "setup: throwaway Postgres container + REAL master migrations (old names)"
+cleanup
+"$REAL_DOCKER" run -d --name "$PG_CONTAINER" -p "127.0.0.1:$E2E_PORT:5432" -e POSTGRES_USER=lantern -e POSTGRES_PASSWORD=lantern \
+  -e POSTGRES_DB=lantern pgvector/pgvector:pg16 >/dev/null || exit 1
+for _ in $(seq 1 60); do "$REAL_DOCKER" exec "$PG_CONTAINER" psql -U lantern -d lantern -Atc 'select 1' >/dev/null 2>&1 && break; sleep 1; done
+sleep 3
+DATABASE_URL="postgres://lantern:lantern@127.0.0.1:$E2E_PORT/lantern?sslmode=disable" SEED_DEV=1 "$MIGRATE_MASTER" > "$SB/migrate-master.log" 2>&1 || { echo "master migrations failed"; tail -5 "$SB/migrate-master.log"; exit 1; }
+apg lantern <<'SQL' || exit 1
+ALTER ROLE lantern_app PASSWORD 'apppw-test';
+INSERT INTO agents (id, tenant_id, name) VALUES ('11111111-1111-1111-1111-111111111111', '00000000-0000-0000-0000-000000000001', 'e2e-agent');
+INSERT INTO agent_versions (agent_id, version, digest, bundle_uri, manifest)
+  SELECT '11111111-1111-1111-1111-111111111111', v, 'sha256:' || v, u, '{}'::jsonb
+  FROM (VALUES ('1','s3://lantern-bundles/t1/a.tgz'), ('2','s3://lantern-bundles/t1/b.tgz'), ('3','s3://lantern-bundles-dev/x.tgz'), ('4','s3://test/y.tgz')) AS t(v,u);
+SQL
+echo "  real schema: v$(q lantern lantern 'select version from schema_migrations'), admin=$(q lantern lantern "select email from users where id='00000000-0000-0000-0000-000000000002'"), ns=$(q lantern lantern "select k8s_namespace from tenants where slug='dev'")"
+else
 say "setup: Postgres (old names, schema v35, bundle_uri on s3://lantern-*)"
 cleanup
 apg <<'SQL' || { echo "cannot create sandbox DB objects"; exit 1; }
@@ -90,6 +123,7 @@ ALTER TABLE agent_versions ENABLE ROW LEVEL SECURITY;
 GRANT SELECT, INSERT, UPDATE ON agent_versions, tenants TO lantern_app_test;
 SQL
 
+fi
 # ------------------------------------------------------------------ throwaway MinIO on the old creds
 say "setup: MinIO container on lantern/lanternsecret with lantern-* buckets"
 "$REAL_DOCKER" volume create "$STUB_MINIO_VOLUME" >/dev/null
@@ -134,7 +168,7 @@ for s in api dashboard gateway runtime-manager runtime-scheduler whatsapp-bridge
     || cp "$REPO_SRC/scripts/launchd/dev.pal.$s.plist" "scripts/launchd/dev.pal.$s.plist"
 done
 cp "$REPO_SRC/scripts/launchd/run-bridge-wrapper.sh" scripts/launchd/
-plutil -replace EnvironmentVariables.DATABASE_URL -string 'postgres://lantern_test:lantern@localhost:5432/cutover_test?sslmode=disable' scripts/launchd/dev.pal.api.plist
+plutil -replace EnvironmentVariables.DATABASE_URL -string "postgres://$OU:lantern@localhost:5432/$OD?sslmode=disable" scripts/launchd/dev.pal.api.plist
 plutil -replace EnvironmentVariables.PATH -string '__HOME__/fake-x64-bin:/usr/bin:/bin' scripts/launchd/dev.pal.dashboard.plist
 cat > infra/docker/docker-compose.yml <<'EOF'
 services:
@@ -159,7 +193,8 @@ volumes:
   pg-data:
   minio-data:
 EOF
-for n in 0034_a 0035_billing; do echo "select 1;" > "services/control-plane/internal/db/migrations/$n.up.sql"; done
+if [[ "$E2E" == 1 ]]; then for f in "$MIGRATIONS_OLD_SRC"/*.up.sql; do echo "-- name only" > "services/control-plane/internal/db/migrations/$(basename "$f")"; done
+else for n in 0034_a 0035_billing; do echo "select 1;" > "services/control-plane/internal/db/migrations/$n.up.sql"; done; fi
 echo 'export const dir = join(homedir(), ".pal");' > packages/bridge-core/src/state-dir.ts
 echo 'const BRIDGE_TOKEN = process.env.PAL_BRIDGE_TOKEN || "";' > services/whatsapp-bridge/src/index.ts
 echo '// imessage session' > services/imessage-bridge/src/session.ts
@@ -169,13 +204,14 @@ printf '.env.local\n' > .gitignore
 echo '{}' > apps/web/package.json
 git add -A && git commit -qm "aeaaa3f3-like: pal labels, old DB/MinIO names" && OLD_SHA="$(git rev-parse HEAD)"
 # release (#401): new DB URL, MinIO creds/buckets, brand migration, new JWT default
-plutil -replace EnvironmentVariables.DATABASE_URL -string 'postgres://pal_test:pal@localhost:5432/cutover_test_pal?sslmode=disable' scripts/launchd/dev.pal.api.plist
+plutil -replace EnvironmentVariables.DATABASE_URL -string "postgres://$NU:pal@localhost:5432/$ND?sslmode=disable" scripts/launchd/dev.pal.api.plist
 plutil -replace EnvironmentVariables.BUNDLE_S3_BUCKET -string 'pal-bundles' scripts/launchd/dev.pal.runtime-manager.plist 2>/dev/null \
   || plutil -insert EnvironmentVariables.BUNDLE_S3_BUCKET -string 'pal-bundles' scripts/launchd/dev.pal.runtime-manager.plist
 sed -i '' -e 's/MINIO_ROOT_USER: lantern/MINIO_ROOT_USER: pal/' -e 's/MINIO_ROOT_PASSWORD: lanternsecret/MINIO_ROOT_PASSWORD: palsecret/' \
   -e 's#lantern lanternsecret && mc mb local/lantern-dev#pal palsecret \&\& mc mb local/pal-dev#' \
   -e 's/POSTGRES_USER: lantern/POSTGRES_USER: pal/' infra/docker/docker-compose.yml
-echo "select 1;" > services/control-plane/internal/db/migrations/0036_pal_brand_rename.up.sql
+if [[ "$E2E" == 1 ]]; then for f in "$MIGRATIONS_NEW_SRC"/*.up.sql; do echo "-- name only" > "services/control-plane/internal/db/migrations/$(basename "$f")"; done
+else echo "select 1;" > services/control-plane/internal/db/migrations/0036_pal_brand_rename.up.sql; fi
 git add -A && git commit -qm "zero-lantern release" && REL="$(git rev-parse HEAD)"
 git push -q "$SB/remote/pal.git" master
 git reset -q --hard "$OLD_SHA"; git remote add origin "$SB/remote/pal.git"; git fetch -q origin
@@ -219,18 +255,18 @@ sleep 1
 RELEASE_REF="$REL" "$CUT" apply > "$SB/apply.out" 2>&1; rc=$?
 grep -E '===|FAIL|WARN|COMPLETE|verified|bundle_uri|MinIO|role|schema' "$SB/apply.out" | cut -c12-200 | sed 's/^/    /' | head -60
 check "apply exits 0" test "$rc" = 0
-check "DB renamed, superuser + app role renamed, old app role gone" bash -c "[ \"\$(q pal_test postgres \"select string_agg(rolname,',' order by rolname) from pg_roles where rolname in ('lantern_test','lantern_app_test','pal_test','pal_app_test')\")\" = pal_app_test,pal_test ] && [ \"\$(q pal_test postgres \"select count(*) from pg_database where datname='cutover_test_pal'\")\" = 1 ]"
-check "superuser password reset to the contract value (TCP login pal_test/pal)" bash -c "printf 'pal\n' | $REAL_DOCKER exec -i $PG_CONTAINER sh -c 'IFS= read -r PGPASSWORD; export PGPASSWORD; psql -XAt -h 127.0.0.1 -U pal_test -d cutover_test_pal -c \"select 1\"' | grep -qx 1"
-check "app role kept its SCRAM password through the rename" bash -c "printf 'apppw-test\n' | $REAL_DOCKER exec -i $PG_CONTAINER sh -c 'IFS= read -r PGPASSWORD; export PGPASSWORD; psql -XAt -h 127.0.0.1 -U pal_app_test -d cutover_test_pal -c \"select 1\"' | grep -qx 1"
-check "migration ran on API start (schema v36) and found nothing to rename (no fight)" bash -c "[ \"\$(q pal_test cutover_test_pal 'select version from schema_migrations')\" = 36 ] && ! grep -q 'migration renamed the app role' '$STUB_STATE/api-start.log'"
-check "bundle_uri: s3://lantern-* rewritten, others untouched" bash -c "[ \"\$(q pal_test cutover_test_pal \"select string_agg(coalesce(bundle_uri,'-'),' ' order by id) from agent_versions\")\" = 's3://pal-bundles/t1/a.tgz s3://pal-bundles/t1/b.tgz s3://pal-bundles-dev/x.tgz s3://test/y.tgz -' ]"
+check "DB renamed, superuser + app role renamed, old app role gone" bash -c "[ \"\$(q $NU postgres \"select string_agg(rolname,',' order by rolname) from pg_roles where rolname in ('$OU','$OA','$NU','$NA')\")\" = $NA,$NU ] && [ \"\$(q $NU postgres \"select count(*) from pg_database where datname='$ND'\")\" = 1 ]"
+check "superuser password reset to the contract value (TCP login $NU/pal)" bash -c "printf 'pal\n' | $REAL_DOCKER exec -i $PG_CONTAINER sh -c 'IFS= read -r PGPASSWORD; export PGPASSWORD; psql -XAt -h 127.0.0.1 -U $NU -d $ND -c \"select 1\"' | grep -qx 1"
+check "app role kept its SCRAM password through the rename" bash -c "printf 'apppw-test\n' | $REAL_DOCKER exec -i $PG_CONTAINER sh -c 'IFS= read -r PGPASSWORD; export PGPASSWORD; psql -XAt -h 127.0.0.1 -U $NA -d $ND -c \"select 1\"' | grep -qx 1"
+check "migration ran on API start (schema v36) and found nothing to rename (no fight)" bash -c "[ \"\$(q $NU $ND 'select version from schema_migrations')\" = 36 ] && ! grep -q 'migration renamed the app role' '$STUB_STATE/api-start.log'"
+check "bundle_uri: s3://lantern-* rewritten, others untouched" bash -c "[ \"\$(q $NU $ND \"select string_agg(coalesce(bundle_uri,'-'),' ' order by id) from agent_versions\")\" = 's3://pal-bundles/t1/a.tgz s3://pal-bundles/t1/b.tgz s3://pal-bundles-dev/x.tgz s3://test/y.tgz -' ]"
 check "MinIO now on pal/palsecret; old root creds rejected" bash -c "mc_() { $REAL_DOCKER exec -e MC_HOST_s=\"http://\$1:\$2@localhost:9000\" $STUB_MINIO_CONTAINER mc ls s/ >/dev/null 2>&1; }; mc_ pal palsecret && ! mc_ lantern lanternsecret"
 check "pal-* mirrors exist, old buckets kept" test "$(pal_buckets pal palsecret)" = "lantern-bundles lantern-bundles-dev lantern-dev lantern-snapshots pal-bundles pal-bundles-dev pal-dev pal-snapshots"
 A1="$(objs pal palsecret lantern-bundles)"; A2="$(objs pal palsecret pal-bundles)"
 check "mirrored objects identical (key/size/etag), non-empty" bash -c "[ -n \"\$1\" ] && [ \"\$1\" = \"\$2\" ]" _ "$A1" "$A2"
 check "gateway + runtime-scheduler JWT_SECRET mapped to the NEW dev constant" bash -c "for s in gateway runtime-scheduler; do [ \"\$(python3 -I '$STUB_HELPER' plist-get '$LA/dev.pal.'\$s'.plist' env:JWT_SECRET)\" = '$NEWJWT' ] || exit 1; done"
 check "runtime-manager BUNDLE_S3_BUCKET → pal-bundles" test "$(python3 -I "$STUB_HELPER" plist-get "$LA/dev.pal.runtime-manager.plist" env:BUNDLE_S3_BUCKET)" = pal-bundles
-check "api DATABASE_URL = release template (pal_test@cutover_test_pal)" bash -c "python3 -I '$STUB_HELPER' plist-get '$LA/dev.pal.api.plist' env:DATABASE_URL | grep -q 'pal_test:pal@localhost:5432/cutover_test_pal'"
+check "api DATABASE_URL = release template ($NU@$ND)" bash -c "python3 -I '$STUB_HELPER' plist-get '$LA/dev.pal.api.plist' env:DATABASE_URL | grep -q '$NU:pal@localhost:5432/$ND'"
 check "live-only PAL_SIGNAL_TOKEN carried" test "$(python3 -I "$STUB_HELPER" plist-get "$LA/dev.pal.api.plist" env:PAL_SIGNAL_TOKEN)" = fake-signal-token
 check "dashboard live NEXT_PUBLIC_API_URL kept" test "$(python3 -I "$STUB_HELPER" plist-get "$LA/dev.pal.dashboard.plist" env:NEXT_PUBLIC_API_URL)" = http://100.64.0.1:8080
 check "checkout .env.local: LANTERN_* and NEXT_PUBLIC_LANTERN_* keys renamed, other keys kept" bash -c "grep -q '^PAL_OWNER_EMAIL=' '$REPO_DIR/.env.local' && grep -q '^NEXT_PUBLIC_PAL_BRIDGE_URL=' '$REPO_DIR/.env.local' && grep -q '^GOOGLE_CLIENT_ID=' '$REPO_DIR/.env.local' && ! grep -q LANTERN '$REPO_DIR/.env.local'"
@@ -240,6 +276,12 @@ check "WhatsApp auth_sessions untouched (no re-pair)" bash -c "diff <(grep -A3 '
 check "state dir untouched in place (no move, no nesting)" bash -c "[ -f '$HOME/.pal/state.key' ] && [ ! -e '$HOME/.pal/.pal' ] && [ -L '$HOME/.lantern' ]"
 check "apply prints no secret value" bash -c "! grep -qE 'fake-wa-token|fake im token|fake-signal-token|lanternsecret|palsecret|kkkkkkkk|apppw' '$SB/apply.out'"
 
+lastmig() { find "$1" -name '*.up.sql' -exec basename {} \; | sed -nE 's/^0*([0-9]+)_.*/\1/p' | sort -n | tail -1; }
+if [[ "$E2E" == 1 ]]; then
+  check "[e2e] REAL brand migration ran: dev namespace pal-t-dev" test "$(q "$NU" "$ND" "select k8s_namespace from tenants where slug='dev'")" = pal-t-dev
+  check "[e2e] REAL dev seed moved the admin to admin@pal.dev" test "$(q "$NU" "$ND" "select email from users where id='00000000-0000-0000-0000-000000000002'")" = admin@pal.dev
+  check "[e2e] schema at the zero-lantern newest migration" test "$(q "$NU" "$ND" 'select version from schema_migrations')" = "$(lastmig "$MIGRATIONS_NEW_SRC")"
+fi
 say "3. verify"
 "$CUT" verify > "$SB/verify.out" 2>&1; rc=$?
 grep -E 'FAIL|WARN|schema|role|MinIO' "$SB/verify.out" | cut -c12-200 | sed 's/^/    /'
@@ -256,6 +298,11 @@ check "verify --old exits 0 (schema 35 startable on the old commit; MinIO old cr
 snap "$SB/S1"; check "byte-identical to the start" same "$SB/S0" "$SB/S1"
 [[ -s "$SB/last.diff" ]] && sed 's/^/      /' "$SB/last.diff" | head -20
 check "checkout back at the old commit" test "$(git -C "$REPO_DIR" rev-parse HEAD)" = "$OLD_SHA"
+if [[ "$E2E" == 1 ]]; then
+  check "[e2e] after rollback: lantern-t-dev namespace back (dump restored)" test "$(q "$OU" "$OD" "select k8s_namespace from tenants where slug='dev'")" = lantern-t-dev
+  check "[e2e] after rollback: schema back at master's newest migration" test "$(q "$OU" "$OD" 'select version from schema_migrations')" = "$(lastmig "$MIGRATIONS_OLD_SRC")"
+  check "[e2e] REAL master migrate boots against the rolled-back DB" env DATABASE_URL="postgres://lantern:lantern@127.0.0.1:$E2E_PORT/lantern?sslmode=disable" "$MIGRATE_MASTER"
+fi
 
 # ------------------------------------------------------------------ failure injection
 inject() {
@@ -268,7 +315,7 @@ inject() {
   check "[$name] auto-rollback IDENTICAL" grep -q 'snapshot IDENTICAL' "$SB/fail-$name.out"
   snap "$SB/S-$name"; check "[$name] byte-identical to the start" same "$SB/S0" "$SB/S-$name"
   check "[$name] MinIO back on the old root creds" bash -c "$REAL_DOCKER exec -e MC_HOST_s=http://lantern:lanternsecret@localhost:9000 $STUB_MINIO_CONTAINER mc ls s/ >/dev/null 2>&1"
-  check "[$name] old role names back" test "$(q lantern_test postgres "select string_agg(rolname,',' order by rolname) from pg_roles where rolname in ('lantern_test','lantern_app_test','pal_test','pal_app_test')")" = "lantern_app_test,lantern_test"
+  check "[$name] old role names back" test "$(q $OU postgres "select string_agg(rolname,',' order by rolname) from pg_roles where rolname in ('$OU','$OA','$NU','$NA')")" = "$OA,$OU"
 }
 inject after-minio PAL_CUTOVER_FAIL_AT=minio
 inject after-infra PAL_CUTOVER_FAIL_AT=infra
