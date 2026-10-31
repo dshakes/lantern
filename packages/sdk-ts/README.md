@@ -16,7 +16,7 @@ import { PalClient } from "@pal-runtime/sdk";
 
 const pal = new PalClient({
   apiKey: process.env.PAL_API_KEY,
-  baseURL: process.env.PAL_API_URL, // defaults to https://api.pal.example.com
+  baseURL: process.env.PAL_API_URL, // defaults to http://localhost:8080
 });
 
 // 1. Create an agent
@@ -95,7 +95,7 @@ export default agent({
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `PAL_API_URL` | `https://api.pal.example.com` | Control-plane base URL |
+| `PAL_API_URL` | `http://localhost:8080` | Control-plane base URL |
 | `PAL_API_KEY` | — | API key (required) |
 | `PAL_TENANT_ID` | — | Optional tenant override (enterprise multi-tenant) |
 

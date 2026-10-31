@@ -199,7 +199,7 @@ resource "azurerm_kubernetes_cluster_node_pool" "pal" {
   enable_auto_scaling   = true
 
   node_labels = {
-    "pal.run/component" = "data-plane"
+    "pal.dev/component" = "data-plane"
   }
 
   tags = var.tags

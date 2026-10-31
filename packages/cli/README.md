@@ -15,7 +15,7 @@ go install github.com/dshakes/pal/packages/cli/cmd/pal@latest
 ## Common commands
 
 ```bash
-pal login                        # authenticate against api.pal.example.com (or --api-url)
+pal login                        # authenticate against PAL_API_URL / --api-url (default localhost)
 pal init my-agent                # scaffold a new agent project
 pal dev                          # boot Postgres + Redis + MinIO + control-plane locally
 
