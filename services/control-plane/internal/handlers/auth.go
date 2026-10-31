@@ -1245,7 +1245,10 @@ func (h *AuthHandler) WithScope(required Scope, next http.HandlerFunc) http.Hand
 func (h *AuthHandler) WithScopeOrAgent(required Scope, next http.HandlerFunc) http.HandlerFunc {
 	scoped := h.WithScope(required, next)
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get(AgentTokenHeader) != "" {
+		// Trimmed exactly as the handlers trim it: a whitespace-only header
+		// must NOT skip the scope check and then be treated as "no agent
+		// token" downstream (that was a scope bypass for restricted keys).
+		if strings.TrimSpace(r.Header.Get(AgentTokenHeader)) != "" {
 			next(w, r)
 			return
 		}

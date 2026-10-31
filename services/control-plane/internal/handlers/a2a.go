@@ -327,18 +327,19 @@ func (h *A2AHandler) InvokeAgent(w http.ResponseWriter, r *http.Request) {
 	// avoid leaking the existence of another tenant's private agent.
 	ctx := r.Context()
 	var target agentRef
+	var targetPublic bool
 	// rls-exempt: authenticated A2A invoke is intentionally cross-tenant — a
 	// caller may invoke its OWN agent OR any tenant's `is_public` agent (the
 	// whole point of A2A). The explicit `is_public = true OR tenant_id = $2`
 	// clause does the gating; RLS would block legitimate public invocations.
 	// Own-tenant first so a name never resolves to a stranger's agent.
 	err := h.srv.Pool.QueryRow(ctx, `
-		SELECT id::text, name, tenant_id::text, COALESCE(current_version_id::text, ''), created_at FROM agents
+		SELECT id::text, name, tenant_id::text, COALESCE(current_version_id::text, ''), created_at, is_public FROM agents
 		WHERE name = $1 AND archived_at IS NULL
 		  AND (is_public = true OR tenant_id::text = $2)
 		ORDER BY (tenant_id::text = $2) DESC, created_at
 		LIMIT 1
-	`, name, callerTenant).Scan(&target.ID, &target.Name, &target.TenantID, &target.VersionID, &target.CreatedAt)
+	`, name, callerTenant).Scan(&target.ID, &target.Name, &target.TenantID, &target.VersionID, &target.CreatedAt, &targetPublic)
 	if err == pgx.ErrNoRows {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
 		return
@@ -361,6 +362,13 @@ func (h *A2AHandler) InvokeAgent(w http.ResponseWriter, r *http.Request) {
 		// The token must be bound to THIS target (audience = target SPIFFE id).
 		caller, verr := z.agentCallerFromRequest(r, z.auth.SpiffeID(target.TenantID, target.ID))
 		if verr != nil || caller.TenantID != callerTenant {
+			// A PRIVATE target was only resolvable through the (still
+			// unverified) tenant claim; answering 401 would confirm it
+			// exists. Look exactly like "no such agent" instead.
+			if !targetPublic {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
+				return
+			}
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"code": "agent_token_invalid", "error": "invalid agent token"})
 			return
 		}

@@ -6,10 +6,14 @@ package handlers
 
 import (
 	"bytes"
+
+	"go.uber.org/zap"
+
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -647,5 +651,56 @@ func TestRLSAgentPolicy_HandoffLabelGrantsOnlyHandoff(t *testing.T) {
 		if err := p.Authorize(ctx, toolAction(tool), ""); err == nil {
 			t.Fatalf("%s must stay denied for a handoff agent", tool)
 		}
+	}
+}
+
+// Regression (independent review): a whitespace-only X-Pal-Agent-Token must
+// not skip the user scope check — handlers trim it to "no agent token" and
+// would then run the restricted key with no scope check.
+func TestWithScopeOrAgent_WhitespaceHeaderStillScopeChecked(t *testing.T) {
+	t.Setenv("PAL_AUTHZ_ENFORCE", "1")
+	auth := NewAuthHandler(&server.Server{Logger: zap.NewNop()}, testJWTSecret)
+	reached := false
+	h := auth.WithScopeOrAgent(ScopeRunsExecute, func(w http.ResponseWriter, r *http.Request) { reached = true })
+	tok := mintSvcToken(t, uuid.NewString(), []string{"runs:read"})
+	for _, hv := range []string{" ", "\t", ""} {
+		reached = false
+		req := httptest.NewRequest(http.MethodPost, "/x", nil)
+		req.Header.Set("Authorization", bearerHeader(tok))
+		req.Header.Set(AgentTokenHeader, hv)
+		rr := httptest.NewRecorder()
+		h(rr, req)
+		if reached || rr.Code != http.StatusForbidden {
+			t.Fatalf("header %q: reached=%v code=%d — scope check skipped", hv, reached, rr.Code)
+		}
+	}
+	// A real (non-blank) agent token goes to the handler, which verifies it.
+	req := httptest.NewRequest(http.MethodPost, "/x", nil)
+	req.Header.Set(AgentTokenHeader, "eyJ.x.y")
+	h(httptest.NewRecorder(), req)
+	if !reached {
+		t.Fatal("agent-token request must reach the handler (which verifies it)")
+	}
+}
+
+// Regression (independent review): an unverified tenant claim must not turn
+// A2A invoke into a cross-tenant existence oracle for PRIVATE agents.
+func TestRLSA2AInvoke_ForgedTenantClaimIsNotAnOracle(t *testing.T) {
+	a := newAuthzEnv(t)
+	victim := seedEnforcedTenant(t, a.e, "an-"+uuid.NewString()[:8])
+	a.seedAgent(t, victim, "secret-bot") // private
+	h := NewA2AHandler(a.e.srv, a.auth)
+	claims := map[string]any{"typ": "agent", "iss": "pal", "tenant_id": victim, "aud": []string{"x"}, "exp": 4102444800}
+	raw, _ := json.Marshal(claims)
+	forged := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"EdDSA","kid":"`+uuid.NewString()+`.1"}`)) + "." +
+		base64.RawURLEncoding.EncodeToString(raw) + "." + base64.RawURLEncoding.EncodeToString([]byte("sig"))
+	codes := map[string]int{}
+	for _, name := range []string{"secret-bot", "no-such-bot"} {
+		rr := a.do(t, h.InvokeAgent, "POST", "/x", "", map[string]any{"message": "hi"}, map[string]string{"name": name},
+			map[string]string{AgentTokenHeader: forged})
+		codes[name] = rr.Code
+	}
+	if codes["secret-bot"] != http.StatusNotFound || codes["no-such-bot"] != http.StatusNotFound {
+		t.Fatalf("existing private agent must look like a missing one: %v", codes)
 	}
 }
