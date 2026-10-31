@@ -635,6 +635,17 @@ LLM answers are replays from `cmd/llm-replay` (W2-0). Env: `PAL_KIOSK`,
 `_ALLOW_PROD`, `_TTL_MIN` (30), `_SWEEP_SEC` (60), `_MAX_SESSIONS` (20),
 `_IP_PER_HOUR` (3). Dashboard: public `/kiosk` start page, `components/kiosk-tour.tsx`.
 
+### Agent promotion: environments, approval, canary, rollback (ADR 0054)
+
+`pal freeze` freezes the working copy into an immutable, content-addressed version (the executor and
+eval runner run that snapshot). `pal promote <agent> --to sandbox|staging|prod [--canary N]` is gated
+server-side (earlier env, fresh server-run hermetic eval vs env baseline, budget); prod needs a human
+owner/admin `pal approve` (API keys/agents can only propose). Canary routes runs via
+`agent_experiments` + `agent_environments`; guards (error rate, cost ratio, eval floor) auto-roll back;
+`pal rollback` is idempotent. Every decision is in the append-only `agent_promotion_audit`. Routes:
+`/v1/agents/{name}/{promote,versions,environments,environments/{env}/rollback}`, `/v1/promotions[/audit|/{id}/approve|reject]`.
+Env: `PAL_PROMOTE_REQUIRE_SANDBOX_RUN` (prod also needs a sandbox microVM run). E2E: `scripts/e2e-agent-promotion.sh`.
+
 ### Deployments
 
 | Method   | Path                       | Description                    |

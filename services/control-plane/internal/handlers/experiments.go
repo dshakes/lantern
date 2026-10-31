@@ -17,7 +17,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"hash/fnv"
 	"net/http"
 	"time"
 
@@ -324,10 +323,7 @@ func PickVariant(ctx context.Context, pool *pgxpool.Pool, tenantID, agentName, r
 		return "", "", ""
 	}
 	// Deterministic hash of run_id into [0,100).
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(runID))
-	bucket := int(h.Sum32() % 100)
-	if bucket < splitB {
+	if canaryBucket(runID, splitB) {
 		return "b", bVer, expID
 	}
 	return "a", aVer, expID

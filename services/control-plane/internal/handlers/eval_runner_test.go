@@ -405,3 +405,61 @@ func TestEvalGenerate_GroundedDraftNeverSaved(t *testing.T) {
 		t.Fatalf("calibration stats: %v", st)
 	}
 }
+
+// Promotion evidence (ADR 0054): a server-run eval is stamped source='hermetic'
+// with the frozen version whose content digest matches what actually ran
+// ("draft:<digest>" when none does), whatever version the caller claims.
+func TestEvalRunSuite_StampsServerSideEvidence(t *testing.T) {
+	f := newEvalFixture(t)
+	agentID := f.seedAgent("store-bot", "")
+	ctx := context.Background()
+	f.agentReply["refund window for shoes?"] = "Returns within 30 days."
+	suite := f.upsertSuite("store-bot", []map[string]any{refundCase})
+	run := func(body map[string]any) (int, string, string) {
+		code, out := f.do(f.h.RunSuite, http.MethodPost, "/v1/eval-suites/"+suite+"/run", body, map[string]string{"id": suite})
+		if code != http.StatusOK {
+			t.Fatalf("run: %d %v", code, out)
+		}
+		var ver, src string
+		if err := f.pool.QueryRow(ctx, `SELECT agent_version, source FROM eval_runs WHERE id::text=$1`, out["id"]).Scan(&ver, &src); err != nil {
+			t.Fatal(err)
+		}
+		return code, ver, src
+	}
+	// 1. Working copy, nothing frozen: stamped by content, claim ignored.
+	_, ver, src := run(map[string]any{})
+	if !strings.HasPrefix(ver, "draft:") || src != "hermetic" {
+		t.Fatalf("evidence = %s/%s", ver, src)
+	}
+	// 2. Freeze the working copy as v9: the same content now stamps as v9.
+	tx, err := f.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, _, err := loadDraftSnapshot(ctx, tx, f.tenant, "store-bot")
+	_ = tx.Rollback(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	man, _ := json.Marshal(map[string]any{"snapshot": snap})
+	if _, err := f.pool.Exec(ctx, `INSERT INTO agent_versions (agent_id, version, digest, bundle_uri, manifest)
+		VALUES ($1::uuid,'v9',$2,'snapshot://inline',$3::jsonb)`, agentID, snap.digest(), string(man)); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := f.do(f.h.RunSuite, http.MethodPost, "/v1/eval-suites/"+suite+"/run", map[string]any{"agentVersion": "forged-v100"}, map[string]string{"id": suite}); code != http.StatusBadRequest {
+		t.Fatalf("a version that was never frozen must be refused, got %d %v", code, out)
+	}
+	if _, ver, _ = run(map[string]any{}); ver != "v9" {
+		t.Fatalf("frozen content should stamp v9, got %s", ver)
+	}
+	// 3. Naming a real frozen version evaluates THAT snapshot even after the draft moves on.
+	if _, err := f.pool.Exec(ctx, `UPDATE agents SET system_prompt='something else entirely' WHERE id=$1::uuid`, agentID); err != nil {
+		t.Fatal(err)
+	}
+	if _, ver, _ = run(map[string]any{"agentVersion": "v9"}); ver != "v9" {
+		t.Fatalf("explicit frozen version stamp = %s", ver)
+	}
+	if _, ver, _ = run(map[string]any{}); !strings.HasPrefix(ver, "draft:") {
+		t.Fatalf("changed draft must not inherit v9's evidence: %s", ver)
+	}
+}
