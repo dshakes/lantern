@@ -152,7 +152,7 @@ export function AgentChat({ product, onUseWizard }: { product: ChatProduct; onUs
   };
 
   const rail = railStatuses(product, facts);
-  const current = rail.find((r) => r.status === "current") ?? rail[0];
+  const current = rail.find((r) => r.status === "current");
   const spec = product === "runtime" && facts?.phase === "create" ? facts.runtime?.spec : null;
   const run = latestData<{ runId: string; status: string; output?: string; error?: string }>(calls, "start_run");
 
@@ -182,7 +182,7 @@ export function AgentChat({ product, onUseWizard }: { product: ChatProduct; onUs
         {/* Rail: compact line on phones, side panel on desktop. */}
         <aside className="sticky top-0 z-10 -mx-4 border-b border-zinc-800 bg-surface-0 px-4 py-3 sm:-mx-6 sm:px-6 lg:order-2 lg:top-8 lg:mx-0 lg:self-start lg:border-0 lg:bg-transparent lg:p-0">
           <p className="text-xs text-zinc-400 lg:hidden">
-            {rail.filter((r) => r.status === "done").length} of {rail.length} done · <span className="text-zinc-50">{current.label}</span>
+            {rail.filter((r) => r.status === "done").length} of {rail.length} done · <span className="text-zinc-50">{current ? current.label : "Set up"}</span>
           </p>
           <ol aria-label="Setup progress" className="hidden space-y-4 lg:block">
             {rail.map((s, i) => (

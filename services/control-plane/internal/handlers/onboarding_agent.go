@@ -72,6 +72,9 @@ const (
 	// A channel check reported by the client is trusted for this long (the same
 	// live-check model as the wizard: the server cannot see the bridges).
 	onbChannelFreshness = 15 * time.Minute
+	// A resume within this long of the agent's last message shows the
+	// transcript as is, without asking the model for a recap.
+	onbRecapAfter = 30 * time.Minute
 )
 
 // ---- persisted transcript ------------------------------------------------------
@@ -485,6 +488,22 @@ func (h *OnboardingAgentHandler) Turn(w http.ResponseWriter, r *http.Request) {
 	}
 
 	t.facts = h.facts(r, tenantID, req.Product, doc)
+
+	// A reload right after the agent spoke needs no recap: the transcript is
+	// already on screen, and a recap per reload is a model call per reload.
+	if req.Event == "resume" && !t.userTurn && len(req.Results) == 0 && len(t.toolCalls) == 0 && t.facts.ProviderReady {
+		if n := len(doc.Messages); n > 0 && doc.Messages[n-1].Role == "agent" && now.Sub(doc.Messages[n-1].At) < onbRecapAfter {
+			actions := []onbAction{}
+			if doc.Pending != nil {
+				actions = append(actions, *doc.Pending)
+			}
+			writeJSON(w, http.StatusOK, onbTurnResponse{
+				Product: req.Product, Mode: "agent", Reply: doc.Messages[n-1].Text, Actions: actions,
+				ToolCalls: []onbToolCall{}, Facts: t.facts, Messages: nonNilMessages(doc.Messages),
+			})
+			return
+		}
+	}
 
 	// 3. No model key yet (or the one just pasted failed its test): there is
 	//    nothing to reason with — scripted turn.

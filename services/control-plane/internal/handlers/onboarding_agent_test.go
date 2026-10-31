@@ -522,8 +522,18 @@ func TestOnboardingAgent_ResumeRecapsAndReoffersPendingAction(t *testing.T) {
 		t.Fatalf("resume GET: %d %+v", rr.Code, got)
 	}
 
-	ah.model.replies = []string{`{"say":"Welcome back — you were about to review consent.","tool":null}`}
+	// A reload right after the agent spoke shows the transcript; no model call.
+	calls := len(ah.model.users)
 	out := ah.turn(t, map[string]any{"product": "pal", "event": "resume"})
+	if len(ah.model.users) != calls || len(out.Actions) != 1 || out.Actions[0].Tool != "ask_consent" {
+		t.Fatalf("immediate resume: %d model calls, actions %+v", len(ah.model.users)-calls, out.Actions)
+	}
+
+	// Coming back later gets a recap.
+	later := time.Now().UTC().Add(time.Hour)
+	ah.h.now = func() time.Time { return later }
+	ah.model.replies = []string{`{"say":"Welcome back — you were about to review consent.","tool":null}`}
+	out = ah.turn(t, map[string]any{"product": "pal", "event": "resume"})
 	if !strings.Contains(ah.model.users[len(ah.model.users)-1], "came back") {
 		t.Error("resume turn should ask the model for a recap")
 	}
@@ -532,6 +542,7 @@ func TestOnboardingAgent_ResumeRecapsAndReoffersPendingAction(t *testing.T) {
 	}
 
 	// Reloading again replaces the recap instead of stacking another.
+	later = later.Add(time.Hour)
 	ah.model.replies = []string{`{"say":"Welcome back again.","tool":null}`}
 	before := len(out.Messages)
 	out = ah.turn(t, map[string]any{"product": "pal", "event": "resume"})
