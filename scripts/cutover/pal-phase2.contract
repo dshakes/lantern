@@ -21,7 +21,7 @@
 : "${EXTRA_ENV_RENAMES:=NEXT_PUBLIC_LANTERN_:NEXT_PUBLIC_PAL_ LANTERN_:PAL_}"
 : "${EXACT_VALUE_MAP:=lantern-dev-jwt-secret-do-not-use-in-production=pal-dev-jwt-secret-do-not-use-in-production}"
 OWNER_NOTES="${OWNER_NOTES:-Dashboard: everyone signs in again (cookie/localStorage keys and the JWT issuer changed); theme resets to dark.
-Dev seed: the admin row moves to admin@pal.dev / password pal once (a changed dev-admin password is reset).
+Dev seed: the admin row moves to admin@pal.local / password pal once (a changed dev-admin password is reset; bridges default PAL_BRIDGE_EMAIL to admin@pal.local — NOTE the contract doc says admin@pal.dev, the code says admin@pal.local).
 Agent-identity / data-plane tokens with the old issuer are rejected: running VMs re-mint on restart, data planes re-register.
 WhatsApp: NO re-pair needed — auth_sessions stays put and the new device name is only sent at pairing; the phone keeps showing the old linked-device name until a voluntary re-pair.
 iPhone Shortcuts: x-pal-signal-token header (old header accepted for one release); rename PAL-Status-Available / PAL-Parked.

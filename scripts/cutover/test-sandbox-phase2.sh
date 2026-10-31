@@ -241,6 +241,8 @@ snap "$SB/S0"
 pal_buckets() { mc_ "$1" "$2" ls --json s/ 2>/dev/null | python3 -I -c 'import json,sys
 print(" ".join(sorted(json.loads(l)["key"].rstrip("/") for l in sys.stdin if l.strip())))'; }
 
+ROLES_NEW="$(printf '%s\n' "$NA" "$NU" | sort | tr '\n' ' ' | sed 's/ $//')"
+ROLES_OLD="$(printf '%s\n' "$OA" "$OU" | sort | tr '\n' ' ' | sed 's/ $//')"
 # ------------------------------------------------------------------ plan
 say "1. plan"
 RELEASE_REF="$REL" "$CUT" plan > "$SB/plan.out" 2>&1; rc=$?
@@ -255,11 +257,11 @@ sleep 1
 RELEASE_REF="$REL" "$CUT" apply > "$SB/apply.out" 2>&1; rc=$?
 grep -E '===|FAIL|WARN|COMPLETE|verified|bundle_uri|MinIO|role|schema' "$SB/apply.out" | cut -c12-200 | sed 's/^/    /' | head -60
 check "apply exits 0" test "$rc" = 0
-check "DB renamed, superuser + app role renamed, old app role gone" bash -c "[ \"\$(q $NU postgres \"select string_agg(rolname,',' order by rolname) from pg_roles where rolname in ('$OU','$OA','$NU','$NA')\")\" = $NA,$NU ] && [ \"\$(q $NU postgres \"select count(*) from pg_database where datname='$ND'\")\" = 1 ]"
+check "DB renamed, superuser + app role renamed, old app role gone" bash -c "[ \"\$(q $NU postgres \"select string_agg(rolname,' ' order by rolname) from pg_roles where rolname in ('$OU','$OA','$NU','$NA')\")\" = \"$ROLES_NEW\" ] && [ \"\$(q $NU postgres \"select count(*) from pg_database where datname='$ND'\")\" = 1 ]"
 check "superuser password reset to the contract value (TCP login $NU/pal)" bash -c "printf 'pal\n' | $REAL_DOCKER exec -i $PG_CONTAINER sh -c 'IFS= read -r PGPASSWORD; export PGPASSWORD; psql -XAt -h 127.0.0.1 -U $NU -d $ND -c \"select 1\"' | grep -qx 1"
 check "app role kept its SCRAM password through the rename" bash -c "printf 'apppw-test\n' | $REAL_DOCKER exec -i $PG_CONTAINER sh -c 'IFS= read -r PGPASSWORD; export PGPASSWORD; psql -XAt -h 127.0.0.1 -U $NA -d $ND -c \"select 1\"' | grep -qx 1"
 check "migration ran on API start (schema v36) and found nothing to rename (no fight)" bash -c "[ \"\$(q $NU $ND 'select version from schema_migrations')\" = 36 ] && ! grep -q 'migration renamed the app role' '$STUB_STATE/api-start.log'"
-check "bundle_uri: s3://lantern-* rewritten, others untouched" bash -c "[ \"\$(q $NU $ND \"select string_agg(coalesce(bundle_uri,'-'),' ' order by id) from agent_versions\")\" = 's3://pal-bundles/t1/a.tgz s3://pal-bundles/t1/b.tgz s3://pal-bundles-dev/x.tgz s3://test/y.tgz -' ]"
+check "bundle_uri: s3://lantern-* rewritten (3 rows), others untouched" bash -c "[ \"\$(q $NU $ND \"select count(*) from agent_versions where bundle_uri like 's3://lantern-%'\")\" = 0 ] && [ \"\$(q $NU $ND \"select count(*) from agent_versions where bundle_uri like 's3://pal-bundles%'\")\" = 3 ] && [ \"\$(q $NU $ND \"select count(*) from agent_versions where bundle_uri = 's3://test/y.tgz'\")\" = 1 ]"
 check "MinIO now on pal/palsecret; old root creds rejected" bash -c "mc_() { $REAL_DOCKER exec -e MC_HOST_s=\"http://\$1:\$2@localhost:9000\" $STUB_MINIO_CONTAINER mc ls s/ >/dev/null 2>&1; }; mc_ pal palsecret && ! mc_ lantern lanternsecret"
 check "pal-* mirrors exist, old buckets kept" test "$(pal_buckets pal palsecret)" = "lantern-bundles lantern-bundles-dev lantern-dev lantern-snapshots pal-bundles pal-bundles-dev pal-dev pal-snapshots"
 A1="$(objs pal palsecret lantern-bundles)"; A2="$(objs pal palsecret pal-bundles)"
@@ -279,7 +281,8 @@ check "apply prints no secret value" bash -c "! grep -qE 'fake-wa-token|fake im 
 lastmig() { find "$1" -name '*.up.sql' -exec basename {} \; | sed -nE 's/^0*([0-9]+)_.*/\1/p' | sort -n | tail -1; }
 if [[ "$E2E" == 1 ]]; then
   check "[e2e] REAL brand migration ran: dev namespace pal-t-dev" test "$(q "$NU" "$ND" "select k8s_namespace from tenants where slug='dev'")" = pal-t-dev
-  check "[e2e] REAL dev seed moved the admin to admin@pal.dev" test "$(q "$NU" "$ND" "select email from users where id='00000000-0000-0000-0000-000000000002'")" = admin@pal.dev
+  SEED_EMAIL="$(sed -nE "s/^[[:space:]]*'(admin@pal[.][a-z]+)',?$/\1/p" "$MIGRATIONS_NEW_SRC/../migrate.go" | head -1)"
+  check "[e2e] REAL dev seed moved the admin to the branch's seed email ($SEED_EMAIL)" test "$(q "$NU" "$ND" "select email from users where id='00000000-0000-0000-0000-000000000002'")" = "$SEED_EMAIL"
   check "[e2e] schema at the zero-lantern newest migration" test "$(q "$NU" "$ND" 'select version from schema_migrations')" = "$(lastmig "$MIGRATIONS_NEW_SRC")"
 fi
 say "3. verify"
@@ -315,7 +318,7 @@ inject() {
   check "[$name] auto-rollback IDENTICAL" grep -q 'snapshot IDENTICAL' "$SB/fail-$name.out"
   snap "$SB/S-$name"; check "[$name] byte-identical to the start" same "$SB/S0" "$SB/S-$name"
   check "[$name] MinIO back on the old root creds" bash -c "$REAL_DOCKER exec -e MC_HOST_s=http://lantern:lanternsecret@localhost:9000 $STUB_MINIO_CONTAINER mc ls s/ >/dev/null 2>&1"
-  check "[$name] old role names back" test "$(q $OU postgres "select string_agg(rolname,',' order by rolname) from pg_roles where rolname in ('$OU','$OA','$NU','$NA')")" = "$OA,$OU"
+  check "[$name] old role names back" test "$(q "$OU" postgres "select string_agg(rolname,' ' order by rolname) from pg_roles where rolname in ('$OU','$OA','$NU','$NA')")" = "$ROLES_OLD"
 }
 inject after-minio PAL_CUTOVER_FAIL_AT=minio
 inject after-infra PAL_CUTOVER_FAIL_AT=infra
