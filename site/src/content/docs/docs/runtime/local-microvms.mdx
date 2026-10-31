@@ -73,7 +73,7 @@ EOF
 firecracker --no-api --config-file vm.json   # boots to a root login on ttyS0
 ```
 
-It reaches a root login on `ttyS0`. On an M4 Max that takes about 1.6 s. Clean up with `limactl stop firecracker-dev && limactl delete firecracker-dev`.
+It reaches a root login on `ttyS0`. Clean up with `limactl stop firecracker-dev && limactl delete firecracker-dev`.
 
 ## Point the stack at it
 
@@ -96,7 +96,7 @@ Check it worked: a scheduled VM's node is not `node-stub`, and `GET /v1/runtime/
 | `FATAL: /dev/kvm missing` | M1/M2 or older than macOS 15. Use CI, a remote Linux host, or `RUNTIME_BACKEND=docker`. |
 | Build refuses to start: disk over the limit | Run `make lima-clean`, or raise `LIMA_DISK_MAX_PCT`. |
 | An e2e target waits on `:50054` | Another manager run holds the port. It waits up to `LIMA_PORT_WAIT_SECS`; check `ss -ltnp \| grep 50054` in the guest. |
-| First exec after a restore takes about 3 s | The manager holds it until the restored harness re-identifies and heartbeats, and the guest is slow under nested virtualization. See [Sandbox lifecycle](/docs/runtime/sandbox-lifecycle/). |
+| First exec after a restore takes seconds | The manager holds it until the restored harness re-identifies and heartbeats, and the guest is slow under nested virtualization. See [Sandbox lifecycle](/docs/runtime/sandbox-lifecycle/). |
 | Node shows `node-stub` | `PAL_SCHEDULER_GRPC_ADDR` is unset on the control plane, so the stub client fakes placement. |
 
 ## Limits

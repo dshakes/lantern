@@ -23,7 +23,7 @@ A sandbox microVM does not have to stay running. **Pause** snapshots its memory 
 
 Set `idleTimeoutSecs` on the schedule request (`--idle-timeout N` on the CLI; `0` or unset means never). When a sandbox sees no exec, tool call or file request for that long, it is snapshotted and its compute and quota slot are released. The scheduler sweeps every 10 s on activity reported with the 30 s node heartbeat, so suspension can trail the timeout by up to about 40 s.
 
-The next exec or file request (REST, CLI or SDK) resumes the VM transparently. The caller sees a slower first response (about 4 s for the in-guest exec channel to re-establish), not an error. A VM paused by an operator (`POST /pause`) is never auto-resumed: exec answers 409.
+The next exec or file request (REST, CLI or SDK) resumes the VM transparently. The caller sees a slower first response while the restored guest re-identifies and reconnects, not an error. In the committed benchmark ([`docs/benchmarks/runtime-latency.md`](repo:/blob/master/docs/benchmarks/runtime-latency.md), nested virtualization on a laptop) a restored VM answered its first exec after 2,491 ms (p50). A VM paused by an operator (`POST /pause`) is never auto-resumed: exec answers 409.
 
 ## Forks
 

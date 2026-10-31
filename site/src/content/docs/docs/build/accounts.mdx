@@ -144,13 +144,13 @@ The From address is `PAL_MAIL_FROM` (default `PAL <no-reply@localhost>`). The re
 - Any failure rolls the whole transaction back and returns `500 internal error`. Nothing is removed.
 - Success is `200 {"tenant_id":"…","deleted":{"runs":12,"agents":3,…}}`, a per-table row count.
 
-The API has no confirmation parameter. The safeguard is in the dashboard: **Settings, Your data** (owners only) offers Export and Delete, and Delete requires typing `delete my workspace` before the button enables.
+The API has no confirmation parameter. The safeguard is in the dashboard: the **Your data** section on the **General** tab of **Settings** (owners only) has **Export data (JSON)** and **Delete workspace**. In the confirmation dialog, **Delete forever** stays disabled until you type `delete my workspace`.
 
-Both tenant routes also carry the `admin` scope annotation. Scope enforcement is on by default in production (`PAL_ENV=production|staging`) and off in dev. Set `PAL_AUTHZ_ENFORCE=0` to opt out (logged as a warning) or `=1` to force it on in dev. Row-level security is on in production whenever `PAL_APP_DB_PASSWORD` is set; without it the control plane refuses to start unless you set `PAL_RLS_ENFORCE=0`. Either way API keys are not owners, so they get `403`.
+Both tenant routes also carry the `admin` scope annotation. Scope enforcement is on by default when `PAL_ENV` is `prod`, `production` or `staging`, and off in dev. Set `PAL_AUTHZ_ENFORCE=0` to opt out (logged as a warning) or `=1` to force it on in dev. Row-level security is on in production whenever `PAL_APP_DB_PASSWORD` is set; without it the control plane refuses to start unless you set `PAL_RLS_ENFORCE=0`. Either way API keys are not owners, so they get `403`.
 
 ## Free-tier caps
 
-Every new workspace, from password sign-up or a first Google login, starts with a hard-fail daily spend cap and a sandbox quota, so a new account cannot run up cost. The cap is the tenant-wide budget (the row `PUT /v1/budgets/tenant` edits; see [Budgets](/docs/build/budgets/)). The quota is the one `PUT /v1/runtime/quota` edits. An owner can raise or remove either. Existing workspaces and the seeded dev workspace are never touched. Set a variable to `off` to skip that cap.
+Every new workspace, from password sign-up or a first Google login, starts with a hard-fail daily spend cap and a sandbox quota, so a new account cannot run up cost. The cap is the tenant-wide budget (the row `PUT /v1/budgets/tenant` edits; see [Budgets](/docs/build/budgets/)). The quota is the one `PUT /v1/runtime/quota` edits. An owner can raise or remove either. Existing workspaces and the seeded dev workspace are never touched. Set a variable to `off` or `0` to skip that cap.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |

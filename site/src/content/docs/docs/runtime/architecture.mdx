@@ -23,7 +23,7 @@ PAL Runtime is a set of real processes joined by real calls. Callers sit outside
 
 | Component | Language / port | Role and boundary |
 | --- | --- | --- |
-| Gateway | Rust (Axum), `:8443` TLS | Edge ingress. Terminates TLS, validates API keys by asking the control plane (cached 60 s by key hash), calls the control plane over gRPC with `x-lantern-service-token`. Refuses API-key auth when introspection is not configured. Without `PAL_TLS_CERT` and `PAL_TLS_KEY` it serves plaintext and warns; never run that way in production. |
+| Gateway | Rust (Axum), `:8443` TLS | Edge ingress. Terminates TLS, validates API keys by asking the control plane (cached 60 s by key hash), calls the control plane over gRPC with `x-pal-service-token`. Refuses API-key auth when introspection is not configured. Without `PAL_TLS_CERT` and `PAL_TLS_KEY` it refuses to start in production; in dev it serves plaintext and warns. |
 | Control plane | Go, `:8080` HTTP (REST, SSE), `:50051` gRPC | Owns agents, runs, budgets and tenants. Gates every run (auth, budget, isolation), runs shared-tier agents inline, journals every step to Postgres. Only callers presenting the service token may set a `tenant_id` on `:50051`. Refuses to start in production without the token. |
 | Model router | Rust, `:50053` gRPC | `ModelService`: `Complete`, `CompleteStream`, `Embed`, `Tokenize`. Maps a capability to a concrete provider model, with caching. It carries tenant provider keys, so it refuses to start in production without the token. |
 

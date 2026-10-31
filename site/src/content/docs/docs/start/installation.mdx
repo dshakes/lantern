@@ -13,11 +13,11 @@ Every builder path starts from a **checkout of the repo** and the **`pal` CLI**,
 
 | Tool | Version | Needed for | Homebrew |
 | --- | --- | --- | --- |
-| Docker Desktop | v4.x+ | Postgres, Redis, MinIO and the demo | `brew install --cask docker` |
+| Docker Desktop | with `docker compose` (Compose v2) | Postgres, Redis, MinIO and the demo | `brew install --cask docker` |
 | Go | 1.26+ | The `pal` CLI and the control plane on the host | `brew install go` |
 | Node.js | 22+ | The dashboard and the bridges | `brew install node` |
 | Git | any | Cloning | `brew install git` |
-| Rust (stable) | any | Only `make build` and `make test` of the Rust services | `brew install rustup` |
+| Rust | 1.94, pinned in `rust-toolchain.toml` | Only `make build` and `make test` of the Rust services | `brew install rustup` |
 
 <Aside>Docker must be running before you start the stack. The CLI module itself declares Go 1.25; 1.26 is what the control plane needs when you run it on the host.</Aside>
 

@@ -13,8 +13,8 @@ Agent code is untrusted and tenants share infrastructure, so every hop between t
 
 | Boundary | Credential it demands | Fails closed when | Enforced in |
 | --- | --- | --- | --- |
-| Internet to gateway | TLS, then a JWT or API key | Key introspection is not configured: API-key auth is refused. Without `PAL_TLS_CERT` and `PAL_TLS_KEY` the gateway serves plaintext and warns; never run that way in production. | `services/gateway` |
-| Gateway to control plane | `x-lantern-service-token` on gRPC `:50051` | `PAL_GRPC_SERVICE_TOKEN` unset in production: the control plane refuses to start | `services/control-plane` interceptors |
+| Internet to gateway | TLS, then a JWT or API key | Key introspection is not configured: API-key auth is refused. Without `PAL_TLS_CERT` and `PAL_TLS_KEY` the gateway refuses to start in production; in dev it serves plaintext and warns. | `services/gateway` |
+| Gateway to control plane | `x-pal-service-token` (legacy `x-lantern-service-token` still accepted) on gRPC `:50051` | `PAL_GRPC_SERVICE_TOKEN` unset in production: the control plane refuses to start | `services/control-plane` interceptors |
 | Caller to REST API | Bearer JWT or API key, then a required scope | Scope enforcement is on by default in production (`PAL_AUTHZ_ENFORCE`; `=0` opts out with a warning) | `internal/handlers/auth.go` |
 | Service to service | Service token on `:50051`, `:50052`, `:50053`, `:50054`, `:50055`, plus a client certificate when `PAL_GRPC_TLS_*` is set (mutual TLS, ADR 0043) | Token or certificate missing in production: the service refuses to start | each service's interceptor |
 | Data-plane tunnel | Server-auth TLS, a bootstrap token, then a session JWT | Exempt from the client certificate; `DataPlaneService` authenticates itself | control plane `DataPlaneService` |

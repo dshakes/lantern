@@ -36,7 +36,7 @@ Press **Start demo**. Five steps over real pages:
 4. A signed-receipt check at `/proof`.
 5. The sandbox view.
 
-After 120 seconds without input, or when the 30-minute timer ends, the session closes and the workspace is deleted.
+After 120 seconds without input, or when the 30-minute timer ends, the page drops the session token. The server deletes the workspace when its 30 minutes are up.
 
 ## How visitors are isolated
 
@@ -49,12 +49,12 @@ After 120 seconds without input, or when the 30-minute timer ends, the session c
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `PAL_KIOSK` | off | `1` enables the endpoint, sweep and guards. Otherwise `/v1/kiosk/session` is 404. |
+| `PAL_KIOSK` | off | `1` (or `true`, `on`) enables the endpoint, sweep and guards. Otherwise `/v1/kiosk/session` is 404. |
 | `PAL_KIOSK_ALLOW_PROD` | off | Required to run kiosk in prod, production or staging. Use only on a dedicated demo host. |
 | `PAL_KIOSK_TTL_MIN` | 30 | Session lifetime in minutes. |
 | `PAL_KIOSK_SWEEP_SEC` | 60 | How often expired sessions are purged. |
 | `PAL_KIOSK_MAX_SESSIONS` | 20 | Live-session cap; over it returns 503. |
-| `PAL_KIOSK_IP_PER_HOUR` | 3 | Sessions per client address per hour; over it returns 429. |
+| `PAL_KIOSK_IP_PER_HOUR` | 3 | Sessions per client address per hour; over it returns 429. The demo overlay sets 60. |
 | `KIOSK_JWT_SECRET` | random per start | Compose overlay. `make demo` and `pal demo` generate one. The control plane refuses kiosk mode with an empty or dev-default `JWT_SECRET`. |
 
 Kiosk mode also requires `PAL_RLS_ENFORCE=1`, `PAL_AUTHZ_ENFORCE=1` and an explicit `JWT_SECRET`. The overlay `infra/docker/docker-compose.kiosk.yml` sets all of them and points `PAL_LLM_BASEURL_OPENAI` and `_ANTHROPIC` at the replay server.
