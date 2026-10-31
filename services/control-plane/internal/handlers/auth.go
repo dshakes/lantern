@@ -1227,6 +1227,23 @@ func (h *AuthHandler) WithScope(required Scope, next http.HandlerFunc) http.Hand
 	}
 }
 
+// WithScopeOrAgent is WithScope for the routes an AGENT may call as itself
+// (ADR 0052): a request carrying X-Pal-Agent-Token skips the user/API-key
+// scope check and goes to next, which MUST verify the agent token for its
+// audience and enforce the agent's policy (always on — agent principals are
+// never governed by PAL_AUTHZ_ENFORCE). Only wire agent-aware handlers here:
+// on any other route the header would be a scope bypass.
+func (h *AuthHandler) WithScopeOrAgent(required Scope, next http.HandlerFunc) http.HandlerFunc {
+	scoped := h.WithScope(required, next)
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get(AgentTokenHeader) != "" {
+			next(w, r)
+			return
+		}
+		scoped(w, r)
+	}
+}
+
 // RequireScopeMiddleware returns an http.Handler that enforces scope on API key
 // requests. The required scope is derived from the HTTP method:
 //

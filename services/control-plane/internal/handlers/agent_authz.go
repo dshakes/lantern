@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -604,6 +605,9 @@ func (z *AgentAuthz) agentCallerFromRequest(r *http.Request, audience string) (*
 	if tok == "" {
 		return nil, nil
 	}
+	if z == nil {
+		return nil, errors.New("agent identity not configured")
+	}
 	c, err := z.auth.Verify(r.Context(), tok, audience, z.lookupIdentity)
 	if err != nil {
 		// No verified tenant to write an audit row under; log the class of
@@ -640,4 +644,70 @@ func toolAction(name string) agentpolicy.Action {
 		return agentpolicy.Action{Kind: agentpolicy.KindConnector, Target: conn, Sub: act}
 	}
 	return agentpolicy.Action{Kind: agentpolicy.KindTool, Target: name}
+}
+
+// authorizeInbound decides whether caller may invoke target (the target's
+// a2aInbound rules + per-caller rate isolation), auditing on the TARGET
+// tenant's chain. callerID is the caller's SPIFFE id, or "tenant:<id>" for a
+// human/API-key caller. Same-tenant human callers are the owner and always
+// pass (but are still audited).
+func (z *AgentAuthz) authorizeInbound(ctx context.Context, target agentRef, callerID, callerTenant string, callerIsAgent bool) error {
+	if z == nil {
+		return nil
+	}
+	same := callerTenant == target.TenantID
+	act := agentpolicy.Action{Kind: agentpolicy.KindA2AInbound, Target: callerID,
+		Aliases: []string{"tenant:" + callerTenant}, SameTenant: same}
+	var (
+		pr     policyRow
+		recent int
+	)
+	tctx := middleware.InjectTenantID(ctx, target.TenantID)
+	err := z.srv.WithTenant(tctx, func(tx pgx.Tx) error {
+		var err error
+		if pr, err = z.loadPolicy(tctx, tx, target.TenantID, target.ID); err != nil {
+			return err
+		}
+		if pr.Policy.Budget.MaxA2AInboundPerMinute > 0 {
+			return tx.QueryRow(tctx, `SELECT count(*) FROM agent_identity_audit
+				WHERE agent_id = $1 AND event = 'a2a.invoke' AND decision = 'allow' AND principal = $2
+				  AND created_at > now() - interval '1 minute'`, target.ID, callerID).Scan(&recent)
+		}
+		return nil
+	})
+	entry := auditEntry{TenantID: target.TenantID, AgentID: target.ID, AgentName: target.Name,
+		AgentVersionID: target.VersionID, Event: "a2a.invoke", ActionKind: string(agentpolicy.KindA2AInbound),
+		Target: callerID, Principal: callerID, Attrs: map[string]any{"caller_tenant": callerTenant, "caller_is_agent": callerIsAgent}}
+	deny := func(reason string) error {
+		entry.Decision, entry.Reason = "deny", reason
+		z.audit(ctx, entry)
+		return &AgentPolicyDeniedError{Kind: agentpolicy.KindA2AInbound, Target: target.Name, Reason: reason}
+	}
+	if err != nil {
+		z.logger().Error("a2a inbound: policy read failed — denying", zap.Error(err))
+		return deny("policy unavailable (fail closed)")
+	}
+	if !(same && !callerIsAgent) {
+		if d := pr.Policy.Evaluate(act); !d.Allowed {
+			return deny(d.Reason)
+		}
+	}
+	if max := pr.Policy.Budget.MaxA2AInboundPerMinute; max > 0 && recent >= max {
+		return deny(fmt.Sprintf("budget.maxA2AInboundPerMinute (%d) exceeded for this caller", max))
+	}
+	entry.Decision = "allow"
+	z.audit(ctx, entry)
+	return nil
+}
+
+// unverifiedAgentTenant reads the tenant_id claim of an agent token WITHOUT
+// verifying it. Only for choosing which agent a name refers to before the
+// token is verified against that agent's audience; the verified claims must
+// then match (a forged tenant fails the signature check).
+func unverifiedAgentTenant(tok string) string {
+	var c agentidentity.AgentClaims
+	if _, _, err := jwt.NewParser().ParseUnverified(tok, &c); err != nil {
+		return ""
+	}
+	return c.TenantID
 }
