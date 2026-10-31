@@ -452,6 +452,12 @@ func (h *EvalHandler) RecordRun(w http.ResponseWriter, r *http.Request) {
 		"regressed":     regressed,
 		"baselineScore": baselineScore,
 	}
+	// Per-case deltas vs the baseline run (informational here: the 422 for
+	// client-posted results stays the aggregate rule it has always been).
+	if b := h.loadBaseline(ctx, tenantID, agentName, body.Branch); b != nil {
+		resp["caseDeltas"] = caseDeltas(body.CaseResults, b.Cases, nil)
+		resp["baselineRunId"] = b.RunID
+	}
 	status := http.StatusOK
 	if regressed {
 		status = http.StatusUnprocessableEntity // 422 — signals CI failure
