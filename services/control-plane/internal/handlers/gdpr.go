@@ -259,6 +259,13 @@ func purgeTenantRows(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger, t
 		}
 	}
 
+	// The agent audit trail is append-only (ADR 0052); erasure of the whole
+	// tenant is the one sanctioned delete, scoped to THIS tenant and this tx.
+	if _, err := tx.Exec(ctx, `SELECT set_config('pal.audit_erasure', $1, true)`, targetID); err != nil {
+		log.Error("GDPR: enable audit erasure failed", zap.Error(err))
+		return nil, err
+	}
+
 	// ── 6b. Every other table with a tenant_id column ──────────────────────
 	// The explicit list above predates later tables (life_events, commitments,
 	// domain_records, errands, …) that have no FK to tenants, so nothing

@@ -146,12 +146,17 @@ CREATE TRIGGER agent_identity_audit_chain
 	FOR EACH ROW EXECUTE FUNCTION agent_identity_audit_chain();
 
 -- Append-only for EVERY role (grants alone do not bind the superuser pool).
--- The one exception is the FK cascade when the tenant itself is deleted
--- (GDPR erasure / tenant teardown): by then the parent row is gone.
+-- Two exceptions, both tenant erasure: the FK cascade when the tenant row is
+-- deleted (parent already gone), and the GDPR purge, which deletes leaf-to-root
+-- inside one transaction after SET LOCAL pal.audit_erasure = '<tenant id>'.
+-- pal_app holds no DELETE grant, so neither path is reachable from the app role.
 CREATE OR REPLACE FUNCTION agent_identity_audit_immutable() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 BEGIN
-	IF TG_OP = 'DELETE' AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = OLD.tenant_id) THEN
+	IF TG_OP = 'DELETE' AND (
+		NOT EXISTS (SELECT 1 FROM tenants WHERE id = OLD.tenant_id)
+		OR current_setting('pal.audit_erasure', true) = OLD.tenant_id::text
+	) THEN
 		RETURN OLD;
 	END IF;
 	RAISE EXCEPTION 'agent_identity_audit is append-only (% rejected)', TG_OP
