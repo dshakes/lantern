@@ -1,129 +1,75 @@
 ---
-title: Surfaces
-description: The channels where people talk to an agent - WhatsApp, iMessage, Slack, Discord, Telegram, voice and web chat.
-glance:
-  what: "A surface is a channel where people talk to an agent: WhatsApp, iMessage, Slack, Discord, Telegram, voice and web chat."
-  why: "One agent and one set of guardrails answer on every channel; the gateway posts replies back for Telegram and WhatsApp Cloud."
-  how: "Pick a channel under Available surfaces, then link it to an agent in Assigning surfaces to agents."
-sidebar:
-  order: 2
+title: Connect your channels
+description: "Link pal to your iMessage and WhatsApp with pal setup, and see which other channels an agent can answer on."
 ---
 
-import { Aside } from '@astrojs/starlight/components';
-import { CrossChannelMemory } from '../../../../components/diagrams';
+import { Aside, Steps } from '@astrojs/starlight/components';
 
-<CrossChannelMemory client:visible />
+pal reaches your messages through two small programs on your Mac, the **channel bridges**: one for **iMessage** and one for **WhatsApp**. You install them once, then run **`pal setup`**, a guided check that confirms each channel is live before it moves on. Nothing counts as connected until setup sees a real result, such as a paired WhatsApp session or an iMessage database it can read.
 
-Seven channels are wired. The agent and its guardrails are the same on each; only the entry point changes. Replies are posted back by the surface gateway only for Telegram and WhatsApp Cloud; the bridges (WhatsApp personal, iMessage), web chat and voice reply through their own paths, and a Slack or Discord run completes without posting back. For pal itself, start with the two bridges: WhatsApp (personal) and iMessage.
+## Set up pal
 
-## Available surfaces
+<Steps>
 
-### WhatsApp
+1. **Install and start the bridges.** Follow [BOT-SETUP.md](repo:/blob/master/docs/personal/BOT-SETUP.md). It covers the Apple ID or WhatsApp number pal uses, Full Disk Access and Automation permission for Messages, and the bridge tokens.
 
-Two paths:
+2. **Start the stack and sign in.**
 
-- **Personal (bridge)**: a Baileys-based bridge pairs with your own WhatsApp account by QR code. No Business account needed. Self-hosted only.
-- **Business Cloud API**: the surface gateway has a WhatsApp Cloud API adapter for a dedicated business number.
+   ```sh
+   pal dev      # starts the API, dashboard and bridges
+   pal login    # setup needs a signed-in account
+   ```
 
-To set up personal WhatsApp:
+3. **Run the guided setup.**
 
-1. Open **Channels** (`/surfaces`) and choose WhatsApp
-2. Select **Personal (bridge)**
-3. Scan the QR code with your WhatsApp app
-4. The bridge connects and your agent is now reachable via WhatsApp
+   ```sh
+   pal setup
+   ```
 
-<Aside>The bridge is a separate long-running process (port 3100). Start it with `make run-whatsapp-bridge`, or `pal dev`, which starts it by default.</Aside>
+   Progress is saved on the server. If you stop, running `pal setup` again resumes at the right step. The dashboard has the same flow at `/pal/onboarding`, with the same saved progress.
 
-#### Bridge tenant env var
+4. **Apply it to this Mac.** At the end, setup offers to write your answers into the bridge config. You can do it later:
 
-Set `PAL_TENANT_ID` to the tenant UUID the bridge runs under. `PAL_DEFAULT_TENANT_ID` is still read as a fallback. The iMessage bridge and `bridge-core` resolve it in that order. The macOS iMessage bridge is covered in [PAL (personal agent)](/docs/pal/).
+   ```sh
+   pal setup --apply
+   ```
 
-### iMessage
+</Steps>
 
-The iMessage bridge (`services/imessage-bridge`) runs on your Mac. It reads `chat.db` (including RCS and newer messages whose text lives in `attributedBody`), sends through Messages.app, and needs Full Disk Access plus Automation permission. If a send fails because the contact is SMS-only, it re-delivers through the Twilio connector's `send_sms` action. Setup and pairing: [BOT-SETUP.md](repo:/blob/master/docs/personal/BOT-SETUP.md).
+## What setup asks
 
-### Slack
-
-The surface gateway (`services/surface-gateway`) has a Slack adapter for events and bot messages, and the control plane serves a slash-command endpoint at `POST /v1/surfaces/slack/command`. In production, unsigned slash commands are refused unless `SLACK_SIGNING_SECRET` is set. Configure the surface under **Channels** (`POST /v1/surfaces` with a `surfaceId` and `displayName`).
-
-### Discord
-
-A Discord adapter ships in the surface gateway. Configure it under **Channels** with your bot credentials.
-
-### Telegram
-
-Connect a Telegram bot to an agent:
-
-1. Create a bot via `@BotFather` on Telegram
-2. Add the bot token under **Channels**
-3. Assign the surface to an agent
-
-**How a message becomes a reply.** Telegram POSTs the update to the surface-gateway at `/webhooks/telegram`. The gateway checks the `X-Telegram-Bot-Api-Secret-Token` header against `TELEGRAM_SECRET_TOKEN` (a missing or wrong token is a 401 and nothing runs), creates a run for `PAL_AGENT_NAME` in `PAL_TENANT_ID`, waits for it to finish, and sends the run's output to the same chat with `sendMessage`. The same loop serves WhatsApp Cloud, whose POSTs are verified with `X-Hub-Signature-256` (`WHATSAPP_APP_SECRET`). Try it end to end with `examples/telegram-assistant` (calendar-aware assistant) and see [the fixture suite](/docs/build/testing/#example-suites-on-a-fixture-stack).
-
-Limits:
-
-- The agent needs a promoted version before the gateway can run it: run it once from the dashboard or `POST /v1/runs` first, otherwise the gateway logs `agent has no promoted version`.
-- Replies are plain text, sent once when the run ends (no token streaming to the chat). Gateway replies are wired for Telegram and WhatsApp Cloud only.
-- A run that does not finish within 3 minutes gets no reply.
-- `TELEGRAM_API_BASE_URL` re-points Bot API calls at a fixture server for tests; the gateway refuses to start with it when `PAL_ENV` is prod, production or staging.
-
-### Voice (Twilio and LiveKit)
-
-Phone numbers route inbound calls to an agent. Two providers are supported:
-
-- **Twilio**: TwiML webhooks for inbound PSTN calls. The control-plane verifies Twilio's webhook signature and replies with TwiML. SMS is also available on the same Twilio connector.
-- **LiveKit**: realtime audio; the control-plane mints a short-lived join token and the audio loop runs in a separately-deployed LiveKit Agents worker (media last-mile).
-
-#### Budget gating
-
-Voice spend counts against the same `agent_budgets` as runs. A Twilio inbound call over a hard-fail budget is declined with `<Reject>` (no carrier cost). A LiveKit join token is refused with HTTP 402 (no token means no media). A flat cost estimate is recorded on connect; the provider's status callback at `POST /v1/voice/calls/status/{provider}` reconciles to actual duration cost when the call ends.
-
-Both Twilio endpoints verify `X-Twilio-Signature` (HMAC-SHA1 over the public URL plus the sorted form fields, keyed with the number's auth token) and answer a bad or missing one with 403 before touching any state, so a forged status callback cannot move a budget. Billing is by started minute: a 61-second call is two minutes at $0.03, so the $0.05 connect-time reservation reconciles to $0.06; a call that never connects refunds it to zero. Try it with `examples/voice-receptionist`; the signed-webhook flow is asserted in [the fixture suite](/docs/build/testing/#example-suites-on-a-fixture-stack). The inbound reply is a fixed greeting today; the realtime conversation needs the LiveKit worker (media last mile).
-
-#### Voice API
-
-| Method | Path | Description |
+| Step | What happens | If it can't continue |
 | --- | --- | --- |
-| `POST` | `/v1/voice/numbers` | Link a phone number to an agent (provider + config) |
-| `GET` | `/v1/voice/numbers` | List linked numbers |
-| `DELETE` | `/v1/voice/numbers/{id}` | Unlink a number |
-| `GET` | `/v1/voice/calls` | Recent calls with duration and cost |
-| `POST` | `/v1/voice/token` | Mint a short-lived LiveKit join token |
-| `POST` | `/v1/voice/webhook/{provider}` | Inbound call webhook (Twilio TwiML or LiveKit JWT) |
-| `POST` | `/v1/voice/calls/status/{provider}` | Call-end status callback; reconciles actual cost into the budget rollup. Point Twilio's "call status changes" webhook here. |
+| 1. Meet pal | Explains what pal will read and send. You must agree before anything else. You can also opt in to learning your voice from messages you sent. | Declining changes nothing. |
+| 2. Connect channels | Checks iMessage and WhatsApp live. `i` starts iMessage and checks permissions; `w` starts WhatsApp pairing (up to 3 minutes to scan the QR). One connected channel is enough. | It prints the fix for each state, for example "grant Full Disk Access to the app running the bridge". |
+| 3. Learn your voice | Reads your recent 1:1 messages (never groups), shows a profile and a sample reply, and asks `[a]` sounds like me, `[r]` try again, `[s]` skip. See [Teach it your voice](/docs/pal/voice/). | Skipped if you did not opt in, or if there are too few messages. |
+| 4. Set trust | Choose `auto`, `ask` or `off` for each kind of message pal recognises (bill, delivery, appointment, fraud alert, one-time code, travel, receipt, promotion), and optional quiet hours. | Holds on money and unverifiable claims stay on whatever you choose. See [Holds and trust](/docs/pal/human-in-the-loop/). |
+| 5. People and facts | You describe your partner, kids, key dates and close contacts in plain words. pal proposes each fact or relationship and saves only the ones you confirm. | You can finish with none. |
+| 6. First Brief | Shows your first [Brief](/docs/pal/daily/), or tells you to text `?` to yourself. | |
 
-#### Env vars
+Setup never gives consent for you. Consent, voice approval and trust choices need a terminal; `pal setup --yes` never prompts, so it cannot get past them.
 
-| Variable | Purpose |
+### What `--apply` writes
+
+| File | What is written |
 | --- | --- |
-| `PAL_VOICE_CALLER_ID` | E.164 caller-ID shown on outbound calls. Must be a Twilio verified number. |
-| `PAL_VOICE_SMS_HEADSUP` | `on` (default): sends an SMS heads-up before the call so recipients recognize the number. |
-| `PAL_VOICE_CLONE` | Optional. `1` speaks outbound calls in a cloned voice via ElevenLabs. Requires `PAL_ELEVENLABS_API_KEY` and `PAL_ELEVENLABS_VOICE_ID`. |
+| `owner-profile.md` in the pal state directory (`~/.pal/`, or the path in `PAL_OWNER_PROFILE`) | The facts and relationships you confirmed, merged into `## Facts` and `## Relationships`. Other lines are kept. |
+| `bridge.env` in the same directory | `PAL_QUIET_START` and `PAL_QUIET_END` if you set quiet hours; `PAL_VOICE_REASONING=1` if you approved your voice profile. |
 
-### Web Chat
+Both files are backed up first (`.bak-<timestamp>`) and written owner-only. Restart the bridges afterwards so they pick up the change.
 
-Embed a chat widget on any website:
+## The two channels
 
-```html
-<!-- widget.js is served by the dashboard app; copy the exact snippet from /embed -->
-<script src="http://localhost:3001/widget.js"
-  data-api-key="YOUR_SCOPED_API_KEY"
-  data-agent="your-agent-name"
-  data-api-base="http://localhost:8080"
-  data-theme="dark"
-  data-position="bottom-right"
-  async defer></script>
-```
+| | iMessage | WhatsApp |
+| --- | --- | --- |
+| Runs as | `services/imessage-bridge`, on your Mac | `services/whatsapp-bridge` (port 3100), on your Mac |
+| Link | Reads `chat.db` and sends through Messages.app. Needs Full Disk Access and Automation permission. | Pairs with your own WhatsApp account by QR code (Settings, Linked devices). No Business account. |
+| Also handles | RCS and newer messages. If a send fails because the contact is SMS-only, it re-delivers through the Twilio connector's `send_sms` action. | |
 
-The widget uses the same `/v1/sessions` endpoints as the dashboard and streams replies over SSE. The API key is visible in the browser, so scope it to sessions and messages. The dashboard's `/embed` page generates the snippet.
+Both bridges take commands only from you, in a chat with yourself or from a separate bot account. See [Privacy and control](/docs/pal/privacy/).
 
-## Assigning surfaces to agents
+<Aside>
+The bridges run on one Mac. If it is off, nothing is processed. Both bridges run the same checks, so a reply is sent or held by the same rules on each channel.
+</Aside>
 
-Configure a surface once for the tenant, then point it at an agent:
-
-1. Set up the surface under **Channels**
-2. On the agent's page, open its **Channels** tab and enable the surfaces it should answer on
-
-<Aside type="caution">An agent answers only on surfaces assigned to it. A message on a channel the agent is not enabled for gets no reply.</Aside>
-
-Every agent is also reachable over the [REST API](/docs/reference/api/).
+Other channels (Slack, Telegram, web chat, phone) are for agents you build: see [Channels](/docs/build/channels/).

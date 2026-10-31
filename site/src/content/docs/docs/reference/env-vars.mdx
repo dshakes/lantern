@@ -1,23 +1,15 @@
 ---
 title: Environment variables
 description: Every environment variable read by the PAL control plane, schedulers, runtime manager, harness and dashboard, with defaults.
-glance:
-  what: "Every environment variable read by the control plane, schedulers, runtime manager, harness and dashboard, with defaults, as a filterable table."
-  why: "It tells you what each variable does and which ones make a process refuse to start in production when unset."
-  how: "Check the Production checklist first, then filter the table below by name, service or meaning."
 sidebar:
   order: 4
 ---
 
 import EnvTable from '../../../../components/docs/EnvTable.astro';
 
-Every environment variable the control plane, schedulers, runtime manager, in-VM harness and dashboard read, with its default, what it does and the line of code that reads it. **Required in prod** means the process refuses to start (or, for the harness, refuses to run the workload) when `PAL_ENV` is `prod`, `production` or `staging` and the value is missing. Flag values accept `1`, `true` or `on` unless a row says otherwise.
+The control plane, schedulers, runtime manager, in-VM harness and dashboard read **environment variables** for configuration, and every one is listed here with its default, what it does and the line of code that reads it. Local development needs none of them: `make run-api` sets the database, Redis and S3 values, and each security variable has a dev default or is skipped with a warning. In production, a variable marked **required in prod** must be set, or the process refuses to start (the harness refuses to run the workload) when `PAL_ENV` is `prod`, `production` or `staging`. Start from the checklist below, then see [Operations](/docs/operate/operations/) for how the Helm chart supplies the values.
 
-**Naming.** Every variable is spelled `PAL_*`. There are no fallback or alias names.
-
-## How to use this page
-
-Local development needs none of these: `make run-api` sets the database, Redis and S3 values, and every security variable has a dev default or is skipped with a warning. For production, start from the [checklist below](#production-checklist), then see [Operations](/docs/operate/operations/) for how the Helm chart supplies them. A production process that is missing a required value logs it by name and exits at startup.
+Every variable is spelled `PAL_*`. Flag values accept `1`, `true` or `on` unless a row says otherwise. A production process missing a required value logs it by name and exits at startup.
 
 ## Production checklist
 
@@ -32,7 +24,7 @@ The control plane also refuses to start in prod with `PAL_TWILIO_WEBHOOK_AUTH=of
 
 ## All variables
 
-Type to filter by name, service or meaning; pick a group; or show only the ones a production process refuses to start without. Each row links to the line in the code that reads it.
+Filter by name, service or meaning, pick a group, or show only the variables a production process refuses to start without. Each row links to the line that reads it.
 
 <EnvTable />
 

@@ -1,124 +1,100 @@
 ---
-title: Installation
-description: Clone the repo, start the local stack, verify it is healthy.
-glance:
-  what: "Clone the repo, build the pal CLI and run pal dev to start Postgres, Redis, MinIO, the API and the dashboard on your machine."
-  why: "A local stack is what every other guide in these docs runs against."
-  how: "Install Docker, Node 22 and Go 1.26, then follow the four steps below."
+title: Install
+description: Install the prerequisites, clone the repo and build the pal CLI.
 sidebar:
   order: 5
 ---
 
 import { Aside, Steps } from '@astrojs/starlight/components';
 
-The stack is Postgres (agents and runs), Redis (live updates), MinIO (agent bundles), the API server and the dashboard. Only want to look around? `make demo` needs Docker and no key ([Demo mode](/docs/start/demo/)).
+Every builder path starts from a **checkout of the repo** and the **`pal` CLI**, a Go binary you build once. To look around without installing the CLI, `make demo` needs only Docker ([Try it: the demo](/docs/start/demo/)). To start the local stack, see [Develop locally](/docs/start/local-dev/).
+
+## Prerequisites
+
+| Tool | Version | Needed for | Homebrew |
+| --- | --- | --- | --- |
+| Docker Desktop | with `docker compose` (Compose v2) | Postgres, Redis, MinIO and the demo | `brew install --cask docker` |
+| Go | 1.26+ | The `pal` CLI and the control plane on the host | `brew install go` |
+| Node.js | 22+ | The dashboard and the bridges | `brew install node` |
+| Git | any | Cloning | `brew install git` |
+| Rust | 1.94, pinned in `rust-toolchain.toml` | Only `make build` and `make test` of the Rust services | `brew install rustup` |
+
+<Aside>Docker must be running before you start the stack. The CLI module itself declares Go 1.25; 1.26 is what the control plane needs when you run it on the host.</Aside>
+
+## Build the CLI
 
 <Steps>
 
-1. **Prerequisites**
-
-   | Tool | Min version | Homebrew |
-   | --- | --- | --- |
-   | Docker Desktop | v4.x+ | `brew install --cask docker` |
-   | Node.js | v22+ | `brew install node` |
-   | Go | v1.26+ | `brew install go` |
-   | Git | any | `brew install git` |
-   | Rust (stable) | only for `make build` / `make test` of the Rust services | `brew install rustup` |
-
-   <Aside>Docker must be running before you start. Postgres, Redis, and MinIO run in Docker containers.</Aside>
-
-2. **Clone the repo**
+1. Clone the repo.
 
    ```bash
    git clone https://github.com/dshakes/pal.git
    cd pal
    ```
 
-3. **Start the stack.** One command boots everything:
+2. Build `pal` into your Go bin directory.
 
    ```bash
-   (cd packages/cli && go build -o "$(go env GOPATH)/bin/pal" ./cmd/pal)   # installs the pal CLI
-   pal dev
+   (cd packages/cli && go build -o "$(go env GOPATH)/bin/pal" ./cmd/pal)
    ```
 
-   Or run services individually for faster iteration:
+3. Check that it runs. If the shell says `pal: command not found`, add `$(go env GOPATH)/bin` to your `PATH`.
 
    ```bash
-   # Terminal 1: Postgres and Redis only (no MinIO; pal dev --infra-only adds it)
-   make dev-infra
-
-   # Terminal 2: control-plane API on :8080
-   make run-api
-
-   # Terminal 3: Next.js dashboard on :3001
-   make dashboard-dev
-   ```
-
-   <Aside type="caution">Never run `go run ./cmd/server` directly. It uses OS-user Postgres auth and will fail. Always use `make run-api`, which injects `DATABASE_URL`, `REDIS_URL`, and `S3_ENDPOINT`.</Aside>
-
-4. **Verify**
-
-   ```bash
-   curl -s http://localhost:8080/healthz
-   # -> {"status":"ok","llmMode":"api","rlsEnforce":false,...}
-
-   make dev-doctor   # probes every service and reports status
-   pal doctor         # the same check from the CLI
+   pal --help
    ```
 
 </Steps>
 
+Once the stack is up (see [Develop locally](/docs/start/local-dev/)), `pal doctor` checks it and prints a fix for each failing check. `make dev-doctor` probes every service from the Makefile instead.
+
 ## Dev credentials
 
-Seeded automatically on first boot; these are the literal seeded values.
+The local stack seeds these on first boot. They are the literal seeded values.
 
 | Service | Value |
 | --- | --- |
 | PostgreSQL | `postgres://pal:pal@localhost:5432/pal?sslmode=disable` |
 | Redis | `redis://localhost:6379` |
-| MinIO | `http://localhost:9000`, console `:9001`, creds `pal / palsecret` |
-| Dashboard | `admin@pal.local` / `pal` at [localhost:3001](http://localhost:3001) |
-| JWT secret | `pal-dev-jwt-secret-do-not-use-in-production` |
-| Dev tenant ID | `00000000-0000-0000-0000-000000000001` (slug: `dev`) |
-| Dev user ID | `00000000-0000-0000-0000-000000000002` (role: `owner`) |
+| MinIO | `http://localhost:9000`, console `:9001`, `pal` / `palsecret` |
+| Dashboard | `admin@pal.local` / `pal` at `http://localhost:3001` |
+| Dev tenant | `00000000-0000-0000-0000-000000000001` (slug `dev`) |
+| Dev user | `00000000-0000-0000-0000-000000000002` (role `owner`) |
 
-<Aside type="caution">Never use these credentials in production. Rotate all secrets before any production deployment.</Aside>
+<Aside type="caution">Never use these in production. Rotate every secret before a production deployment ([Production deployment](/docs/operate/deployment/)).</Aside>
 
 ## Service ports
 
-Only the control plane (`:8080`/`:50051`) and dashboard (`:3001`) run under `pal dev`; `make dev` adds the rest except the surface-gateway, which you run yourself.
+`pal dev` runs the control plane and the dashboard. `make dev` adds the rest, except the surface-gateway, which you run yourself.
 
 | Service | Port | Protocol |
 | --- | --- | --- |
-| control-plane (HTTP) | `:8080` | REST + health + SSE |
-| control-plane (gRPC) | `:50051` | gRPC |
-| dashboard | `:3001` | Next.js / Turbopack |
-| workflow-engine | `:50052` | gRPC |
-| model-router | `:50053` | gRPC |
-| runtime-manager | `:50054` | gRPC |
-| runtime-scheduler | `:50055` / `:8085` | gRPC / REST |
+| control plane | `:8080` | REST, health, SSE |
+| control plane (gRPC) | `:50051` | gRPC |
+| dashboard | `:3001` | HTTP |
+| workflow engine | `:50052` | gRPC |
+| model router | `:50053` | gRPC |
+| runtime manager | `:50054` | gRPC |
+| runtime scheduler | `:50055` / `:8085` | gRPC / REST |
 | gateway | `:8443` | HTTPS |
-| surface-gateway | `:8444` | HTTP webhooks |
-| PostgreSQL | `:5432` | postgres |
-| Redis | `:6379` | redis |
-| MinIO S3 | `:9000` | S3-compatible |
-| MinIO console | `:9001` | HTTP browser |
+| surface gateway | `:8444` | HTTP webhooks |
+| PostgreSQL, Redis | `:5432`, `:6379` | postgres, redis |
+| MinIO | `:9000` / `:9001` | S3 / console |
 
 ## Make targets
 
 | Target | What it does |
 | --- | --- |
-| `make dev` | Full docker-compose stack |
-| `make dev-infra` | Postgres + Redis only, no MinIO (`pal dev --infra-only` adds it) |
+| `make dev` | The full docker-compose stack |
+| `make dev-infra` | Postgres and Redis only; `pal dev --infra-only` adds MinIO |
+| `make run-api` | The control plane on `:8080` |
+| `make dashboard-dev` | The dashboard on `:3001` |
 | `make dev-doctor` | Health-check every service |
-| `make run-api` | Control-plane on `:8080` |
-| `make dashboard-dev` | Next.js dashboard on `:3001` |
-| `make run-whatsapp-bridge` | WhatsApp bridge on `:3100` |
-| `make build` | Compile Go + Rust + TypeScript |
-| `make test` | All test suites |
-| `make lint` | All linters |
-| `make ci-local` | Lint + test + audit (same as CI) |
-| `make proto` | Regenerate from `.proto` definitions |
-| `make clean` | Remove artifacts + docker volumes |
+| `make build` / `make test` / `make lint` | Compile, test, lint all languages |
+| `make ci-local` | Lint, test and audit, the same matrix as CI |
+| `make proto` | Regenerate from `.proto` files |
+| `make clean` | Remove artifacts and docker volumes |
 
-Next: [see real examples](/docs/start/examples/).
+<Aside type="caution">Do not run `go run ./cmd/server` directly. It uses OS-user Postgres auth and fails. `make run-api` injects `DATABASE_URL`, `REDIS_URL` and `S3_ENDPOINT`.</Aside>
+
+Next: [Try it: the demo](/docs/start/demo/) or [Quickstart in 60 seconds](/docs/start/sixty-seconds/).

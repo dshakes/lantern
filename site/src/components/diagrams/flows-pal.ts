@@ -441,3 +441,59 @@ export const RECAP: FlowDef = {
     },
   ],
 };
+
+// ---------------------------------------------------------------------------
+// Docs landing hero: both products on one picture.
+export const TWO_PRODUCTS: FlowDef = {
+  id: "two-products",
+  title: "pal runs on PAL Runtime",
+  caption: "Step through a reply pal sends, one it holds, and a run of your own agent.",
+  vb: [560, 410],
+  nodes: [
+    { id: "you", label: "A contact writes", sub: "iMessage · WhatsApp", tone: "client", x: 10, y: 20, w: 160 },
+    { id: "dev", label: "Your agent code", sub: "SDK · CLI · REST", tone: "client", x: 390, y: 20, w: 160 },
+    { id: "bridge", label: "pal bridge", sub: "on your Mac", tone: "pal", x: 10, y: 160, w: 160, detail: "Reads the message, keeps your people and memory, and runs every check on the draft before anything is sent.", src: [M(`${BC}/agent.ts`)] },
+    { id: "cp", label: "PAL Runtime", sub: "sessions · runs · journal", tone: "rt", x: 200, y: 160, w: 160, detail: "The control plane: sessions for pal's turns, runs for your agents, budgets checked before the model call, and a journal of every step.", src: [M("services/control-plane/internal/handlers/sessions.go"), M("services/control-plane/internal/handlers/budgets.go")] },
+    { id: "llm", label: "Model call", sub: "your keys · failover", tone: "rt", x: 390, y: 160, w: 160 },
+    { id: "gates", label: "Gates", sub: "money · dates · grief", tone: "pal", x: 10, y: 300, w: 160, detail: "The commitment and grounding gates. Each is a model judgment plus a deterministic backstop, so an outage cannot fail open.", src: [M(`${BC}/commitment-gate.ts`), M(`${BC}/grounding-gate.ts`)] },
+    { id: "send", label: "Sent as you", sub: "paced like you", tone: "ok", x: 200, y: 262, w: 160, src: [M(`${BC}/pacing.ts`)] },
+    { id: "held", label: "Held for you", sub: "page to self-chat", tone: "deny", x: 200, y: 340, w: 160 },
+    { id: "vm", label: "microVM", sub: "egress allowlist", tone: "guest", x: 390, y: 300, w: 160, detail: "Untrusted code runs in a Firecracker or Kata microVM. Egress goes through an allowlist; secrets are vended at run time, never baked in.", src: [M("services/runtime-manager/src/egress_broker.rs")] },
+  ],
+  edges: [
+    { from: "you", to: "bridge" },
+    { from: "bridge", to: "cp", label: "turn", bidi: true },
+    { from: "cp", to: "llm", bidi: true },
+    { from: "bridge", to: "gates", label: "draft" },
+    { from: "gates", to: "send", via: [[185, 327], [185, 289]] },
+    { from: "gates", to: "held" },
+    { from: "dev", to: "cp", label: "run", via: [[470, 120], [280, 120]] },
+    { from: "cp", to: "vm", label: "tool code", via: [[280, 245], [470, 245]] },
+  ],
+  scenarios: [
+    {
+      id: "reply", label: "pal sends",
+      steps: [
+        { title: "A contact writes", note: "The bridge on your Mac picks up the message from iMessage or WhatsApp.", edges: ["you>bridge"] },
+        { title: "A draft in your voice", note: "The bridge posts the turn to a session on PAL Runtime, which calls your model provider.", edges: ["bridge>cp", "cp>llm"] },
+        { title: "Checked, then sent", note: "Nothing commits you and nothing is unverifiable, so the reply goes out, paced like you.", edges: ["bridge>gates", "gates>send"] },
+      ],
+    },
+    {
+      id: "held", label: "pal holds",
+      steps: [
+        { title: "A relative asks for money", note: "The draft says \"sending it now\".", edges: ["you>bridge", "bridge>cp", "cp>llm"] },
+        { title: "Held, not sent", note: "The commitment gate holds it and pages your self-chat. Your one typed line becomes the reply.", edges: ["bridge>gates", "gates>held"], deny: true },
+      ],
+    },
+    {
+      id: "run", label: "Your agent",
+      steps: [
+        { title: "Your code starts a run", note: "POST /v1/runs from an SDK, the CLI or curl.", edges: ["dev>cp"] },
+        { title: "Budget first, then the model", note: "A hard cap answers 402 before any model call. Every step is journaled, so a crash resumes instead of restarting.", edges: ["cp>llm"] },
+        { title: "Untrusted code in a microVM", note: "Tool code runs behind an egress allowlist, never on the host.", edges: ["cp>vm"] },
+      ],
+    },
+  ],
+  legend: [["pal", "pal"], ["rt", "PAL Runtime"], ["ok", "Sent"], ["deny", "Held"]],
+};

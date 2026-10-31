@@ -1,28 +1,24 @@
 ---
 title: Develop locally
-description: "The inner loop for building an agent on your laptop - scaffold, pal agent dev to re-publish and re-run on every save, then gate on evals."
-glance:
-  what: "pal agent dev watches your agent directory and, on every save, re-publishes the agent, fires a smoke run and streams its steps."
-  why: "Edit-to-result in seconds, against the same API, journal and budgets production uses, so nothing changes when you ship."
-  how: "Boot the stack with pal dev, scaffold with pal init, then leave pal agent dev running while you edit."
+description: "The inner loop for building an agent on your laptop: scaffold, pal agent dev to re-publish and re-run on every save, then gate on evals."
 sidebar:
   order: 3
 ---
-import Progress from '../../../../components/Progress.astro';
-
-<Progress current={3} />
-
 
 import { Aside, Steps, FileTree } from '@astrojs/starlight/components';
 
+`pal dev` boots the local stack and `pal agent dev` is the inner loop. On every save it **re-publishes** your agent, fires a **smoke run** and streams its steps, against the same API, journal and budgets production uses. Edit-to-result takes seconds, and nothing changes when you ship.
+
 <Steps>
 
-1. **Boot the stack** (Docker for Postgres, Redis and MinIO; the API and dashboard run on the host, so you need Go 1.26+ and Node 22+, see [Installation](/docs/start/installation/)):
+1. **Boot the stack.** Docker runs Postgres, Redis and MinIO; the API and dashboard run on the host, so you need Go 1.26+ and Node 22+ ([Install](/docs/start/installation/)).
 
    ```bash
    pal dev                 # API :8080, dashboard :3001, WhatsApp bridge :3100 (iMessage bridge on macOS); logs in one terminal
    pal dev --infra-only    # just the containers, if you run the API yourself
    ```
+
+   `pal dev logs [service]` tails container logs. `pal dev down` stops them; `--volumes` also deletes data. Ports are listed in [Install](/docs/start/installation/).
 
 2. **Scaffold an agent.** Templates: `basic` (default), `research`, `tool-use`, `connector`, `personal`, `scheduled`, `approval`.
 
@@ -36,45 +32,33 @@ import { Aside, Steps, FileTree } from '@astrojs/starlight/components';
      - …           starter code for the template
    </FileTree>
 
-3. **Start the inner loop** and keep it running while you edit:
+3. **Start the loop** and leave it running while you edit.
 
    ```bash
    cd my-agent
    pal agent dev my-agent --input '{"prompt":"hi"}' --eval
    ```
 
-   On every change to `agent.yaml` or any `.yaml/.yml`, `.json`, `.ts/.tsx`, `.js/.jsx`, `.py` or `.go` file it:
+   On every change to `agent.yaml` or any `.yaml`, `.yml`, `.json`, `.ts`, `.tsx`, `.js`, `.jsx`, `.py` or `.go` file, it:
+
    1. publishes a new agent version,
    2. fires a smoke run with `--input`,
    3. streams `step_started`, `step_completed`, `step_failed` and `confidence_evaluated` as a waterfall,
-   4. with `--eval`, runs the agent's eval suite and prints pass/fail against the baseline.
+   4. with `--eval`, runs the agent's eval suite and prints pass or fail against the baseline.
 
-   Ctrl-C exits. (`agents` and `agent` are the same command.)
+   Ctrl-C exits. `agents` and `agent` are the same command.
 
-4. **Gate it like CI will:**
+4. **Gate it the way CI will.**
 
    ```bash
-   pal test --agent my-agent --suite <your-suite>          # non-zero exit on regression
-   pal test --agent my-agent --rehearse --window 24h          # replay recent real failures
+   pal test --agent my-agent --suite <your-suite>      # non-zero exit on regression
+   pal test --agent my-agent --rehearse --window 24h   # replay recent real failures
    ```
 
 </Steps>
 
-<details>
-<summary>What is running, and where</summary>
-
-| Piece | Port | Notes |
-| --- | --- | --- |
-| Control-plane API | `:8080` | REST, SSE and health. `:50051` is its gRPC port. |
-| Dashboard | `:3001` | Next.js dev server. |
-| Postgres / Redis / MinIO | `:5432` / `:6379` / `:9000` | Docker containers. |
-
-`pal dev logs [service]` tails container logs; `pal dev down` stops them (`--volumes` also deletes data). Full list: [Installation](/docs/start/installation/).
-
-</details>
-
 <Aside type="tip" title="Real microVMs on a Mac">
-`pal dev` prints at start-up whether the sandbox is a stub or a real runtime. Runs in the inner loop use the shared tier by default. To exercise the microVM tier locally, see [Run real microVMs on your Mac](/docs/runtime/local-microvms/).
+`pal dev` prints at start-up whether the sandbox is a stub or a real runtime. Runs in the inner loop use the shared tier by default. To exercise the microVM tier locally, see [microVMs on your machine](/docs/runtime/local-microvms/).
 </Aside>
 
 When the loop is green, [deploy it](/docs/start/deploy/).

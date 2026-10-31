@@ -1,27 +1,67 @@
 ---
 title: Durability
-description: Checkpointing through the journal, lease-based recovery, and idempotent side effects.
-glance:
-  what: "Every step is journaled before and after; a recovery sweep reclaims runs whose worker died."
-  why: "A restart mid-run must neither lose the run nor repeat an email or a paid model call."
-  how: "Play the crash scenario; the reference below lists the knobs."
+description: Checkpointing through the journal, lease-based recovery and idempotent side effects, with the files that implement each.
 sidebar:
   order: 5
 ---
 
-import { CheckpointSequence } from '../../../../components/diagrams';
+import Diagram from '../../../../components/Diagram.astro';
 
-<CheckpointSequence client:visible />
+A restart in the middle of a run must neither lose the run nor repeat an email or a paid model call. PAL does this with three mechanisms that share one store: the **journal** records every step before and after it runs, a **lease** with a recovery sweep reclaims runs whose worker died, and an **idempotency key** on every external side effect makes a repeated call harmless. The idea and the picture are in [Durable execution](/docs/runtime/durable-execution/).
 
-## Reference
+## Mechanisms
 
 | Mechanism | Where | Guarantee |
 | --- | --- | --- |
-| `journal_events` | Postgres, PK `(run_id, seq)` | Ordered, replayable event log |
-| Run lease | `run_locks` | One worker per run |
-| Recovery sweep | every 30 s (`PAL_RECOVERY_INTERVAL`) | Steals only expired locks |
-| `CompletedStep` | workflow interpreter | Completed nodes are skipped on re-drive |
-| `claimSideEffect` | before external deliveries | Keyed `run:step:attempt`; no double send |
-| Subagent depth | child runs | Capped at 5 |
+| `journal_events` | Postgres, primary key `(run_id, seq)` | Ordered, replayable, append-only event log |
+| Run lease | `run_locks` | One worker per run; an expired lease can be stolen |
+| Recovery sweep | `RunRecoveryLoop` in `services/control-plane/internal/handlers/recovery.go`, every 30 s (`PAL_RECOVERY_INTERVAL`) | Finds `running` or `queued` runs with no live lock and re-drives them |
+| `acquireRecoveryLock` | `recovery.go` | An upsert on `run_locks` that only steals an expired lock, so two replicas never re-drive the same run |
+| `checkCachedLLMStep` | `durable_replay.go` | A stored `step_completed` for the LLM step means reuse the output; no provider call |
+| `CompletedStep` | Workflow interpreter, wired to `journalCompletedStep` in `rest.go` | Completed nodes are skipped on re-drive; the walk resumes at the first incomplete node |
+| `claimSideEffect` | `durable_replay.go`, before external deliveries | Keyed `run:step:attempt`; a repeat does not send twice |
+| Provider `Idempotency-Key` | `llm_idempotency.go` | A retry or replay to the same provider dedups there |
+| Subagent depth | `maxSubagentDepth` in `rest.go` | Child runs capped at 5 |
 
-See also [Durable execution](/docs/runtime/durable-execution/).
+## What the journal holds
+
+For each step the executor writes `step_started` before it acts and `step_completed` or `step_failed` after. The completed row stores the full output, which is what makes a replay skip the call. Every other event kind (for example `confidence_evaluated` or `anomaly_detected`) lands in the same table. Because the sequence key is `(run_id, seq)`, the same rows feed the SSE stream, the gRPC `StreamRunEvents` replay, receipts and the run waterfall.
+
+## Crash and re-drive
+
+1. A run is mid-step. The LLM step has journaled `step_started`.
+2. The process dies before `step_completed` is written. The run row still says `running`.
+3. On the next sweep, the recovery loop finds the run with an absent or expired `run_locks` row.
+4. `acquireRecoveryLock` wins the lock, or loses to another replica and moves on.
+5. `redriveRun` re-enters the executor, or the workflow interpreter, for that run.
+6. `checkCachedLLMStep` and `CompletedStep` return stored outputs for every step that already completed.
+7. The first incomplete step runs. If the crash came before its `step_completed`, the provider call is made again under the same key derivation, so the provider can dedup it.
+8. The run finishes from where it stopped. It does not restart.
+
+<Diagram name="crash-resume" />
+
+When the run is an in-VM agent, the re-drive injects `PAL_RESUME=1` into its environment so the agent knows it is being resumed (`recovery.go`). The picture of this flow is on [Durable execution](/docs/runtime/durable-execution/).
+
+## The durable engine
+
+The workflow engine (`services/workflow-engine`) applies the same rules to its own steps.
+
+| Step kind | Behavior | File |
+| --- | --- | --- |
+| Any attempt | `executeAttempt` checks the replay cache (`HasStepResult`, keyed `stepID:attempt`) and returns the cached result without re-executing | `internal/engine/step_executor.go` |
+| `llm_call` | Dispatched through the model router with key `run_id:step_id:attempt` | `internal/engine/step_executor.go` |
+| `tool_call` | Dispatched to the runtime manager with the same key | `internal/engine/step_executor.go` |
+| `child_run` | The engine creates and drives the child itself | `internal/engine/child_run.go` |
+
+`child_run` has three properties that matter for recovery:
+
+- **Depth comes from the database.** It is computed from the `parent_run_id` chain and capped at `maxChildRunDepth = 5`. It is not a context value, because a context value resets to 0 when the engine replays.
+- **Adoption covers the gap the cache cannot.** A crash after the child row is created but before `step_completed` leaves nothing cached. The child records `parent_run_id` and `parent_step_id` in `trigger_meta`, and the re-run adopts it instead of creating a second child.
+- **No split brain.** The child is created `running`, not `queued`, so the scheduler's poll for `queued` and `resumable` runs cannot claim it while the parent drives it inline.
+
+A child that stops on an approval or a signal fails the parent step with `ErrChildRunPaused`. The parent does not wait for the approval, so nested approvals do not work yet.
+
+## Limits
+
+- Idempotency covers the side effects PAL performs itself. A tool that talks to a third party must tolerate a repeated call.
+- The sweep runs every 30 s by default, so a crashed run resumes after up to that interval plus the lease expiry.

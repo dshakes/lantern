@@ -1,46 +1,38 @@
 ---
-title: Knowledge base and human handoff
-description: Upload documents for cited answers, and hand a conversation to a person.
-glance:
-  what: "Upload documents to an agent: they are chunked, embedded in Postgres with pgvector, and the best chunks join context on each message."
-  why: "Replies carry the documents they were drawn from, and a conversation can be handed to a person when the agent cannot answer."
-  how: "Use the Documents endpoints to upload a file, then see Human handoff."
-sidebar:
-  order: 3
+title: Knowledge and handoff
+description: "pal answers from your own documents, acts on your Mac when you say yes, and keeps one memory of a person across iMessage and WhatsApp."
 ---
-import { KnowledgeHandoff } from '../../../../components/diagrams';
 
-<KnowledgeHandoff client:visible />
+import { CrossChannelMemory } from '../../../../components/diagrams';
 
-This is the platform feature for agents you build. pal's search over your own files works differently: it reads local documents on your Mac, never uploaded ([Privacy](/docs/pal/privacy/)).
 
-Upload documents to an agent. Each one is split into chunks, embedded and stored in Postgres with pgvector. On every session message the best chunks are added to the agent's context, and the reply carries the documents it was drawn from. An agent labelled `handoff=human` can also pass a conversation to a person.
+pal knows three things beyond the message in front of it. It can answer from **your own documents** on your Mac, it can **act on your Mac** (Calendar, Notes, Mail) when you confirm, and it keeps **one memory** of each person across iMessage and WhatsApp. Documents are read in place and never uploaded. Handing something to you rather than answering is the default whenever pal is unsure: [Holds and trust](/docs/pal/human-in-the-loop/) covers that.
 
-## Documents
+## Your documents
 
-| Method | Path | Scope | Notes |
-| --- | --- | --- | --- |
-| POST | `/v1/agents/{name}/documents` | agents:write | Body `{title, content, source?, id?}`. Up to 1 MiB of text and 120 chunks. A caller-supplied `id` (UUID, unique per agent) makes the upload idempotent: the same id replaces the document. 201 with `chunkCount` and `embeddedChunks`. |
-| GET | `/v1/agents/{name}/documents` | agents:read | List. |
-| GET | `/v1/agents/{name}/documents/{id}` | agents:read | Metadata. 404 for another tenant's document. |
-| DELETE | `/v1/agents/{name}/documents/{id}` | agents:write | 204; chunks are removed with it. |
-| POST | `/v1/agents/{name}/documents/search` | agents:read | Body `{query, limit?}`; returns `results[{documentId,title,content,score}]`. |
+Ask in your own chat: "when does my passport expire?" or "find my lease". pal searches and reads files only inside `PAL_PERSONAL_DOCS_ROOTS` (default: Documents, Desktop, Downloads and iCloud Drive), answers from what it finds, and uses `PAL_OWNER_NAME` to rank files when you say "my". Scanned PDFs are read with OCR, up to `PAL_PERSONAL_DOCS_OCR_MAX_PAGES` pages (default 3), and the extracted text is cached owner-only because it often holds passport and licence numbers.
 
-## How retrieval works
+Document questions work only from you. When a contact asks you for a document, pal finds the file and pings your own chat to confirm before anything is sent.
 
-Chunks are embedded with the tenant's OpenAI key (`text-embedding-3-small`, 1536 dimensions) and matched by cosine distance; hits below `PAL_KB_MIN_SCORE` (default 0.2) are dropped. With no OpenAI key the chunks are stored without a vector and search falls back to Postgres full-text. The excerpts are fenced in the system prompt and labelled as reference data, not instructions. Agents with no documents pay nothing: no embedding call is made.
+## Actions on your Mac
 
-The session event `message_completed` includes `sources: [{id, title}]` for the documents used; the web widget shows them under the reply.
+When an answer contains a deadline, an expiry, an ID or a file, pal offers a follow-up: add a calendar reminder, save a note, or draft an email. Dates are written in friendly form ("Sept 14, 2031").
 
-## Human handoff
+Reply `yes`, `sure` or `do it` within 10 minutes and pal runs the action itself, with no model call in between. That matters: a model would sometimes claim the reminder was set without ever setting it. Actions use Calendar.app, Notes.app and Mail.app, and run only from your own chat.
 
-Label the agent `handoff=human` (and optionally `handoff_slack_channel`). The agent then has exactly one tool, `handoff_to_human`, and no connector tools, so a public widget key cannot reach your integrations. When the model calls it the session moves to `status=handoff`, the stream emits `session.handoff`, and a message is posted to the Slack channel through your installed Slack connector (once per handoff).
+## One memory across channels
 
-| Method | Path | Scope | Notes |
-| --- | --- | --- | --- |
-| POST | `/v1/sessions/{id}/handoff` | runs:execute | Force a handoff without the model. Idempotent. |
-| POST | `/v1/sessions/{id}/operator-messages` | write | Body `{content}`. Only while in handoff (409 otherwise); emits `operator.message`. |
-| POST | `/v1/sessions/{id}/resolve` | write | Hand the chat back to the agent; emits `session.resolved`. |
-| GET | `/v1/sessions?status=handoff` | read | The queue of conversations waiting for a person. |
+A person who writes to you on iMessage and on WhatsApp is one person to pal. Facts, episodes and topics learned on one channel are available on the other.
 
-While a session is in handoff, customer messages are saved to the transcript and the model stays silent. Operator endpoints need the coarse `write` scope on purpose: a public widget key (`runs:execute`) must not be able to speak as the operator.
+<CrossChannelMemory client:visible />
+
+| Layer | What it holds | Where |
+| --- | --- | --- |
+| Person graph | One row per person, with each channel handle merged into it. Duplicates are merged on request. | Control plane (`/v1/people`) |
+| Timeline and context | Events per person, sliceable to the last N days, used to build the reply context | Control plane (`/v1/memory/*`) |
+| Episodes | A `(date, topic, outcome)` entry for each substantive exchange; the 5 most recent per contact join the reply prompt, for 14 days | Your Mac, encrypted |
+| Topic index | Topic-tagged messages from the last 7 days, so a thread can recall what other contacts said about the same topic | Your Mac, encrypted |
+
+pal never volunteers a detail from another thread unless you ask. Cross-thread recall is for context, not for repeating one person's words to another. Your owner profile and your own corrections win over the address book when pal decides who someone is.
+
+Agents you build can use uploaded documents and human handoff: see [Knowledge and handoff for agents](/docs/build/knowledge/).

@@ -1,95 +1,44 @@
 ---
-title: Human-in-the-loop
-description: Approval nodes and the confidence gate put a person in a workflow before a side effect runs.
-glance:
-  what: "Approval nodes you place yourself and the off-by-default confidence gate both pause a workflow for a person, via the takeover API."
-  why: "Some actions, such as mailing customers or issuing refunds, should not run unattended; a parked run holds no worker."
-  how: "Add an approval node as described in Approval workflow nodes, then use the Takeover API to grant or deny."
-sidebar:
-  order: 4
+title: Holds and trust
+description: "pal sends ordinary replies on its own and holds anything that commits you or states something it can't verify."
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 import { HoldsGates } from '../../../../components/diagrams';
 
+Every reply pal would send to a contact passes eight steps first. Most are about sounding like you. Two are **holds**: the **commitment gate** and the **grounding gate**. A held reply is **not sent**. It comes to your own chat as a draft, and what you type back becomes the reply. A prompt rule is advice; a hold is enforced in code, and it applies whatever your trust settings say.
+
 <HoldsGates client:visible />
 
-Two ways to put a person in a workflow: **approval nodes** you place yourself, and the **confidence gate** (off by default), which diverts low-confidence steps to a person. Both record the decision through the takeover API.
+## What gets held
 
-Some actions should not run unattended: mailing 500 customers, issuing a refund, deleting records. The run stops there and asks a person. While it waits, the run is parked and holds no worker.
-
-## Approval workflow nodes
-
-In the visual workflow editor, an `approval` node pauses execution until a human acts. The run moves to `status: 'waiting'`, the executing goroutine exits, and a `takeover_requests` row is created. The request expires after **30 minutes** by default (pass `timeoutMinutes`, max 1440).
-
-### Takeover API
-
-```text
-# Create a pending takeover row (done by the workflow node automatically,
-# or manually by an operator)
-POST /v1/runs/{id}/takeover/request
-{ "reason": "About to send email to 500 users", "stepId": "send", "timeoutMinutes": 60 }
--> { "id": "tk-uuid", "status": "pending", "expiresAt": "..." }
-
-# List takeover requests for a run
-GET /v1/runs/{id}/takeover
--> [{ "id": "tk-uuid", "status": "pending", "reason": "...", "expiresAt": "..." }]
-
-# Operator approves (optional notes; optional SDP offer for WebRTC takeover)
-POST /v1/runs/{id}/takeover/{tkId}/grant
-{ "notes": "ok to send", "sdpOffer": "v=0\r\n..." }
-
-# Operator denies: the approval node fails (step_failed) and so does the run
-POST /v1/runs/{id}/takeover/{tkId}/deny
-{ "notes": "not now" }
-
-# Browser-side SDP answer (for live WebRTC session)
-POST /v1/runs/{id}/takeover/{tkId}/answer
-{ "sdpAnswer": "v=0\r\n..." }
-
-# Release: the run is re-queued and resumes from the approval node
-POST /v1/runs/{id}/takeover/{tkId}/release
-```
-
-<Aside title="Parked, not spinning">
-A run in `waiting` status holds no goroutine, so a long wait costs no compute. On release the interpreter replays the graph and skips every step already completed in the journal, resuming at the approval node. The SDP fields exist for live WebRTC takeover, but the microVM video stream is not wired yet; the grant, release and resume path is. A paused child run fails its parent step; nested approvals do not work yet.
-</Aside>
-
-## Confidence gate
-
-Off by default. Set `PAL_CONFIDENCE_GATE=1` to turn it on. Before a side-effecting node runs, the interpreter scores it. Below the threshold (`PAL_CONFIDENCE_GATE_THRESHOLD`, default 0.75) the step goes to human approval instead of executing. If no approval handler is wired, the step auto-approves so unattended workflows still finish.
-
-### Gated node types
-
-- **`tool`** and **`connector`**: always gated when the feature is on
-- **`ai-step`**: only gated when `node.Data["requiresConfidence"] = true`
-
-### Estimators
-
-Select the estimator with `PAL_CONFIDENCE_ESTIMATOR`.
-
-**`verbalization` (default).** Scans prior step text for self-reported confidence ("Confidence: 85%"). Falls back to 0.9 when none is found. Failure mode: silence leads to 0.9 and auto-execute; a model that hallucinates an action also writes "confidence: 95%".
-
-**`self-consistency`.** Re-poses the pending action to the model `PAL_CONFIDENCE_SAMPLES` times (default 5) as a fresh YES/NO judgment and returns the fraction voting "execute". Consensus gives a high score; a split vote gives a low score and diverts. Safer than verbalization because silence is actively probed. Falls back to the verbalization heuristic when no LLM sampler is wired.
-
-### Outcome calibration
-
-Off by default; `PAL_CONFIDENCE_CALIBRATE=1` enables it. Wraps the base estimator and lowers its score by the realized **regret rate**: the fraction of auto-executed steps of that type later thumbs-downed (feedback score of 2 or lower) or ending in a failed run: `adjusted = base × (1 − regret)`. Action types that have gone wrong get gated harder over time. Fail-safe: any error or fewer than 3 samples gives regret 0, so the base score is unchanged.
-
-### Journal events
-
-Every gated step emits a `confidence_evaluated` journal event with `{ score, threshold, decision ("execute" | "divert"), node_type, estimator }`. A diverted step emits `step_completed` once approved, or `step_failed` if denied.
-
-### Env vars
-
-| Variable | Default | Purpose |
+| Gate | Holds a reply that | Example |
 | --- | --- | --- |
-| `PAL_CONFIDENCE_GATE` | off | `1`/`true`/`on` enables gating |
-| `PAL_CONFIDENCE_GATE_THRESHOLD` | `0.75` | Minimum score [0,1] for auto-execution |
-| `PAL_CONFIDENCE_ESTIMATOR` | `verbalization` | `self-consistency` to poll for independent agreement |
-| `PAL_CONFIDENCE_SAMPLES` | `5` | Independent judgments for self-consistency (clamped [1,9]) |
-| `PAL_CONFIDENCE_CALIBRATE` | off | `1` wraps the estimator in outcome-regret calibration |
+| Commitment gate | Commits you to money or a concrete action, or answers a contact who is asking you for money, in any language pal handles (English, romanized Telugu, Hindi) | "I'll send 70k now" |
+| Grounding gate | States a specific date or time for something in your life in answer to a timing question; corrects the contact about your own plans; asserts an outcome only you could confirm; or answers death, illness or bad news in a celebratory or jokey tone | "Not today, the big day is the 10th" |
 
-<Aside title="Rollout order">
-Enable the gate on non-production agents first. Inspect `confidence_evaluated` events in the run waterfall. Switch to `self-consistency` and tune threshold and samples. Then production.
-</Aside>
+Each gate has two layers, and either can hold: a model judge, and a fixed multilingual backstop that always runs. A model outage therefore cannot let a reply through. A hold forces the draft path even if draft-confirm is off, and pages you with a message starting `⚠️ HELD`. It says whether the contact is asking for money or the draft promises it, or which claim pal can't verify.
+
+pal does not verify the claim; it holds it. Nothing is checked against your calendar and then sent.
+
+### Sharing a contact's number
+
+When a held draft was a request for someone's number, pal sends the numbers directly, and tells you with a `📇 shared …` note, only if all of these are true: the requester has a relationship on file, each name matches exactly one person, every matched person is in your `## Relationships`, and it is not a group. Otherwise the numbers wait in the hold for your one-word `send`.
+
+## What gets rewritten
+
+The **claim verifier** rewrites a completed-action claim ("I sent him an email") into intent ("I'll send him an email") unless the bridge recorded that action for that contact in the last 10 minutes. The recorded actions are a document sent, the owner notified, a calendar event added, and a note saved. "I let him know" becomes "I'll make sure he sees this" every time, because the bridge has no way to complete that mid-thread.
+
+## Your trust settings
+
+| You want | Do this | What happens |
+| --- | --- | --- |
+| Review ordinary low-confidence replies | `PAL_DRAFT_CONFIRM=on` (iMessage) or `PAL_DRAFT_HIGH_STAKES=on` (WhatsApp) | Low-confidence replies wait for your `send`. Off by default: the reply is held briefly, then sent with a heads-up to you. |
+| Stop sending, keep drafting | `mute` | pal still drafts each reply and hands it to you. If the hand-off fails, the reply is dropped, never sent. |
+| Stop everything | `kill switch on` | All inbound is ignored until you release it. |
+| Quiet nights | `PAL_QUIET_START` / `PAL_QUIET_END` (default 1 and 6) | Messages queue and are answered in the morning. |
+| Per-kind actions on bills, deliveries and the like | `auto`, `ask` or `off`, set in `pal setup` or the dashboard Automations feed | Controls whether pal acts on that kind of message, with undo. |
+
+Draft-confirm is off by default because turning it on drafted ordinary short messages from family instead of answering, which felt like pal was not responding. Money and unverifiable claims are held either way. Every suppressed reply logs which check stopped it; see [Privacy and control](/docs/pal/privacy/).
+
+Agents you build can pause for a person too: see [Approvals](/docs/build/approvals/).

@@ -1,19 +1,15 @@
 ---
 title: Headless agent quickstart
-description: Write your first agent.yaml, pick an isolation class, run it, watch it, and terminate it, in about 15 minutes.
-glance:
-  what: "A headless agent is a container image plus a short agent.yaml (limits, isolation class, egress) that PAL Runtime schedules into a sandbox and cleans up."
-  why: "It is the smallest background worker you can run, and the same spec scales to the untrusted-code classes."
-  how: "Start the four make targets under Prerequisites, then run pal run examples/headless-agents/01-hello/agent.yaml."
+description: Write an agent.yaml, run it in a sandbox, watch its logs and terminate it.
 sidebar:
   order: 2
 ---
 
 import { MicroVmRunSequence } from '../../../../components/diagrams';
 
-<MicroVmRunSequence client:visible />
+A **headless agent** has no conversation. You package code as an image, describe it in a short **`agent.yaml`**, and PAL Runtime picks a machine, builds the sandbox, runs it, streams its logs and cleans up. This guide runs the smallest of the four demos in `examples/headless-agents/` and takes about 15 minutes. It is for anyone who wants a background worker that runs under an **isolation class** instead of on the host.
 
-"Headless" means no conversation. You package code as an image, describe it in `agent.yaml`, and PAL Runtime finds a machine, builds the sandbox, runs it, streams logs and cleans up. This page builds the smallest of the four demos in `examples/headless-agents/`.
+<MicroVmRunSequence client:visible />
 
 ## Prerequisites
 
@@ -23,14 +19,14 @@ From the repo root, in separate terminals:
 make dev-infra            # Postgres + Redis (MinIO is not started)
 make run-runtime-manager  # runtime-manager on :50054
 make run-scheduler        # scheduler on :50055 / :8085
-make run-api-runtime      # control-plane wired to the scheduler, :8080
+make run-api-runtime      # control plane wired to the scheduler, :8080
 ```
 
-Docker on the host is enough for `trusted` and `standard`. Export an API token as `PAL_API_TOKEN` for the REST calls below.
+Docker on the host is enough for the `trusted` and `standard` classes. Export an API token as `PAL_API_TOKEN` for the REST calls below.
 
 ## 1. Write the spec
 
-An `agent.yaml` declares the image, the isolation class, limits, and any egress or secrets. This is the minimal one: a first-party script that only writes to stdout, so it picks `trusted` and asks for no network.
+An `agent.yaml` declares the image, the isolation class, limits and any egress or secrets. This is `examples/headless-agents/01-hello/agent.yaml`: a first-party script that writes to stdout, so it uses `trusted` and no network.
 
 ```yaml
 apiVersion: pal.dev/v1
@@ -40,7 +36,7 @@ metadata:
   labels:
     owner: pal-team
 spec:
-  image_digest: pal/demos/hello@sha256:0000...0001
+  image_digest: pal/demos/hello@sha256:0000000000000000000000000000000000000000000000000000000000000001
   isolation: trusted        # first-party, no package loading
   limits:
     vcpu: "100m"            # 0.1 vCPU
@@ -53,61 +49,61 @@ spec:
   idempotent: true
 ```
 
-`image_digest` is pinned by digest, not a tag, so the runtime runs exactly the bytes you signed.
+The image is pinned by digest, not a tag, so the runtime runs exactly the bytes you named.
 
 ## 2. Pick the isolation class
 
-Rule of thumb:
+| Your code | Class |
+| --- | --- |
+| First-party, signed | `trusted` |
+| Your own code (the usual choice) | `standard` |
+| Loads internet packages or drives a browser | `untrusted` |
+| Adversarial input | `hostile` |
 
-- First-party signed code: `trusted`.
-- Your own code, the default: `standard`.
-- Loads internet packages or drives a browser: `untrusted`.
-- Adversarial input: `hostile`.
-
-Demo 02 (`web-scraper`) uses `untrusted` because it pulls packages from PyPI. The decision tree is in [Isolation classes](/docs/runtime/isolation/).
+Demo 02 (`web-scraper`) uses `untrusted` because it installs packages from PyPI. The full decision tree is in [Isolation](/docs/runtime/isolation/).
 
 ## 3. Run it
 
-The CLI schedules the spec:
-
 ```bash
 pal run examples/headless-agents/01-hello/agent.yaml \
-  --input '{"name": "Ada"}'
+  --input '{"name": "Ada"}'    # add --follow to stream logs after scheduling
 ```
 
-The CLI posts the parsed spec to `POST /v1/runtime/schedule`. Add `--follow` to stream logs after scheduling.
+The CLI posts the parsed spec to `POST /v1/runtime/schedule`. A successful call returns HTTP 201 with a `vmId`.
 
-The response (HTTP 201) carries a `vmId`. If it also carries `"stub": true`, the control plane is on the stub scheduler and nothing was spawned: set `PAL_SCHEDULER_GRPC_ADDR` (`make run-api-runtime` does this). Over your per-tenant quota, the call returns HTTP 402 instead.
+- `"stub": true` in the response means the control plane is on the stub scheduler and nothing was spawned. Set `PAL_SCHEDULER_GRPC_ADDR`; `make run-api-runtime` does this.
+- Over your per-tenant quota, the call returns HTTP 402 instead.
 
 For debugging, `pal vm exec <id> -- <cmd>` runs a command in the VM, and `--idle-timeout N` auto-suspends an idle sandbox.
 
-## 4. Watch logs, traces and cost
+## 4. Watch it
 
-Stream the harness log lines over SSE:
+Stream the harness log lines over SSE, then read the instance and its recent audit events:
 
 ```bash
 curl -N http://localhost:8080/v1/runtime/vms/<vmId>/logs \
   -H "Authorization: Bearer $PAL_API_TOKEN"
-```
 
-Inspect the instance and its recent audit events:
-
-```bash
 curl http://localhost:8080/v1/runtime/vms/<vmId> \
   -H "Authorization: Bearer $PAL_API_TOKEN"
 ```
 
-Or open `localhost:3001/runtime`. The dashboard shows the live instance, its log stream and resource usage, and lets you exec in for debugging. If you have an OTel collector wired ([Observability](/docs/observability/)) you get one trace per spawn with token and cost telemetry. Aggregate counters are at `GET /v1/runtime/metrics`.
+The dashboard at `localhost:3001/runtime` shows the same instance with its log stream and resource usage, and lets you exec in. With an OTel collector wired ([Observability](/docs/observability/)) you get one trace per spawn. Aggregate counters are at `GET /v1/runtime/metrics`.
 
 ## 5. Terminate
 
-A clean-exiting workload is torn down automatically. To drain and stop one early:
+A workload that exits cleanly is torn down automatically. To stop one early:
 
 ```bash
 curl -X DELETE "http://localhost:8080/v1/runtime/vms/<vmId>?grace=30s" \
   -H "Authorization: Bearer $PAL_API_TOKEN"
 ```
 
-The instance drains for the grace period, the manager tears it down, and the scheduler marks it terminated.
+The instance drains for the grace period, the manager tears it down, and the scheduler marks it terminated. States and transitions are in [microVM lifecycle](/docs/architecture/vm-lifecycle/).
 
-Next: [invocation modes](/docs/runtime/invocation/). For a sandbox with real data, see `examples/data-analyst` (egress denied by default).
+## Limits
+
+- Idle-suspend suits long-lived exec sandboxes. A workload VM that runs one command and exits gains nothing from `idleTimeoutSecs`.
+- The stub scheduler fabricates VM ids and spawns nothing. The control plane refuses to start with it in production.
+
+Next: [Invoke an agent](/docs/runtime/invocation/). For a sandbox that works on real data with egress denied by default, see `examples/data-analyst`.

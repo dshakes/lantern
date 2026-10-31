@@ -1,0 +1,11 @@
+---
+// Starlight Hero override: the stock hero, plus the interactive two-product
+// diagram in the right column (the docs landing is the only splash page).
+import Default from '@astrojs/starlight/components/Hero.astro';
+import { TwoProducts } from '../diagrams';
+---
+
+<div class="pal-hero">
+  <Default />
+  <div class="pal-hero-ix"><TwoProducts client:visible /></div>
+</div>
