@@ -33,6 +33,7 @@ export const CheckpointSequence = () => <Sequence name="checkpoint" />;
 // pal
 export const BriefAttention = () => <FlowDiagram def={P.BRIEF_ATTENTION} />;
 export const HoldsGates = () => <FlowDiagram def={P.HOLDS_GATES} />;
+export const TwoProducts = () => <FlowDiagram def={P.TWO_PRODUCTS} compact />;
 export const VoicePipeline = () => <FlowDiagram def={P.VOICE_PIPELINE} />;
 export const CrossChannelMemory = () => <FlowDiagram def={P.CROSS_CHANNEL_MEMORY} />;
 export const WorldModel = () => <FlowDiagram def={P.WORLD_MODEL} />;

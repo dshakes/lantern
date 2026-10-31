@@ -1,21 +1,26 @@
 ---
-title: CLI reference
+title: CLI
 description: "The PAL command-line tool: local stack, agents, runs, evals, sandbox VMs, webhook triggers and data-plane install."
-glance:
-  what: "One static Go binary, pal, that runs the local stack and manages agents, runs, evals and sandbox VMs."
-  why: "It covers the whole workflow from a terminal, from a first demo to gating CI on evals."
-  how: "Run pal demo to look around, or pal dev to boot the stack and pal onboard to build an agent."
 sidebar:
   order: 3
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-One static Go binary, `pal`. Its source lives at `packages/cli/cmd/pal`. It boots the local stack, scaffolds and runs agents, gates CI on evals, drives sandbox VMs, and installs the data plane in your cloud.
+`pal` is a single static Go binary that boots the local stack, scaffolds and runs agents, gates CI on evals, drives sandbox VMs, sets up the personal agent and installs the data plane in your cloud. It is for anyone who works from a terminal. Just looking? `pal demo` needs Docker and no API key. Building your own? `pal dev` boots the stack and `pal onboard` walks you through a first agent. Personal agent users start with `pal setup`.
 
-Just looking? `pal demo` needs Docker and no API key. To build your own, `pal dev` boots the stack and `pal onboard` walks you through your first agent.
+| Area | Commands |
+| --- | --- |
+| Get started | [`demo`](#demo), [`onboard`](#onboard), [`setup`](#setup), [`doctor`](#doctor), [`dev`](#dev) |
+| Build | [`init`](#init), [`agents`](#agents) (incl. `agents dev`), [`deploy`](#deploy), [`hooks`](#hooks) |
+| Run and observe | [`runs`](#runs), [`logs`](#logs), [`test`](#test) |
+| Sandbox VMs | [`run`, `vm`](#vm) |
+| Cloud | [`infra`](#infra) |
+| Account | [`login`, `whoami`, `logout`](#login--whoami--logout) |
 
 ## Install
+
+Source lives at `packages/cli/cmd/pal`. The command below builds it under the name `pal`, so every command on this site works as written.
 
 ```bash
 # Build from the repo
@@ -43,6 +48,18 @@ First-run wizard: health check, sign-in, provider key (with a real test call), t
 pal onboard                 # interactive
 pal onboard --yes --provider anthropic --api-key "$KEY" \
   --description "Triage support tickets"   # CI
+```
+
+## setup
+
+Agentic first run for the personal agent: the terminal twin of the dashboard's `/pal/onboarding`. The control plane owns the state and returns the step to resume, so the CLI, the dashboard and the server agree. Steps are `welcome`, `channels`, `voice`, `trust`, `profile` and `done` (your first Brief). Each step advances only on a real result: a live bridge check, a saved setting read back, your explicit confirmation. Consent is never given non-interactively.
+
+Flags: `--yes` / `-y` never prompts; it reports where setup stands and does not change consent. `--apply` writes the setup into this Mac's bridge config: confirmed facts and relationships into the owner profile, and quiet hours and the voice setting into `bridge.env`. Both files are backed up first. Bridge addresses come from `PAL_BRIDGE_URL`, `PAL_IMESSAGE_BRIDGE_URL` and `PAL_DASHBOARD_URL`, and tokens from `PAL_BRIDGE_TOKEN` and `PAL_IMESSAGE_BRIDGE_TOKEN`. See [Connect your channels](/docs/pal/surfaces/).
+
+```bash
+pal setup           # interactive, resumes where you left off
+pal setup --apply   # also write the result into the local bridge config
+pal setup --yes     # report progress without prompting
 ```
 
 ## doctor
@@ -87,7 +104,7 @@ pal agents delete my-agent [--force]
 pal agents dev my-agent [--dir ./my-agent] [--input '{"prompt":"hi"}'] [--eval] [--yes]
 ```
 
-`agents dev` is the agent development inner loop: it watches the local directory for changes to `agent.yaml` or code files, re-publishes the agent version on each change, runs a smoke input (`--input`), and streams the run events. `--eval` also runs the agent's eval suite after each publish.
+`agents dev` (also `pal agent dev`) is the agent development inner loop: it watches the local directory for changes to `agent.yaml` or code files, re-publishes the agent version on each change, runs a smoke input (`--input`), and streams the run events. `--eval` also runs the agent's eval suite after each publish.
 
 ## runs
 

@@ -1,10 +1,6 @@
 ---
-title: Webhook triggers
+title: Triggers
 description: Bind a signed public URL to an agent so GitHub, Sentry, PagerDuty or any HMAC sender can start runs.
-glance:
-  what: "A trigger binds the public URL POST /v1/hooks/{id} to one agent; every HMAC-verified delivery from GitHub, Sentry, PagerDuty or your own sender starts a run."
-  why: "Senders never hold a PAL token, and a delivery sent twice starts one run."
-  how: "Run pal hooks create my-agent --provider github and copy the secret, which is shown once."
 sidebar:
   order: 4
 ---
@@ -12,11 +8,11 @@ sidebar:
 import { Aside, Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 import { WebhookTriggers } from '../../../../components/diagrams';
 
+A **trigger** binds the public URL `POST /v1/hooks/{id}` to one agent. Every delivery from GitHub, Sentry, PagerDuty or your own sender that carries a valid **HMAC-SHA256 signature** starts a run. The signature is the only credential, so senders never hold a PAL token, and a delivery sent twice starts one run. This guide is for anyone wiring an external system to an agent.
+
 <WebhookTriggers client:visible />
 
-The signature is the only credential. Any service that can sign a request with HMAC-SHA256 can post to `POST /v1/hooks/{id}`.
-
-## How it works
+## How a delivery is handled
 
 <Steps>
 
@@ -30,7 +26,7 @@ The signature is the only credential. Any service that can sign a request with H
 
 ## Create a trigger
 
-`POST /v1/agents/{name}/triggers` with `provider` (`generic`, `github`, `sentry` or `pagerduty`), and optionally `secret` and `inputTemplate`. The agent must already exist. Requires the `agents:write` scope when scope enforcement is on.
+`POST /v1/agents/{name}/triggers` takes `provider` (`generic`, `github`, `sentry` or `pagerduty`) and optionally `secret` and `inputTemplate`. The agent must already exist. It needs the `agents:write` scope when scope enforcement is on.
 
 <Tabs>
 <TabItem label="curl">
@@ -64,6 +60,7 @@ curl -X DELETE http://localhost:8080/v1/triggers/$ID -H "Authorization: Bearer $
 
 ```ts
 import { PalClient } from "@pal-runtime/sdk";
+
 const client = new PalClient({ apiKey: process.env.PAL_API_KEY, baseUrl: "http://localhost:8080" });
 
 const t = await client.triggers.create("my-agent", { provider: "github" });
@@ -78,9 +75,10 @@ await client.triggers.delete(t.id);
 <TabItem label="Python">
 
 ```python
+import os
 from pal import PalClient
 
-async with PalClient(api_key="hlx_live_...", base_url="http://localhost:8080") as client:
+async with PalClient(api_key=os.environ["PAL_API_KEY"], base_url="http://localhost:8080") as client:
     t = await client.triggers.create("my-agent", provider="github")
     print(t["hookPath"], t.get("secret"))  # secret is present only here
 
@@ -122,17 +120,17 @@ printf '%s' "$SECRET" | pal hooks create my-agent --provider generic --secret-st
 </TabItem>
 </Tabs>
 
-`pal hooks` is also reachable as `pal hook` and `pal triggers`. In the dashboard, open an agent and use **Manage** on its webhook triggers card (`/agents/{name}/triggers`): **New trigger** picks a provider, takes an optional secret and input template, then shows the payload URL and secret in a copy dialog. Each row has Enable/Disable, **Replace secret** and Delete.
+`pal hooks` is also reachable as `pal hook` and `pal triggers`. The SDKs are not published to npm or PyPI; install them from the repo path ([SDKs](/docs/sdks/)). In the dashboard, open an agent and use **Manage** on its webhook triggers card (`/agents/{name}/triggers`). **New trigger** picks a provider, takes an optional secret and input template, then shows the payload URL and secret in a copy dialog. Each row has Enable/Disable, **Replace secret** and Delete.
 
 ## The URL and the secret
 
 The public URL is the API base URL plus the trigger's `hookPath`, for example `http://localhost:8080/v1/hooks/6f0c1c6e-...`. The sender must be able to reach it, so a local control plane needs a tunnel.
 
-- If you omit `secret`, PAL Runtime generates one (`whsec_` plus 64 hex characters) and returns it in the create response only. List and get never return it. The owner data export leaves it out too.
-- If you supply one, it must be at least 16 characters and is not echoed back.
-- To change it, `PATCH /v1/triggers/{id}` with a new `secret` (same 16-character minimum). The old secret stops working immediately; there is no overlap window.
+- Omit `secret` and PAL Runtime generates one (`whsec_` plus 64 hex characters), returned in the create response only. List and get never return it, and the owner data export leaves it out.
+- A secret you supply must be at least 16 characters and is not echoed back.
+- To change it, `PATCH /v1/triggers/{id}` with a new `secret` (same minimum). The old secret stops working immediately; there is no overlap window.
 
-## Provider setup
+## Set up a provider
 
 | Provider | Header | Signed bytes | Delivery id (dedup key) |
 | --- | --- | --- | --- |
@@ -143,29 +141,17 @@ The public URL is the API base URL plus the trigger's `hookPath`, for example `h
 
 All four are HMAC-SHA256 with the trigger secret, hex encoded.
 
-### GitHub
+**GitHub.** Create a `github` trigger and let PAL Runtime generate the secret. In the repository (or organization), go to **Settings, Webhooks, Add webhook**. Paste the URL as the payload URL, set content type to `application/json`, paste the secret into **Secret**, and choose the events to send. GitHub sends a `ping` when you save; it is a signed delivery like any other and starts a run. Templates see the event name as `event` (from `X-GitHub-Event`).
 
-Create a `github` trigger and let PAL Runtime generate the secret. In the repository (or organization), **Settings → Webhooks → Add webhook**: paste the URL as the payload URL, set content type to `application/json`, paste the secret into **Secret**, and choose the events to send. GitHub sends a `ping` when you save; it is a signed delivery like any other and starts a run. The event name is available to templates as `event` (from `X-GitHub-Event`).
-
-### Sentry
-
-Sentry generates its own client secret, so you cannot choose it. Create a `sentry` trigger first (you need its URL for the Sentry integration), then paste Sentry's client secret into PAL Runtime:
+**Sentry.** Sentry generates its own client secret, so you cannot choose it. Create a `sentry` trigger first (you need its URL for the Sentry integration), then give PAL Runtime Sentry's secret. The event is read from `Sentry-Hook-Resource`.
 
 ```bash
 printf '%s' "<sentry client secret>" | pal hooks update <trigger-id> --secret-stdin
 ```
 
-Or use **Replace secret** in the dashboard, or `PATCH` with `secret`. The event is read from `Sentry-Hook-Resource`.
+**PagerDuty.** PagerDuty shows its signing secret after you create the webhook subscription, so the order is the same: create the `pagerduty` trigger, use its URL as the delivery URL, then replace the trigger's secret with the one PagerDuty displays. During a secret rotation PagerDuty sends several `v1=` signatures in one header, and any match passes. The delivery id and event come from `event.id` and `event.event_type` in the body.
 
-### PagerDuty
-
-PagerDuty shows its signing secret after you create the webhook subscription, so the order is the same: create the `pagerduty` trigger, use its URL as the subscription's delivery URL, then replace the trigger's secret with the one PagerDuty displays. During a PagerDuty secret rotation it sends several `v1=` signatures in one header; any match passes. The delivery id and event come from `event.id` and `event.event_type` in the body.
-
-### Generic HMAC
-
-These headers use the `X-Pal-` prefix on the wire.
-
-For anything else, sign `<unix-timestamp>.<body>` with HMAC-SHA256 and send `X-Pal-Signature: t=<unix>,v1=<hex>`. The timestamp must be within five minutes of server time, in either direction. Send `X-Pal-Delivery` as a stable id per event and optionally `X-Pal-Event`.
+**Generic HMAC.** For anything else, sign `<unix-timestamp>.<body>` with HMAC-SHA256 and send `X-Pal-Signature: t=<unix>,v1=<hex>`. The timestamp must be within five minutes of server time, in either direction. Send `X-Pal-Delivery` as a stable id per event, and optionally `X-Pal-Event`.
 
 ```bash
 SECRET=whsec_...   # from the create response
@@ -182,7 +168,7 @@ curl -i -X POST "$HOOK" \
 # {"runId":"...","deliveryId":"incident-42"}
 ```
 
-Run it a second time within five minutes with the same `X-Pal-Delivery` and you get the duplicate response below.
+Run it again with the same `X-Pal-Delivery` and you get the `200` duplicate response below.
 
 ## Responses
 
@@ -203,20 +189,14 @@ Every error body is `{"error": "..."}`. The signature checks never say which par
 
 When run creation fails (402, 429, 500), the delivery id is released, so the provider's own retry can succeed once the budget resets or the limit clears.
 
-## Limits
-
-- **Body size:** 1 MiB. Larger gets 413.
-- **Rate:** per trigger, 60 deliveries per minute with a burst of 10 by default. Set `PAL_HOOK_RATE_PER_MIN` and `PAL_HOOK_BURST` on the control plane to change them. Buckets are in memory per replica, so with several replicas the effective limit is higher.
-- **Delivery id:** longer than 200 characters is replaced by its SHA-256 for storage.
-
 ## Duplicate deliveries
 
-Every delivery is checked against two keys, each unique per trigger: the provider's delivery id (table above; for `generic` without `X-Pal-Delivery`, and for any provider that sends no id, a hash of the signed bytes) and a SHA-256 of the signed bytes. A match on either returns `200 {"duplicate":true}` and starts no run.
+Every delivery is checked against two keys, each unique per trigger: the provider's delivery id (see the table above; for `generic` without `X-Pal-Delivery`, and for any provider that sends no id, a hash of the signed bytes) and a SHA-256 of the signed bytes. A match on either returns `200 {"duplicate":true}` and starts no run.
 
 The second key exists because GitHub, Sentry and PagerDuty sign only the body, not their delivery id headers, so someone holding a captured request could replay it with a fresh id.
 
 <Aside type="caution">
-A sender that posts the byte-identical body twice gets one run. The real providers put a unique id or timestamp in their payloads; for hand-rolled senders use `generic`, whose signed bytes include the timestamp. Delivery rows are not pruned yet.
+A sender that posts the byte-identical body twice gets one run. The real providers put a unique id or timestamp in their payloads. For hand-rolled senders use `generic`, whose signed bytes include the timestamp.
 </Aside>
 
 ## What the run receives
@@ -234,35 +214,26 @@ With no template, the run input is:
 
 If the body is not valid JSON, `payload` is the raw body as a string. `event` is the provider's event name, or an empty string where the format has none. The run is recorded with trigger kind `webhook`.
 
-An `inputTemplate` (a JSON object, set on create or update; `null` clears it) replaces that shape. Inside it, a string that is exactly `{{path}}` becomes the typed value at that dotted path in `{payload, event, provider, deliveryId, triggerId}` (or `null` if absent). A `{{path}}` inside a longer string is interpolated as text (empty if absent; non-strings are JSON-encoded). Nothing else is evaluated.
+An `inputTemplate` (a JSON object, set on create or update; `null` clears it) replaces that shape. Inside it, a string that is exactly `{{path}}` becomes the typed value at that dotted path in `{payload, event, provider, deliveryId, triggerId}`, or `null` if absent. A `{{path}}` inside a longer string is interpolated as text (empty if absent; non-strings are JSON-encoded). Nothing else is evaluated.
 
 ```bash
 pal hooks create my-agent --provider github \
   --template '{"pr":"{{payload.number}}","title":"{{payload.pull_request.title}}","note":"PR {{payload.number}} opened"}'
 ```
 
-## Other ways to start a run
+## Limits
 
-`POST /v1/runs`; a [schedule](/docs/build/scheduling/); a channel message ([Surfaces](/docs/pal/surfaces/)); an A2A call to `POST /v1/agents/{name}/a2a/invoke` ([Marketplace and A2A](/docs/build/marketplace/)).
+- **Body size:** 1 MiB. Larger gets 413.
+- **Rate:** per trigger, 60 deliveries per minute with a burst of 10 by default. Set `PAL_HOOK_RATE_PER_MIN` and `PAL_HOOK_BURST` on the control plane to change them. Buckets are in memory per replica, so with several replicas the effective limit is higher.
+- **Delivery id:** longer than 200 characters is replaced by its SHA-256 for storage.
+- **Spend:** a delivery goes through the same handler as `POST /v1/runs`, so a reached hard-fail [budget](/docs/build/budgets/) returns 402 and starts no run. Set a budget on any agent you expose this way.
+- **No event filter.** Every verified delivery, including a GitHub `ping`, starts a run.
+- **No overlap window** when rotating a secret.
+- **No retention sweep.** Delivery records are not pruned.
+- **Replay protection** differs by provider: only `generic` signs a timestamp (five-minute window). The others rely on the duplicate check.
 
-## Budgets and spend
+The route takes no token, and the trigger's tenant comes from its row, never from the request. The secret is stored AES-256-GCM encrypted when `PAL_CREDENTIAL_KEY` is set (plaintext otherwise), and is never logged. Trigger CRUD runs under row-level security, so another tenant's trigger returns 404.
 
-A delivery goes through the same handler as `POST /v1/runs`, so the agent's [budget](/docs/build/budgets/) and the tenant spawn limit apply: a reached hard-fail cap returns 402 and starts no run. Set a budget on any agent you expose this way.
+Other ways to start a run: `POST /v1/runs`, a [schedule](/docs/build/scheduling/), a channel message ([Connect your channels](/docs/pal/surfaces/)), or an A2A call ([Marketplace](/docs/build/marketplace/)).
 
-## Security notes
-
-- **Signature only.** The route takes no token. The trigger's tenant comes from its row, never from the request.
-- **Constant-time compare** of every candidate signature (`hmac.Equal`), no early exit.
-- **No id oracle.** Unknown, disabled and non-UUID ids return the same 404 before any signature check; the rate limit is spent only after the signature passes, so an unsigned flood cannot starve a real sender.
-- **Secret storage.** AES-256-GCM when `PAL_CREDENTIAL_KEY` is set (plaintext otherwise). Never returned by list or get, never logged, left out of the owner [data export](/docs/build/accounts/).
-- **Tenant scoping.** Trigger CRUD runs under row-level security; another tenant's trigger returns 404.
-- **Replay.** Only `generic` signs a timestamp (five-minute window); the others rely on the duplicate check above.
-
-## Not yet
-
-- No overlap window when rotating a secret.
-- No retention sweep for delivery records.
-- Per-replica rate limit; no per-IP limit at this layer.
-- No event filter: every verified delivery, including a GitHub `ping`, starts a run.
-
-Next: [scheduling](/docs/build/scheduling/).
+Next: [Scheduling](/docs/build/scheduling/).

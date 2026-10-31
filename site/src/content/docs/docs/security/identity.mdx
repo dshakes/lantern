@@ -1,10 +1,6 @@
 ---
 title: Identity and secrets
-description: Per-instance Ed25519 identity and short-TTL secret vending for microVM workloads, plus broker mode where credentials never enter the VM.
-glance:
-  what: "Each spawn gets its own Ed25519 identity, and secrets are vended to it at runtime with a 300-second TTL, authenticated by kernel-attested peer credentials."
-  why: "The spec holds only a reference, never a key, and a leaked value expires in minutes."
-  how: "Add a secrets entry with secret_uri: pal.secret://... to your spec; use broker mode if even a short-lived value in the VM is too much."
+description: Short-lived instance identity and secret vending for microVM workloads, plus broker mode where credentials never enter the VM.
 sidebar:
   order: 3
 ---
@@ -12,35 +8,38 @@ sidebar:
 import { Aside } from '@astrojs/starlight/components';
 import { IdentitySecrets } from '../../../../components/diagrams';
 
+Agents need API keys, and keys are what an attacker wants. A spec holds only a **reference** to a secret. The value is resolved at the last moment, handed to a process that proves it is the workload, and kept in memory for a short **TTL**. Each spawn also gets a signed **instance identity**, so a request to the secret relay can be tied to one VM, one tenant and one run. If even a short-lived value inside the VM is too much, use [broker mode](/docs/security/egress/), where the credential never enters it.
+
 <IdentitySecrets client:visible />
 
-Agents need API keys, and keys are what an attacker wants. The spec holds only a reference. The real value is handed over at the last moment, expires quickly, and goes only to a process that proves it is the workload it claims to be. Because every spawn has its own identity, anything it does traces back to that one run.
+## Who proves what
 
-## Per-instance Ed25519 identity
+| Hop | Credential | Checked by |
+| --- | --- | --- |
+| Workload to the harness secrets socket | Kernel-attested uid and pid (`SO_PEERCRED`) | The harness, against `PAL_WORKLOAD_UID` |
+| Harness to the runtime manager | Per-VM client certificate whose identity must match the `vm_id` | The manager, before it vends |
+| Manager to the control-plane relay | Pre-shared token in `X-Pal-Runtime-Token`, and optionally the instance token | The control plane |
+| Relay to the stored secret | The tenant on the VM's own record | The control plane |
 
-At spawn, the runtime issues the instance its own Ed25519 keypair. The identity is scoped to that single spawn (two runs of the same agent have different keys) and it is what the observability layer uses as `agent_instance_id` to keep traces from colliding.
+## Instance identity
 
-### Externally verifiable
+At schedule time the control plane mints a short-lived signed token for the instance and injects it into the VM's environment. It is a JWT with `typ: agent-instance` (so a normal user JWT is rejected), the `agent_instance_id`, `tenant_id` and `run_id`. The token is signed with Ed25519 when `PAL_AGENT_IDENTITY_ED25519_SEED` is set, and with HS256 otherwise. The default lifetime is one hour (`PAL_AGENT_IDENTITY_TTL`). The instance id is what observability uses as `agent_instance_id`, so traces from two runs of one agent do not collide.
 
-The instance's public identity is verifiable at a well-known endpoint, so a downstream service can confirm it is talking to a genuine PAL Runtime-issued instance:
+With the Ed25519 seed set, the public key is published, with no auth, at:
 
 ```
 GET /.well-known/pal-agent-identity
 ```
 
-## Short-TTL secret vending
-
-The workload never ships with secrets. Instead it requests them at runtime via the harness's secrets socket (`/run/pal/secrets.sock`), which authenticates every connecting peer with `SO_PEERCRED` (kernel-attested uid and pid, not spoofable). The harness only vends to the workload uid injected by the manager as `PAL_WORKLOAD_UID`. Secrets have a 300-second TTL.
-
-The control-plane resolves `pal.secret/...` references through a relay endpoint protected by a pre-shared `X-Pal-Runtime-Token` header (SHA-256 compared, set via `PAL_RUNTIME_SECRET_TOKEN`; the endpoint returns 403 when unset).
+Without the seed the endpoint reports only `HS256` and never emits the secret.
 
 <Aside type="caution">
-The relay is authenticated by the pre-shared token. The manager-to-control-plane hop also uses mutual TLS when `PAL_GRPC_TLS_*` is configured (ADR 0043).
+The identity is a token signed by the control plane's key, not a keypair held inside the VM. Set the Ed25519 seed in any real deployment, or a verifier has no public key to check against.
 </Aside>
 
-## The `pal.secret/...` ref form
+## Secret references
 
-In the spec you reference a secret, you do not embed it. The runtime resolves the reference at execution time, so the raw value never appears in the image, logs, traces or run state. From demo 02:
+In a spec you reference a secret, you do not embed it. The raw value never appears in the image, logs, traces or run state. From demo 02:
 
 ```yaml
 secrets:
@@ -48,28 +47,40 @@ secrets:
     secret_uri: pal.secret://__tenant__/key/scraper-user-agent
 ```
 
-The `pal.secret/...` ref form is the same convention used across the platform (see [Security](/docs/security/)). The runtime is where it is resolved, inside the isolation boundary, at the moment the workload needs it.
+The relay resolves refs of the form `pal.secret/llm/<provider>`, `pal.secret/connector/<install_id>/<config_key>` and `pal.secret/connector/<install_id>/oauth`. An unknown ref and a ref that belongs to another tenant return the same `not found`, so the endpoint is not an oracle for what exists.
+
+## Vending
+
+The workload does not ship with secrets. It requests them at runtime from the harness's socket, `/run/pal/secrets.sock`. The harness authenticates every peer with `SO_PEERCRED` and vends only to the workload uid the manager injects as `PAL_WORKLOAD_UID` (and to its own uid). Vended secrets are cached with a 300-second TTL. An unauthorized attempt emits a `secret_access_denied` audit event. If `PAL_WORKLOAD_UID` is unset, the harness warns once and allows the request, which is the dev path. In production the manager must inject it, and the harness refuses to start without a workload identity.
+
+The harness asks the manager, and the manager asks the control plane over `POST /v1/runtime/secrets/resolve`:
+
+- **Fail closed.** The relay needs `PAL_RUNTIME_SECRET_TOKEN` on both the control plane and the manager. Unset on the control plane, every call returns 403. The token is hashed with SHA-256 before a constant-time compare.
+- **Not reachable with a user JWT.** The route accepts the service token, not an end-user session.
+- **Brute-force limit.** Authentication failures are rate-limited per remote IP, at 10 failures per minute. Beyond that, the relay answers 429.
+- **VM binding.** The relay checks that the `vm_id` exists, belongs to the claimed tenant and is not terminated or failed. All three failures return the same 404 body. When an instance token is presented, its `agent_instance_id` must match that `vm_id` and tenant, and a bad token gets 403.
+- **Per-VM certificate.** The manager checks that the client certificate's identity matches the `vm_id` on a vend, so one VM cannot ask for another's secrets.
+- **Audit.** Each request writes a `secret_resolve` audit row with the ref names and count. Values are never logged.
+- **The manager never holds the decryption key.** `PAL_CREDENTIAL_KEY` lives on the control plane. A compromised manager node cannot decrypt a tenant's secrets by itself.
+
+Without a manager, the harness can read secrets from its own environment when `PAL_ALLOW_SECRET_STUB=1`. Never set it in production.
 
 <Aside type="caution">
-Pair secret vending with the right [isolation class](/docs/runtime/isolation/). A workload that loads internet packages and also holds a secret should be `untrusted` with an egress allowlist, so a compromised dependency can't exfiltrate the vended value to an arbitrary host.
+Vending still puts a short-lived value inside the VM, so a compromised workload can read it while it is valid. Pair secrets with the right [isolation class](/docs/runtime/isolation/): a workload that loads internet packages and holds a secret should be `untrusted`, with an egress allowlist.
 </Aside>
 
 ## Broker mode: credentials never enter the VM
 
-Vending still puts a short-lived value inside the VM, so a compromised workload can read it while it is valid. The opt-in broker mode (`PAL_EGRESS_MODE=broker`, Firecracker only) closes that gap for outbound API calls: the VM has no network device, and the host broker resolves the `pal.secret` ref and injects the header on the way out. The workload never holds the value. See [Egress and credentials](/docs/security/egress/).
-
-## Operating notes
-
-- **The manager never holds the decryption key.** `PAL_CREDENTIAL_KEY` lives only on the control plane, which resolves a `pal.secret/` ref over `POST /v1/runtime/secrets/resolve`. A compromised manager node cannot decrypt a tenant's secrets on its own.
-- **The relay is fail-closed.** It needs the pre-shared `PAL_RUNTIME_SECRET_TOKEN` on both the control plane and the manager (unset on the control plane: 403), and is not reachable with an end-user JWT.
-- **Per-VM mTLS.** The manager binds the `vm_id` reported on a vend to the mTLS peer certificate, so a workload cannot claim to be another VM. When the VM terminates its instance token stops working.
-- **Dev stub.** Without a manager, the harness reads secrets from its own environment when `PAL_ALLOW_SECRET_STUB=1`. Never set it in production.
-- **Credential encryption.** Provider keys and connector tokens are AES-256-GCM encrypted at rest with `PAL_CREDENTIAL_KEY`; the control plane refuses to start in production without it. See [Environment variables](/docs/reference/env-vars/).
+In broker mode (`PAL_EGRESS_MODE=broker`, Firecracker only, opt-in) the VM has no network device. The host broker resolves the secret ref and sets the header on the way out. The workload never holds the value. See [Egress](/docs/security/egress/).
 
 ## Software measurement of the launched VM
 
-Each Firecracker VM gets a SHA-256 measurement over its kernel, rootfs, harness, boot arguments and spawn contract (ADR 0031). Secrets and per-VM identity are excluded, so two VMs from the same images and spec match. `PAL_MEASUREMENT_GATE` on the runtime-manager is `off`, `warn` (the default) or `enforce`, which refuses a VM whose measurement matches no reference.
+Each Firecracker VM gets a SHA-256 measurement over its kernel, rootfs, harness, boot arguments and spawn contract (ADR 0031). Secrets and per-VM identity are excluded, so two VMs from the same images and spec match. `PAL_MEASUREMENT_GATE` on the runtime manager is `off`, `warn` (the default) or `enforce`, which refuses a VM whose measurement matches no reference.
 
 <Aside type="caution">
-The measurement is host-asserted: the manager hashes the files it is about to boot and records what it launched. It does not prove what ran inside the VM, and a compromised host could forge it. Hardware attestation (ADR 0023) is a separate mechanism that needs confidential-compute hardware and is unverified here. The value appears as `softwareMeasurement` in [receipts](/docs/security/receipts/) for microVM runs.
+The measurement is host-asserted: the manager hashes the files it is about to boot and records what it launched. It does not prove what ran inside the VM, and a compromised host could forge it. Hardware attestation (ADR 0023) needs confidential-compute hardware and is unverified here. The value appears as `softwareMeasurement` in [Receipts](/docs/security/receipts/) for microVM runs.
 </Aside>
+
+## Encryption of stored credentials
+
+Provider keys and connector tokens are AES-256-GCM encrypted at rest with `PAL_CREDENTIAL_KEY`. The control plane refuses to start in production without it. See [Environment variables](/docs/reference/env-vars/).

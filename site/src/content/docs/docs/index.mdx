@@ -1,12 +1,209 @@
 ---
-title: PAL documentation
-description: "Docs for pal, the personal agent in iMessage and WhatsApp, and PAL Runtime: durable, budgeted, sandboxed agents in your cloud."
-tableOfContents: false
-pagefind: true
-editUrl: false
-prev: false
+title: Start here
+description: "pal answers your iMessage and WhatsApp as you and holds anything that commits you. PAL Runtime runs your own agents: durable, budgeted and sandboxed."
+template: splash
+hero:
+  title: 'An agent for your life. <span class="grad">A runtime for yours.</span>'
+  tagline: "<strong>pal</strong> answers your iMessage and WhatsApp as you, and holds anything that commits you until you say yes. <strong>PAL Runtime</strong> runs your own agents: durable, budgeted and sandboxed, on your laptop or in your cloud."
+  actions:
+    - text: Use pal
+      link: /pal/docs/pal/
+      icon: right-arrow
+    - text: Build on PAL Runtime
+      link: /pal/docs/start/sixty-seconds/
+      icon: right-arrow
+      variant: secondary
+    - text: Try the demo
+      link: /pal/docs/start/demo/
+      variant: minimal
 ---
 
-import DocsPortal from '../../../components/DocsPortal.astro';
+import { Card, CardGrid, Tabs, TabItem } from '@astrojs/starlight/components';
+import { HoldsGates, SystemContext } from '../../../components/diagrams';
 
-<DocsPortal />
+<p class="kicker">The problem</p>
+
+## Agents that act are easy to start and hard to trust.
+
+<CardGrid>
+  <Card title="01 · A reply can commit you">
+    An agent writing as you can promise money, confirm a date it never checked, or answer bad news in the wrong tone. Sounding like you is the easy part.
+  </Card>
+  <Card title="02 · A crash spends twice">
+    A process dies mid-run and the run starts over: the model is billed again and the email goes out twice. Retries are not durability.
+  </Card>
+  <Card title="03 · Agent code is untrusted code">
+    Tools run code the model chose, fetch from the internet and hold your keys. A loop with no cap runs until the invoice arrives.
+  </Card>
+</CardGrid>
+
+<p class="kicker">pal · for you</p>
+
+## It brings you what matters. It waits on what is risky.
+
+pal runs on your Mac next to iMessage and WhatsApp. Ordinary replies go out in your voice, paced like you. A reply that **promises money**, **states a date it cannot verify** or **claims something only you could confirm** is held and sent to your self-chat. Step through what happens to one held reply:
+
+<HoldsGates client:visible />
+
+[How pal works](/docs/pal/) · [Holds and trust](/docs/pal/human-in-the-loop/) · [Privacy and control](/docs/pal/privacy/)
+
+<p class="kicker">PAL Runtime · for builders</p>
+
+## The parts every production agent needs.
+
+pal is built on PAL Runtime, and your agents get the same platform. Every step is **journaled**, so a crash resumes instead of restarting. Budgets are checked **before** the model is called, so a hard cap costs nothing. Untrusted code runs in a **microVM** with an egress allowlist, and models are addressed by capability, not by vendor name.
+
+<SystemContext client:visible />
+
+[How PAL Runtime works](/docs/architecture/overview/) · [Durable execution](/docs/runtime/durable-execution/) · [Security model](/docs/security/)
+
+<p class="kicker">Quickstart</p>
+
+## From a checkout to a first result.
+
+Every path starts from a checkout. [Install](/docs/start/installation/) lists the prerequisites (Docker, Node.js 22, Go 1.26).
+
+```sh
+git clone https://github.com/dshakes/pal.git && cd pal
+(cd packages/cli && go build -o "$(go env GOPATH)/bin/pal" ./cmd/pal)
+```
+
+<Tabs syncKey="path">
+<TabItem label="Try it (no keys)">
+
+The whole platform on Docker, with recorded model answers. Each visitor gets a throwaway workspace that expires after 30 minutes.
+
+```console
+$ pal demo                                      # Docker builds the images (slow the first time)
+…
+ Container pal-demo-dashboard-1  Started
+demo ready in 1m15s: http://localhost:3001/kiosk
+$ pal demo --down                               # stop it and delete its volumes
+…
+demo stopped, data deleted
+```
+
+Next: [Try it: the demo](/docs/start/demo/).
+
+</TabItem>
+<TabItem label="Use pal">
+
+Install and pair the two channel bridges first ([BOT-SETUP.md](repo:/blob/master/docs/personal/BOT-SETUP.md)). Then `pal setup` walks you through the rest and checks each channel live. This is a real run on a Mac where neither bridge was started yet, so step 2 says how to fix it; lines in `<…>` come from your model.
+
+```console
+$ pal dev            # the control plane and dashboard, on this Mac
+$ pal setup
+pal setup
+────────────────────────────────────────────────
+
+1. Meet pal
+   <pal introduces itself and says what it will touch>
+   Any questions first? (Enter to continue) >
+   pal may read your iMessage/WhatsApp on this Mac and reply as you, sending conversation text to your own model provider. Agree? [y/N] y
+   Optional: learn your voice from messages you've sent (read once, not stored)? [y/N] y
+2. Connect channels (checked live)
+   • iMessage: the bridge isn't running — start it (`pal dev`), then re-check
+   • WhatsApp: the bridge isn't running — start it (`pal dev`), then re-check
+   [i] start iMessage + check permissions  [w] link WhatsApp  [Enter] re-check  [q] quit >
+```
+
+With a bridge running, its line reads `✓ iMessage: connected` (or `✓ WhatsApp: connected`) and setup moves on to your voice, trust, your people and facts, and a first Brief. `pal setup` resumes where you left off and never gives consent for you. Next: [How pal works](/docs/pal/), then [Connect your channels](/docs/pal/surfaces/).
+
+</TabItem>
+<TabItem label="Build on PAL Runtime">
+
+Start the stack, then let `pal onboard` design an agent from one sentence, test your provider key with a real call, and stream the first run. This is a real run against a fresh database; run ids are replaced with `<run-id>` and lines in `<…>` come from your model.
+
+```console
+$ pal dev            # Postgres, Redis, MinIO, the API on :8080, the dashboard on :3001
+$ pal onboard
+PAL onboard — let's get you set up.
+────────────────────────────────────────────────
+1. Health check ... ✓
+2. Authentication ... ✓  dev login (<dev account>)
+3. LLM provider ... ✗  none configured
+  Configure an LLM provider to continue.
+  Provider (openai/anthropic): openai
+  API key:                                      # not echoed
+3. LLM provider ... ✓  openai
+4. Agent
+   What do you want your agent to do? (one or two sentences; Enter for a general assistant)
+   > Summarize any web page I paste into three bullets
+   designing ... ✓
+
+   Proposed agent: <name>
+   <one-line description>
+   Why: <why this design fits the goal>
+     1. <step> — <what it does>
+   First task: "<a first input that proves it works>"
+
+   Create it? [Y/n]
+   ✓ created <name>
+5. First run ... ✓  run <run-id> started
+   streaming events:
+   …                                            # one started/completed line per step
+────────────────────────────────────────────────
+You're set.
+
+Agent output:
+  <the agent's answer>
+
+Dashboard:  http://localhost:3001/runs/<run-id>
+
+Run it again:
+  pal runs create --agent <name> --input '{"prompt":"What can you do?"}'
+
+What just happened:
+  <a short explanation of the run>
+
+next: pal agent dev <name>   # edit locally; re-publishes and re-runs on every save
+```
+
+Next: [Quickstart in 60 seconds](/docs/start/sixty-seconds/), then [Your first agent](/docs/start/quickstart/).
+
+</TabItem>
+</Tabs>
+
+<p class="kicker">Measured, not claimed</p>
+
+## Every number links to its source.
+
+Real Firecracker microVMs, medians of 20 or more runs, from the committed [runtime latency benchmark](repo:/blob/master/docs/benchmarks/runtime-latency.md). They were measured under nested virtualization on a laptop, so compare changes with them; they are not production SLOs.
+
+| Operation | p50 |
+| --- | --: |
+| Spawn a microVM (RPC returns) | 143 ms |
+| Exec round trip in a warm VM | 115 ms |
+| Restore a paused VM (RPC returns) | 131 ms |
+| Restore, then first exec answered | 2,491 ms |
+| Egress request refused by the broker | 32 ms |
+
+How the numbers move a sandbox through pause, resume and fork: [Sandbox lifecycle](/docs/runtime/sandbox-lifecycle/).
+
+<p class="kicker">For the people who say no</p>
+
+## In production, a missing guard stops the service.
+
+The chart sets the environment to `production`. From then on these refuse to start, rather than run without the guard:
+
+| Missing | What refuses |
+| --- | --- |
+| Shared service token (`PAL_GRPC_SERVICE_TOKEN`) | The control plane, and every internal gRPC service that checks it |
+| Encryption key for stored credentials (`PAL_CREDENTIAL_KEY`) | The control plane |
+| Restricted database role for row-level security (`PAL_APP_DB_PASSWORD`) | The control plane, unless you opt out with `PAL_RLS_ENFORCE=0` |
+| TLS certificate and key (`PAL_TLS_CERT`, `PAL_TLS_KEY`) | The gateway |
+| The firewall rule that forces sandbox egress through the allowlist, when egress rules are declared | The workload inside the microVM |
+
+Each boundary and what it demands: [Security model](/docs/security/) and [Security boundaries](/docs/architecture/security-boundaries/).
+
+<p class="kicker">Pick your path</p>
+
+## Read the docs in order, or jump to your part.
+
+| You want to | Read, in order |
+| --- | --- |
+| Know what this is | [What PAL is](/docs/capabilities/) |
+| Use pal on your own messages | [How pal works](/docs/pal/) → [Connect your channels](/docs/pal/surfaces/) → [Teach it your voice](/docs/pal/voice/) → [Holds and trust](/docs/pal/human-in-the-loop/) → [Daily use](/docs/pal/daily/) |
+| Build an agent | [Quickstart in 60 seconds](/docs/start/sixty-seconds/) → [Your first agent](/docs/start/quickstart/) → [How PAL Runtime works](/docs/architecture/overview/) → [Agents](/docs/build/agents/) |
+| Run it in production | [Security model](/docs/security/) → [Production deployment](/docs/operate/deployment/) → [Observability](/docs/observability/) → [Operations](/docs/operate/operations/) |
+| Look something up | [REST API](/docs/reference/api/) · [CLI](/docs/reference/cli/) · [SDKs](/docs/sdks/) · [Environment variables](/docs/reference/env-vars/) |

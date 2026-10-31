@@ -1,0 +1,43 @@
+---
+title: Approvals
+description: "Pause a workflow run for a person: approval nodes, takeover requests, and the opt-in confidence gate."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+pal holds a reply until you say yes; the platform gives agents you build the same idea. An **approval node** in a workflow parks the run until a person grants or denies it, and the opt-in **confidence gate** sends low-confidence side effects to that same approval path instead of executing them. Nothing runs while a run waits, and a released run resumes from the approval node rather than starting over.
+
+## Approval nodes
+
+The run moves to `waiting`, the executing goroutine exits (a parked run holds no worker), and a `takeover_requests` row is created. It expires after **30 minutes** by default (`timeoutMinutes`, max 1440).
+
+| Method | Path | What it does |
+| --- | --- | --- |
+| `POST` | `/v1/runs/{id}/takeover/request` | Create a pending request (the node does this itself) |
+| `GET` | `/v1/runs/{id}/takeover` | List requests for a run |
+| `POST` | `/v1/runs/{id}/takeover/{tkId}/grant` | Approve; optional notes and SDP offer |
+| `POST` | `/v1/runs/{id}/takeover/{tkId}/deny` | The approval node fails, and so does the run |
+| `POST` | `/v1/runs/{id}/takeover/{tkId}/answer` | Browser-side SDP answer (live WebRTC session) |
+| `POST` | `/v1/runs/{id}/takeover/{tkId}/release` | The run is re-queued and resumes from the approval node |
+
+On release the interpreter replays the graph and skips every step already completed in the journal. The microVM video stream for WebRTC takeover is not wired yet; the grant, release and resume path is. A paused child run fails its parent step; nested approvals do not work yet.
+
+## Confidence gate
+
+Off by default; `PAL_CONFIDENCE_GATE=1` turns it on. Before a side-effecting node runs, the interpreter scores it. Below `PAL_CONFIDENCE_GATE_THRESHOLD` (default 0.75) the step goes to approval instead of executing. If no approval handler is wired, the step auto-approves so unattended workflows finish.
+
+| Gated node | When |
+| --- | --- |
+| `tool`, `connector` | Always, when the gate is on |
+| `ai-step` | Only when the node sets `requiresConfidence` to true |
+
+| Estimator (`PAL_CONFIDENCE_ESTIMATOR`) | How it scores | Weakness |
+| --- | --- | --- |
+| `self-consistency` (default) | Asks the model `PAL_CONFIDENCE_SAMPLES` times (default 5; a value outside 1 to 9 falls back to 5) for an independent YES/NO and returns the fraction that say execute. With no model wired it falls back to the heuristic below | Each sample is one model call |
+| `verbalization` (opt-out; also `heuristic`) | Reads self-reported confidence from earlier step text; 0.9 when there is none | Silence scores 0.9 and auto-executes |
+
+`PAL_CONFIDENCE_CALIBRATE=1` lowers a score by the realized regret rate for that agent and node type: the share of auto-executed steps later thumbs-downed (score 2 or lower) or ending in a failed run. With fewer than 3 samples or any error, the base score is unchanged. Every gated step journals `confidence_evaluated` with `{score, threshold, decision, node_type, estimator}`.
+
+<Aside title="Rollout order">
+Enable the gate on non-production agents first, read the `confidence_evaluated` events in the run waterfall, tune the threshold and samples, then enable it in production.
+</Aside>

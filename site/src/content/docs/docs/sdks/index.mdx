@@ -1,23 +1,26 @@
 ---
 title: SDKs
-description: "The TypeScript, Python and Go SDKs for the PAL management API, side by side, with client setup, runs, sessions, errors and the full namespace listing."
-glance:
-  what: "Three SDKs over the same REST API: TypeScript (the fullest), Python (async, at management parity with Go) and Go."
-  why: "Typed methods instead of hand-written HTTP: trigger agents from your app, wire runs into a backend, script bulk operations."
-  how: "Pick your language once in any tab below; every tabbed example on the site switches with it."
+description: "The TypeScript, Python and Go SDKs for the PAL management API, side by side."
 sidebar:
   order: 1
-  label: TypeScript, Python, Go
 ---
 
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Every sample here was checked against the SDK source on `master` (`packages/sdk-ts`, `packages/sdk-python`, `packages/sdk-go`). The TypeScript package is `@pal-runtime/sdk`, the Python package is `pal-runtime` (import `pal`), and the Go module keeps its path `github.com/dshakes/pal/packages/sdk-go` (package `pal`). For the raw endpoints see the [API reference](/docs/reference/api/).
+The **SDKs** wrap the control plane's REST API in typed methods, so you can start runs, hold sessions and script bulk operations from your own code instead of hand-writing HTTP. There are three: **TypeScript** (the fullest, and the only one that also writes agent code), **Python** (async, at management parity with Go) and **Go**. Pick your language in any tab; every tabbed example on the site follows it. For the raw endpoints see [REST API](/docs/reference/api/).
+
+| SDK | Package | Import | Notes |
+| --- | --- | --- | --- |
+| TypeScript | `@pal-runtime/sdk` | `PalClient` | Event streams, retries, agent authoring (`agent`, `step`) |
+| Python | `pal-runtime` | `from pal import PalClient` | Async; runtime context (`ctx.*`) is stubbed |
+| Go | `github.com/dshakes/pal/packages/sdk-go` | package `pal` | Retries; no run event stream yet |
+
+Every sample here was checked against the SDK source on `master` (`packages/sdk-ts`, `packages/sdk-python`, `packages/sdk-go`).
 
 ## Install
 
 <Aside type="caution" title="Not on a registry yet">
-None of the three is published. Install from a checkout. Do not `pip install pal-sdk` from PyPI: that name belongs to an unrelated project.
+None of the three is published. Install from a checkout. Do not install an SDK from PyPI or npm under a similar name: none of those packages are ours.
 </Aside>
 
 <Tabs syncKey="lang">
@@ -46,7 +49,7 @@ go get github.com/dshakes/pal/packages/sdk-go
 
 ## Client setup
 
-All three read `PAL_API_KEY` and `PAL_API_URL` when you pass nothing (the old `PAL_*` names still work). The built-in default URL (`https://api.pal.example.com`) is not a live service, so always set `PAL_API_URL` to your own control plane, for example `http://localhost:8080`.
+All three read `PAL_API_KEY` and `PAL_API_URL` when you pass nothing. The built-in default URL is not a live service, so always set `PAL_API_URL` to your own control plane, for example `http://localhost:8080`.
 
 <Tabs syncKey="lang">
 <TabItem label="TypeScript" icon="seti:typescript">
@@ -318,7 +321,7 @@ export default agent<{ query: string }>({
     // Durable step: journaled, idempotent, resumable after a crash
     const data = await step("fetch-data", () => ctx.tools.web.search(input.query));
 
-    // Addressed by capability; the model router picks the vendor model
+    // Addressed by capability; PAL maps it to a vendor model
     const summary = await step("summarize", () =>
       ctx.llm.complete({
         messages: [{ role: "user", content: `Summarize: ${data}` }],

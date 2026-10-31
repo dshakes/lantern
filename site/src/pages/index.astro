@@ -55,6 +55,20 @@ const TRUST = [
     </div>
   </section>
 
+  <section class="section" aria-labelledby="problem-h">
+    <div class="wrap">
+      <div class="section-head" data-reveal>
+        <p class="eyebrow">The problem</p>
+        <h2 id="problem-h" class="h2" style="margin-top:12px">Agents that act are easy to start and hard to trust.</h2>
+      </div>
+      <ul class="grid-3 trust">
+        <li class="card" data-reveal><h3 class="h3">A reply can commit you.</h3><p>An agent writing as you can promise money, confirm a date it never checked, or answer bad news in the wrong tone.</p></li>
+        <li class="card" data-reveal><h3 class="h3">A crash spends twice.</h3><p>A process dies mid-run and the run starts over: the model is billed again and the email goes out twice.</p></li>
+        <li class="card" data-reveal><h3 class="h3">Agent code is untrusted code.</h3><p>Tools run code the model chose, reach the internet and hold your keys. A loop with no cap runs until the invoice.</p></li>
+      </ul>
+    </div>
+  </section>
+
   <section class="section band" aria-labelledby="moment-h">
     <div class="wrap split">
       <div data-reveal>
@@ -129,7 +143,7 @@ const TRUST = [
       <ul class="grid-3 trust">
         {TRUST.map((t) => <li class="card" data-reveal><h3 class="h3">{t.h}</h3><p>{t.b}</p></li>)}
       </ul>
-      <a class="arrow-link" style="margin-top:24px" href={u('docs/runtime/security/')}>Security model</a>
+      <a class="arrow-link" style="margin-top:24px" href={u('docs/security/')}>Security model</a>
     </div>
   </section>
 
