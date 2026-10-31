@@ -1760,13 +1760,7 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 				}
 			}
 		}
-		systemPromptStr += fmt.Sprintf(`
-
-# Available tools (call these — they ARE the connectors)
-You currently have these tools attached and ready to call: %s.
-When the instructions above mention a 'GitHub connector', 'Linear connector',
-'Gmail connector', etc., they refer to the matching tools in this list.
-DO NOT respond with "I don't have access" — the tools are right here. Call them.`, strings.Join(availableNames, ", "))
+		systemPromptStr += toolBindingPrompt(availableNames)
 	}
 	// Tool-shy models (gpt-4o-mini, haiku) routinely refuse to call tools
 	// that ARE in the request, then lie 'I can't access the tools'. If we
@@ -3169,6 +3163,19 @@ func runToMap(r *palv1.Run) map[string]any {
 
 // runTotalStatus is the pal.run.total status label. A nil error is not
 // proof of success: the workflow path marks the row 'failed' and returns nil.
+// toolBindingPrompt binds prompt vocabulary ("the GitHub connector") to the
+// attached tool names. Shared by the run executor and the hermetic eval runner
+// so an eval sees the exact system prompt a real run does.
+func toolBindingPrompt(names []string) string {
+	return fmt.Sprintf(`
+
+# Available tools (call these — they ARE the connectors)
+You currently have these tools attached and ready to call: %s.
+When the instructions above mention a 'GitHub connector', 'Linear connector',
+'Gmail connector', etc., they refer to the matching tools in this list.
+DO NOT respond with "I don't have access" — the tools are right here. Call them.`, strings.Join(names, ", "))
+}
+
 func runTotalStatus(outErr error, dbStatus string) string {
 	if outErr != nil || dbStatus == "failed" {
 		return "failed"

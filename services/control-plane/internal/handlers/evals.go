@@ -12,7 +12,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -26,8 +25,10 @@ import (
 )
 
 type EvalHandler struct {
-	srv  *server.Server
-	auth *AuthHandler
+	srv      *server.Server
+	auth     *AuthHandler
+	llm      *LlmProxyHandler
+	complete evalCompleteFn // LLM seam for run/generate/calibrate; nil → 503
 }
 
 func NewEvalHandler(srv *server.Server, auth *AuthHandler) *EvalHandler {
@@ -42,8 +43,12 @@ type evalCase struct {
 	Name     string         `json:"name"`
 	Input    string         `json:"input"`
 	Expected string         `json:"expected,omitempty"`
-	Assert   map[string]any `json:"assert,omitempty"` // e.g. {"contains":"foo", "minLen":10}
+	Assert   map[string]any `json:"assert,omitempty"` // e.g. {"contains":"foo", "minLen":10}; v2 keys in eval_assert.go
 	Weight   float64        `json:"weight,omitempty"`
+	// v2 (ADR 0052): independent agent samples per case and deterministic
+	// tool fixtures for hermetic runs (POST /v1/eval-suites/{id}/run).
+	Samples int        `json:"samples,omitempty"`
+	Mocks   []evalMock `json:"mocks,omitempty"`
 }
 
 type evalSuiteDTO struct {
@@ -65,6 +70,13 @@ type evalCaseResult struct {
 	Error     string  `json:"error,omitempty"`
 	LatencyMs int64   `json:"latencyMs,omitempty"`
 	CostUsd   float64 `json:"costUsd,omitempty"`
+	// v2 (server-run) detail. All optional so client-posted results keep their shape.
+	Stddev       float64           `json:"stddev,omitempty"`
+	PassRate     *float64          `json:"passRate,omitempty"`
+	Flaky        bool              `json:"flaky,omitempty"`
+	JudgeCostUsd float64           `json:"judgeCostUsd,omitempty"`
+	Assertions   []assertionResult `json:"assertions,omitempty"`
+	Samples      []evalSample      `json:"samples,omitempty"`
 }
 
 type evalRunDTO struct {
@@ -107,6 +119,18 @@ func (h *EvalHandler) UpsertSuite(w http.ResponseWriter, r *http.Request) {
 	if body.AgentName == "" || body.Name == "" || len(body.Cases) == 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agentName, name, and cases required"})
 		return
+	}
+	seen := make(map[string]bool, len(body.Cases))
+	for _, c := range body.Cases {
+		if err := validateCase(c); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if seen[c.Name] {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("duplicate case name %q", c.Name)})
+			return
+		}
+		seen[c.Name] = true
 	}
 	casesJSON, _ := json.Marshal(body.Cases)
 	var id string
@@ -619,6 +643,5 @@ func compareToBaseline(ctx context.Context, pool *pgxpool.Pool, tenantID, agentN
 	if err != nil {
 		return nil, false
 	}
-	regressed := score+0.01 < baseline && math.Abs(baseline-score) > 0.01
-	return &baseline, regressed
+	return &baseline, aggregateRegressed(score, baseline)
 }
