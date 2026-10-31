@@ -59,7 +59,7 @@ vm_status() { limactl list --format '{{.Status}}' "${VM}" 2>/dev/null || true; }
 in_vm() {
   limactl shell --workdir "${REPO_ROOT}" "${VM}" -- env \
     LIMA_DISK_MAX_PCT="${DISK_MAX_PCT}" LIMA_PORT_WAIT_SECS="${PORT_WAIT_SECS}" \
-    ${LISTEN_PORT:+LISTEN_PORT="${LISTEN_PORT}"} \
+    ${LISTEN_PORT:+LISTEN_PORT="${LISTEN_PORT}"} ${SCHEDULER_URL:+SCHEDULER_URL="${SCHEDULER_URL}"} ${DEV_TLS_DIR:+DEV_TLS_DIR="${DEV_TLS_DIR}"} \
     ${ITERATIONS:+ITERATIONS="${ITERATIONS}"} ${FORK_SIZES:+FORK_SIZES="${FORK_SIZES}"} \
     ${FORK_ITERATIONS:+FORK_ITERATIONS="${FORK_ITERATIONS}"} ${FORK_CONCURRENCY:+FORK_CONCURRENCY="${FORK_CONCURRENCY}"} ${SKIP_BROKER:+SKIP_BROKER="${SKIP_BROKER}"} ${FORK_READY_MAX:+FORK_READY_MAX="${FORK_READY_MAX}"} ${ONLY_BROKER:+ONLY_BROKER="${ONLY_BROKER}"} \
     bash "${REPO_ROOT}/infra/lima/lima.sh" _in "$@"
@@ -283,7 +283,14 @@ guest_runtime() {
   sudo mkdir -p /srv/jailer /var/lib/pal/snapshots
   local port="${LISTEN_PORT:-52054}"
   wait_port_free "${port}"
-  log "runtime-manager (firecracker, jailed) on :${port} -> Mac localhost:${port}; registering with http://host.lima.internal:8085"
+  # The manager signs a per-VM certificate at spawn (harness identity); without a signing CA a
+  # real boot fails with "no manager signing CA configured". Mint a throwaway dev CA per run.
+  local ca_dir; ca_dir="$(mktemp -d)"
+  openssl req -x509 -newkey rsa:2048 -nodes -days 1 -keyout "${ca_dir}/ca.key" -out "${ca_dir}/ca.crt" \
+    -subj "/CN=pal-dev-vm-ca" -addext "basicConstraints=critical,CA:TRUE" >/dev/null 2>&1 \
+    || die "could not mint the dev VM signing CA"
+  mkdir -p "${ca_dir}/vm-certs"
+  log "runtime-manager (firecracker, jailed) on :${port} -> Mac localhost:${port}; registering with ${SCHEDULER_URL:-http://host.lima.internal:8085}"
   log "on the Mac: pal dev (or make run-scheduler + PAL_SCHEDULER_GRPC_ADDR=localhost:50055 make run-api)"
   exec sudo env \
     RUNTIME_BACKEND=firecracker PAL_RUNTIME_BACKEND=firecracker \
@@ -292,6 +299,8 @@ guest_runtime() {
     FIRECRACKER_JAILER_PATH="$(command -v jailer)" FIRECRACKER_JAILER_UID=123 \
     FIRECRACKER_JAILER_GID=100 FIRECRACKER_CHROOT_BASE=/srv/jailer \
     SCHEDULER_URL="${SCHEDULER_URL:-http://host.lima.internal:8085}" \
+    PAL_VM_SIGNING_CA_CERT="${DEV_TLS_DIR:-${ca_dir}}/ca.crt" PAL_VM_SIGNING_CA_KEY="${DEV_TLS_DIR:-${ca_dir}}/ca.key" PAL_VM_CERT_DIR="${ca_dir}/vm-certs" \
+    ${DEV_TLS_DIR:+PAL_MANAGER_TLS_CA="${DEV_TLS_DIR}/ca.crt" PAL_MANAGER_TLS_CERT="${DEV_TLS_DIR}/server.crt" PAL_MANAGER_TLS_KEY="${DEV_TLS_DIR}/server.key"} \
     NODE_NAME="lima-${VM}" NODE_ADVERTISE_ADDR="localhost:${port}" \
     NODE_REGION=local NODE_ZONE=lima \
     "${MANAGER_BIN}"

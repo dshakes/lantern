@@ -44,6 +44,7 @@ import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/button";
 import { Modal, ModalField } from "@/components/modal";
 import { EmptyState } from "@/components/empty-state";
+import { AgentEnvironments } from "./agent-environments";
 import { StateDot, StatePill, Sparkline, UtilBar } from "../runtime/cockpit-ui";
 import type { VmState } from "@/lib/runtime-types";
 // dataplane-demo imports intentionally removed — demo fleet is no longer shown
@@ -438,6 +439,8 @@ export default function DeploymentsPage() {
       <CommandStrip stats={stats} usingDemo={usingDemo} lastUpdated={lastUpdated} />
 
       <div className="space-y-8 p-6 md:p-8">
+        <AgentEnvironments />
+
         {/* PRIMARY: data-plane fleet + region map */}
         {planes.length === 0 ? (
           <EmptyState

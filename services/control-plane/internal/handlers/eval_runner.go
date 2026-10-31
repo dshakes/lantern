@@ -415,6 +415,51 @@ func (h *EvalHandler) RunSuite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Evidence binding (ADR 0054): an eval either runs a named FROZEN version
+	// (agentVersion) or the working copy, and is stamped with the version whose
+	// content digest matches what actually ran ("draft:<digest>" if none does).
+	// A caller's claim never becomes the stamp.
+	var runDigest string
+	if err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		if req.AgentVersion != "" {
+			snap, err := versionSnapshot(ctx, tx, tenantID, agentName, req.AgentVersion)
+			if err != nil || snap == nil {
+				return fmt.Errorf("version %q not found or has no frozen snapshot (run `pal freeze`)", req.AgentVersion)
+			}
+			if len(snap.Workflow) > 0 {
+				return fmt.Errorf("version %q is a workflow agent; hermetic evals run tool-loop agents", req.AgentVersion)
+			}
+			// Exactly the frozen content, never the draft's (an empty value stays empty).
+			agent.SystemPrompt, agent.Model = snap.SystemPrompt, snap.Model
+			runDigest = snap.digestHex()
+			return nil
+		}
+		snap, _, err := loadDraftSnapshot(ctx, tx, tenantID, agentName)
+		if err != nil {
+			return err
+		}
+		// One read feeds both the run and the digest: a concurrent deploy cannot make the
+		// stamp describe content the eval never ran.
+		if snap.SystemPrompt != "" {
+			agent.SystemPrompt = snap.SystemPrompt
+		}
+		agent.Model = snap.Model
+		runDigest = snap.digestHex()
+		return nil
+	}); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	req.AgentVersion = "draft:" + runDigest[:12]
+	_ = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		var v string
+		if tx.QueryRow(ctx, `SELECT av.version FROM agent_versions av JOIN agents a ON a.id = av.agent_id
+			WHERE a.tenant_id=$1 AND a.name=$2 AND av.digest = decode($3,'hex')`, tenantID, agentName, runDigest).Scan(&v) == nil {
+			req.AgentVersion = v
+		}
+		return nil
+	})
+
 	baseline := h.loadBaseline(ctx, tenantID, agentName, req.Branch)
 	res := h.executeSuite(ctx, tenantID, agent, cases, specs, req, baseline)
 
@@ -474,8 +519,8 @@ func (h *EvalHandler) RunSuite(w http.ResponseWriter, r *http.Request) {
 		return tx.QueryRow(ctx, `
 			INSERT INTO eval_runs
 			  (tenant_id, suite_id, agent_name, agent_version, commit_sha, branch, passed, score,
-			   cases_total, cases_passed, cases_result, duration_ms, total_cost_usd)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13)
+			   cases_total, cases_passed, cases_result, duration_ms, total_cost_usd, source)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,'hermetic')
 			RETURNING id`, tenantID, suiteID, agentName, req.AgentVersion, req.CommitSha, req.Branch,
 			allPassed, score, total, passed, resultsJSON, res.durationMs, totalCost).Scan(&id)
 	})
