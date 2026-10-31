@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -84,5 +85,27 @@ func TestPromoteContract_IsValidJSONAndExcludesApproval(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(out), &c); err != nil || c.Tool != "propose_promotion" || len(c.Not) == 0 {
 		t.Fatalf("bad contract: %v %q", err, out)
+	}
+}
+
+func TestSandboxRun_RefusesStubScheduler(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/agents/a/promote":
+			_ = json.NewEncoder(w).Encode(map[string]any{"promotion": map[string]any{"version": "v1", "status": "promoted", "env": "sandbox"}})
+		case "/v1/runtime/schedule":
+			_ = json.NewEncoder(w).Encode(map[string]any{"vmId": "vm-fake", "stub": true})
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	spec := t.TempDir() + "/agent.yaml"
+	if err := os.WriteFile(spec, []byte("image_digest: demo:latest\nisolation: trusted\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := runPromoCmd(t, srv.URL, "sandbox", "run", "a", "--spec", spec)
+	if err == nil || !strings.Contains(err.Error(), "NOT SCHEDULED") {
+		t.Fatalf("a stub scheduler must fail loudly, got %v", err)
 	}
 }
