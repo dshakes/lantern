@@ -429,8 +429,8 @@ func (h *EvalHandler) RunSuite(w http.ResponseWriter, r *http.Request) {
 			if len(snap.Workflow) > 0 {
 				return fmt.Errorf("version %q is a workflow agent; hermetic evals run tool-loop agents", req.AgentVersion)
 			}
-			agent.SystemPrompt = firstNonEmpty(snap.SystemPrompt, agent.SystemPrompt)
-			agent.Model = firstNonEmpty(snap.Model, agent.Model)
+			// Exactly the frozen content, never the draft's (an empty value stays empty).
+			agent.SystemPrompt, agent.Model = snap.SystemPrompt, snap.Model
 			runDigest = snap.digestHex()
 			return nil
 		}
@@ -438,6 +438,12 @@ func (h *EvalHandler) RunSuite(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
+		// One read feeds both the run and the digest: a concurrent deploy cannot make the
+		// stamp describe content the eval never ran.
+		if snap.SystemPrompt != "" {
+			agent.SystemPrompt = snap.SystemPrompt
+		}
+		agent.Model = snap.Model
 		runDigest = snap.digestHex()
 		return nil
 	}); err != nil {

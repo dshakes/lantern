@@ -634,3 +634,34 @@ func TestPromotion_FreezeIsContentAddressedAndIdempotent(t *testing.T) {
 		t.Fatal("freeze changed the serving version")
 	}
 }
+
+func TestPromotion_FreezeRefusesEmptyPromptAndGuardsAreBounded(t *testing.T) {
+	f := newPromoFixture(t)
+	_, err := f.e.superPool.Exec(context.Background(), `UPDATE agents SET system_prompt=NULL WHERE tenant_id=$1 AND name=$2`, f.tenant, f.agent)
+	must(t, err)
+	if code, _ := f.call("POST", "/v1/agents/"+f.agent+"/versions", f.owner, nil); code != 409 {
+		t.Fatalf("freezing an empty definition must be refused, got %d", code)
+	}
+	f.ready("v2")
+	for name, g := range map[string]map[string]any{
+		"minRuns below the earliest trip": {"minRuns": 3},
+		"error rate that cannot trip":     {"maxErrorRate": 1},
+		"cost ratio that cannot trip":     {"maxCostRatio": 100},
+	} {
+		if code, _ := f.promote(f.apikey, "prod", "v2", map[string]any{"canaryPct": 10, "guards": g}); code != 400 {
+			t.Errorf("%s: want 400, got %d", name, code)
+		}
+	}
+}
+
+func TestPromotion_CanaryExperimentCannotBeConcludedByHand(t *testing.T) {
+	f := newPromoFixture(t)
+	f.startCanary()
+	var exp string
+	must(t, f.e.superPool.QueryRow(context.Background(), `SELECT canary_experiment_id::text FROM agent_environments WHERE tenant_id=$1 AND agent_name=$2 AND env='prod'`, f.tenant, f.agent).Scan(&exp))
+	eh := NewExperimentHandler(f.e.srv, f.h.auth)
+	f.mux.HandleFunc("POST /v1/experiments/{id}/conclude", eh.Conclude)
+	if code, out := f.call("POST", "/v1/experiments/"+exp+"/conclude", f.owner, map[string]any{"winner": "a"}); code != 409 {
+		t.Fatalf("hand-concluding a promotion canary must conflict, got %d %v", code, out)
+	}
+}

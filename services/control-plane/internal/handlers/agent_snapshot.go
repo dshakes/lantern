@@ -132,6 +132,9 @@ func (h *PromotionHandler) CreateVersion(w http.ResponseWriter, r *http.Request)
 		if err != nil {
 			return err
 		}
+		if snap.SystemPrompt == "" && len(snap.Workflow) == 0 {
+			return fmt.Errorf("%w: agent has no system prompt or workflow to freeze (template-backed agents must be given an explicit prompt first)", errConflict)
+		}
 		dg := snap.digest()
 		// Serialize concurrent freezes of one agent.
 		if _, err := tx.Exec(ctx, `SELECT 1 FROM agents WHERE id::text=$1 FOR UPDATE`, agentID); err != nil {

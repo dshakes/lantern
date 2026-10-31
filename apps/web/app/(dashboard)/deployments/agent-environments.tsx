@@ -421,6 +421,11 @@ export function AgentEnvironments() {
           </>
         }
       >
+        {decision?.kind === "approve" && (decision.p.canaryPct ?? 0) > 0 && (
+          <p className="mb-3 break-words text-xs text-zinc-400">
+            Canary {decision.p.canaryPct}% with guards: {summarizeDetail(decision.p.guards)}
+          </p>
+        )}
         <ModalField label="Note (optional)">
           <input className={INPUT} value={note} onChange={(e) => setNote(e.target.value)} />
         </ModalField>

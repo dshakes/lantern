@@ -144,8 +144,16 @@ func (g *canaryGuards) defaults() {
 }
 
 func (g canaryGuards) validate() error {
-	if g.MaxErrorRate > 1 || g.MinEvalScore < 0 || g.MinEvalScore > 1 || g.MinRuns > 100000 || g.MaxCostRatio > 100 {
-		return fmt.Errorf("guards out of range")
+	// A guard that cannot trip is not a guard: bound each knob to a range in which it can.
+	switch {
+	case g.MaxErrorRate < 0 || g.MaxErrorRate > 0.5:
+		return fmt.Errorf("maxErrorRate must be in (0, 0.5]")
+	case g.MaxCostRatio < 0 || g.MaxCostRatio > 10:
+		return fmt.Errorf("maxCostRatio must be in (0, 10]")
+	case g.MinEvalScore < 0 || g.MinEvalScore > 1:
+		return fmt.Errorf("minEvalScore must be in [0, 1]")
+	case g.MinRuns != 0 && (g.MinRuns < canaryMinTripRuns || g.MinRuns > 100000):
+		return fmt.Errorf("minRuns must be between %d and 100000", canaryMinTripRuns)
 	}
 	return nil
 }

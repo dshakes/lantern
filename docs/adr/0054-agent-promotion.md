@@ -99,6 +99,19 @@ the tenant), and terminates the VM.
 ## Known limits / not done
 - Guard stats use `runs` status/cost; per-run eval scoring on live traffic is not sampled
   (a newer hermetic eval of the canary is the eval guard).
+- Frozen versions pin prompt, model and workflow only. Labels/tools/connectors/MCP attachments
+  still come from the live agent row, so those are not immutable per version.
+- Interactive sessions (`sessions.go`) and the bridges read the live agent row: `pal deploy`
+  changes session behaviour immediately, outside promotion. Only runs are version-routed.
+- Sandbox-run evidence (`PAL_PROMOTE_REQUIRE_SANDBOX_RUN`) is self-reported by the caller (the
+  VM must exist in the tenant); treat that gate as advisory until the server records its own exec.
+- A requester may approve their own request (no maker/checker split), and an owner session driven
+  by an LLM counts as human. Use a dedicated agent API key for the onboarding agent.
+- Rollback does not re-pin the env's eval baseline to the restored version.
+- Freezing is refused for an agent with no system prompt and no workflow (template-backed agents
+  need an explicit prompt first); canary guards are bounded (error rate <= 0.5, cost ratio <= 10,
+  minRuns >= 5) so a proposer cannot configure a guard that cannot trip.
+- A promotion canary's experiment cannot be concluded through `/v1/experiments/{id}/conclude`.
 - Variant stats struct is serialized without JSON tags (`Terminal`, `Failed`, `AvgCost`).
 - Workflow-agent hermetic evals remain unsupported (ADR 0052), so workflow versions
   cannot pass the eval gate yet.

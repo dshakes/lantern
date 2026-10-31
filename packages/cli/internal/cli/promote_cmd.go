@@ -140,7 +140,11 @@ if a guard trips.`,
 			}
 			if code == http.StatusUnprocessableEntity && evalSuite != "" && failedEval(out) {
 				fmt.Fprintf(cmd.ErrOrStderr(), "eval gate failed; running hermetic eval suite %s against baseline %q\n", evalSuite, to)
-				ec, eo, err := promoHTTP("POST", "/v1/eval-suites/"+url.PathEscape(evalSuite)+"/run", map[string]any{"branch": to})
+				evalBody := map[string]any{"branch": to}
+				if version != "" {
+					evalBody["agentVersion"] = version // evaluate the frozen version being promoted, not the draft
+				}
+				ec, eo, err := promoHTTP("POST", "/v1/eval-suites/"+url.PathEscape(evalSuite)+"/run", evalBody)
 				if err != nil {
 					return err
 				}
@@ -167,7 +171,7 @@ if a guard trips.`,
 	}
 	f := cmd.Flags()
 	f.StringVar(&to, "to", "", "target environment: sandbox, staging or prod (required)")
-	f.StringVar(&version, "version", "", "agent version (default: the agent's current version)")
+	f.StringVar(&version, "version", "", "frozen agent version (default: the newest; see `pal freeze`)")
 	f.IntVar(&canary, "canary", 0, "prod only: percent of runs (1-99) to send to the new version first")
 	f.Float64Var(&maxErr, "max-error-rate", 0.10, "canary guard: max failed/terminal runs")
 	f.Float64Var(&maxCost, "max-cost-ratio", 1.5, "canary guard: max candidate/stable cost per run")

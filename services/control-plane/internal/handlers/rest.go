@@ -1543,9 +1543,10 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 		`SELECT system_prompt, COALESCE(labels, '{}'::jsonb)::text, COALESCE(model, '') FROM agents WHERE name = $1 AND tenant_id = $2`,
 		agentName, tenantID,
 	).Scan(&storedSystemPrompt, &labelsJSON, &agentModel)
+	frozenRun := false
 	if snap := h.runSnapshot(ctx, runID); snap != nil {
 		// Frozen version (ADR 0054): its prompt and model, not the mutable working copy.
-		storedSystemPrompt, agentModel = &snap.SystemPrompt, snap.Model
+		storedSystemPrompt, agentModel, frozenRun = &snap.SystemPrompt, snap.Model, true
 	}
 	systemPromptStr := fmt.Sprintf("You are the agent '%s'. Process the user's input and produce a useful result.", agentName)
 	// resolvedTemplateID drives prefetch dispatch — MUST be set on every
@@ -1574,7 +1575,7 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 	}
 	if storedSystemPrompt != nil && *storedSystemPrompt != "" {
 		systemPromptStr = *storedSystemPrompt
-	} else {
+	} else if !frozenRun { // a frozen run never rewrites the working copy
 		// Lazy back-fill for agents that pre-date templates.go storing
 		// system_prompt. resolvedTemplateID was already set above.
 		var tpl templateDef

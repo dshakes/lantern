@@ -30,6 +30,7 @@ export interface EnvState {
 }
 
 export interface Promotion {
+  guards?: Record<string, unknown> | null;
   id: string;
   agentName: string;
   env: PromoEnv;

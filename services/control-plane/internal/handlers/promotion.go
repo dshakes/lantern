@@ -1022,10 +1022,16 @@ func (h *PromotionHandler) RecordSandboxRun(w http.ResponseWriter, r *http.Reque
 // PickVariant); an agent that never used environments keeps the legacy
 // current_version_id. Any lookup problem falls back to the legacy version:
 // routing must never fail a run.
-func pickPromotedVersion(ctx context.Context, tx pgx.Tx, tenant, agentID, agentName, runID, legacyVersionID string) (string, map[string]string) {
+func pickPromotedVersion(ctx context.Context, outer pgx.Tx, tenant, agentID, agentName, runID, legacyVersionID string) (string, map[string]string) {
+	// A savepoint: a SQL error here must not abort the caller's transaction.
+	tx, err := outer.Begin(ctx)
+	if err != nil {
+		return legacyVersionID, nil
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // read-only; rolling back releases the savepoint
 	var stable, status, cand string
 	var split int
-	err := tx.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		SELECT e.version, e.status, COALESCE(x.variant_b_version,''), COALESCE(x.traffic_split_b,0)
 		FROM agent_environments e LEFT JOIN agent_experiments x ON x.id = e.canary_experiment_id AND x.status='running'
 		WHERE e.tenant_id=$1 AND e.agent_name=$2 AND e.env='prod'`, tenant, agentName).Scan(&stable, &status, &cand, &split)

@@ -35,6 +35,8 @@ type evalFixture struct {
 	agentReply map[string]string // case input → agent text
 	genReply   string
 	toolCalls  []string // tool names the fake agent saw dispatched
+	systems    []string // system prompts the fake agent was actually given
+	models     []string // preferred model of each agent turn
 }
 
 func newEvalFixture(t *testing.T) *evalFixture {
@@ -71,7 +73,7 @@ func newEvalFixture(t *testing.T) *evalFixture {
 // complete is the fake LLM: agent turns call the scripted tool through the
 // dispatcher they were given; judge turns grade "30 days" answers 5, else 1,
 // and honour maker≠checker exclusions; generator turns return genReply.
-func (f *evalFixture) complete(ctx context.Context, _, _ string, msgs, tools []map[string]any, dispatch toolDispatchFn) (evalCompletion, error) {
+func (f *evalFixture) complete(ctx context.Context, _, preferred string, msgs, tools []map[string]any, dispatch toolDispatchFn) (evalCompletion, error) {
 	sys, _ := msgs[0]["content"].(string)
 	user, _ := msgs[1]["content"].(string)
 	switch sys {
@@ -99,6 +101,10 @@ func (f *evalFixture) complete(ctx context.Context, _, _ string, msgs, tools []m
 	case generateSystemPrompt:
 		return evalCompletion{Text: f.genReply, Model: "judge-model", CostUsd: 0.002}, nil
 	}
+	f.mu.Lock()
+	f.systems = append(f.systems, sys)
+	f.models = append(f.models, preferred)
+	f.mu.Unlock()
 	var prompt struct{ Prompt string }
 	_ = json.Unmarshal([]byte(user), &prompt)
 	var calls []ToolInvocation
@@ -461,5 +467,43 @@ func TestEvalRunSuite_StampsServerSideEvidence(t *testing.T) {
 	}
 	if _, ver, _ = run(map[string]any{}); !strings.HasPrefix(ver, "draft:") {
 		t.Fatalf("changed draft must not inherit v9's evidence: %s", ver)
+	}
+}
+
+// The eval must run EXACTLY the frozen content: a frozen version is evaluated with its own
+// prompt and model even after the working copy moves on, and an empty frozen value is not
+// silently replaced by the draft's.
+func TestEvalRunSuite_RunsFrozenSnapshotNotDraft(t *testing.T) {
+	f := newEvalFixture(t)
+	agentID := f.seedAgent("store-bot", "")
+	ctx := context.Background()
+	f.agentReply["refund window for shoes?"] = "Returns within 30 days."
+	suite := f.upsertSuite("store-bot", []map[string]any{refundCase})
+	snap := agentSnapshot{SystemPrompt: "FROZEN-PROMPT-P1", Model: "frozen-model"}
+	man, _ := json.Marshal(map[string]any{"snapshot": snap})
+	if _, err := f.pool.Exec(ctx, `INSERT INTO agent_versions (agent_id, version, digest, bundle_uri, manifest)
+		VALUES ($1::uuid,'v1',$2,'snapshot://inline',$3::jsonb)`, agentID, snap.digest(), string(man)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.pool.Exec(ctx, `UPDATE agents SET system_prompt='DRAFT-PROMPT-P2', model='draft-model' WHERE id=$1::uuid`, agentID); err != nil {
+		t.Fatal(err)
+	}
+	run := func(body map[string]any) {
+		if code, out := f.do(f.h.RunSuite, http.MethodPost, "/v1/eval-suites/"+suite+"/run", body, map[string]string{"id": suite}); code != http.StatusOK {
+			t.Fatalf("run: %d %v", code, out)
+		}
+	}
+	last := func() (string, string) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return f.systems[len(f.systems)-1], f.models[len(f.models)-1]
+	}
+	run(map[string]any{"agentVersion": "v1"})
+	if sys, m := last(); !strings.Contains(sys, "FROZEN-PROMPT-P1") || strings.Contains(sys, "DRAFT") || m != "frozen-model" {
+		t.Fatalf("frozen eval ran %q / %q", sys, m)
+	}
+	run(map[string]any{})
+	if sys, m := last(); !strings.Contains(sys, "DRAFT-PROMPT-P2") || m != "draft-model" {
+		t.Fatalf("draft eval ran %q / %q", sys, m)
 	}
 }
