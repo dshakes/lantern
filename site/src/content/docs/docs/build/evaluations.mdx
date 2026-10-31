@@ -109,3 +109,19 @@ POST /v1/experiments/{id}/conclude    { "winner": "b", "promote": true }    # "a
 `trafficSplitB` is stored, not applied. With `autoPromote` on, PAL promotes the leader once both arms have at least `minRunsToPromote` runs (default 100) and one leads by more than 0.02. That is a fixed margin, not a significance test. `GET /v1/experiments` and `GET /v1/experiments/{id}` list and read them.
 
 Span attributes and traces: [Observability](/docs/observability/).
+
+## CI gates for your agent repo
+
+`pal ci init` writes a GitHub Actions workflow and a generic `.pal/ci.sh` that run, in order,
+manifest lint, a policy/security lint, the hermetic eval suite with the baseline regression gate,
+and a budget check. All pass/fail decisions are deterministic code; a model never grades the gate.
+The run writes `pal-ci-report.json` and a PR comment.
+
+```bash
+pal ci init --suite ci --dry-run   # preview the files
+pal ci init --suite ci             # write them
+pal ci lint                        # the two offline gates, no credentials
+```
+
+Set the repo secret `PAL_API_KEY` and variables `PAL_API_URL` and `PAL_CI_STAGING_ACK=1`. The key
+must belong to a **staging** workspace: the gate deploys the PR's manifest there before evaluating it.

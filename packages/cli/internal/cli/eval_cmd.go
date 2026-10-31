@@ -195,10 +195,12 @@ Example:
 	return cmd
 }
 
-func runEval(ctx context.Context, base, token string, o evalRunOpts, out io.Writer) error {
+// execEvalRun runs the suite server-side and returns the decoded result plus
+// the raw body. A 422 (regression) is a result, not an error.
+func execEvalRun(ctx context.Context, base, token string, o evalRunOpts) (*evalRunResp, []byte, string, error) {
 	s, err := fetchSuite(ctx, base, token, o.agent, o.suite)
 	if err != nil {
-		return err
+		return nil, nil, "", err
 	}
 	branch := o.branch
 	if branch == "" {
@@ -230,22 +232,30 @@ func runEval(ctx context.Context, base, token string, o evalRunOpts, out io.Writ
 	}
 	status, raw, err := evalPost(ctx, base, token, "/v1/eval-suites/"+url.PathEscape(s.ID)+"/run", body)
 	if err != nil {
-		return fmt.Errorf("eval run: %w", err)
+		return nil, nil, branch, fmt.Errorf("eval run: %w", err)
 	}
 	if status != http.StatusOK && status != http.StatusUnprocessableEntity {
-		return evalServerError("eval run", status, raw) // 400/402/503: server text
+		return nil, nil, branch, evalServerError("eval run", status, raw) // 400/402/503: server text
 	}
 	var r evalRunResp
 	if err := json.Unmarshal(raw, &r); err != nil {
-		return fmt.Errorf("eval run: decode response: %w", err)
+		return nil, nil, branch, fmt.Errorf("eval run: decode response: %w", err)
 	}
 	if status == http.StatusUnprocessableEntity {
 		r.Regressed = true
 	}
+	return &r, raw, branch, nil
+}
+
+func runEval(ctx context.Context, base, token string, o evalRunOpts, out io.Writer) error {
+	r, raw, branch, err := execEvalRun(ctx, base, token, o)
+	if err != nil {
+		return err
+	}
 	if o.jsonOut {
 		_, _ = out.Write(append(bytes.TrimSpace(raw), '\n'))
 	} else {
-		printEvalRun(out, &r, o.agent, branch)
+		printEvalRun(out, r, o.agent, branch)
 	}
 	if r.Regressed {
 		return fmt.Errorf("regression vs. baseline on %s", branch)
