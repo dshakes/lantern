@@ -1938,6 +1938,17 @@ func (h *LlmProxyHandler) proxyAgentWithTools(
 
 	tools, _ := toolsForTenant(ctx, h.srv.Pool, tenantID)
 
+	// Agent identity (ADR 0052): the agent named in the request is the
+	// principal for every tool the loop dispatches.
+	actx, _, aerr := currentAgentAuthz().Establish(ctx, tenantID, req.AgentName, "")
+	if aerr != nil {
+		if !writeAgentPolicyDenied(w, aerr) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"code": "agent_identity_unavailable", "error": aerr.Error()})
+		}
+		return
+	}
+	ctx = actx
+
 	dispatch := func(dispatchCtx context.Context, name string, args map[string]any) (any, error) {
 		return dispatchTool(dispatchCtx, h.srv.Pool, tenantID, name, args)
 	}
