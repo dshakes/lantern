@@ -366,6 +366,23 @@ A residue scan fails the plan or apply if any plist or env value still points
 at the old DB user or DB, the old MinIO password, an old bucket, or the old dev
 JWT secret. It reports key names only.
 
+**A stray `pal_app` (or `pal`) role on the cluster.** An agent's test run can
+create the target role on the shared server. The live server had one: `pal_app`,
+with no grants in `lantern` and its only objects in test DB `p4_2781320577`.
+If it stays, the brand migration skips its rename and the new code connects as
+a role with no grants. `plan` refuses this state and names the databases that
+hold the role. To remove it, rerun with `PAL_CUTOVER_DROP_STRAY_ROLE=1`:
+
+1. In each database that holds the role, the DB step runs `REASSIGN OWNED BY
+   pal_app TO lantern` and then `DROP OWNED BY pal_app`. The leftover objects
+   survive, now owned by the superuser.
+2. It drops the role.
+3. Only then does it rename `lantern_app` to `pal_app`.
+
+It refuses if the old or new live database depends on the role. Rollback does
+not recreate the stray role. Its snapshot diff then shows exactly that one line,
+and the sandbox suite asserts that this is the only difference.
+
 **WhatsApp: no re-pair.** `auth_sessions/` doesn't move. The new linked-device
 name (`PAL`) is sent only when pairing, not when logging in (checked in
 Baileys' `validate-connection.js`), so the phone keeps showing the old name
