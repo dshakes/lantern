@@ -302,7 +302,7 @@ func checkAuth(restURL string) (checkResult, string) {
 	}
 
 	// Fall back to seeded dev credentials.
-	loginResp, err := client.Login("admin@pal.dev", "pal")
+	loginResp, err := client.Login("admin@pal.local", "pal")
 	if err != nil {
 		return checkResult{
 			label:  "authentication",

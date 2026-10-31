@@ -31,7 +31,7 @@ stack.
 ```bash
 export TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"email":"admin@pal.dev","password":"pal"}' | jq -r .token)
+  -d '{"email":"admin@pal.local","password":"pal"}' | jq -r .token)
 
 # 1. create the agent
 curl -s -X POST http://localhost:8080/v1/agents \
@@ -146,5 +146,5 @@ entirely offline by fetching the algorithm + key fingerprint from
 `GET /.well-known/pal-receipts`:
 
 ```json
-{"algorithm":"HMAC-SHA256","docs":"https://docs.pal.dev/receipts","keyFingerprint":"8bdbb2dacd05280b"}
+{"algorithm":"HMAC-SHA256","docs":"https://dshakes.github.io/pal/receipts","keyFingerprint":"8bdbb2dacd05280b"}
 ```

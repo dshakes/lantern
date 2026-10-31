@@ -75,10 +75,10 @@ var devSeedStatements = []string{
 	 VALUES (
 		'00000000-0000-0000-0000-000000000002',
 		'00000000-0000-0000-0000-000000000001',
-		'admin@pal.dev',
+		'admin@pal.local',
 		'Admin',
 		'local',
-		'admin@pal.dev',
+		'admin@pal.local',
 		'$2a$10$TjzuOlrLRP/7gC9HGdUX0u4aLfWZH/ho3WzZUiW7bSbRkAf2VEIau',
 		'owner'
 	 )

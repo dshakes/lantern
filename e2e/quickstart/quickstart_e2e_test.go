@@ -27,7 +27,7 @@
 // Override target / credentials:
 //
 //	PAL_E2E_API_URL   (default http://localhost:8080)
-//	PAL_E2E_EMAIL     (default admin@pal.dev)
+//	PAL_E2E_EMAIL     (default admin@pal.local)
 //	PAL_E2E_PASSWORD  (default pal)
 package quickstart_e2e
 

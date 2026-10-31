@@ -47,13 +47,15 @@ impl AppError {
     fn error_type(&self) -> &'static str {
         match self {
             AppError::WebhookVerification(_) => {
-                "https://pal.run/errors/webhook-verification-failed"
+                "https://dshakes.github.io/pal/errors/webhook-verification-failed"
             }
-            AppError::BadRequest(_) => "https://pal.run/errors/bad-request",
-            AppError::NotFound(_) => "https://pal.run/errors/not-found",
-            AppError::AdapterNotConfigured(_) => "https://pal.run/errors/adapter-not-configured",
-            AppError::Upstream(_) => "https://pal.run/errors/upstream",
-            AppError::Internal(_) => "https://pal.run/errors/internal",
+            AppError::BadRequest(_) => "https://dshakes.github.io/pal/errors/bad-request",
+            AppError::NotFound(_) => "https://dshakes.github.io/pal/errors/not-found",
+            AppError::AdapterNotConfigured(_) => {
+                "https://dshakes.github.io/pal/errors/adapter-not-configured"
+            }
+            AppError::Upstream(_) => "https://dshakes.github.io/pal/errors/upstream",
+            AppError::Internal(_) => "https://dshakes.github.io/pal/errors/internal",
         }
     }
 
@@ -94,7 +96,7 @@ impl IntoResponse for AppError {
                 "application/problem+json",
             )],
             serde_json::to_string(&body).unwrap_or_else(|_| {
-                r#"{"type":"https://pal.run/errors/internal","title":"Internal Server Error","status":500,"detail":"failed to serialize error"}"#.to_string()
+                r#"{"type":"https://dshakes.github.io/pal/errors/internal","title":"Internal Server Error","status":500,"detail":"failed to serialize error"}"#.to_string()
             }),
         )
             .into_response()

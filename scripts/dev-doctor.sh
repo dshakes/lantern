@@ -152,7 +152,7 @@ check_api() {
   local login_body
   login_body=$(curl -sS -X POST http://localhost:8080/auth/login \
     -H 'Content-Type: application/json' \
-    -d '{"email":"admin@pal.dev","password":"pal"}' -m 3 2>/dev/null)
+    -d '{"email":"admin@pal.local","password":"pal"}' -m 3 2>/dev/null)
   if [[ "$login_body" == *'"token":'* ]]; then
     pass "control-plane :8080" "healthz=200, login=OK"
   else

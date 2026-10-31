@@ -235,7 +235,7 @@ CREATE INDEX schedules_next_fire_idx ON schedules (next_fire_at) WHERE next_fire
 CREATE TABLE webhook_subscriptions (
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   trigger_id        UUID NOT NULL REFERENCES triggers(id) ON DELETE CASCADE,
-  ingest_url        TEXT NOT NULL UNIQUE,                -- https://hooks.pal.run/<uuid>
+  ingest_url        TEXT NOT NULL UNIQUE,                -- https://hooks.pal.example.com/<uuid>
   signing_secret    BYTEA NOT NULL,                      -- HMAC verification
   vendor            TEXT,                                -- 'github', 'stripe', ...
   vendor_handle     TEXT                                 -- subscription id at vendor

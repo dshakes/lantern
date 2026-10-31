@@ -20,7 +20,7 @@ there are no long-term support branches yet.
 
 ## Scope & hardening notes
 
-- **Dev credentials are dev-only.** The seeded `admin@pal.dev` / `pal`
+- **Dev credentials are dev-only.** The seeded `admin@pal.local` / `pal`
   login, the `pal-dev-jwt-secret-do-not-use-in-production` JWT secret, and
   the local Postgres/MinIO credentials in `docs`/compose are for local
   development. **Production deployments must override** `JWT_SECRET`,

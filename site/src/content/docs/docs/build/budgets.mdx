@@ -151,7 +151,7 @@ Response: 200 OK
 
 ```bash
 TOKEN=$(curl -s localhost:8080/auth/login -H 'Content-Type: application/json' \
-  -d '{"email":"admin@pal.dev","password":"pal"}' | jq -r .token)
+  -d '{"email":"admin@pal.local","password":"pal"}' | jq -r .token)
 
 # Cap an agent at 1 run per day, hard-fail
 curl -s -X PUT localhost:8080/v1/agents/demo/budget \

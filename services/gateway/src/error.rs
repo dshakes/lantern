@@ -53,13 +53,13 @@ impl AppError {
 
     fn error_type(&self) -> &'static str {
         match self {
-            AppError::Auth(_) => "https://pal.run/errors/unauthorized",
-            AppError::Forbidden(_) => "https://pal.run/errors/forbidden",
-            AppError::NotFound(_) => "https://pal.run/errors/not-found",
-            AppError::BadRequest(_) => "https://pal.run/errors/bad-request",
-            AppError::Internal(_) => "https://pal.run/errors/internal",
-            AppError::Upstream(_) => "https://pal.run/errors/upstream",
-            AppError::RateLimited { .. } => "https://pal.run/errors/rate-limited",
+            AppError::Auth(_) => "https://dshakes.github.io/pal/errors/unauthorized",
+            AppError::Forbidden(_) => "https://dshakes.github.io/pal/errors/forbidden",
+            AppError::NotFound(_) => "https://dshakes.github.io/pal/errors/not-found",
+            AppError::BadRequest(_) => "https://dshakes.github.io/pal/errors/bad-request",
+            AppError::Internal(_) => "https://dshakes.github.io/pal/errors/internal",
+            AppError::Upstream(_) => "https://dshakes.github.io/pal/errors/upstream",
+            AppError::RateLimited { .. } => "https://dshakes.github.io/pal/errors/rate-limited",
         }
     }
 
@@ -100,7 +100,7 @@ impl IntoResponse for AppError {
                 "application/problem+json",
             )],
             serde_json::to_string(&body).unwrap_or_else(|_| {
-                r#"{"type":"https://pal.run/errors/internal","title":"Internal Server Error","status":500,"detail":"failed to serialize error"}"#.to_string()
+                r#"{"type":"https://dshakes.github.io/pal/errors/internal","title":"Internal Server Error","status":500,"detail":"failed to serialize error"}"#.to_string()
             }),
         )
             .into_response();

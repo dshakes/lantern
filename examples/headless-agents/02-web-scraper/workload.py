@@ -40,7 +40,9 @@ def main() -> int:
         print(json.dumps({"error": "url required"}), file=sys.stderr)
         return 2
 
-    user_agent = read_secret("USER_AGENT", "pal-demo/0.1 (+https://pal.dev)")
+    user_agent = read_secret(
+        "USER_AGENT", "pal-demo/0.1 (+https://dshakes.github.io/pal)"
+    )
 
     try:
         resp = requests.get(

@@ -84,3 +84,19 @@ path_hits() {
     exit 1;
   }
 '
+
+# Third-party domains. pal.run and pal.dev are owned by strangers: a default
+# URL, copy button or e-mail on them would send users' API keys, agent tokens
+# or mail to someone else's server. Hosts only — K8s label keys (pal.dev/<key>)
+# are names, never contacted. Use
+# localhost / a derived origin in code, RFC 2606 pal.example.com in examples,
+# the docs site https://dshakes.github.io/pal for docs links.
+rc=0
+domains="$(git grep -n -I -P \
+  '((https?|wss?)://|@)([a-z0-9-]+\.)*pal\.(run|dev)\b(?![._-])|\b[a-z0-9-]+\.pal\.(run|dev)\b(?![._-])|(?<![\w./@-])pal\.run(?![\w.-])' \
+  -- . ':!scripts/brand-check.sh' ':!scripts/zero-lantern/**' ':!scripts/cutover/**' ':!docs/runbooks/pal-cutover.md')" || rc=$?
+[[ $rc -le 1 ]] || { echo "brand-check: git grep failed (exit $rc)" >&2; exit "$rc"; }
+if [[ -n "$domains" ]]; then
+  printf '%s\n' "$domains" | sed 's/^/third-party domain: /' >&2
+  [[ "$mode" != enforce ]] || { echo "brand-check: hosts on pal.run / pal.dev (third-party domains) found" >&2; exit 1; }
+fi

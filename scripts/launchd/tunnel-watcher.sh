@@ -49,7 +49,7 @@ fetch_twilio_creds() {
   local jwt sid auth pn
   jwt=$(curl -s -m 5 -X POST http://127.0.0.1:8080/auth/login \
     -H 'content-type: application/json' \
-    -d '{"email":"admin@pal.dev","password":"pal"}' \
+    -d '{"email":"admin@pal.local","password":"pal"}' \
     | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
   [ -z "$jwt" ] && return 1
   local resp

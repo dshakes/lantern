@@ -140,7 +140,7 @@ jobs:
           cache-dependency-path: |
             services/control-plane/go.sum
             packages/cli/go.sum
-      # Same control-plane env the fixture tier uses; the seeded dev user (admin@pal.dev) is
+      # Same control-plane env the fixture tier uses; the seeded dev user (admin@pal.local) is
       # what the test logs in as. Own DB so it never shares state with the other jobs' databases.
       - name: Start control-plane
         working-directory: services/control-plane

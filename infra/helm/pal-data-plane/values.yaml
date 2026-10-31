@@ -27,9 +27,9 @@ global:
 # Control plane connection settings
 # ---------------------------------------------------------------------------
 controlPlane:
-  # The control plane gRPC endpoint. For PAL Runtime SaaS, use the default.
-  # For self-hosted, set to your control plane's address.
-  endpoint: "https://api.pal.run"
+  # REQUIRED: your control plane's endpoint. No default — the agent sends its
+  # bootstrap token here, so it must be a control plane you operate.
+  endpoint: ""
   # Multi-region (ADR 0046): ordered control-plane endpoints, one per region,
   # primary first. Empty = use `endpoint` only (single-region, no health probe).
   # e.g. ["api.us-east-1.example.com:443", "api.us-west-2.example.com:443"]

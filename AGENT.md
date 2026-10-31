@@ -258,7 +258,7 @@ $ pal build
 ✓ manifest.lock.json
 $ cosign sign --key pal.key bundle.tar.zst
 $ pal push
-✓ pushed to pal.dev/acme/research-agent@sha256:1f2e...
+✓ pushed to registry.pal.example.com/acme/research-agent@sha256:1f2e...
 ```
 
 What is enforced today (ADR 0044): the control plane does **not** verify bundle

@@ -88,9 +88,13 @@ variable "services_cidr" {
 }
 
 variable "pal_control_plane_endpoint" {
-  description = "Endpoint of the PAL Runtime control plane (default https://api.pal.run)."
+  description = "Endpoint of YOUR PAL Runtime control plane (required; no default: the data-plane agent sends its credentials here). Must be https:// unless it points at localhost."
   type        = string
-  default     = null
+
+  validation {
+    condition     = can(regex("^https://", var.pal_control_plane_endpoint)) || can(regex("^http://(localhost|127\\.0\\.0\\.1)(:[0-9]+)?(/.*)?$", var.pal_control_plane_endpoint))
+    error_message = "pal_control_plane_endpoint must be an https:// URL (http:// only for localhost)."
+  }
 }
 
 variable "tenant_id" {
@@ -111,7 +115,7 @@ variable "pal_version" {
 }
 
 locals {
-  control_plane_endpoint = coalesce(var.pal_control_plane_endpoint, "https://api.pal.run")
+  control_plane_endpoint = var.pal_control_plane_endpoint
   chart_version          = coalesce(var.pal_version, "0.1.0")
 }
 

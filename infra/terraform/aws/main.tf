@@ -362,7 +362,7 @@ resource "aws_eks_node_group" "this" {
   }
 
   labels = {
-    "pal.run/component" = "data-plane"
+    "pal.dev/component" = "data-plane"
   }
 
   lifecycle {

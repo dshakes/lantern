@@ -206,12 +206,12 @@ ingress:
   className: nginx
   annotations: {}
   hosts:
-    - host: api.pal.run
+    - host: api.pal.example.com
       paths:
         - path: /
           pathType: Prefix
           service: gateway
-    - host: app.pal.run
+    - host: app.pal.example.com
       paths:
         - path: /
           pathType: Prefix

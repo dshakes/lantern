@@ -1,5 +1,6 @@
 "use client";
 
+import { usePublicUrls } from "@/lib/public-url";
 import { useState, useEffect, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import {
@@ -235,6 +236,7 @@ function validateFields(fields: Record<string, string>, definitions: ConfigField
 // ---------------------------------------------------------------------------
 
 export default function SurfacesPage() {
+  const publicUrls = usePublicUrls();
   const toast = useToast();
   const searchParams = useSearchParams();
   const { user } = useAuth();
@@ -409,9 +411,10 @@ export default function SurfacesPage() {
     toast.info(`${configModal.name} disconnected`);
   };
 
-  const embedCode = `<script src="https://cdn.pal.run/webchat.js"
-  data-tenant="t_acme"
-  data-agent="auto"
+  const embedCode = `<script src="${publicUrls.widgetSrc}"
+  data-api-key="pk_live_..."
+  data-agent="your-agent"
+  data-api-base="${publicUrls.apiBase}"
   data-theme="dark">
 </script>`;
 

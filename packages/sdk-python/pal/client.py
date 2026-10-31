@@ -82,7 +82,7 @@ class PalClient:
         timeout: float = 30.0,
         route_strategy: str | None = None,
     ) -> None:
-        self.base_url = (base_url or os.environ.get("PAL_API_URL") or "https://api.pal.run").rstrip("/")
+        self.base_url = (base_url or os.environ.get("PAL_API_URL") or "http://localhost:8080").rstrip("/")
         self._api_key = api_key or os.environ.get("PAL_API_KEY") or ""
         self._timeout = timeout
         self._route_strategy = route_strategy or os.environ.get("PAL_ROUTE_STRATEGY") or "auto"

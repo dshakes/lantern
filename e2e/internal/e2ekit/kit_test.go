@@ -119,7 +119,7 @@ func unsetEnv(t *testing.T, key string) {
 func kitFor(t *testing.T, srv *httptest.Server) *Kit {
 	t.Helper()
 	setEnv(t, "PAL_E2E_API_URL", srv.URL)
-	setEnv(t, "PAL_E2E_EMAIL", "admin@pal.dev")
+	setEnv(t, "PAL_E2E_EMAIL", "admin@pal.local")
 	setEnv(t, "PAL_E2E_PASSWORD", "pal")
 	return Connect(t)
 }
@@ -384,7 +384,7 @@ func TestCreateAgent_OverridesModel(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	setEnv(t, "PAL_E2E_API_URL", srv.URL)
-	setEnv(t, "PAL_E2E_EMAIL", "admin@pal.dev")
+	setEnv(t, "PAL_E2E_EMAIL", "admin@pal.local")
 	setEnv(t, "PAL_E2E_PASSWORD", "pal")
 	k := Connect(t)
 

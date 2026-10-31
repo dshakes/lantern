@@ -355,7 +355,7 @@ func (h *ReceiptHandler) WellKnown(w http.ResponseWriter, _ *http.Request) {
 			"algorithm":      "Ed25519",
 			"publicKey":      base64.StdEncoding.EncodeToString(k.pub),
 			"keyFingerprint": hex.EncodeToString(fp[:8]),
-			"docs":           "https://docs.pal.dev/receipts",
+			"docs":           "https://dshakes.github.io/pal/receipts",
 		})
 		return
 	}
@@ -365,7 +365,7 @@ func (h *ReceiptHandler) WellKnown(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"algorithm":      "HMAC-SHA256",
 		"keyFingerprint": hex.EncodeToString(digest[:8]),
-		"docs":           "https://docs.pal.dev/receipts",
+		"docs":           "https://dshakes.github.io/pal/receipts",
 	})
 }
 

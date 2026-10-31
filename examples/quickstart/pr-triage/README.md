@@ -29,7 +29,7 @@ First get a token (documented dev credentials):
 ```bash
 export TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"email":"admin@pal.dev","password":"pal"}' | jq -r .token)
+  -d '{"email":"admin@pal.local","password":"pal"}' | jq -r .token)
 ```
 
 ### 1. Create the agent

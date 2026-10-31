@@ -32,7 +32,7 @@ An *agent* is an AI worker with a name and instructions. A *run* is one executio
 
 ## In the dashboard
 
-Open [localhost:3001/onboarding](http://localhost:3001/onboarding) and sign in (the seeded dev account: `admin@pal.dev` / `pal`). A conversation on the right, a progress rail on the left.
+Open [localhost:3001/onboarding](http://localhost:3001/onboarding) and sign in (the seeded dev account: `admin@pal.local` / `pal`). A conversation on the right, a progress rail on the left.
 
 <Steps>
 
@@ -76,7 +76,7 @@ pal onboard --yes \
   --description "Summarize support tickets into one-line triage notes"
 ```
 
-Other `pal` commands reuse the credentials `pal onboard` saves. To sign in separately: `pal login --email admin@pal.dev --password pal`.
+Other `pal` commands reuse the credentials `pal onboard` saves. To sign in separately: `pal login --email admin@pal.local --password pal`.
 
 ## Under the hood
 
@@ -85,7 +85,7 @@ Both paths use public endpoints you can script:
 ```bash
 export PAL_TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"admin@pal.dev","password":"pal"}' | jq -r .token)
+  -d '{"email":"admin@pal.local","password":"pal"}' | jq -r .token)
 H="Authorization: Bearer $PAL_TOKEN"; J="Content-Type: application/json"
 
 # 1. Provider key + a real test call

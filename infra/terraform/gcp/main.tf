@@ -201,7 +201,7 @@ resource "google_container_node_pool" "pal" {
     ]
 
     labels = {
-      "pal.run/component" = "data-plane"
+      "pal.dev/component" = "data-plane"
     }
 
     workload_metadata_config {

@@ -189,12 +189,12 @@ func (h *A2AHandler) GetAgentCard(w http.ResponseWriter, r *http.Request) {
 		Description:  desc,
 		Version:      version, // real version from agent_versions; "" when no version deployed yet
 		Capabilities: caps,
-		Endpoint:     "https://api.pal.run/v1/agents/" + name + "/a2a/invoke",
+		Endpoint:     derivePublicURL(r) + "/v1/agents/" + name + "/a2a/invoke",
 		InputSchema:  defaultInput,
 		OutputSchema: defaultOutput,
 		Provider: AgentCardProvider{
 			Name: "PAL",
-			URL:  "https://pal.run",
+			URL:  "https://dshakes.github.io/pal",
 		},
 	}
 
@@ -266,12 +266,12 @@ func (h *A2AHandler) AgentDirectory(w http.ResponseWriter, r *http.Request) {
 			Description:  desc,
 			Version:      version, // real version from agent_versions; "" when none deployed
 			Capabilities: caps,
-			Endpoint:     "https://api.pal.run/v1/agents/" + name + "/a2a/invoke",
+			Endpoint:     derivePublicURL(r) + "/v1/agents/" + name + "/a2a/invoke",
 			InputSchema:  json.RawMessage(`{"type":"object","properties":{"message":{"type":"string"}}}`),
 			OutputSchema: json.RawMessage(`{"type":"object","properties":{"result":{"type":"string"}}}`),
 			Provider: AgentCardProvider{
 				Name: "PAL",
-				URL:  "https://pal.run",
+				URL:  "https://dshakes.github.io/pal",
 			},
 		}
 		agentCardIdentity(&card, ownerTenant, agentID)
@@ -283,7 +283,7 @@ func (h *A2AHandler) AgentDirectory(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"agents":   cards,
-		"provider": map[string]string{"name": "PAL", "url": "https://pal.run"},
+		"provider": map[string]string{"name": "PAL", "url": "https://dshakes.github.io/pal"},
 	})
 }
 

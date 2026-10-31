@@ -30,7 +30,7 @@ class PalRuntimeClient:
         timeout: float = 120.0,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self.base_url = (base_url or os.environ.get("PAL_API_URL") or "https://api.pal.run").rstrip("/")
+        self.base_url = (base_url or os.environ.get("PAL_API_URL") or "http://localhost:8080").rstrip("/")
         self._api_key = api_key or os.environ.get("PAL_API_KEY") or ""
         headers = {"Content-Type": "application/json"}
         if self._api_key:

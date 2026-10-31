@@ -24,7 +24,7 @@
 // Override the target / credentials with:
 //
 //	PAL_E2E_API_URL   (default http://localhost:8080)
-//	PAL_E2E_EMAIL     (default admin@pal.dev)
+//	PAL_E2E_EMAIL     (default admin@pal.local)
 //	PAL_E2E_PASSWORD  (default pal)
 package runtime_e2e
 
@@ -142,7 +142,7 @@ func newClient(t *testing.T) *apiClient {
 func (c *apiClient) login() {
 	c.t.Helper()
 	body := map[string]string{
-		"email":    envOr("PAL_E2E_EMAIL", "admin@pal.dev"),
+		"email":    envOr("PAL_E2E_EMAIL", "admin@pal.local"),
 		"password": envOr("PAL_E2E_PASSWORD", "pal"),
 	}
 	var resp struct {

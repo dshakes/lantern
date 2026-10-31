@@ -13,6 +13,7 @@ import clsx from "clsx";
 import { PageHeader } from "@/components/page-header";
 import { useToast } from "@/components/toast";
 import { api } from "@/lib/api";
+import { usePublicUrls } from "@/lib/public-url";
 import type { Agent } from "@/lib/mock-data";
 
 type Theme = "dark" | "light";
@@ -48,22 +49,7 @@ export default function EmbedPage() {
     };
   }, [agentName]);
 
-  // Derive an apiBase that works for both prod (where PAL is hosted)
-  // and dev (where the widget points back to localhost:8080). At publish
-  // time the user replaces this with their public URL.
-  const apiBase = useMemo(() => {
-    if (typeof window === "undefined") return "https://your-pal";
-    if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
-      return "http://localhost:8080";
-    }
-    return window.location.origin;
-  }, []);
-
-  const widgetSrc = useMemo(() => {
-    return typeof window !== "undefined"
-      ? `${window.location.origin}/widget.js`
-      : "https://your-pal/widget.js";
-  }, []);
+  const { apiBase, widgetSrc } = usePublicUrls();
 
   const snippet = useMemo(() => {
     return [

@@ -255,7 +255,7 @@ func runDev(opts devOpts) error {
 		if opts.withIM && runtime.GOOS == "darwin" {
 			fmt.Fprintln(os.Stderr, tag(tagInfra, "  iMessage:  http://localhost:3200"))
 		}
-		fmt.Fprintln(os.Stderr, tag(tagInfra, "  Login:     admin@pal.dev / pal"))
+		fmt.Fprintln(os.Stderr, tag(tagInfra, "  Login:     admin@pal.local / pal"))
 		fmt.Fprintln(os.Stderr, tag(tagInfra, "──────────────────────────────────────────"))
 		if opts.openURL {
 			_ = openBrowser(dashURL)

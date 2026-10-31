@@ -4,7 +4,7 @@ Output docs/media/onboard.gif
 Source docs/media/tapes/_settings.tape
 Hide
 Type "export PATH=$PWD/bin:$PATH HOME=$(mktemp -d) PAL_API_URL=localhost:8080 PAL_USE_REST=1" Enter
-Type "pal login --email admin@pal.dev --password pal >/dev/null && clear" Enter
+Type "pal login --email admin@pal.local --password pal >/dev/null && clear" Enter
 Show
 Type "pal onboard" Enter
 Sleep 30s

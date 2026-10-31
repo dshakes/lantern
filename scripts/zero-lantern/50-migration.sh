@@ -14,7 +14,7 @@ name=pal_brand_rename
 
 cur="$(ls "$dir" | sed -n "s/^\([0-9]\{4\}\)_${name}\.up\.sql$/\1/p" | head -1)"
 if [[ -n "$cur" ]]; then
-  clash="$(ls "$dir" | grep -E "^${cur}_" | grep -v "_${name}\." || true)"
+  clash="$(cd "$dir" && for f in "${cur}"_*; do [[ -e "$f" && "$f" != *"_${name}."* ]] && echo "$f"; done || true)"
   if [[ -n "$clash" ]]; then
     zl_note "migration $cur clashes with: $clash — renumbering"
     git rm -q -- "$dir/${cur}_${name}.up.sql" "$dir/${cur}_${name}.down.sql"
@@ -30,7 +30,7 @@ cp "$ZL_HERE/assets/${name}.down.sql" "$dir/${cur}_${name}.down.sql"
 git add -- "$dir/${cur}_${name}.up.sql" "$dir/${cur}_${name}.down.sql"
 
 # Postcondition: exactly one copy, highest-or-unique number, no duplicate versions.
-n="$(ls "$dir" | grep -c "_${name}\.up\.sql$")"
+n="$(cd "$dir" && set -- [0-9][0-9][0-9][0-9]_"${name}".up.sql && { [[ -e "$1" ]] && echo $#; } || echo 0)"
 [[ "$n" == 1 ]] || zl_fail "expected one ${name} migration, found $n"
 dups="$(ls "$dir" | sed -n 's/^\([0-9]\{4\}\)_.*\.up\.sql$/\1/p' | sort | uniq -d)"
 [[ -z "$dups" ]] || zl_fail "duplicate migration versions: $dups"
