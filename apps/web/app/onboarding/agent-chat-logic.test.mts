@@ -108,7 +108,7 @@ test("channelSummary is human", () => {
 });
 
 test("toolLabel + latestData", () => {
-  assert.equal(toolLabel("design_agent"), "Designed the agent");
+  assert.equal(toolLabel("design_agent"), "Design the agent");
   assert.equal(toolLabel("collect_provider_key"), "Add a model key");
   assert.equal(toolLabel("weird_tool"), "weird tool");
   const calls = [

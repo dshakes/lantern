@@ -294,20 +294,21 @@ export const ACTION_TITLES: Record<string, string> = {
   show_brief: "Your first Brief",
 };
 
-/** Human label for a tool chip in the transcript. */
+/** Human label for a tool chip in the transcript. Neutral (not past tense):
+ * the chip shows a ✗ when the call failed, so the label must not claim success. */
 export function toolLabel(tool: string | undefined): string {
   if (!tool) return "tool";
   const labels: Record<string, string> = {
-    save_provider_key: "Saved model key",
-    test_provider: "Tested model key",
-    design_agent: "Designed the agent",
-    create_agent: "Created the agent",
+    save_provider_key: "Save model key",
+    test_provider: "Test model key",
+    design_agent: "Design the agent",
+    create_agent: "Create the agent",
     start_run: "First run",
-    finish: "Finished setup",
-    skip_voice: "Skipped voice",
-    propose_trust: "Proposed trust settings",
+    finish: "Finish setup",
+    skip_voice: "Skip voice",
+    propose_trust: "Propose trust settings",
     extract_profile: "Read your people",
-    finish_profile: "Closed your people",
+    finish_profile: "Close your people",
     ...ACTION_TITLES,
   };
   return labels[tool] ?? tool.replace(/_/g, " ");
