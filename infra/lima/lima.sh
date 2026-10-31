@@ -84,8 +84,6 @@ host_up() {
 # Guest side (Linux, inside the VM).
 # ---------------------------------------------------------------------------
 CACHE="${HOME}/.cache/pal-lima"
-# ADR 0032: cache dir renamed; carry an existing cache over (no image rebuild).
-if [[ -d "${HOME}/.cache/lantern-lima" && ! -e "${CACHE}" ]]; then mv "${HOME}/.cache/lantern-lima" "${CACHE}"; fi
 TARGET="${CACHE}/target"   # shared cargo target dir: harness (musl) + manager
 IMG="${CACHE}/image"
 TIMING="${CACHE}/timing"
@@ -95,8 +93,8 @@ guest_env() {
   [ -f "${HOME}/.cargo/env" ] && . "${HOME}/.cargo/env"
   ARCH="$(uname -m)"
   MUSL="${ARCH}-unknown-linux-musl"
-  HARNESS_BIN="${TARGET}/${MUSL}/release/lantern-harness"
-  MANAGER_BIN="${TARGET}/release/lantern-runtime-manager"
+  HARNESS_BIN="${TARGET}/${MUSL}/release/pal-harness"
+  MANAGER_BIN="${TARGET}/release/pal-runtime-manager"
 }
 
 guest_deps() {
@@ -141,13 +139,13 @@ disk_guard() {
 }
 
 build_harness() {
-  log "building lantern-harness (${MUSL}) -> ${TARGET}"
-  cargo build --release --locked --bin lantern-harness --target "${MUSL}" \
+  log "building pal-harness (${MUSL}) -> ${TARGET}"
+  cargo build --release --locked --bin pal-harness --target "${MUSL}" \
     --manifest-path services/harness/Cargo.toml --target-dir "${TARGET}"
 }
 
 build_manager() {
-  log "building lantern-runtime-manager -> ${TARGET}"
+  log "building pal-runtime-manager -> ${TARGET}"
   cargo build --release --locked --manifest-path services/runtime-manager/Cargo.toml --target-dir "${TARGET}"
 }
 
@@ -183,7 +181,7 @@ wait_port_free() {
 # What a run must not leave behind: firecracker processes, snapshot dirs, jails.
 leak_snapshot() {
   { pgrep -x firecracker || true
-    sudo find /var/lib/lantern/snapshots -mindepth 3 -maxdepth 3 -type d 2>/dev/null || true
+    sudo find /var/lib/pal/snapshots -mindepth 3 -maxdepth 3 -type d 2>/dev/null || true
     sudo find /srv/jailer -mindepth 2 -maxdepth 2 -type d 2>/dev/null || true
   } | sort
 }
@@ -198,7 +196,7 @@ leak_check() {
 guest_e2e() {
   guest_image
   build_manager
-  sudo mkdir -p /srv/jailer /var/lib/lantern/snapshots "${TIMING}"
+  sudo mkdir -p /srv/jailer /var/lib/pal/snapshots "${TIMING}"
   wait_port_free 50054
   local before rc=0
   before="$(leak_snapshot)"
@@ -230,7 +228,7 @@ guest_broker_e2e() {
 guest_measurement_e2e() {
   guest_image
   build_manager
-  sudo mkdir -p /srv/jailer /var/lib/lantern/snapshots
+  sudo mkdir -p /srv/jailer /var/lib/pal/snapshots
   local port="${LISTEN_PORT:-51055}" before rc=0
   wait_port_free "${port}"
   wait_port_free "$((port + 1))"
@@ -247,7 +245,7 @@ guest_measurement_e2e() {
 guest_bench() {
   guest_image
   build_manager
-  sudo mkdir -p /srv/jailer /var/lib/lantern/snapshots
+  sudo mkdir -p /srv/jailer /var/lib/pal/snapshots
   local port="${LISTEN_PORT:-51060}" before rc=0
   wait_port_free "${port}"
   wait_port_free "$((port + 1))"
@@ -277,18 +275,18 @@ host_bench() {
 
 # Design-time runtime for `dev` (ADR 0045). Foreground; Ctrl-C stops it.
 # DEV ONLY: plaintext gRPC and no service token (the manager's dev defaults);
-# LANTERN_ENV is never set here. Jailed exactly like guest_e2e. :52054, not
+# PAL_ENV is never set here. Jailed exactly like guest_e2e. :52054, not
 # :50054, so it never blocks `make lima-e2e` nor collides with a host manager.
 guest_runtime() {
   guest_image
   build_manager
-  sudo mkdir -p /srv/jailer /var/lib/lantern/snapshots
+  sudo mkdir -p /srv/jailer /var/lib/pal/snapshots
   local port="${LISTEN_PORT:-52054}"
   wait_port_free "${port}"
   log "runtime-manager (firecracker, jailed) on :${port} -> Mac localhost:${port}; registering with http://host.lima.internal:8085"
   log "on the Mac: pal dev (or make run-scheduler + PAL_SCHEDULER_GRPC_ADDR=localhost:50055 make run-api)"
   exec sudo env \
-    RUNTIME_BACKEND=firecracker LANTERN_RUNTIME_BACKEND=firecracker \
+    RUNTIME_BACKEND=firecracker PAL_RUNTIME_BACKEND=firecracker \
     LISTEN_ADDR="0.0.0.0:${port}" LOG_LEVEL="${LOG_LEVEL:-info}" \
     FC_KERNEL_PATH="${IMG}/vmlinux" FC_ROOTFS_PATH="${IMG}/rootfs.ext4" \
     FIRECRACKER_JAILER_PATH="$(command -v jailer)" FIRECRACKER_JAILER_UID=123 \

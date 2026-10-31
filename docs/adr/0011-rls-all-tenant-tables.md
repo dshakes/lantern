@@ -23,7 +23,7 @@ Two further gaps on the existing policies:
   `INSERT`/`UPDATE`. A buggy or hostile write could create a row under a
   `tenant_id` that doesn't match `app.tenant_id`.
 - **Not landed where it matters.** The runtime manager already has an RLS-capable
-  pool (`AppPool` / `lantern_app`, gated by `PAL_RLS_ENFORCE`), but with no
+  pool (`AppPool` / `pal_app`, gated by `PAL_RLS_ENFORCE`), but with no
   policies on most tables, switching it on bought nothing for them.
 
 ## Decision
@@ -38,7 +38,7 @@ as versioned migration `0003_rls_all_tenant_tables` (per ADR 0010), and
 
 The change is inert until enforcement is deliberately turned on:
 
-1. **Land the policies (this ADR).** The privileged `lantern` superuser pool
+1. **Land the policies (this ADR).** The privileged `pal` superuser pool
    (`Server.Pool`) bypasses RLS — superusers are never subject to it — so all
    existing code paths, which run on `Pool`, are unaffected. `PAL_RLS_ENFORCE`
    is off in dev and `AppPool` aliases `Pool` when unset. Nothing breaks.
@@ -47,7 +47,7 @@ The change is inert until enforcement is deliberately turned on:
    `app.tenant_id` GUC so they keep working when enforcement flips. `sessions.go`
    is the first proof cutover; `agents.go`/`runs.go` were already on the pattern.
 3. **Flip `PAL_RLS_ENFORCE=1`** (with `PAL_APP_DB_PASSWORD` set so
-   `AppPool` connects as `lantern_app`, a non-superuser without `BYPASSRLS`).
+   `AppPool` connects as `pal_app`, a non-superuser without `BYPASSRLS`).
    From that point the database itself denies any tenant-mismatched read or
    write — defence-in-depth behind the application's `WHERE` clauses.
 
@@ -93,11 +93,11 @@ than the GUC-only simulation in `internal/db/rls_test.go`:
 
 - **Harness:** `internal/handlers/rls_integration_test.go` —
   `newEnforcedServer(t)` builds a real `server.Server` whose `TenantPool()`
-  (`AppPool`) connects to Postgres **as the non-superuser `lantern_app` role**
+  (`AppPool`) connects to Postgres **as the non-superuser `pal_app` role**
   over its own DSN, so RLS is genuinely enforced at the database for every query
   routed through `s.srv.WithTenant`, exactly as production behaves under
   `PAL_RLS_ENFORCE=1`. It runs `Migrate`, stamps a test password on the
-  `lantern_app` role (`ALTER ROLE … PASSWORD …`, the documented prod step), and
+  `pal_app` role (`ALTER ROLE … PASSWORD …`, the documented prod step), and
   reuses the production `buildAppPoolConfig` logic (parse `DATABASE_URL`, swap
   user+password, preserve all other DSN params). Skips cleanly when
   `DATABASE_URL` is unset or the role can't be made loginable.
@@ -173,7 +173,7 @@ Per-file decisions:
   `agent_mcp_attachments` reads/writes (attach/list/detach) are cut over to
   `WithTenant`. Cutover surfaced + fixed a latent bug: `attached_at`
   (timestamptz) was scanned into a `string`, which only worked under the
-  superuser pool's text protocol; under `lantern_app`'s binary protocol it now
+  superuser pool's text protocol; under `pal_app`'s binary protocol it now
   scans into `time.Time`.
 - **`slack_command.go`** — `resolveTenantFromSlackTeam` stays exempt (pre-tenant
   lookup that *resolves* the tenant from the Slack team). The post-resolution
@@ -226,12 +226,12 @@ LIVE-path judgment calls (kept on `Pool` with explicit tenant filter +
 
 **`PAL_RLS_ENFORCE=1` is now safe to flip per-env (with the prod app-pool
 password set).** The whole `internal/handlers` package keeps same-tenant
-reads/writes working under the `lantern_app` role (proven by the
+reads/writes working under the `pal_app` role (proven by the
 `newEnforcedServer` harness tests across every group) and the database denies
 cross-tenant access. The only sites that stay on the privileged `Pool` are
 genuinely pre-auth / system / public-catalog / child-table / detached-executor,
 each annotated `// rls-exempt: <reason>`. Operator step before flipping per-env:
-`ALTER ROLE lantern_app PASSWORD '<strong>'` and set `PAL_APP_DB_PASSWORD`.
+`ALTER ROLE pal_app PASSWORD '<strong>'` and set `PAL_APP_DB_PASSWORD`.
 
 ## Consequences
 
@@ -242,7 +242,7 @@ each annotated `// rls-exempt: <reason>`. Operator step before flipping per-env:
   inert under the superuser pool until enforcement is enabled.
 - Recovery / marketplace / migration paths must continue to use the privileged
   `Pool` (and are annotated `// rls-exempt: <reason>` where they legitimately
-  cross tenants); running them on `lantern_app` under enforcement would (correctly)
+  cross tenants); running them on `pal_app` under enforcement would (correctly)
   return zero cross-tenant rows.
 
 ## Verification gate (required before merge)
@@ -252,7 +252,7 @@ each annotated `// rls-exempt: <reason>`. Operator step before flipping per-env:
 2. `TestRLSEnforcement_AllTenantTables` passes — every enforced table has
    `ENABLE` + `FORCE` + a `USING`/`WITH CHECK` policy referencing `app.tenant_id`.
 3. `TestRLSEnforcement_Sessions` proves cross-tenant denial + same-tenant
-   visibility on the first cutover table under the `lantern_app` role.
+   visibility on the first cutover table under the `pal_app` role.
 4. The session handler tests stay green — same-tenant callers see no behaviour
    change after the `sessions.go` cutover.
 5. Per cutover batch: `newEnforcedServer` harness self-test
@@ -261,14 +261,14 @@ each annotated `// rls-exempt: <reason>`. Operator step before flipping per-env:
    full `internal/handlers` package stays green. Connectors batch:
    `TestRLSConnectors_SameTenant_FullLifecycle` + `TestRLSConnectors_CrossTenant_Blocked`.
 6. P1.1b handler-group cutover: all `RLS`-prefixed enforcement tests pass under
-   `DATABASE_URL=…lantern go test ./internal/handlers/ -run RLS`, the full
+   `DATABASE_URL=…pal go test ./internal/handlers/ -run RLS`, the full
    `internal/handlers` suite stays green, and `go test -race` on the RLS tests is
    clean. The cutover grep shows **0** non-exempt tenant-scoped `srv.Pool.<method>`
    sites in the P1.1b group files (every remaining `srv.Pool` site in those files
    carries a `// rls-exempt:` justification).
 7. P1.1b-final (last 12 files): cutover COMPLETE. `RLSRuns_*` (runs CRUD
    same-tenant + cross-tenant) and `RLSMCPAttachments_*` (attach/list/detach +
-   cross-tenant) enforcement tests pass under the `lantern_app` harness; the full
+   cross-tenant) enforcement tests pass under the `pal_app` harness; the full
    `internal/handlers` suite stays green; `go test -race ./internal/handlers/ -run
    RLS` is clean. **Non-exempt tenant-scoped `srv.Pool.<method>` sites across the
    ENTIRE package: 0.** `PAL_RLS_ENFORCE=1` is safe to flip per-env.

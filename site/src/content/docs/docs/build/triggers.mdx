@@ -93,7 +93,7 @@ async with PalClient(api_key="hlx_live_...", base_url="http://localhost:8080") a
 <TabItem label="Go">
 
 ```go
-import pal "github.com/dshakes/lantern/packages/sdk-go"
+import pal "github.com/dshakes/pal/packages/sdk-go"
 
 c := pal.New(pal.WithAPIKey(key), pal.WithBaseURL("http://localhost:8080"))
 
@@ -139,7 +139,7 @@ The public URL is the API base URL plus the trigger's `hookPath`, for example `h
 | `github` | `X-Hub-Signature-256: sha256=<hex>` | raw body | `X-GitHub-Delivery` |
 | `sentry` | `Sentry-Hook-Signature: <hex>` | raw body | `Request-ID` |
 | `pagerduty` | `X-PagerDuty-Signature: v1=<hex>[,v1=<hex>]` | raw body | `event.id` in the JSON body |
-| `generic` | `X-Lantern-Signature: t=<unix>,v1=<hex>[,v1=<hex>]` | `<t>.<raw body>` | `X-Lantern-Delivery` (optional) |
+| `generic` | `X-Pal-Signature: t=<unix>,v1=<hex>[,v1=<hex>]` | `<t>.<raw body>` | `X-Pal-Delivery` (optional) |
 
 All four are HMAC-SHA256 with the trigger secret, hex encoded.
 
@@ -163,9 +163,9 @@ PagerDuty shows its signing secret after you create the webhook subscription, so
 
 ### Generic HMAC
 
-These header names keep the `X-Lantern-` prefix on the wire; they are not renamed.
+These headers use the `X-Pal-` prefix on the wire.
 
-For anything else, sign `<unix-timestamp>.<body>` with HMAC-SHA256 and send `X-Lantern-Signature: t=<unix>,v1=<hex>`. The timestamp must be within five minutes of server time, in either direction. Send `X-Lantern-Delivery` as a stable id per event and optionally `X-Lantern-Event`.
+For anything else, sign `<unix-timestamp>.<body>` with HMAC-SHA256 and send `X-Pal-Signature: t=<unix>,v1=<hex>`. The timestamp must be within five minutes of server time, in either direction. Send `X-Pal-Delivery` as a stable id per event and optionally `X-Pal-Event`.
 
 ```bash
 SECRET=whsec_...   # from the create response
@@ -175,14 +175,14 @@ T=$(date +%s)
 SIG=$(printf '%s.%s' "$T" "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $NF}')
 
 curl -i -X POST "$HOOK" \
-  -H "X-Lantern-Signature: t=$T,v1=$SIG" \
-  -H "X-Lantern-Delivery: incident-42" \
+  -H "X-Pal-Signature: t=$T,v1=$SIG" \
+  -H "X-Pal-Delivery: incident-42" \
   -d "$BODY"
 # HTTP/1.1 202 Accepted
 # {"runId":"...","deliveryId":"incident-42"}
 ```
 
-Run it a second time within five minutes with the same `X-Lantern-Delivery` and you get the duplicate response below.
+Run it a second time within five minutes with the same `X-Pal-Delivery` and you get the duplicate response below.
 
 ## Responses
 
@@ -211,7 +211,7 @@ When run creation fails (402, 429, 500), the delivery id is released, so the pro
 
 ## Duplicate deliveries
 
-Every delivery is checked against two keys, each unique per trigger: the provider's delivery id (table above; for `generic` without `X-Lantern-Delivery`, and for any provider that sends no id, a hash of the signed bytes) and a SHA-256 of the signed bytes. A match on either returns `200 {"duplicate":true}` and starts no run.
+Every delivery is checked against two keys, each unique per trigger: the provider's delivery id (table above; for `generic` without `X-Pal-Delivery`, and for any provider that sends no id, a hash of the signed bytes) and a SHA-256 of the signed bytes. A match on either returns `200 {"duplicate":true}` and starts no run.
 
 The second key exists because GitHub, Sentry and PagerDuty sign only the body, not their delivery id headers, so someone holding a captured request could replay it with a fresh id.
 

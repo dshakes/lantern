@@ -42,7 +42,7 @@ KVM-capable runner**, never on the dev host.
 ```
   infra/firecracker/build-image.sh
         │  fetches a KVM-bootable vmlinux + builds rootfs.ext4
-        │  (rootfs init = static lantern-harness, per ADR-0004)
+        │  (rootfs init = static pal-harness, per ADR-0004)
         │  exports FC_KERNEL_PATH / FC_ROOTFS_PATH
         ▼
   runtime-manager (RUNTIME_BACKEND=firecracker)
@@ -80,7 +80,7 @@ Builds the two boot artifacts the backend reads (`FC_KERNEL_PATH`,
   or override with `FC_KERNEL_URL`). The script documents how to swap in a
   from-source build with a pinned `.config` instead.
 - **`rootfs.ext4`** — a minimal ext4 image whose `/sbin/init` is the
-  statically-linked `lantern-harness` (built with the musl target, matching the
+  statically-linked `pal-harness` (built with the musl target, matching the
   harness Dockerfile release profile). This follows
   [ADR-0004](../adr/0004-harness-baked-into-vm-image.md): the harness is baked
   into the image, not injected at boot.

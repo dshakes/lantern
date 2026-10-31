@@ -220,7 +220,7 @@ func (hs *HealthSweeper) tick() {
 		transition := s.tracker.observe(ok)
 		switch transition {
 		case "down":
-			msg := fmt.Sprintf("⚠️ lantern: %s DOWN (%s) — %d failed probes",
+			msg := fmt.Sprintf("⚠️ pal: %s DOWN (%s) — %d failed probes",
 				s.name, s.addr, downThreshold)
 			hs.logger.Warn("health sweep: service DOWN",
 				zap.String("service", s.name),
@@ -233,7 +233,7 @@ func (hs *HealthSweeper) tick() {
 				)
 			}
 		case "up":
-			msg := fmt.Sprintf("✅ lantern: %s back up (%s)", s.name, s.addr)
+			msg := fmt.Sprintf("✅ pal: %s back up (%s)", s.name, s.addr)
 			hs.logger.Info("health sweep: service UP",
 				zap.String("service", s.name),
 				zap.String("addr", s.addr),

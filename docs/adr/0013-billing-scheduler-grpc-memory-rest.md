@@ -4,7 +4,7 @@
 - **Date:** 2026-06-23
 - **Deciders:** PAL Runtime control-plane / services team
 - **Tags:** grpc, protobuf, billing, scheduler, memory, health
-- **Related:** [CLAUDE.md](../../CLAUDE.md) (proto workflow, invariants #2/#6/#7), `packages/proto/lantern/v1/`
+- **Related:** [CLAUDE.md](../../CLAUDE.md) (proto workflow, invariants #2/#6/#7), `packages/proto/pal/v1/`
 
 ## Context
 
@@ -21,11 +21,11 @@ advertised a per-service health status for a service name that has **no proto
 definition at all**:
 
 ```go
-healthSvc.SetServingStatus("lantern.v1.BillingService", healthpb.HealthCheckResponse_SERVING)
+healthSvc.SetServingStatus("pal.v1.BillingService", healthpb.HealthCheckResponse_SERVING)
 ```
 
-A health probe or service mesh querying `lantern.v1.BillingService` /
-`lantern.v1.SchedulerService` / `lantern.v1.MemoryService` got `SERVING` for an
+A health probe or service mesh querying `pal.v1.BillingService` /
+`pal.v1.SchedulerService` / `pal.v1.MemoryService` got `SERVING` for an
 RPC surface that did not exist and could never answer. The services were both
 **not callable** and **lying about being callable**.
 
@@ -41,8 +41,8 @@ can diverge from the hand stubs, so a blanket regen is unsafe.
 
 ### Billing + scheduler: author real protos and register
 
-Add `packages/proto/lantern/v1/billing.proto` and `scheduler.proto` in the
-existing `lantern.v1` package / `go_package` style, with RPCs matching the
+Add `packages/proto/pal/v1/billing.proto` and `scheduler.proto` in the
+existing `pal.v1` package / `go_package` style, with RPCs matching the
 existing handler method surface one-to-one. Generate **only** those two files
 into `gen/go` (`protoc` targeting just the new `.proto`s,
 `paths=source_relative`, mirroring the Makefile `proto` flags) so no
@@ -63,7 +63,7 @@ proto does not mutate run state itself.
 
 ### Memory: no proto; REST-only via control-plane
 
-Memory deliberately gets **no** `lantern.v1.MemoryService` proto. A canonical
+Memory deliberately gets **no** `pal.v1.MemoryService` proto. A canonical
 unified-memory + person-graph surface already exists in the control-plane over
 REST (`/v1/memory/*`, `/v1/people/*` — see CLAUDE.md "Cross-channel unified
 memory"). A parallel gRPC MemoryService would duplicate that surface and create
@@ -73,7 +73,7 @@ So the memory service's `main.go`:
 
 - drops the dead `_ = memorySvc` placeholder (and the now-unused embedding
   plumbing it fed);
-- **stops advertising** `lantern.v1.MemoryService` over gRPC health — it sets
+- **stops advertising** `pal.v1.MemoryService` over gRPC health — it sets
   only the overall server status (`""`), which is honest: the process serves
   gRPC health + reflection for liveness, and nothing else;
 - documents in a comment that memory is served over REST by the control-plane.

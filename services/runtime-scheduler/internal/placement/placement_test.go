@@ -4,10 +4,10 @@ import (
 	"testing"
 	"time"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/cluster"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/placement"
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/scoring"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/cluster"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/placement"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/scoring"
 )
 
 func newEngine(store cluster.ClusterStore) *placement.Engine {
@@ -25,12 +25,12 @@ func TestHint_RejectsInsufficientVCPU(t *testing.T) {
 	})
 
 	e := newEngine(s)
-	spec := &lanternv1.AgentSpec{
+	spec := &palv1.AgentSpec{
 		ImageDigest: "sha256:abc",
 		TenantId:    "t1",
-		Limits:      &lanternv1.ResourceLimits{Vcpu: "2"}, // needs 2000m
+		Limits:      &palv1.ResourceLimits{Vcpu: "2"}, // needs 2000m
 	}
-	hint := &lanternv1.PlacementHint{Node: "n1"}
+	hint := &palv1.PlacementHint{Node: "n1"}
 
 	_, err := e.Pick(spec, hint, 10)
 	if err == nil {
@@ -49,12 +49,12 @@ func TestHint_RejectsInsufficientMemory(t *testing.T) {
 	})
 
 	e := newEngine(s)
-	spec := &lanternv1.AgentSpec{
+	spec := &palv1.AgentSpec{
 		ImageDigest: "sha256:abc",
 		TenantId:    "t1",
-		Limits:      &lanternv1.ResourceLimits{Memory: "2Gi"}, // needs 2Gi
+		Limits:      &palv1.ResourceLimits{Memory: "2Gi"}, // needs 2Gi
 	}
-	hint := &lanternv1.PlacementHint{Node: "n1"}
+	hint := &palv1.PlacementHint{Node: "n1"}
 
 	_, err := e.Pick(spec, hint, 10)
 	if err == nil {
@@ -74,12 +74,12 @@ func TestHint_AcceptsAdequateCapacity(t *testing.T) {
 	})
 
 	e := newEngine(s)
-	spec := &lanternv1.AgentSpec{
+	spec := &palv1.AgentSpec{
 		ImageDigest: "sha256:abc",
 		TenantId:    "t1",
-		Limits:      &lanternv1.ResourceLimits{Vcpu: "2", Memory: "2Gi"},
+		Limits:      &palv1.ResourceLimits{Vcpu: "2", Memory: "2Gi"},
 	}
-	hint := &lanternv1.PlacementHint{Node: "n1"}
+	hint := &palv1.PlacementHint{Node: "n1"}
 
 	d, err := e.Pick(spec, hint, 10)
 	if err != nil {
@@ -101,11 +101,11 @@ func TestConfidential_PlacesOnlyOnCCNode(t *testing.T) {
 		FreeVcpuMillis: 8000, FreeMemoryBytes: 8 << 30, LastHeartbeat: time.Now(),
 	})
 	e := newEngine(s)
-	spec := &lanternv1.AgentSpec{
+	spec := &palv1.AgentSpec{
 		ImageDigest:  "sha256:abc",
 		TenantId:     "t1",
 		Confidential: true,
-		Limits:       &lanternv1.ResourceLimits{Vcpu: "2", Memory: "2Gi"},
+		Limits:       &palv1.ResourceLimits{Vcpu: "2", Memory: "2Gi"},
 	}
 	d, err := e.Pick(spec, nil, 10)
 	if err != nil {
@@ -124,9 +124,9 @@ func TestConfidential_NoCCNode_NoSuitableNode(t *testing.T) {
 		Name: "plain", FreeVcpuMillis: 8000, FreeMemoryBytes: 8 << 30, LastHeartbeat: time.Now(),
 	})
 	e := newEngine(s)
-	spec := &lanternv1.AgentSpec{
+	spec := &palv1.AgentSpec{
 		ImageDigest: "sha256:abc", TenantId: "t1", Confidential: true,
-		Limits: &lanternv1.ResourceLimits{Vcpu: "2", Memory: "2Gi"},
+		Limits: &palv1.ResourceLimits{Vcpu: "2", Memory: "2Gi"},
 	}
 	if _, err := e.Pick(spec, nil, 10); err == nil {
 		t.Fatal("expected no-suitable-node error for confidential workload with no CC node, got nil")
@@ -140,9 +140,9 @@ func TestNonConfidential_PlacesOnPlainNode(t *testing.T) {
 		Name: "plain", FreeVcpuMillis: 8000, FreeMemoryBytes: 8 << 30, LastHeartbeat: time.Now(),
 	})
 	e := newEngine(s)
-	spec := &lanternv1.AgentSpec{
+	spec := &palv1.AgentSpec{
 		ImageDigest: "sha256:abc", TenantId: "t1", // Confidential defaults false
-		Limits: &lanternv1.ResourceLimits{Vcpu: "2", Memory: "2Gi"},
+		Limits: &palv1.ResourceLimits{Vcpu: "2", Memory: "2Gi"},
 	}
 	d, err := e.Pick(spec, nil, 10)
 	if err != nil {

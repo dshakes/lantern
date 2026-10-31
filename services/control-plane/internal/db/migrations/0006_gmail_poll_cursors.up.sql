@@ -5,7 +5,7 @@
 -- processed message so successive polls skip already-seen messages.
 --
 -- RLS posture mirrors 0004/0005 exactly: ENABLE + FORCE + tenant_isolation
--- policy with both USING and WITH CHECK, plus a GRANT to lantern_app.
+-- policy with both USING and WITH CHECK, plus a GRANT to pal_app.
 
 CREATE TABLE IF NOT EXISTS gmail_poll_cursors (
 	tenant_id           uuid        PRIMARY KEY,
@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS gmail_poll_cursors (
 	last_checked_at     timestamptz NOT NULL DEFAULT now()
 );
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE gmail_poll_cursors TO lantern_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE gmail_poll_cursors TO pal_app;
 
 DO $$
 BEGIN

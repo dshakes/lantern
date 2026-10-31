@@ -9,7 +9,7 @@ def test_egress_rule_inject_serializes_camel_case() -> None:
         inject=[
             CredentialInjection(
                 header="Authorization",
-                secret_ref="lantern.secret/llm/openai",
+                secret_ref="pal.secret/llm/openai",
                 value_prefix="Bearer ",
             )
         ],
@@ -18,7 +18,7 @@ def test_egress_rule_inject_serializes_camel_case() -> None:
     assert body["inject"] == [
         {
             "header": "Authorization",
-            "secretRef": "lantern.secret/llm/openai",
+            "secretRef": "pal.secret/llm/openai",
             "valuePrefix": "Bearer ",
         }
     ]
@@ -27,7 +27,7 @@ def test_egress_rule_inject_serializes_camel_case() -> None:
 
 def test_egress_rule_parses_from_rest_shape() -> None:
     rule = EgressRule.model_validate(
-        {"pattern": "x.com", "inject": [{"header": "x-api-key", "secretRef": "lantern.secret/llm/a"}]}
+        {"pattern": "x.com", "inject": [{"header": "x-api-key", "secretRef": "pal.secret/llm/a"}]}
     )
-    assert rule.inject[0].secret_ref == "lantern.secret/llm/a"
+    assert rule.inject[0].secret_ref == "pal.secret/llm/a"
     assert rule.inject[0].value_prefix == ""

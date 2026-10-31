@@ -70,7 +70,7 @@ a spoken passphrase check on the first `prompt`.
   `PAL_PUBLIC_BASE_URL` (the Cloudflare tunnel) with the `wss` scheme.
 - **Twilio ConversationRelay** must be enabled on the account (beta).
 - **ElevenLabs voice** (optional) — set the `voice` attribute; you already
-  have `PAL_ELEVENLABS_KEY` / `PAL_ELEVENLABS_VOICE_ID`.
+  have `PAL_ELEVENLABS_API_KEY` / `PAL_ELEVENLABS_VOICE_ID`.
 
 ### 4. Env
 

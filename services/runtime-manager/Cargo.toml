@@ -1,10 +1,9 @@
 [package]
-name = "lantern-runtime-manager"
+name = "pal-runtime-manager"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-pal_env = { path = "../../packages/pal-env-rs" }
 tokio = { version = "1", features = ["full"] }
 tonic = { version = "0.12", features = ["tls"] }
 prost = "0.13"

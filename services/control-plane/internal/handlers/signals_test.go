@@ -12,7 +12,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 func newSignalHandlerForTest(t *testing.T) *SignalHandler {
@@ -22,12 +22,12 @@ func newSignalHandlerForTest(t *testing.T) *SignalHandler {
 }
 
 // isolateHome points HOME at a temp dir so the handler writes
-// ~/.lantern/device-signals.jsonl under the test's sandbox.
+// ~/.pal/device-signals.jsonl under the test's sandbox.
 func isolateHome(t *testing.T) string {
 	t.Helper()
 	tmp := t.TempDir()
 	t.Setenv("PAL_STATE_DIR", "") // an operator override must not redirect test writes
-	t.Setenv("LANTERN_STATE_DIR", "")
+	t.Setenv("PAL_STATE_DIR", "")
 	t.Setenv("HOME", tmp)
 	return tmp
 }
@@ -40,7 +40,7 @@ func postSignal(t *testing.T, h *SignalHandler, token string, body map[string]an
 	}
 	req := httptest.NewRequest(http.MethodPost, "/v1/signals", bytes.NewReader(raw))
 	if token != "" {
-		req.Header.Set("x-lantern-signal-token", token)
+		req.Header.Set("x-pal-signal-token", token)
 	}
 	rec := httptest.NewRecorder()
 	h.IngestSignal(rec, req)
@@ -197,7 +197,7 @@ func TestSignalIngest(t *testing.T) {
 				t.Fatalf("status = %d, want %d (body=%s)", rec.Code, tt.wantStatus, rec.Body.String())
 			}
 
-			path := filepath.Join(home, ".lantern", "device-signals.jsonl")
+			path := filepath.Join(home, ".pal", "device-signals.jsonl")
 			data, err := os.ReadFile(path)
 			lines := 0
 			if err == nil {
@@ -240,7 +240,7 @@ func TestSignalIngestDefaultsAndFormat(t *testing.T) {
 		t.Fatalf("expected {ok:true}, got %s (err=%v)", rec.Body.String(), err)
 	}
 
-	path := filepath.Join(home, ".lantern", "device-signals.jsonl")
+	path := filepath.Join(home, ".pal", "device-signals.jsonl")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read file: %v", err)
@@ -289,7 +289,7 @@ func TestSignalHealthMetricValueJSONL(t *testing.T) {
 		t.Fatalf("status = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
 	}
 
-	path := filepath.Join(home, ".lantern", "device-signals.jsonl")
+	path := filepath.Join(home, ".pal", "device-signals.jsonl")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read file: %v", err)
@@ -333,7 +333,7 @@ func TestSignalListReturnsAppended(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/signals?limit=2", nil)
-	req.Header.Set("x-lantern-signal-token", tok)
+	req.Header.Set("x-pal-signal-token", tok)
 	rec := httptest.NewRecorder()
 	h.ListSignals(rec, req)
 
@@ -373,7 +373,7 @@ func TestSignalListReturnsMetricValue(t *testing.T) {
 
 	// GET and verify the fields come back.
 	req := httptest.NewRequest(http.MethodGet, "/v1/signals?limit=1", nil)
-	req.Header.Set("x-lantern-signal-token", tok)
+	req.Header.Set("x-pal-signal-token", tok)
 	rec := httptest.NewRecorder()
 	h.ListSignals(rec, req)
 
@@ -414,13 +414,31 @@ func TestSignalListTokenGate(t *testing.T) {
 	}
 }
 
+// Shortcuts installed before the rename send the legacy header; it is
+// accepted for one release (ADR 0032) and checked against the same token.
+func TestSignalListLegacyTokenHeader(t *testing.T) {
+	isolateHome(t)
+	t.Setenv("PAL_SIGNAL_TOKEN", "test-signal-token")
+	h := newSignalHandlerForTest(t)
+
+	for tok, want := range map[string]int{"test-signal-token": http.StatusOK, "wrong": http.StatusUnauthorized} {
+		req := httptest.NewRequest(http.MethodGet, "/v1/signals", nil)
+		req.Header.Set(legacySignalTokenHeader, tok)
+		rec := httptest.NewRecorder()
+		h.ListSignals(rec, req)
+		if rec.Code != want {
+			t.Fatalf("legacy header %q: status = %d, want %d", tok, rec.Code, want)
+		}
+	}
+}
+
 func TestSignalFileBounded(t *testing.T) {
 	const tok = "test-signal-token"
 	home := isolateHome(t)
 	t.Setenv("PAL_SIGNAL_TOKEN", tok)
 
 	// Pre-seed the file past the cap so the next append triggers a trim.
-	dir := filepath.Join(home, ".lantern")
+	dir := filepath.Join(home, ".pal")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}

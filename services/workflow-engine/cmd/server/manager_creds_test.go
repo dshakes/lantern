@@ -33,7 +33,7 @@ func TestManagerTransportCreds(t *testing.T) {
 
 func TestServiceTokenCreds_AttachesToken(t *testing.T) {
 	md, _ := serviceTokenCreds{token: "s3cret"}.GetRequestMetadata(context.Background())
-	if md["x-lantern-service-token"] != "s3cret" {
+	if md["x-pal-service-token"] != "s3cret" {
 		t.Fatalf("metadata = %v", md)
 	}
 }

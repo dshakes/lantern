@@ -14,7 +14,7 @@ package handlers
 //       - the original input
 //       - the original output (if any)
 //       - the original agent version
-//  3. The caller (lantern test --rehearse) re-executes each input against the
+//  3. The caller (pal test --rehearse) re-executes each input against the
 //     candidate version and posts case results back to /v1/eval-runs, which
 //     gates merge via the existing eval-in-CI machinery.
 //
@@ -30,7 +30,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 type RehearseHandler struct {

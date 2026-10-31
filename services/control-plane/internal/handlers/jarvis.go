@@ -24,9 +24,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/secrets"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 type JarvisHandler struct {
@@ -602,7 +602,7 @@ func (h *JarvisHandler) sendBriefEmail(ctx context.Context, tenantID, brief stri
 		return false
 	}
 	_, err := executeConnectorAction(ctx, h.srv.Pool, tenantID, "gmail", "send_message",
-		map[string]any{"to": owner, "subject": "Your Lantern brief", "body": brief, "label": "lantern", "skipInbox": false})
+		map[string]any{"to": owner, "subject": "Your PAL brief", "body": brief, "label": "pal", "skipInbox": false})
 	if err != nil {
 		h.logger().Warn("brief email failed", zap.Error(err))
 	}

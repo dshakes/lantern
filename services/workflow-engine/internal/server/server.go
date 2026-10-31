@@ -5,7 +5,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/workflow-engine/internal/engine"
+	"github.com/dshakes/pal/services/workflow-engine/internal/engine"
 )
 
 // Server holds shared dependencies for all gRPC service handlers.

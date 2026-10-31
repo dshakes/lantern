@@ -9,11 +9,11 @@
 # Driven by launchd StartInterval (one check per invocation).
 set -euo pipefail
 
-SENTINEL="$HOME/.lantern/a2p-approved"
+SENTINEL="$HOME/.pal/a2p-approved"
 [ -f "$SENTINEL" ] && exit 0   # already notified
 
-DBURL="postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable"
-creds=$(PGPASSWORD=lantern psql "$DBURL" -tA -c \
+DBURL="postgres://pal:pal@localhost:5432/pal?sslmode=disable"
+creds=$(PGPASSWORD=pal psql "$DBURL" -tA -c \
   "SELECT config FROM connector_installs WHERE connector_id='twilio' LIMIT 1" 2>/dev/null || true)
 [ -z "$creds" ] && exit 0
 export TW_CONFIG="$creds"
@@ -50,11 +50,11 @@ if not approved:
 
 # Auto-switch: flip the brief channel to SMS via the runtime override file
 # the control-plane reads at send time — no restart needed.
-lantern = os.path.expanduser("~/.lantern")
-os.makedirs(lantern, exist_ok=True)
+pal = os.path.expanduser("~/.pal")
+os.makedirs(pal, exist_ok=True)
 switched = False
 try:
-    with open(os.path.join(lantern, "brief-channel"), "w") as f:
+    with open(os.path.join(pal, "brief-channel"), "w") as f:
         f.write("sms")
     switched = True
 except Exception as e:
@@ -75,5 +75,5 @@ try:
 except Exception as e:
     print("a2p: APPROVED, channel switched, but WhatsApp ping failed:", e)
 
-open(os.path.join(lantern, "a2p-approved"), "w").close()
+open(os.path.join(pal, "a2p-approved"), "w").close()
 PY

@@ -202,7 +202,7 @@ export function ScheduleModal({ open, onClose, onScheduled }: ScheduleModalProps
 
         <ModalField
           label="Image"
-          hint="Container image — tag or fully-qualified ref (e.g. alpine:latest, ghcr.io/lantern/agent-runner:v1)."
+          hint="Container image — tag or fully-qualified ref (e.g. alpine:latest, ghcr.io/pal/agent-runner:v1)."
         >
           <input
             value={form.image}

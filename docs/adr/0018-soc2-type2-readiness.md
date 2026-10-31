@@ -40,7 +40,7 @@ What already exists (grounded in the tree):
 - **Observability** — OTel spans stamped with `tenant_id`/`user_id`/`run_id`/
   `step_id` via `internal/middleware.EnrichSpan` on both HTTP and gRPC entry
   points (invariant #9).
-- **Authn** — bcrypt password hash (12-char minimum), JWT `LanternClaims`,
+- **Authn** — bcrypt password hash (12-char minimum), JWT `PalClaims`,
   Google/GitHub OIDC, hashed API keys with scopes, login rate-limiting
   (`auth.go`, `api_keys.go`).
 - **Right-to-erasure** — owner-scoped tenant purge (`gdpr.go`,
@@ -63,7 +63,7 @@ document; each row's evidence must be an artifact an auditor can pull.
 | CC6.2 | SSO for enterprise identity | **Gap (PRODUCT)** | Only Google/GitHub OIDC today; SAML+SCIM designed in ADR 0019 |
 | CC6.3 | Role-based access enforcement | **Partial** | `claims.Role` checks are ad-hoc per-handler (e.g. `cross_app.go:323`); no central RBAC policy or documented role→permission matrix. GAP: formalize |
 | CC6.6 | Boundary protection / egress | **Have** | Harness egress allowlist, fail-closed prod (`egress.rs`) |
-| CC6.7 | Secrets never in logs/traces | **Have** | Invariant #10; `lantern.secret/...` refs; token redaction in `auth.go` |
+| CC6.7 | Secrets never in logs/traces | **Have** | Invariant #10; `pal.secret/...` refs; token redaction in `auth.go` |
 | CC6.8 | Malicious-code / untrusted-code isolation | **Have** | User code runs in Firecracker/Kata microVM only (invariant #5) |
 | CC7.1 | Vulnerability detection | **Partial** | `make audit` (govulncheck/cargo-audit/npm audit) + `sdlc-lint` CI. GAP: no scheduled/continuous scan, no dependency-update SLA |
 | CC7.2 | Anomaly / security monitoring | **Partial** | OTel spans + harness security audit events exist; no alerting rules, no SIEM sink. GAP (PRODUCT+PROCESS) |

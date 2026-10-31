@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/llmreplay"
+	"github.com/dshakes/pal/services/control-plane/internal/llmreplay"
 )
 
 func TestCheckLLMBaseURLOverrides(t *testing.T) {

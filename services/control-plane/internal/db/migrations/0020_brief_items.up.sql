@@ -25,7 +25,7 @@ CREATE INDEX IF NOT EXISTS brief_items_tenant_sent_idx
 -- Tenant isolation (invariant #7). Same shape as migration 0003: ENABLE +
 -- FORCE, and a policy carrying BOTH USING and WITH CHECK so a row can never
 -- be read or written under the wrong tenant. Inert until
--- LANTERN_RLS_ENFORCE=1, like every other tenant table.
+-- PAL_RLS_ENFORCE=1, like every other tenant table.
 ALTER TABLE brief_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE brief_items FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS tenant_isolation ON brief_items;

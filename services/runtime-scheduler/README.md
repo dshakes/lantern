@@ -4,8 +4,8 @@ Cluster-scoped placement service for the PAL Runtime runtime. Picks which
 node should host a candidate microVM, dispatches the spawn to that
 node's `runtime-manager`, and streams `StatusEvent`s back to callers.
 
-Proto contract: `packages/proto/lantern/v1/runtime.proto`
-Generated Go stubs: `gen/go/lantern/v1/runtime.pb.go` (+ `_grpc.pb.go`)
+Proto contract: `packages/proto/pal/v1/runtime.proto`
+Generated Go stubs: `gen/go/pal/v1/runtime.pb.go` (+ `_grpc.pb.go`)
 
 ## Responsibilities
 
@@ -40,7 +40,7 @@ prioritize warm-pool hits and region affinity (see
 
 | Port  | Protocol | Purpose                                            |
 |-------|----------|----------------------------------------------------|
-| 50055 | gRPC     | `lantern.v1.RuntimeScheduler` + health + reflection|
+| 50055 | gRPC     | `pal.v1.RuntimeScheduler` + health + reflection|
 | 8085  | HTTP     | REST gateway + `/healthz` + `/readyz`              |
 
 ## REST gateway
@@ -66,7 +66,7 @@ Node heartbeats authenticate with `X-Scheduler-Token` (matches
 |----------------------------------|--------------------------------------------------------|----------------------------------------|
 | `LISTEN_ADDR`                    | `:50055`                                               | gRPC listen address                    |
 | `HTTP_ADDR`                      | `:8085`                                                | REST listen address                    |
-| `JWT_SECRET`                     | `lantern-dev-jwt-secret-do-not-use-in-production`      | Same secret as control-plane           |
+| `JWT_SECRET`                     | `pal-dev-jwt-secret-do-not-use-in-production`      | Same secret as control-plane           |
 | `SCHEDULER_NODE_TOKEN`           | (empty: auth disabled)                                 | Required for node heartbeats in prod   |
 | `SCHEDULER_TENANT_MAX_VMS`       | `20`                                                   | Hard cap on concurrent VMs per tenant  |
 | `SCHEDULER_WEIGHT_*`             | see `scoring.DefaultWeights`                           | Tunable score weights                  |
@@ -88,7 +88,7 @@ Smoke test (assuming you have a valid JWT in `$TOKEN`):
 # Pretend a node heartbeats in
 curl -s -X POST localhost:8085/v1/nodes/heartbeat \
   -H 'Content-Type: application/json' \
-  -d '{"name":"node-1","address":"node-1.lantern.svc:50054","region":"us-east-1","is_spot":true,"is_arm":true,"free_vcpu_millis":4000,"free_memory_bytes":8589934592}'
+  -d '{"name":"node-1","address":"node-1.pal.svc:50054","region":"us-east-1","is_spot":true,"is_arm":true,"free_vcpu_millis":4000,"free_memory_bytes":8589934592}'
 
 # Schedule a VM
 curl -s -X POST localhost:8085/v1/schedule \

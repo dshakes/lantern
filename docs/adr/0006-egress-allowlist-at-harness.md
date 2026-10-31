@@ -39,7 +39,7 @@ Egress filtering is **enforced inside the guest by the harness**, with the host 
    - HTTP method enforcement via a thin user-space proxy on `127.0.0.1` that the worker is configured to use via `HTTP_PROXY` env var.
    - Per-rule rate limit via nftables `limit rate`.
 3. The host CNI still enforces a per-tenant IP/CIDR policy as a backstop.
-4. Every denied connection is logged as an `AuditEvent { action: "egress_denied", attrs: { rule, destination } }` (`runtime.proto:393`) and metered as `lantern_egress_denied_total{vm_id}`.
+4. Every denied connection is logged as an `AuditEvent { action: "egress_denied", attrs: { rule, destination } }` (`runtime.proto:393`) and metered as `pal_egress_denied_total{vm_id}`.
 5. `NETWORK_NONE` short-circuits: harness brings up loopback only, no NIC at all.
 
 The dynamic-policy push pathway: `HeartbeatAck.egress_overrides` (`runtime.proto:360`) lets the manager push updated rules without a restart — used for emergency-block during an active incident.
@@ -81,5 +81,5 @@ Adds a full mesh dataplane to every guest — way too heavy. Service meshes solv
 ## References
 
 - [`docs/architecture/04-runtime-isolation.md`](../architecture/04-runtime-isolation.md) — Untrusted hardening item #3
-- [`packages/proto/lantern/v1/runtime.proto`](../../packages/proto/lantern/v1/runtime.proto) — `EgressRule`, `NetworkPolicy`, `HeartbeatAck.egress_overrides`
+- [`packages/proto/pal/v1/runtime.proto`](../../packages/proto/pal/v1/runtime.proto) — `EgressRule`, `NetworkPolicy`, `HeartbeatAck.egress_overrides`
 - [`docs/architecture/04b-microvm-productionization.md`](../architecture/04b-microvm-productionization.md) — where the harness fits in the security boundary table

@@ -24,9 +24,9 @@ not latency). Availability = not a 5xx. Latency = answered within 1s (`le="1"` b
    (`http.response.status_code=5xx`, group by span name `METHOD /v1/...`) or
    `kubectl logs deploy/<release>-control-plane | grep '"status":5'`.
 3. Latency burn with a healthy 5xx rate: check Postgres (`pg_stat_activity` waiting, pool saturation per
-   [db-saturation.md](db-saturation.md)), then the model-router seam if `LANTERN_USE_MODEL_ROUTER` is on
+   [db-saturation.md](db-saturation.md)), then the model-router seam if `PAL_USE_MODEL_ROUTER` is on
    (see [slo-model-router-errors.md](slo-model-router-errors.md)).
-4. Recent deploy or flag flip (`LANTERN_RLS_ENFORCE`, `LANTERN_AUTHZ_ENFORCE`)? Roll back first, debug after:
+4. Recent deploy or flag flip (`PAL_RLS_ENFORCE`, `PAL_AUTHZ_ENFORCE`)? Roll back first, debug after:
    [ga-staged-rollout.md](ga-staged-rollout.md), [rls-flip.md](rls-flip.md).
 
 ## Remediation
@@ -38,7 +38,7 @@ Roll back the last control-plane release, scale replicas if CPU-bound, fail over
 
 The SLI has no series for 30 minutes, so the burn alerts cannot fire. Check that Prometheus scrapes
 `:9464` with job `pal-control-plane` (the `job` in `monitoring.slos.<name>.job`), that the NetworkPolicy
-`allow-metrics-scrape` admits your Prometheus namespace, and that `LANTERN_METRICS_ADDR` is not disabled.
+`allow-metrics-scrape` admits your Prometheus namespace, and that `PAL_METRICS_ADDR` is not disabled.
 
 ## Escalate
 

@@ -20,9 +20,6 @@
 //! File location: $PAL_OWNER_PROFILE, else ~/.pal/owner-profile.md.
 //! Hot-reloaded with a short TTL so edits take effect without a restart.
 
-// Mirror LANTERN_X -> PAL_X before this module's top-level env reads, for any
-// entrypoint that did not import env-compat first (ADR 0032).
-import "./env-compat.js";
 import { palStateDir } from "./state-dir.js";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -200,8 +197,6 @@ export class OwnerProfileStore {
       // Re-applied on every reload, so editing "## My world" takes effect.
       if (!OWNER_TZ_ENV_EXPLICIT && this.cache.timezone &&
           process.env.PAL_OWNER_TIMEZONE !== this.cache.timezone) {
-        process.env.LANTERN_OWNER_TIMEZONE = this.cache.timezone;
-        // Both names (ADR 0032): env-compat mirrored PAL_OWNER_TIMEZONE at boot.
         process.env.PAL_OWNER_TIMEZONE = this.cache.timezone;
         this.logger.info(
           { timezone: this.cache.timezone, source: "owner-profile" },

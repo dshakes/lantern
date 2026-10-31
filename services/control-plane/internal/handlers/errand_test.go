@@ -32,8 +32,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/db"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/db"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // ---------- stub dialers ----------
@@ -134,7 +134,7 @@ func seedTwilioConnector(t *testing.T, pool *pgxpool.Pool, tenantID, authToken s
 }
 
 // doErrandTurn fires POST /v1/voice/errand/turn/{id} as a Twilio form POST.
-// Uses LANTERN_TWILIO_WEBHOOK_AUTH=off (set by caller via t.Setenv) to bypass
+// Uses PAL_TWILIO_WEBHOOK_AUTH=off (set by caller via t.Setenv) to bypass
 // signature verification in most tests.
 func doErrandTurn(t *testing.T, h *ErrandHandler, id string, form url.Values) *httptest.ResponseRecorder {
 	t.Helper()
@@ -674,7 +674,7 @@ func newEnforcedErrandHandler(t *testing.T, e *enforcedServer) *ErrandHandler {
 }
 
 // TestRLSErrands_SameTenantWorks proves propose + list work under genuine
-// RLS enforcement (AppPool as lantern_app).
+// RLS enforcement (AppPool as pal_app).
 func TestRLSErrands_SameTenantWorks(t *testing.T) {
 	t.Setenv("PAL_ERRAND", "1")
 	e := newEnforcedServer(t)

@@ -3,7 +3,7 @@ package main
 import (
 	"crypto/tls"
 
-	"github.com/dshakes/lantern/packages/grpctls"
+	"github.com/dshakes/pal/packages/grpctls"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )

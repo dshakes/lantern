@@ -7,7 +7,6 @@ publish = false
 
 [dependencies]
 anyhow = "1"
-pal_env = { path = "../pal-env-rs" }
 # Pin the process-level crypto provider: a binary that also links aws-lc-rs
 # (e.g. via reqwest) otherwise panics at the first TLS handshake.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

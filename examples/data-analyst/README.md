@@ -18,7 +18,7 @@ plane (invariant #5), and egress is deny-by-default.
 ```bash
 BASE=http://localhost:8080
 VM=$(curl -s -XPOST $BASE/v1/runtime/schedule -H "Authorization: Bearer $T" \
-  -d '{"imageDigest":"lantern/examples/data-analyst@sha256:...05","isolation":"untrusted","network":"allowlist_domain"}' | jq -r .vmId)
+  -d '{"imageDigest":"pal/examples/data-analyst@sha256:...05","isolation":"untrusted","network":"allowlist_domain"}' | jq -r .vmId)
 curl -XPUT "$BASE/v1/runtime/vms/$VM/files/content?path=sales.csv" -H "Authorization: Bearer $T" --data-binary @sales.csv
 curl -XPOST $BASE/v1/runtime/vms/$VM/exec -H "Authorization: Bearer $T" \
   -d '{"command":"python","argv":["/opt/analyze.py","/workspace/sales.csv"]}'
@@ -34,8 +34,8 @@ curl -XPOST $BASE/v1/runtime/vms/$VM/exec -H "Authorization: Bearer $T" \
 Run the docker tier against your own stack (never the :8080 one):
 
 ```bash
-docker build -t lantern-analyst:dev examples/data-analyst
-# manager: RUNTIME_BACKEND=docker AGENT_IMAGE=lantern-analyst:dev (+ scheduler, control-plane,
+docker build -t pal-analyst:dev examples/data-analyst
+# manager: RUNTIME_BACKEND=docker AGENT_IMAGE=pal-analyst:dev (+ scheduler, control-plane,
 #   llm-replay -rules examples/data-analyst/replay-rules.json,
 #   PAL_LLM_BASEURL_OPENAI=http://127.0.0.1:<replay port>, an openai provider key seeded)
 cd e2e/examples && PAL_E2E_API_URL=http://127.0.0.1:28080 go test -tags e2e -count=1 -v -run TestDataAnalystSandbox ./...   # or: make test-e2e-analyst

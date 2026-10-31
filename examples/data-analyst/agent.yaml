@@ -1,7 +1,7 @@
 # Data analyst sandbox (example X5). Upload a CSV, run pandas in a microVM, get
 # JSON + a chart back. Schedule with:  POST /v1/runtime/schedule  (this spec,
 # camel-cased) or `pal run`.  See README.md.
-apiVersion: lantern.dev/v1
+apiVersion: pal.dev/v1
 kind: AgentSpec
 
 metadata:
@@ -11,7 +11,7 @@ metadata:
 
 spec:
   # Build with the Dockerfile here; Docker tier uses it as the manager's AGENT_IMAGE.
-  image_digest: lantern/examples/data-analyst@sha256:0000000000000000000000000000000000000000000000000000000000000005
+  image_digest: pal/examples/data-analyst@sha256:0000000000000000000000000000000000000000000000000000000000000005
   isolation: untrusted        # agent-written code: microVM only (invariant #5)
 
   limits:

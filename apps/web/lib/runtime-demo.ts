@@ -34,7 +34,7 @@ export const DEMO_VMS: VmRow[] = [
     cpuBase: 0.62,
     memBase: 0.54,
     costHr: 0.184,
-    spec: { image: "ghcr.io/lantern/agent-runner:v4", vcpus: 4, memory_mb: 8192, agent: "research-orchestrator" },
+    spec: { image: "ghcr.io/pal/agent-runner:v4", vcpus: 4, memory_mb: 8192, agent: "research-orchestrator" },
   },
   {
     vmId: "vm_5c8e0a17f9d3b2e4",
@@ -49,7 +49,7 @@ export const DEMO_VMS: VmRow[] = [
     cpuBase: 0.81,
     memBase: 0.39,
     costHr: 0.092,
-    spec: { image: "ghcr.io/lantern/scraper:v2", vcpus: 2, memory_mb: 4096, egress: "allowlist" },
+    spec: { image: "ghcr.io/pal/scraper:v2", vcpus: 2, memory_mb: 4096, egress: "allowlist" },
   },
   {
     vmId: "vm_9d2f4b6a8c1e0537",
@@ -64,7 +64,7 @@ export const DEMO_VMS: VmRow[] = [
     cpuBase: 0.44,
     memBase: 0.71,
     costHr: 0.241,
-    spec: { image: "ghcr.io/lantern/redactor:v1", vcpus: 4, memory_mb: 16384, runtime: "kata" },
+    spec: { image: "ghcr.io/pal/redactor:v1", vcpus: 4, memory_mb: 16384, runtime: "kata" },
   },
   {
     vmId: "vm_3b7c1e9f5a2d6480",
@@ -79,7 +79,7 @@ export const DEMO_VMS: VmRow[] = [
     cpuBase: 0.12,
     memBase: 0.18,
     costHr: 0.412,
-    spec: { image: "ghcr.io/lantern/llama-infer:v3", vcpus: 8, memory_mb: 32768, gpu: 1 },
+    spec: { image: "ghcr.io/pal/llama-infer:v3", vcpus: 8, memory_mb: 32768, gpu: 1 },
   },
   {
     vmId: "vm_e0a4c8d2b6f19357",
@@ -94,7 +94,7 @@ export const DEMO_VMS: VmRow[] = [
     cpuBase: 0.33,
     memBase: 0.29,
     costHr: 0.071,
-    spec: { image: "ghcr.io/lantern/doc-extract:v2", vcpus: 2, memory_mb: 4096 },
+    spec: { image: "ghcr.io/pal/doc-extract:v2", vcpus: 2, memory_mb: 4096 },
   },
   {
     vmId: "vm_7f1d3b5a9c0e2846",
@@ -109,7 +109,7 @@ export const DEMO_VMS: VmRow[] = [
     cpuBase: 0.21,
     memBase: 0.46,
     costHr: 0.058,
-    spec: { image: "ghcr.io/lantern/eval-runner:v5", vcpus: 2, memory_mb: 8192 },
+    spec: { image: "ghcr.io/pal/eval-runner:v5", vcpus: 2, memory_mb: 8192 },
   },
   {
     vmId: "vm_2c6e8a0d4b1f9753",
@@ -124,7 +124,7 @@ export const DEMO_VMS: VmRow[] = [
     cpuBase: 0.91,
     memBase: 0.83,
     costHr: 0.266,
-    spec: { image: "ghcr.io/lantern/headless-chrome:v6", vcpus: 4, memory_mb: 16384, runtime: "kata" },
+    spec: { image: "ghcr.io/pal/headless-chrome:v6", vcpus: 4, memory_mb: 16384, runtime: "kata" },
   },
   {
     vmId: "vm_b8d0f2a4c6e13579",
@@ -139,7 +139,7 @@ export const DEMO_VMS: VmRow[] = [
     cpuBase: 0.07,
     memBase: 0.09,
     costHr: 0.011,
-    spec: { image: "ghcr.io/lantern/policy.wasm", runtime: "wasmtime" },
+    spec: { image: "ghcr.io/pal/policy.wasm", runtime: "wasmtime" },
   },
   {
     vmId: "vm_4a9c1e3f7b5d0286",
@@ -155,7 +155,7 @@ export const DEMO_VMS: VmRow[] = [
     cpuBase: 0,
     memBase: 0,
     costHr: 0,
-    spec: { image: "ghcr.io/lantern/etl:v1", vcpus: 2, memory_mb: 4096, exit_code: 137 },
+    spec: { image: "ghcr.io/pal/etl:v1", vcpus: 2, memory_mb: 4096, exit_code: 137 },
   },
   {
     vmId: "vm_d6f8b0a2c4e15937",
@@ -170,7 +170,7 @@ export const DEMO_VMS: VmRow[] = [
     cpuBase: 0,
     memBase: 0,
     costHr: 0.034,
-    spec: { image: "ghcr.io/lantern/forecaster:v2", vcpus: 1, memory_mb: 2048 },
+    spec: { image: "ghcr.io/pal/forecaster:v2", vcpus: 1, memory_mb: 2048 },
   },
   {
     vmId: "vm_1e5c9a7f3b0d2648",
@@ -185,7 +185,7 @@ export const DEMO_VMS: VmRow[] = [
     cpuBase: 0.18,
     memBase: 0.52,
     costHr: 0.121,
-    spec: { image: "ghcr.io/lantern/devcontainer:base", vcpus: 4, memory_mb: 8192, persistent: true },
+    spec: { image: "ghcr.io/pal/devcontainer:base", vcpus: 4, memory_mb: 8192, persistent: true },
   },
   {
     vmId: "vm_8c0a2e4f6b9d1735",

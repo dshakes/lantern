@@ -6,8 +6,8 @@ import (
 	"os"
 	"strings"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/packages/cli/internal"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/packages/cli/internal"
 	"github.com/spf13/cobra"
 )
 
@@ -55,7 +55,7 @@ func newAgentsCreateCommand() *cobra.Command {
 				return err
 			}
 
-			agent, err := clients.Agents.CreateAgent(cmd.Context(), &lanternv1.CreateAgentRequest{
+			agent, err := clients.Agents.CreateAgent(cmd.Context(), &palv1.CreateAgentRequest{
 				Name:        name,
 				Description: description,
 				Labels:      labelMap,
@@ -94,7 +94,7 @@ func newAgentsGetCommand() *cobra.Command {
 			}
 			defer clients.Close()
 
-			agent, err := clients.Agents.GetAgent(cmd.Context(), &lanternv1.GetAgentRequest{
+			agent, err := clients.Agents.GetAgent(cmd.Context(), &palv1.GetAgentRequest{
 				Name: args[0],
 			})
 			if err != nil {
@@ -137,7 +137,7 @@ func newAgentsListCommand() *cobra.Command {
 			}
 			defer clients.Close()
 
-			resp, err := clients.Agents.ListAgents(cmd.Context(), &lanternv1.ListAgentsRequest{
+			resp, err := clients.Agents.ListAgents(cmd.Context(), &palv1.ListAgentsRequest{
 				PageSize: pageSize,
 			})
 			if err != nil {
@@ -218,7 +218,7 @@ func newAgentsDeleteCommand() *cobra.Command {
 			}
 			defer clients.Close()
 
-			_, err = clients.Agents.DeleteAgent(cmd.Context(), &lanternv1.DeleteAgentRequest{
+			_, err = clients.Agents.DeleteAgent(cmd.Context(), &palv1.DeleteAgentRequest{
 				Name: name,
 			})
 			if err != nil {
@@ -260,7 +260,7 @@ func parseLabels(pairs []string) (map[string]string, error) {
 }
 
 // agentToMap converts an Agent proto to a generic map for JSON output.
-func agentToMap(a *lanternv1.Agent) map[string]any {
+func agentToMap(a *palv1.Agent) map[string]any {
 	m := map[string]any{
 		"id":          a.GetId(),
 		"tenant_id":   a.GetTenantId(),

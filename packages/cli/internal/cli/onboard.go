@@ -26,7 +26,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dshakes/lantern/packages/cli/internal"
+	"github.com/dshakes/pal/packages/cli/internal"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -223,8 +223,8 @@ day-to-day tasks. Be concise, accurate, and honest about what you do and don't k
 // quickstartRunInput is the first run payload sent to prove the agent works.
 var quickstartRunInput = json.RawMessage(`{"prompt":"Say hi and name one thing you can help me with."}`)
 
-// guideAgentName is the on-platform guide agent created via the lantern-guide template.
-const guideAgentName = "lantern-guide"
+// guideAgentName is the on-platform guide agent created via the pal-guide template.
+const guideAgentName = "pal-guide"
 
 // guideSystemPrompt is the fallback prompt used when the template endpoint is unavailable.
 const guideSystemPrompt = `You are the PAL onboarding guide. You receive the output (and any error) from the user's very first agent run and must explain it clearly.
@@ -631,7 +631,7 @@ func onboardAuth(restURL string) (string, string, error) {
 	}
 
 	// Fall back to seeded dev credentials.
-	loginResp, err := client.Login("admin@lantern.dev", "lantern")
+	loginResp, err := client.Login("admin@pal.local", "pal")
 	if err != nil {
 		return "", "", fmt.Errorf("stored credentials absent/stale and dev login failed: %w", err)
 	}
@@ -865,7 +865,7 @@ func providerNames(providers []map[string]any) string {
 }
 
 // runGuideStep is the BEST-EFFORT step 6 of onboard. It spins up the
-// on-platform lantern-guide agent (via the from-template endpoint, with
+// on-platform pal-guide agent (via the from-template endpoint, with
 // budget caps) and runs it with the context from the first real run.
 //
 // FAIL-SOFT CONTRACT: this function NEVER returns an error and NEVER
@@ -875,7 +875,7 @@ func providerNames(providers []map[string]any) string {
 func runGuideStep(client *internal.RESTClient, firstRunContext, agentName string) {
 	// Create or reuse the guide agent. Prefer the template path so the
 	// budget cap applies automatically.
-	_, templateErr := client.ApplyTemplate("lantern-guide", guideAgentName)
+	_, templateErr := client.ApplyTemplate("pal-guide", guideAgentName)
 	if templateErr != nil {
 		// Template endpoint may return 409 (already exists) or be unavailable.
 		// Either way, check if the agent already exists before falling back.

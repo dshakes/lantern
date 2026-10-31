@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/packages/cli/internal"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/packages/cli/internal"
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -64,10 +64,10 @@ func newRunsCreateCommand() *cobra.Command {
 				}
 			}
 
-			run, err := clients.Runs.CreateRun(cmd.Context(), &lanternv1.CreateRunRequest{
+			run, err := clients.Runs.CreateRun(cmd.Context(), &palv1.CreateRunRequest{
 				AgentName:   agentName,
 				Input:       inputStruct,
-				TriggerKind: lanternv1.TriggerKind_TRIGGER_KIND_MANUAL,
+				TriggerKind: palv1.TriggerKind_TRIGGER_KIND_MANUAL,
 				Stream:      stream,
 			})
 			if err != nil {
@@ -111,7 +111,7 @@ func newRunsGetCommand() *cobra.Command {
 			}
 			defer clients.Close()
 
-			run, err := clients.Runs.GetRun(cmd.Context(), &lanternv1.GetRunRequest{
+			run, err := clients.Runs.GetRun(cmd.Context(), &palv1.GetRunRequest{
 				Id: args[0],
 			})
 			if err != nil {
@@ -169,13 +169,13 @@ func newRunsListCommand() *cobra.Command {
 			}
 			defer clients.Close()
 
-			req := &lanternv1.ListRunsRequest{
+			req := &palv1.ListRunsRequest{
 				AgentName: agentName,
 			}
 
 			if statusFilter != "" {
 				rs := parseRunStatusFlag(statusFilter)
-				if rs == lanternv1.RunStatus_RUN_STATUS_UNSPECIFIED {
+				if rs == palv1.RunStatus_RUN_STATUS_UNSPECIFIED {
 					return fmt.Errorf("unknown status %q (valid: queued, running, paused, succeeded, failed, cancelled)", statusFilter)
 				}
 				req.StatusFilter = rs
@@ -247,7 +247,7 @@ func newRunsCancelCommand() *cobra.Command {
 			}
 			defer clients.Close()
 
-			run, err := clients.Runs.CancelRun(cmd.Context(), &lanternv1.CancelRunRequest{
+			run, err := clients.Runs.CancelRun(cmd.Context(), &palv1.CancelRunRequest{
 				Id:     args[0],
 				Reason: reason,
 			})
@@ -273,7 +273,7 @@ func newRunsCancelCommand() *cobra.Command {
 
 // streamRunEvents connects to StreamRunEvents and pretty-prints each event.
 func streamRunEvents(cmd *cobra.Command, clients *internal.Clients, runID string, fromSeq uint64) error {
-	stream, err := clients.Runs.StreamRunEvents(cmd.Context(), &lanternv1.StreamRunEventsRequest{
+	stream, err := clients.Runs.StreamRunEvents(cmd.Context(), &palv1.StreamRunEventsRequest{
 		RunId:   runID,
 		FromSeq: fromSeq,
 		Live:    true,
@@ -301,20 +301,20 @@ func streamRunEvents(cmd *cobra.Command, clients *internal.Clients, runID string
 }
 
 // printStreamEvent renders a single StreamEvent to stderr with appropriate colors.
-func printStreamEvent(e *lanternv1.StreamEvent) {
+func printStreamEvent(e *palv1.StreamEvent) {
 	ts := formatTimestamp(e.GetTs())
 	prefix := fmt.Sprintf("%s[%s seq=%d]%s ", colorDim, ts, e.GetSeq(), colorReset)
 
 	switch p := e.GetPayload().(type) {
-	case *lanternv1.StreamEvent_StepStarted:
+	case *palv1.StreamEvent_StepStarted:
 		fmt.Fprintf(os.Stderr, "%s%s=> step started: %s (kind: %s, attempt: %d)%s\n",
 			prefix, colorBlue, p.StepStarted.GetStepId(), p.StepStarted.GetKind(), p.StepStarted.GetAttempt(), colorReset)
 
-	case *lanternv1.StreamEvent_StepCompleted:
+	case *palv1.StreamEvent_StepCompleted:
 		fmt.Fprintf(os.Stderr, "%s%s=> step completed: %s (%.1fms)%s\n",
 			prefix, colorGreen, p.StepCompleted.GetStepId(), p.StepCompleted.GetDurationMs(), colorReset)
 
-	case *lanternv1.StreamEvent_StepFailed:
+	case *palv1.StreamEvent_StepFailed:
 		retry := ""
 		if p.StepFailed.GetWillRetry() {
 			retry = " (will retry)"
@@ -322,18 +322,18 @@ func printStreamEvent(e *lanternv1.StreamEvent) {
 		fmt.Fprintf(os.Stderr, "%s%s=> step failed: %s [%s] %s%s%s\n",
 			prefix, colorRed, p.StepFailed.GetStepId(), p.StepFailed.GetErrorCode(), p.StepFailed.GetErrorMessage(), retry, colorReset)
 
-	case *lanternv1.StreamEvent_LlmDelta:
+	case *palv1.StreamEvent_LlmDelta:
 		fmt.Fprintf(os.Stderr, "%s%s%s%s", prefix, colorDim, p.LlmDelta.GetText(), colorReset)
 
-	case *lanternv1.StreamEvent_LlmComplete:
+	case *palv1.StreamEvent_LlmComplete:
 		fmt.Fprintf(os.Stderr, "\n%s%s=> llm complete: model=%s tokens_in=%d tokens_out=%d cost=$%.4f%s\n",
 			prefix, colorCyan, p.LlmComplete.GetModelUsed(), p.LlmComplete.GetTokensIn(), p.LlmComplete.GetTokensOut(), p.LlmComplete.GetCostUsd(), colorReset)
 
-	case *lanternv1.StreamEvent_ToolCall:
+	case *palv1.StreamEvent_ToolCall:
 		fmt.Fprintf(os.Stderr, "%s%s=> tool call: %s (call_id: %s)%s\n",
 			prefix, colorYellow, p.ToolCall.GetToolName(), p.ToolCall.GetCallId(), colorReset)
 
-	case *lanternv1.StreamEvent_ToolResult:
+	case *palv1.StreamEvent_ToolResult:
 		errStr := ""
 		if p.ToolResult.GetIsError() {
 			errStr = " [ERROR]"
@@ -341,28 +341,28 @@ func printStreamEvent(e *lanternv1.StreamEvent) {
 		fmt.Fprintf(os.Stderr, "%s%s=> tool result: call_id=%s%s%s\n",
 			prefix, colorYellow, p.ToolResult.GetCallId(), errStr, colorReset)
 
-	case *lanternv1.StreamEvent_Log:
+	case *palv1.StreamEvent_Log:
 		fmt.Fprintf(os.Stderr, "%s[%s] %s\n", prefix, p.Log.GetLevel(), p.Log.GetMessage())
 
-	case *lanternv1.StreamEvent_Question:
+	case *palv1.StreamEvent_Question:
 		fmt.Fprintf(os.Stderr, "%s%s=> question: %s (options: %s)%s\n",
 			prefix, colorCyan, p.Question.GetQuestion(), strings.Join(p.Question.GetOptions(), ", "), colorReset)
 
-	case *lanternv1.StreamEvent_Approval:
+	case *palv1.StreamEvent_Approval:
 		fmt.Fprintf(os.Stderr, "%s%s=> approval required: %s%s\n",
 			prefix, colorYellow, p.Approval.GetReason(), colorReset)
 
-	case *lanternv1.StreamEvent_Heartbeat:
+	case *palv1.StreamEvent_Heartbeat:
 		fmt.Fprintf(os.Stderr, "%s%s...heartbeat%s\n", prefix, colorDim, colorReset)
 
-	case *lanternv1.StreamEvent_End:
+	case *palv1.StreamEvent_End:
 		fmt.Fprintf(os.Stderr, "%s%s=> stream ended: %s%s\n",
 			prefix, colorGreen, p.End.GetReason(), colorReset)
 	}
 }
 
 // runToMap converts a Run proto to a generic map for JSON output.
-func runToMap(r *lanternv1.Run) map[string]any {
+func runToMap(r *palv1.Run) map[string]any {
 	m := map[string]any{
 		"id":               r.GetId(),
 		"tenant_id":        r.GetTenantId(),
@@ -403,7 +403,7 @@ func runToMap(r *lanternv1.Run) map[string]any {
 }
 
 // streamEventToMap converts a StreamEvent to a generic map for JSON output.
-func streamEventToMap(e *lanternv1.StreamEvent) map[string]any {
+func streamEventToMap(e *palv1.StreamEvent) map[string]any {
 	m := map[string]any{
 		"run_id": e.GetRunId(),
 		"seq":    e.GetSeq(),
@@ -414,53 +414,53 @@ func streamEventToMap(e *lanternv1.StreamEvent) map[string]any {
 	}
 
 	switch p := e.GetPayload().(type) {
-	case *lanternv1.StreamEvent_StepStarted:
+	case *palv1.StreamEvent_StepStarted:
 		m["type"] = "step_started"
 		m["step_id"] = p.StepStarted.GetStepId()
 		m["kind"] = p.StepStarted.GetKind()
 		m["attempt"] = p.StepStarted.GetAttempt()
-	case *lanternv1.StreamEvent_StepCompleted:
+	case *palv1.StreamEvent_StepCompleted:
 		m["type"] = "step_completed"
 		m["step_id"] = p.StepCompleted.GetStepId()
 		m["duration_ms"] = p.StepCompleted.GetDurationMs()
-	case *lanternv1.StreamEvent_StepFailed:
+	case *palv1.StreamEvent_StepFailed:
 		m["type"] = "step_failed"
 		m["step_id"] = p.StepFailed.GetStepId()
 		m["error_code"] = p.StepFailed.GetErrorCode()
 		m["error_message"] = p.StepFailed.GetErrorMessage()
 		m["will_retry"] = p.StepFailed.GetWillRetry()
-	case *lanternv1.StreamEvent_LlmDelta:
+	case *palv1.StreamEvent_LlmDelta:
 		m["type"] = "llm_delta"
 		m["text"] = p.LlmDelta.GetText()
 		m["model_used"] = p.LlmDelta.GetModelUsed()
-	case *lanternv1.StreamEvent_LlmComplete:
+	case *palv1.StreamEvent_LlmComplete:
 		m["type"] = "llm_complete"
 		m["model_used"] = p.LlmComplete.GetModelUsed()
 		m["tokens_in"] = p.LlmComplete.GetTokensIn()
 		m["tokens_out"] = p.LlmComplete.GetTokensOut()
 		m["cost_usd"] = p.LlmComplete.GetCostUsd()
-	case *lanternv1.StreamEvent_ToolCall:
+	case *palv1.StreamEvent_ToolCall:
 		m["type"] = "tool_call"
 		m["tool_name"] = p.ToolCall.GetToolName()
 		m["call_id"] = p.ToolCall.GetCallId()
-	case *lanternv1.StreamEvent_ToolResult:
+	case *palv1.StreamEvent_ToolResult:
 		m["type"] = "tool_result"
 		m["call_id"] = p.ToolResult.GetCallId()
 		m["is_error"] = p.ToolResult.GetIsError()
-	case *lanternv1.StreamEvent_Log:
+	case *palv1.StreamEvent_Log:
 		m["type"] = "log"
 		m["level"] = p.Log.GetLevel()
 		m["message"] = p.Log.GetMessage()
-	case *lanternv1.StreamEvent_Question:
+	case *palv1.StreamEvent_Question:
 		m["type"] = "question"
 		m["question"] = p.Question.GetQuestion()
 		m["options"] = p.Question.GetOptions()
-	case *lanternv1.StreamEvent_Approval:
+	case *palv1.StreamEvent_Approval:
 		m["type"] = "approval"
 		m["reason"] = p.Approval.GetReason()
-	case *lanternv1.StreamEvent_Heartbeat:
+	case *palv1.StreamEvent_Heartbeat:
 		m["type"] = "heartbeat"
-	case *lanternv1.StreamEvent_End:
+	case *palv1.StreamEvent_End:
 		m["type"] = "end"
 		m["reason"] = p.End.GetReason()
 	}
@@ -469,19 +469,19 @@ func streamEventToMap(e *lanternv1.StreamEvent) map[string]any {
 }
 
 // formatRunStatus converts a RunStatus enum to a human-readable string.
-func formatRunStatus(s lanternv1.RunStatus) string {
+func formatRunStatus(s palv1.RunStatus) string {
 	switch s {
-	case lanternv1.RunStatus_RUN_STATUS_QUEUED:
+	case palv1.RunStatus_RUN_STATUS_QUEUED:
 		return "queued"
-	case lanternv1.RunStatus_RUN_STATUS_RUNNING:
+	case palv1.RunStatus_RUN_STATUS_RUNNING:
 		return "running"
-	case lanternv1.RunStatus_RUN_STATUS_PAUSED:
+	case palv1.RunStatus_RUN_STATUS_PAUSED:
 		return "paused"
-	case lanternv1.RunStatus_RUN_STATUS_SUCCEEDED:
+	case palv1.RunStatus_RUN_STATUS_SUCCEEDED:
 		return "succeeded"
-	case lanternv1.RunStatus_RUN_STATUS_FAILED:
+	case palv1.RunStatus_RUN_STATUS_FAILED:
 		return "failed"
-	case lanternv1.RunStatus_RUN_STATUS_CANCELLED:
+	case palv1.RunStatus_RUN_STATUS_CANCELLED:
 		return "cancelled"
 	default:
 		return "unknown"
@@ -489,22 +489,22 @@ func formatRunStatus(s lanternv1.RunStatus) string {
 }
 
 // parseRunStatusFlag converts a CLI flag value to a RunStatus enum.
-func parseRunStatusFlag(s string) lanternv1.RunStatus {
+func parseRunStatusFlag(s string) palv1.RunStatus {
 	switch strings.ToLower(s) {
 	case "queued":
-		return lanternv1.RunStatus_RUN_STATUS_QUEUED
+		return palv1.RunStatus_RUN_STATUS_QUEUED
 	case "running":
-		return lanternv1.RunStatus_RUN_STATUS_RUNNING
+		return palv1.RunStatus_RUN_STATUS_RUNNING
 	case "paused":
-		return lanternv1.RunStatus_RUN_STATUS_PAUSED
+		return palv1.RunStatus_RUN_STATUS_PAUSED
 	case "succeeded":
-		return lanternv1.RunStatus_RUN_STATUS_SUCCEEDED
+		return palv1.RunStatus_RUN_STATUS_SUCCEEDED
 	case "failed":
-		return lanternv1.RunStatus_RUN_STATUS_FAILED
+		return palv1.RunStatus_RUN_STATUS_FAILED
 	case "cancelled":
-		return lanternv1.RunStatus_RUN_STATUS_CANCELLED
+		return palv1.RunStatus_RUN_STATUS_CANCELLED
 	default:
-		return lanternv1.RunStatus_RUN_STATUS_UNSPECIFIED
+		return palv1.RunStatus_RUN_STATUS_UNSPECIFIED
 	}
 }
 

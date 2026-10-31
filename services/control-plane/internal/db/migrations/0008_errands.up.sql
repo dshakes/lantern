@@ -12,7 +12,7 @@
 --   dnc_numbers — per-tenant Do-Not-Call list; any number here is refused.
 --
 -- RLS posture mirrors 0005–0007 exactly (ENABLE + FORCE + tenant_isolation
--- policy with USING and WITH CHECK, plus GRANT to lantern_app).
+-- policy with USING and WITH CHECK, plus GRANT to pal_app).
 
 CREATE TABLE IF NOT EXISTS errands (
     id                 uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -39,7 +39,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS errands_tenant_idem_key
     ON errands (tenant_id, idempotency_key)
     WHERE idempotency_key IS NOT NULL;
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE errands TO lantern_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE errands TO pal_app;
 
 DO $$
 BEGIN
@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS dnc_numbers (
     PRIMARY KEY (tenant_id, number)
 );
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE dnc_numbers TO lantern_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE dnc_numbers TO pal_app;
 
 DO $$
 BEGIN

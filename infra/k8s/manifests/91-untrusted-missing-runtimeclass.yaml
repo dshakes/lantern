@@ -17,11 +17,11 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: untrusted-missing-runtimeclass
-  namespace: lantern-t-validate
+  namespace: pal-t-validate
   labels:
-    app.kubernetes.io/managed-by: lantern-runtime-manager
-    lantern.dev/run-id: run-validate-untrusted
-    lantern.dev/isolation-class: untrusted
+    app.kubernetes.io/managed-by: pal-runtime-manager
+    pal.dev/run-id: run-validate-untrusted
+    pal.dev/isolation-class: untrusted
 spec:
   # gVisor is the ADR-0009 RuntimeClass for STANDARD/UNTRUSTED. It is NOT
   # installed on a stock kind node, so this reference must NOT resolve to runc.

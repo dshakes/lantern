@@ -19,7 +19,7 @@ Every agent run executes in one of two tiers. The tier is a property of the **ag
 | Crash resume | Recovery sweep re-drives within 30s | Recovery sweep re-schedules (same `run_id`, `PAL_RESUME=1`, ≤3 attempts); exhausted → `microvm_resume_exhausted` |
 | Isolation | Trust boundary: same OS process as control-plane | Separate kernel (gVisor) or separate hypervisor (Kata microVM) |
 | Egress control | Outbound allowed (trust-first-party code) | Harness enforces allowlist + iptables REDIRECT; deny-default |
-| Secret vending | Resolved inline via `lantern.secret/…` refs | Short-TTL JWT over vsock; harness caches with declared TTL |
+| Secret vending | Resolved inline via `pal.secret/…` refs | Short-TTL JWT over vsock; harness caches with declared TTL |
 | Idempotency | `(run_id, step_id, attempt)` key on every LLM + connector call | Same key on every harness tool invocation |
 | Use case | Loop agents, bridge replies, dashboard runs, trusted workflows | User-supplied code, `exec` tools, untrusted packages |
 | Downgrade | N/A | **Never silently fallback to shared** — failure is explicit (`microvm_unavailable`) |
@@ -207,7 +207,7 @@ The scheduler performs 5-factor placement (warm pool, region, cost, health, fair
 
 ### In-guest tool runner {#in-guest-tool-runner}
 
-As of commit f26c7c7 (2026-07-23), the harness contains a typed tool registry in `services/harness/src/tool_runner.rs`. The manager dispatches tool calls to it via the existing `RuntimeHarness.Exec` gRPC stream using a `__lantern_tool_call__` sentinel in `argv[0]` followed by a JSON envelope. The harness intercepts the sentinel **before** the general exec audit path, so serialized arguments (which may hold secrets) never appear in audit logs (invariant #10).
+As of commit f26c7c7 (2026-07-23), the harness contains a typed tool registry in `services/harness/src/tool_runner.rs`. The manager dispatches tool calls to it via the existing `RuntimeHarness.Exec` gRPC stream using a `__pal_tool_call__` sentinel in `argv[0]` followed by a JSON envelope. The harness intercepts the sentinel **before** the general exec audit path, so serialized arguments (which may hold secrets) never appear in audit logs (invariant #10).
 
 Built-in tools:
 
@@ -300,10 +300,10 @@ Every span emitted anywhere in the stack uses these keys (defined in `internal/m
 
 | Attribute | Key | Set by |
 |---|---|---|
-| Tenant | `lantern.tenant_id` | HTTP enrichment middleware + gRPC tracing interceptor |
-| User | `lantern.user_id` | Same |
-| Run | `lantern.run_id` | Same + inline executor |
-| Step | `lantern.step_id` | Inline executor per step |
+| Tenant | `pal.tenant_id` | HTTP enrichment middleware + gRPC tracing interceptor |
+| User | `pal.user_id` | Same |
+| Run | `pal.run_id` | Same + inline executor |
+| Step | `pal.step_id` | Inline executor per step |
 
 `EnrichSpan(ctx, tenantID, userID, runID, stepID)` is the single chokepoint both HTTP and gRPC entry points use, so the keys never drift between them. It is a no-op when telemetry is disabled.
 
@@ -317,7 +317,7 @@ The microVM tier adds `vm_id`, `isolation_class`, and `agent_version` on schedul
 
 ### Metrics (microVM tier)
 
-`lantern_vm_boot_duration_seconds{class}` · `lantern_vm_running{node,class}` · `lantern_warm_pool_size{class,digest}` · `lantern_egress_denied_total{vm_id}`
+`pal_vm_boot_duration_seconds{class}` · `pal_vm_running{node,class}` · `pal_warm_pool_size{class,digest}` · `pal_egress_denied_total{vm_id}`
 
 ---
 

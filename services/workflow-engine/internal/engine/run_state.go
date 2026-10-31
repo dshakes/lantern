@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"sync"
 
-	"github.com/dshakes/lantern/services/workflow-engine/internal/journal"
+	"github.com/dshakes/pal/services/workflow-engine/internal/journal"
 )
 
 // StepResult holds the cached result of a completed step. During replay,

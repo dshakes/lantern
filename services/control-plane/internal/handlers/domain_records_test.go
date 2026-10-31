@@ -23,7 +23,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // ----------------------- helpers -----------------------
@@ -755,7 +755,7 @@ func TestDomainRecord_EncryptionRoundTrip(t *testing.T) {
 // ----------------------- RLS enforcement -----------------------
 
 // TestRLSDomainRecords_SameTenantWorks proves create+list under the
-// RLS-enforced AppPool (lantern_app role).
+// RLS-enforced AppPool (pal_app role).
 func TestRLSDomainRecords_SameTenantWorks(t *testing.T) {
 	e := newEnforcedServer(t)
 	auth := NewAuthHandler(e.srv, testJWTSecret)

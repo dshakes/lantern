@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Install ALL Lantern services as macOS LaunchAgents so they auto-start
+# Install ALL PAL services as macOS LaunchAgents so they auto-start
 # at login + auto-restart on crash. Prod-grade pattern for a Mac that
-# runs Lantern 24/7.
+# runs PAL 24/7.
 #
 # Usage:
 #   ./scripts/launchd/install.sh                # install everything
 #   ./scripts/launchd/install.sh api dashboard  # install only some
 #   ./scripts/launchd/install.sh whatsapp imessage
-#   ./scripts/launchd/install.sh --uninstall    # remove ALL Lantern agents
+#   ./scripts/launchd/install.sh --uninstall    # remove ALL PAL agents
 #
 # After install:
-#   - launchctl list | grep lantern  — see status
-#   - Logs in ~/Library/Logs/Lantern/
+#   - launchctl list | grep pal  — see status
+#   - Logs in ~/Library/Logs/PAL/
 #   - launchctl unload <plist>       — stop a service
 #   - launchctl load <plist>         — start it back up
 
@@ -20,7 +20,7 @@ set -euo pipefail
 REPO_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/../.." && pwd )"
 PLIST_SRC_DIR="$REPO_ROOT/scripts/launchd"
 LAUNCH_AGENT_DIR="$HOME/Library/LaunchAgents"
-LOG_DIR="$HOME/Library/Logs/Lantern"
+LOG_DIR="$HOME/Library/Logs/PAL"
 
 # Order matters — infra brings up docker, api waits for postgres,
 # dashboard waits for api. LaunchAgents run in parallel but each
@@ -32,7 +32,7 @@ ALL_SERVICES=( "infra" "api" "dashboard" "dashboard-reload" \
 
 if [[ "${1:-}" == "--uninstall" ]]; then
   for s in "${ALL_SERVICES[@]}"; do
-    PLIST="$LAUNCH_AGENT_DIR/dev.lantern.${s}.plist"
+    PLIST="$LAUNCH_AGENT_DIR/dev.pal.${s}.plist"
     if [[ -f "$PLIST" ]]; then
       launchctl unload "$PLIST" 2>/dev/null || true
       rm -f "$PLIST"
@@ -79,8 +79,8 @@ echo ""
 chmod +x "$PLIST_SRC_DIR"/*.sh 2>/dev/null || true
 
 for s in "${ALL_SERVICES[@]}"; do
-  SRC="$PLIST_SRC_DIR/dev.lantern.${s}.plist"
-  DST="$LAUNCH_AGENT_DIR/dev.lantern.${s}.plist"
+  SRC="$PLIST_SRC_DIR/dev.pal.${s}.plist"
+  DST="$LAUNCH_AGENT_DIR/dev.pal.${s}.plist"
 
   if [[ ! -f "$SRC" ]]; then
     echo "✗ skipping $s — no plist at $SRC"
@@ -121,7 +121,7 @@ done
 
 echo ""
 echo "Loaded LaunchAgents:"
-launchctl list | grep -i lantern || echo "  (none yet — check 'launchctl list' again in a moment)"
+launchctl list | grep -i pal || echo "  (none yet — check 'launchctl list' again in a moment)"
 echo ""
 echo "Logs:"
 for s in "${ALL_SERVICES[@]}"; do

@@ -4,7 +4,7 @@ The PAL runtime invokes this as::
 
     pal-runner --agent my-agent --input '{"key": "value"}'
 
-Or via the ``LANTERN_AGENT_NAME`` / ``LANTERN_INPUT`` environment variables.
+Or via the ``PAL_AGENT_NAME`` / ``PAL_INPUT`` environment variables.
 
 In dev mode you can also run directly::
 
@@ -17,11 +17,11 @@ import argparse
 import asyncio
 import importlib
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
 
-from pal import _env
 from pal.agent import get_agent, list_agents
 from pal.runtime.context import build_dev_context, build_production_context
 from pal.runtime.runtime import RuntimeMode, detect_mode
@@ -115,24 +115,24 @@ def main() -> None:
     )
     parser.add_argument(
         "--agent",
-        default=_env.get("AGENT_NAME"),
-        help="Agent name (or set LANTERN_AGENT_NAME)",
+        default=os.environ.get("PAL_AGENT_NAME"),
+        help="Agent name (or set PAL_AGENT_NAME)",
     )
     parser.add_argument(
         "--input",
-        default=_env.get("INPUT", "{}"),
-        help="JSON input (or set LANTERN_INPUT)",
+        default=os.environ.get("PAL_INPUT", "{}"),
+        help="JSON input (or set PAL_INPUT)",
     )
     parser.add_argument(
         "--dir",
-        default=_env.get("AGENT_DIR"),
+        default=os.environ.get("PAL_AGENT_DIR"),
         help="Directory to search for agent modules",
     )
 
     args = parser.parse_args()
 
     if not args.agent:
-        parser.error("--agent is required (or set LANTERN_AGENT_NAME)")
+        parser.error("--agent is required (or set PAL_AGENT_NAME)")
 
     try:
         input_data = json.loads(args.input)

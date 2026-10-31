@@ -29,9 +29,9 @@ CREATE POLICY tenant_isolation ON auth_tokens
 	USING (tenant_id::text = current_setting('app.tenant_id', true))
 	WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE auth_tokens TO lantern_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE auth_tokens TO pal_app;
 
 -- 0020 created brief_items without this grant, so every RLS-enforced read of
 -- it (the brief "done 1" path, and the tenant export) failed with
--- "permission denied" on the lantern_app pool.
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE brief_items TO lantern_app;
+-- "permission denied" on the pal_app pool.
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE brief_items TO pal_app;

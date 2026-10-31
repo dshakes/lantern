@@ -139,7 +139,7 @@ Heartbeats carry no payload other than the timestamp, so they're cheap.
 ## In the SDK (consumer side)
 
 ```ts
-const stream = await lantern.runs.create({
+const stream = await pal.runs.create({
   agent: "research-agent",
   input: { query: "..." },
   stream: true,
@@ -176,7 +176,7 @@ Next.js 15 RSC + streaming maps perfectly onto SSE:
 
 ```tsx
 async function RunInspector({ runId }: { runId: string }) {
-  const events = await lantern.runs.events(runId, { live: true });
+  const events = await pal.runs.events(runId, { live: true });
   return (
     <Suspense fallback={<RunSkeleton />}>
       <StreamingEvents events={events} />

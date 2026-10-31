@@ -11,7 +11,7 @@ use crate::proto::{
 };
 use crate::router::ModelRouter;
 
-/// The tonic gRPC service implementation for `lantern.v1.ModelService`.
+/// The tonic gRPC service implementation for `pal.v1.ModelService`.
 pub struct ModelServiceImpl {
     router: Arc<ModelRouter>,
     cache: Option<Arc<PromptCache>>,

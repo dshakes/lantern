@@ -45,10 +45,10 @@ CREATE TABLE IF NOT EXISTS life_event_prefs (
 );
 
 -- Grant DML to the non-superuser app role (mirrors the baseline's per-table
--- GRANTs). Without this, RLS-enforced queries on the lantern_app pool fail with
+-- GRANTs). Without this, RLS-enforced queries on the pal_app pool fail with
 -- "permission denied for table" before the row-level policy is even evaluated.
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE life_events TO lantern_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE life_event_prefs TO lantern_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE life_events TO pal_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE life_event_prefs TO pal_app;
 
 -- RLS: enable + force + tenant_isolation policy, byte-for-byte matching 0003.
 DO $$

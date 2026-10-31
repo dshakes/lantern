@@ -29,14 +29,14 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/db"
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/db"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 const (
 	// batchDefaultMaxItems is the upper bound on items per batch when
-	// PAL_BATCH_MAX_ITEMS (or LANTERN_BATCH_MAX_ITEMS) is not set.
+	// PAL_BATCH_MAX_ITEMS (or PAL_BATCH_MAX_ITEMS) is not set.
 	batchDefaultMaxItems = 1000
 
 	// batchDefaultConcurrency caps the number of child runs that run in
@@ -165,7 +165,7 @@ func (h *BatchHandler) CreateBatch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agentName is required"})
 		return
 	}
-	maxItems := envIntOrDefault("PAL_BATCH_MAX_ITEMS", envIntOrDefault("LANTERN_BATCH_MAX_ITEMS", batchDefaultMaxItems))
+	maxItems := envIntOrDefault("PAL_BATCH_MAX_ITEMS", envIntOrDefault("PAL_BATCH_MAX_ITEMS", batchDefaultMaxItems))
 	if len(body.Items) == 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "items must not be empty"})
 		return

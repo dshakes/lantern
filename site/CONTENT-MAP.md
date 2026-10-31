@@ -1,13 +1,13 @@
-# Content map: old Lantern sites (deleted in fd11a65d) to the new PAL site
+# Content map: old PAL sites (deleted in fd11a65d) to the new PAL site
 
-Method: old sources read with `git show fd11a65d^:<path>`; new docs compared by 5-word shingle overlap after Lantern->PAL
-normalisation, plus identifier sweeps (every `LANTERN_*` var checked as `PAL_*`; every `/v1/...` path; connector names).
+Method: old sources read with `git show fd11a65d^:<path>`; new docs compared by 5-word shingle overlap after the rename
+normalisation, plus identifier sweeps (every `PAL_*` var checked as `PAL_*`; every `/v1/...` path; connector names).
 Docs tree is still being reorganised by other agents (egress/identity/receipts/security now under `security/`, observability and SDKs
 have their own sections). Paths below are relative to `src/content/docs/docs/` unless prefixed `pages/`, `data/`.
 "Lives at" for landing items = `src/pages/*.astro`, `src/data/*.ts`.
 
 Overlap legend: coverage = share of old prose shingles found in the new page. Low numbers are almost always rewording,
-table/JSX-to-markdown reshaping, or rename (lantern->pal), not loss. Spot checks listed in section 2.
+table/JSX-to-markdown reshaping, or the rename itself, not loss. Spot checks listed in section 2.
 
 ## 1. Old page inventory
 
@@ -116,7 +116,7 @@ table/JSX-to-markdown reshaping, or rename (lantern->pal), not loss. Spot checks
 | Fork fan-out "up to 1,000 (default 100), validated with 3 forks" | compare | `pages/compare/index.astro` | kept |
 | E2B "up to 20" forks; ACE "thousands" (per Google) | compare | `pages/compare/index.astro` | kept; vendor claims, dated 2026-10-28 |
 | Free-tier / quota / rate numbers (spawn burst 20, hook burst 10, 60/min, 1 MiB body, 30 s) | accounts, triggers, env-vars | same pages / `env-vars.json` | kept |
-| Metrics `*.run.step.duration`, `.retries`, `.total`, `budget.check.errors` | observability, budgets | `observability/index.mdx` (`lantern.run.step.duration` seen; `.retries` name not found by grep), `build/budgets.mdx` | **verify** (names may still say lantern.* vs pal.*) |
+| Metrics `*.run.step.duration`, `.retries`, `.total`, `budget.check.errors` | observability, budgets | `observability/index.mdx` (`pal.run.step.duration` seen; `.retries` name not found by grep), `build/budgets.mdx` | **verify** (names may still say pal.* vs pal.*) |
 
 ### Connectors and brand logos
 | Item | Old source | New location | Status |
@@ -130,9 +130,9 @@ table/JSX-to-markdown reshaping, or rename (lantern->pal), not loss. Spot checks
 | Item | Old source | New location | Status |
 |---|---|---|---|
 | Home summary table (5 rows: VPC, crash-resume, spend caps, routing, creds outside sandbox) | page.tsx SUMMARY | `pages/runtime/index.astro` (checked "Apache-2.0"); row text not individually verified | kept/verify |
-| Sandbox matrix, 11 rows x (Lantern, ACE, E2B, Modal) | compare/page.tsx SANDBOX | `pages/compare/index.astro` (gVisor, Titan, DLP, Proven at scale, up to 20 present) | kept |
+| Sandbox matrix, 11 rows x (PAL, ACE, E2B, Modal) | compare/page.tsx SANDBOX | `pages/compare/index.astro` (gVisor, Titan, DLP, Proven at scale, up to 20 present) | kept |
 | Platform matrix, 6 rows (durable, budgets, routing, receipts, self-host, availability) | compare PLATFORM | `pages/compare/index.astro` | kept |
-| "Who should pick what" (ACE / E2B or Modal / Lantern) | compare picks | `pages/compare/index.astro` | kept |
+| "Who should pick what" (ACE / E2B or Modal / PAL) | compare picks | `pages/compare/index.astro` | kept |
 | Footnote: vendor docs as of 2026-10-28; ACE deep dive Oct 22 2026 | compare | `pages/compare/index.astro` | kept |
 
 ### Code samples
@@ -148,26 +148,26 @@ table/JSX-to-markdown reshaping, or rename (lantern->pal), not loss. Spot checks
 ### FAQ / other
 | Item | Old source | New location | Status |
 |---|---|---|---|
-| Privacy policy (entity "Lantern Assistant", contact support@lantern.run, effective June 2, 2026) | privacy/page.tsx | none | **GAP** |
+| Privacy policy (entity "PAL Assistant", contact support@pal.local, effective June 2, 2026) | privacy/page.tsx | none | **GAP** |
 | Terms of service (same entity/contact/date) | terms/page.tsx | none | **GAP** |
 | SEO metadata (titles/descriptions per page) | each page `metadata` | frontmatter | kept |
 | Search index script | docs/scripts/build-search-index.mjs | Starlight/Pagefind | intentionally-dropped (replaced) |
 | robots/sitemap | robots.ts, sitemap.ts | Astro config | not checked |
 | Recording component (embeds asciinema/gif) | docs Recording.tsx | `start/examples.mdx` mentions "recording" | verify |
 | Dev credentials table, service ports | installation | `start/installation.mdx` | kept |
-| Env var names LANTERN_* | all | `PAL_*` in docs; master Go code already reads `PAL_*` (e.g. `PAL_SIGNUP_MODE` in auth_lifecycle.go) | kept (renamed consistently; 182/182 on env-vars page) |
+| Env var names PAL_* | all | `PAL_*` in docs; master Go code already reads `PAL_*` (e.g. `PAL_SIGNUP_MODE` in auth_lifecycle.go) | kept (renamed consistently; 182/182 on env-vars page) |
 
 ## 3. GAPS to restore
 
 | # | Gap | Old text / code | Suggested target |
 |---|---|---|---|
-| 1 | Privacy page | Footer link `/privacy/`; entity `"Lantern Assistant"`, contact `support@lantern.run`, effective `June 2, 2026`; full text in `git show fd11a65d^:apps/landing/app/privacy/page.tsx` (203 lines). Rename entity/contact with owner OK (legal text, do not auto-rewrite). | new `src/pages/privacy` (marketing page), not docs |
+| 1 | Privacy page | Footer link `/privacy/`; entity `"PAL Assistant"`, contact `support@pal.local`, effective `June 2, 2026`; full text in `git show fd11a65d^:apps/landing/app/privacy/page.tsx` (203 lines). Rename entity/contact with owner OK (legal text, do not auto-rewrite). | new `src/pages/privacy` (marketing page), not docs |
 | 2 | Terms page | same entity/contact/date; `git show fd11a65d^:apps/landing/app/terms/page.tsx` (170 lines) | new `src/pages/terms` |
 | 3 | Broker demo (3 steps) | "Looks for a network card -> none: The VM has no network device. Its only way out is a socket to the host." / "Calls an API with the key 'placeholder' -> 200: The host swapped in the real credential... the agent only ever saw 'placeholder'." / "Sends the same call over plain HTTP -> 403: Refused by the host. A credential never leaves unencrypted." Source: infra/firecracker/broker-e2e.sh PASS lines, recording docs/media/egress-broker-kvm.gif | `security/egress.mdx` (broker mode section) and `pages/runtime/index.astro` |
 | 4 | Broker poster/recording asset | `apps/landing/public/media/broker-run-poster.webp`, `docs/media/egress-broker-kvm.gif` | `public/media/` + `security/egress.mdx` |
 | 5 | Per-step timing chart | Snapshot 634, Stop 207, Restore 138, Fork 1/2/3 = 131/145/160 ms; "One Firecracker run, 1 vCPU and 128 MiB per VM, on a laptop rather than bare metal"; links "Full benchmark" (docs/benchmarks/runtime-latency.md) and recording | `runtime/sandbox-lifecycle.mdx` (ensure 207 and 145 rows in table; add benchmark link) |
 | 6 | Home summary "Not applicable / Out of scope" cells | `Spend caps: Daily caps; per-run cap on workflows only` vs `Out of scope; Modal partly`; `Credentials outside sandbox: Opt-in broker mode` vs `ACE by default; E2B (beta) and Modal (experimental) opt-in` | verify in `pages/runtime/index.astro`; full version already in `pages/compare/index.astro` |
-| 7 | Metric names | `pal.run.step.retries`, `pal.run.total`, `pal.budget.check.errors` (old pages said lantern.*) | `observability/index.mdx`: new page still shows `lantern.run.step.duration`; decide one prefix and check `.retries`/`.total` rows exist |
+| 7 | Metric names | `pal.run.step.retries`, `pal.run.total`, `pal.budget.check.errors` (old pages said pal.*) | `observability/index.mdx`: new page still shows `pal.run.step.duration`; decide one prefix and check `.retries`/`.total` rows exist |
 | 8 | Minor prose dropped | "wax seal" trigger analogy (triggers); full "common HTTP status codes" blurb text (api: 400/401/403/404/402 list is present as table) | `build/triggers.mdx` (optional) |
 
 Unverifiable / invented-number check: no invented latency figures found. 634/207/138/131/145/160 ms and "M4 Max, nested KVM, 1 vCPU 128 MiB" are sourced in
@@ -185,5 +185,5 @@ qualifiers in the new page. "Proven at scale: Lima nested-KVM + CI only" is self
 | 4 | Broker recording | RESTORED as a link to `docs/media/egress-broker-kvm.gif` from `docs/security/egress.mdx`; the webp poster stays dropped (no image needed for a link). |
 | 5 | Per-step timings | RESTORED in `docs/runtime/sandbox-lifecycle.mdx#cost`: 131/145/160 ms forks, ~200 ms stop, benchmark link, run date, "not production" label. |
 | 6 | Home summary cells | Landing/compare owner; the full matrix is on `pages/compare`. |
-| 7 | Metric names | KEPT as `lantern.*`: that is what the code emits on master (they are wire names until the infra rename). |
+| 7 | Metric names | `pal.*` only: that is what the code emits. |
 | 8 | "Wax seal" analogy | Intentionally dropped (style only). |

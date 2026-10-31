@@ -73,16 +73,14 @@ var getExempt = map[string]string{
 	"GET /v1/signals": "bridge token / JWT scope checked in-handler, or legacy PAL_SIGNAL_TOKEN (ADR 0047)",
 
 	// Public/unauthenticated by design.
-	"GET /v1/agents/{name}/card":              "A2A card: public for is_public agents; internal auth for own agents",
-	"GET /.well-known/agent.json":             "public A2A directory (is_public agents only)",
-	"GET /v1/marketplace":                     "public marketplace listing (no tenant data)",
-	"GET /v1/marketplace/{slug}":              "public marketplace entry (no tenant data)",
-	"GET /v1/mcp/servers":                     "public MCP server catalog (no tenant data)",
-	"GET /v1/mcp/servers/{slug}":              "public MCP server entry (no tenant data)",
-	"GET /.well-known/lantern-receipts":       "public signing key / algorithm disclosure",
-	"GET /.well-known/lantern-agent-identity": "public agent identity key fingerprint",
-	"GET /.well-known/pal-receipts":           "public signing key / algorithm disclosure (PAL name; ADR 0032)",
-	"GET /.well-known/pal-agent-identity":     "public agent identity key fingerprint (PAL name; ADR 0032)",
+	"GET /v1/agents/{name}/card":          "A2A card: public for is_public agents; internal auth for own agents",
+	"GET /.well-known/agent.json":         "public A2A directory (is_public agents only)",
+	"GET /v1/marketplace":                 "public marketplace listing (no tenant data)",
+	"GET /v1/marketplace/{slug}":          "public marketplace entry (no tenant data)",
+	"GET /v1/mcp/servers":                 "public MCP server catalog (no tenant data)",
+	"GET /v1/mcp/servers/{slug}":          "public MCP server entry (no tenant data)",
+	"GET /.well-known/pal-receipts":       "public signing key / algorithm disclosure",
+	"GET /.well-known/pal-agent-identity": "public agent identity key fingerprint",
 
 	// Runtime routes check runtime:* scopes inside the handler (requireRuntimeScope).
 	"GET /v1/runtime/vms":                    "in-handler runtime:read",

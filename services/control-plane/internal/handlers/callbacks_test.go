@@ -94,7 +94,7 @@ func TestDeliverCallback_SignatureAndBody(t *testing.T) {
 	var gotSig string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotBody, _ = io.ReadAll(r.Body)
-		gotSig = r.Header.Get("X-Lantern-Signature")
+		gotSig = r.Header.Get("X-Pal-Signature")
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
@@ -125,7 +125,7 @@ func TestDeliverCallback_SignatureAndBody(t *testing.T) {
 
 	// Verify signature header is present and in the right format.
 	if gotSig == "" {
-		t.Fatal("X-Lantern-Signature header missing")
+		t.Fatal("X-Pal-Signature header missing")
 	}
 	if len(gotSig) < 4 || gotSig[:3] != "v1=" {
 		t.Errorf("signature header format wrong: %q", gotSig)

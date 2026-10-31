@@ -4,9 +4,9 @@ package handlers
 // connector_auth.go, connector_executor.go) after the P1.1b cutover to
 // s.srv.WithTenant.
 //
-// These tests run against the lantern_app-backed harness (newEnforcedServer):
+// These tests run against the pal_app-backed harness (newEnforcedServer):
 // every query the handlers route through s.srv.WithTenant is executed by the
-// non-superuser `lantern_app` role with RLS genuinely enforced at Postgres —
+// non-superuser `pal_app` role with RLS genuinely enforced at Postgres —
 // NOT simulated. They prove the two properties the cutover must guarantee:
 //
 //	(a) a SAME-TENANT caller still reads + writes its OWN rows (returns rows,

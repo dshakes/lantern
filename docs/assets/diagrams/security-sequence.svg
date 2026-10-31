@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1180" class="lx" role="img" aria-labelledby="security-sequence-title security-sequence-desc">
   <title id="security-sequence-title">A sandbox is checked at every hop, from schedule to signed receipt</title>
-  <desc id="security-sequence-desc">Sequence of security checks for a headless sandbox. The caller posts to /v1/runtime/schedule with a JWT or API key carrying runtime:write. The control plane applies the runtime quota gate, returning HTTP 402 when a hard cap is hit, then mints a per-VM agent identity token (EdDSA, HS256 fallback). It calls the runtime-scheduler with the service token and tenant_id; the scheduler asks the runtime-manager to spawn over mTLS with the service token. The manager boots the microVM with spawn.json and a per-VM certificate on a read-only image, and the harness starts the workload as an unprivileged uid. When the workload asks for a secret on the secrets socket, the harness checks its uid with SO_PEERCRED and calls VendSecret with its per-VM certificate (CN must equal the vm_id and match this incarnation's pin) plus the agent instance token. The manager checks the secret URI was declared in the spec, resolves it through the control plane with X-Lantern-Runtime-Token, and returns it with a TTL of at most 300 seconds. In opt-in broker mode (LANTERN_EGRESS_MODE=broker, Firecracker only) credentials are injected at the host egress broker instead of vended into the VM. In the default mode secrets are vended into the VM. Outbound requests go through the harness proxy on 127.0.0.1:3128 and are refused when not allowlisted. The harness streams audit events to the manager, which posts them to /v1/runtime/report and the runtime_audit_events table. Finally the control plane issues a signed run receipt (Ed25519 or HMAC) covering the journal's SHA-256.</desc>
+  <desc id="security-sequence-desc">Sequence of security checks for a headless sandbox. The caller posts to /v1/runtime/schedule with a JWT or API key carrying runtime:write. The control plane applies the runtime quota gate, returning HTTP 402 when a hard cap is hit, then mints a per-VM agent identity token (EdDSA, HS256 fallback). It calls the runtime-scheduler with the service token and tenant_id; the scheduler asks the runtime-manager to spawn over mTLS with the service token. The manager boots the microVM with spawn.json and a per-VM certificate on a read-only image, and the harness starts the workload as an unprivileged uid. When the workload asks for a secret on the secrets socket, the harness checks its uid with SO_PEERCRED and calls VendSecret with its per-VM certificate (CN must equal the vm_id and match this incarnation's pin) plus the agent instance token. The manager checks the secret URI was declared in the spec, resolves it through the control plane with X-Pal-Runtime-Token, and returns it with a TTL of at most 300 seconds. In opt-in broker mode (PAL_EGRESS_MODE=broker, Firecracker only) credentials are injected at the host egress broker instead of vended into the VM. In the default mode secrets are vended into the VM. Outbound requests go through the harness proxy on 127.0.0.1:3128 and are refused when not allowlisted. The harness streams audit events to the manager, which posts them to /v1/runtime/report and the runtime_audit_events table. Finally the control plane issues a signed run receipt (Ed25519 or HMAC) covering the journal's SHA-256.</desc>
   <style class="lx-style">
     .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
     @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
@@ -113,7 +113,7 @@
 
   <path class="edge-patina" d="M700 738H302" marker-end="url(#security-sequence-ap)"/>
   <text class="t-b" x="510" y="730">resolve secret ref</text>
-  <text class="t-s mono" x="510" y="754">X-Lantern-Runtime-Token</text>
+  <text class="t-s mono" x="510" y="754">X-Pal-Runtime-Token</text>
 
   <path class="edge" d="M300 786H698" marker-end="url(#security-sequence-a)"/>
   <text class="t-b" x="510" y="778">secret value</text>
@@ -125,7 +125,7 @@
 
   <!-- opt-in broker mode note -->
   <rect class="node-host" x="40" y="852" width="1120" height="32" rx="10"/>
-  <text class="t-b" x="56" y="873">With the host egress broker (opt-in, LANTERN_EGRESS_MODE=broker), credentials are injected on the host instead of vended into the VM.</text>
+  <text class="t-b" x="56" y="873">With the host egress broker (opt-in, PAL_EGRESS_MODE=broker), credentials are injected on the host instead of vended into the VM.</text>
 
   <!-- egress -->
   <path class="edge-flame" d="M1100 926H902" marker-end="url(#security-sequence-af)"/>

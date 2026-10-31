@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dshakes/lantern/packages/cli/internal"
+	"github.com/dshakes/pal/packages/cli/internal"
 	"github.com/spf13/cobra"
 )
 
@@ -34,9 +34,7 @@ deploy agent code from your terminal. For the build inner loop,
 ` + "`pal agent dev <name>`" + ` watches a directory, re-publishes the agent on every
 save, fires a smoke run and streams its events. Interactive sessions, connector
 integrations, and cron scheduling are available today via the SDKs and
-dashboard — not yet as CLI subcommands.
-
-` + "`lantern`" + ` is the legacy name of this CLI and keeps working as an alias.`,
+dashboard — not yet as CLI subcommands.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       fmt.Sprintf("%s (commit: %s, built: %s)", version, commit, date),

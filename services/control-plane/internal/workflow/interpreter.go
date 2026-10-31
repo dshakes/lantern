@@ -233,7 +233,7 @@ type Deps struct {
 
 	// RecordReplaySkip, when non-nil, is called each time CompletedStep
 	// returns a cached result (crash-resume replay skip). The caller uses
-	// this to increment the lantern.run.replay.skips OTel counter.
+	// this to increment the pal.run.replay.skips OTel counter.
 	RecordReplaySkip func()
 }
 

@@ -12,19 +12,15 @@ HTTP surface.
 ## Install
 
 Registry packages are not published yet. The distribution is named `pal-runtime`; do not
-`pip install lantern-sdk` (that PyPI name belongs to an unrelated project). Install from the repo:
+`pip install pal-sdk` (that PyPI name belongs to an unrelated project). Install from the repo:
 
 ```bash
-pip install "path/to/lantern/packages/sdk-python"          # add [deepagents] for the extra below
+pip install "path/to/pal/packages/sdk-python"          # add [deepagents] for the extra below
 # or in CI:
 pip install "git+https://github.com/dshakes/pal.git#subdirectory=packages/sdk-python"
 ```
 
 The import package is `pal` (`from pal import PalClient`); the CLI entry point is `pal-runner`.
-
-**Deprecated:** the old `lantern` import package (and `lantern-runner`, `LanternClient`, `Lantern*Error`,
-`LanternSandbox`) remains as a thin shim that emits a `DeprecationWarning`. It resolves to the same
-objects/modules as `pal`, but new code should import from `pal` (ADR 0032).
 
 Dependencies pulled in automatically: `httpx>=0.27`, `pydantic>=2.0`, `grpcio>=1.62`,
 `protobuf>=5.0`, `opentelemetry-api>=1.20`.
@@ -47,7 +43,7 @@ from pal import PalClient
 async def main():
     async with PalClient(
         api_key=os.environ["PAL_API_KEY"],
-        # base_url defaults to https://api.lantern.run
+        # base_url defaults to PAL_API_URL, else http://localhost:8080
         # or set PAL_API_URL for a self-hosted instance
     ) as client:
 
@@ -71,7 +67,7 @@ asyncio.run(main())
 
 ```python
 PalClient(
-    base_url: str | None = None,    # default: PAL_API_URL or https://api.lantern.run
+    base_url: str | None = None,    # default: PAL_API_URL or http://localhost:8080
     api_key: str | None = None,     # default: PAL_API_KEY
     *,
     timeout: float = 30.0,          # per-request timeout in seconds
@@ -89,9 +85,9 @@ not using a context manager.
 
 | Var | Purpose |
 |---|---|
-| `PAL_API_URL` | Base URL of the control-plane API. Default `https://api.lantern.run`. For local dev: `http://localhost:8080` |
+| `PAL_API_URL` | Base URL of the control-plane API. Default `http://localhost:8080`; set it to your control plane |
 | `PAL_API_KEY` | Bearer token issued by `POST /auth/login` or the API-keys settings page |
-| `PAL_ROUTE_STRATEGY` | One of `auto`, `cheap`, `best`, `fast`. Sent as `X-Pal-Route-Strategy` (and legacy `X-Lantern-Route-Strategy`). Default `auto` |
+| `PAL_ROUTE_STRATEGY` | One of `auto`, `cheap`, `best`, `fast`. Sent as `X-Pal-Route-Strategy`. Default `auto` |
 
 ---
 
@@ -279,7 +275,7 @@ pal-runner --agent hello-world --input '{"name": "World"}'
 
 ## deepagents integration
 
-`pip install "path/to/lantern/packages/sdk-python[deepagents]"` adds a
+`pip install "path/to/pal/packages/sdk-python[deepagents]"` adds a
 [deepagents](https://github.com/langchain-ai/deepagents) sandbox backend that runs
 the agent's shell and filesystem inside a PAL microVM instead of on the host.
 Egress allowlist, secret vending, and per-tenant quota are enforced by the runtime,

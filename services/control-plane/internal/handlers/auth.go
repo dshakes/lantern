@@ -20,8 +20,8 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/mailer"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/mailer"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // AuthHandler provides HTTP handlers for signup, login, and token introspection.
@@ -217,7 +217,7 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		INSERT INTO tenants (slug, name, tier, k8s_namespace)
 		VALUES ($1, $2, 'personal', $3)
 		RETURNING id
-	`, slug, req.Name+"'s Workspace", "lantern-t-"+slug).Scan(&tenantID)
+	`, slug, req.Name+"'s Workspace", "pal-t-"+slug).Scan(&tenantID)
 	if err != nil {
 		h.logger().Error("insert tenant failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
@@ -688,7 +688,7 @@ func (h *AuthHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 			INSERT INTO tenants (slug, name, tier, k8s_namespace)
 			VALUES ($1, $2, 'personal', $3)
 			RETURNING id
-		`, slug, displayName+"'s Workspace", "lantern-t-"+slug).Scan(&tenantID)
+		`, slug, displayName+"'s Workspace", "pal-t-"+slug).Scan(&tenantID)
 		if txErr != nil {
 			h.logger().Error("insert tenant failed", zap.Error(txErr))
 			http.Redirect(w, r, dashboardURL+"/login?error="+url.QueryEscape("Internal error"), http.StatusFound)

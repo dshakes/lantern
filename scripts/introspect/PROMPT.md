@@ -19,7 +19,7 @@ chance to flush anything at the end. Two real runs on 2026-08-17 spent 22
 minutes doing genuine log analysis (97 shell commands), hit the cap, and left
 **zero** evidence behind, because the report was the last step.
 
-So: **create `~/.lantern/introspect/REPORT-<UTC-date-time>.md` within your
+So: **create `~/.pal/introspect/REPORT-<UTC-date-time>.md` within your
 first few tool calls**, with just a header and "IN PROGRESS". Append findings
 as you go. A truncated report of real findings is worth far more than a
 perfect report that never gets written — and its absence is what the liveness
@@ -29,7 +29,7 @@ guard alarms on.
 
 Read real behavior — never speculate:
 
-- `~/Library/Logs/Lantern/imessage-bridge.out.log` and `whatsapp-bridge.out.log`
+- `~/Library/Logs/PAL/imessage-bridge.out.log` and `whatsapp-bridge.out.log`
   — the bot's own sends, deliveries, and decisions. Grep for delivery results,
   `docRelay`, `ok:false`, suppression reasons, `pending-draft delivery result`,
   `backstop`, marker handling, exceptions.
@@ -51,7 +51,7 @@ Focus ONLY on the owner's real DM conversations. Do not invent examples.
 
 The bridge's own rules live in `CLAUDE.md` (the "Personal-docs + agentic Mac
 actions" section) and the project memory under
-`~/.claude/projects/-Users-shakes-workspace-lantern/memory/`. A response is WRONG
+the Claude Code project memory directory for this checkout (`~/.claude/projects/<checkout path with / as ->/memory/`). A response is WRONG
 if it does any of:
 
 - **Claims an action it didn't take** (false "sent"/"done"; `docRelay:false` on a
@@ -67,7 +67,7 @@ if it does any of:
 - **Asserted a fact about the owner's own life it could not ground** — a date,
   a status, "done"/"happened", or CORRECTED a contact about the owner's plans
   ("not today, sep 10 is the big day" on the real opening day, 2026-09-18).
-  Cross-check every such claim against `~/.lantern/owner-profile.md` (is the
+  Cross-check every such claim against `~/.pal/owner-profile.md` (is the
   line stale? does `## Now` disagree?), the device calendar, and the Apple Mail
   envelope index. The grounding gate (`grounding-gate.ts`, log line
   "GROUNDING GATE — reply HELD") should have held it; if it was auto-sent, that
@@ -101,7 +101,7 @@ Decide per finding:
 If all hold: commit (concise message, NO Claude co-author line — the owner
 forbids it), then `git push origin master`. After pushing, restart the affected
 bridge(s) so the fix goes live:
-`launchctl kickstart -k gui/$(id -u)/dev.lantern.imessage-bridge` and/or
+`launchctl kickstart -k gui/$(id -u)/dev.pal.imessage-bridge` and/or
 `.whatsapp-bridge`.
 
 **Write it up instead** (do NOT touch code) when: the fix would touch anything
@@ -110,7 +110,7 @@ changes owner-facing tone/policy, or the gate is red. Never merge on a red gate.
 
 ## 4. Anti-thrash + scope guards (this loop runs unattended)
 
-- Read `~/.lantern/introspect/state.json` first. It has TWO lists and they
+- Read `~/.pal/introspect/state.json` first. It has TWO lists and they
   pull in opposite directions:
   - `handled` — closed (FIXED / WONTFIX). Do NOT re-fix or re-flag these.
   - `open` — CONFIRMED WRONG and still broken. These are NOT settled. You may
@@ -142,7 +142,7 @@ changes owner-facing tone/policy, or the gate is red. Never merge on a red gate.
 
 ## 5. Always end by writing the report
 
-Write `~/.lantern/introspect/REPORT-<UTC-date-time>.md` with: what you reviewed
+Write `~/.pal/introspect/REPORT-<UTC-date-time>.md` with: what you reviewed
 (counts), each finding (evidence + verdict), what you fixed+merged (commit
 shas), and what you left for the owner with a recommended action. This file is
 how the owner audits you. Be concise and honest — if you merged something,

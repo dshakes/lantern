@@ -454,7 +454,6 @@ export function buildOwnerConferenceTwiml(conferenceName: string): string {
 //
 //   1. PAL_VOICE_CLONE=1            — explicit master opt-in
 //   2. PAL_ELEVENLABS_API_KEY       — the synthesis credential
-//      (legacy alias PAL_ELEVENLABS_KEY also accepted)
 //   3. PAL_ELEVENLABS_VOICE_ID      — which cloned voice to speak in
 //
 // When ANY of the three is missing, the gate is CLOSED and callers fall

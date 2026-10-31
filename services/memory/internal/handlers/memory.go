@@ -13,11 +13,11 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/dshakes/lantern/services/memory/internal/middleware"
-	"github.com/dshakes/lantern/services/memory/internal/server"
+	"github.com/dshakes/pal/services/memory/internal/middleware"
+	"github.com/dshakes/pal/services/memory/internal/server"
 )
 
-var tracer = otel.Tracer("lantern.memory")
+var tracer = otel.Tracer("pal.memory")
 
 // MemoryTier represents the three tiers of memory.
 type MemoryTier string

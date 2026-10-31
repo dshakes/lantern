@@ -1,7 +1,7 @@
 # Headless-Agent Demos
 
 Four end-to-end examples that showcase the PAL Runtime headless-agent execution
-layer (`packages/proto/lantern/v1/runtime.proto`, `services/runtime-scheduler`,
+layer (`packages/proto/pal/v1/runtime.proto`, `services/runtime-scheduler`,
 `services/runtime-manager`, `services/harness`). Each demo:
 
 1. Has its own `agent.yaml` declaring image, isolation class, resources, secrets, egress rules.
@@ -48,10 +48,10 @@ make run-scheduler
 make run-api-runtime
 
 # Build all four demo images locally
-docker build -t lantern/demos/hello:latest examples/headless-agents/01-hello
-docker build -t lantern/demos/web-scraper:latest examples/headless-agents/02-web-scraper
-docker build -t lantern/demos/stateful-research:latest examples/headless-agents/03-stateful-research
-docker build -t lantern/demos/ml-inference:latest examples/headless-agents/04-ml-inference
+docker build -t pal/demos/hello:latest examples/headless-agents/01-hello
+docker build -t pal/demos/web-scraper:latest examples/headless-agents/02-web-scraper
+docker build -t pal/demos/stateful-research:latest examples/headless-agents/03-stateful-research
+docker build -t pal/demos/ml-inference:latest examples/headless-agents/04-ml-inference
 
 # Schedule + tail logs for one demo
 pal run examples/headless-agents/01-hello/agent.yaml --input '{"name": "Ada"}'
@@ -61,7 +61,7 @@ curl -X POST http://localhost:8080/v1/runtime/schedule \
   -H "Authorization: Bearer $PAL_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "imageDigest": "lantern/demos/hello:latest",
+    "imageDigest": "pal/demos/hello:latest",
     "isolation": "trusted",
     "limits": {"vcpu": "100m", "memory": "64Mi", "timeout_secs": 30}
   }'

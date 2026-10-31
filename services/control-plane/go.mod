@@ -1,4 +1,4 @@
-module github.com/dshakes/lantern/services/control-plane
+module github.com/dshakes/pal/services/control-plane
 
 go 1.26.0
 
@@ -17,7 +17,7 @@ require (
 )
 
 require (
-	github.com/dshakes/lantern/gen/go v0.0.0
+	github.com/dshakes/pal/gen/go v0.0.0
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/google/uuid v1.6.0
 	github.com/minio/minio-go/v7 v7.2.1
@@ -37,8 +37,7 @@ require (
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
-	github.com/dshakes/lantern/packages/grpctls v0.0.0
-	github.com/dshakes/lantern/packages/palenv v0.0.0
+	github.com/dshakes/pal/packages/grpctls v0.0.0
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
@@ -76,8 +75,7 @@ require (
 	gopkg.in/ini.v1 v1.67.2 // indirect
 )
 
-replace github.com/dshakes/lantern/gen/go => ../../gen/go
+replace github.com/dshakes/pal/gen/go => ../../gen/go
 
-replace github.com/dshakes/lantern/packages/palenv => ../../packages/palenv
 
-replace github.com/dshakes/lantern/packages/grpctls => ../../packages/grpctls
+replace github.com/dshakes/pal/packages/grpctls => ../../packages/grpctls

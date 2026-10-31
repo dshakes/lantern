@@ -1,7 +1,5 @@
 # Context is the repo root; ship only what the harness build reads.
 *
 !packages/proto
-!packages/pal-env-rs
 !services/harness
-packages/pal-env-rs/target
 services/harness/target

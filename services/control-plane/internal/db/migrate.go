@@ -59,26 +59,32 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool, seedDev bool) error {
 // They create a fixed tenant + admin account with a well-known password so
 // `make dev` works out-of-the-box without any manual bootstrapping.
 // These statements MUST NOT run in production — a static bcrypt hash for a
-// known password ("lantern") is a trivially-exploitable backdoor.
+// known password ("pal") is a trivially-exploitable backdoor.
 var devSeedStatements = []string{
 	// ---------------------------------------------------------------
 	// Seed default dev tenant and admin user
-	// Password is "lantern" hashed with bcrypt.
+	// Password is "pal" hashed with bcrypt. A dev admin row seeded under an
+	// earlier email is moved to the current one (and its password reset to
+	// the dev default) exactly once; a row already on this email is untouched.
 	// ---------------------------------------------------------------
 	`INSERT INTO tenants (id, slug, name, tier, k8s_namespace)
-	 VALUES ('00000000-0000-0000-0000-000000000001', 'dev', 'Development', 'team', 'lantern-t-dev')
+	 VALUES ('00000000-0000-0000-0000-000000000001', 'dev', 'Development', 'team', 'pal-t-dev')
 	 ON CONFLICT (id) DO NOTHING`,
 
 	`INSERT INTO users (id, tenant_id, email, display_name, auth_provider, auth_subject, password_hash, role)
 	 VALUES (
 		'00000000-0000-0000-0000-000000000002',
 		'00000000-0000-0000-0000-000000000001',
-		'admin@lantern.dev',
+		'admin@pal.local',
 		'Admin',
 		'local',
-		'admin@lantern.dev',
-		'$2b$10$.hAunSjVIs5aiTYrzIAmfuLbpy1Im2N4xIvhjFVG5v3fak/eeyP7W',
+		'admin@pal.local',
+		'$2a$10$TjzuOlrLRP/7gC9HGdUX0u4aLfWZH/ho3WzZUiW7bSbRkAf2VEIau',
 		'owner'
 	 )
-	 ON CONFLICT DO NOTHING`,
+	 ON CONFLICT (id) DO UPDATE SET
+		email = EXCLUDED.email,
+		auth_subject = EXCLUDED.auth_subject,
+		password_hash = EXCLUDED.password_hash
+	 WHERE users.email IS DISTINCT FROM EXCLUDED.email`,
 }

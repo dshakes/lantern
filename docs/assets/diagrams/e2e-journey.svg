@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600" class="lx" role="img" aria-labelledby="e2e-journey-title e2e-journey-desc">
   <title id="e2e-journey-title">Agent lifecycle</title>
-  <desc id="e2e-journey-desc">Six stages on the same runtime primitives: develop, test, deploy, run, observe, improve. Develop: lantern onboard, lantern agents dev, workflow editor, SDKs. Test: eval suites, rehearsals, cost forecast. Deploy: immutable versions, A/B experiments, budgets, isolation by manifest. Run: two tiers one journal, streaming, channels and schedules. Observe: traces, metrics, receipts, peer health. Improve: feedback, confidence calibration, memory distillation. The journal underlies all six stages.</desc>
+  <desc id="e2e-journey-desc">Six stages on the same runtime primitives: develop, test, deploy, run, observe, improve. Develop: pal onboard, pal agents dev, workflow editor, SDKs. Test: eval suites, rehearsals, cost forecast. Deploy: immutable versions, A/B experiments, budgets, isolation by manifest. Run: two tiers one journal, streaming, channels and schedules. Observe: traces, metrics, receipts, peer health. Improve: feedback, confidence calibration, memory distillation. The journal underlies all six stages.</desc>
   <style class="lx-style">
     .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
     @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
@@ -42,8 +42,8 @@
   <text class="t-sub" x="40" y="76">Six stages on one runtime. Production feedback becomes the next release's eval cases.</text>
   <rect class="node" x="40" y="100" width="352" height="130" rx="14"/>
   <text class="t-h" x="56" y="126">1 Develop</text>
-  <text class="t-b" x="56" y="146">lantern onboard: description to running agent</text>
-  <text class="t-b" x="56" y="164">lantern agents dev: watch, smoke run</text>
+  <text class="t-b" x="56" y="146">pal onboard: description to running agent</text>
+  <text class="t-b" x="56" y="164">pal agents dev: watch, smoke run</text>
   <text class="t-b" x="56" y="182">Visual workflow editor that executes</text>
   <text class="t-b" x="56" y="200">SDKs (TS, Python, Go) · connectors · MCP</text>
   <rect class="node" x="424" y="100" width="352" height="130" rx="14"/>
@@ -67,7 +67,7 @@
   <rect class="node" x="424" y="270" width="352" height="130" rx="14"/>
   <text class="t-h" x="440" y="296">5 Observe</text>
   <text class="t-b" x="440" y="316">One trace and metric contract</text>
-  <text class="t-b" x="440" y="334">lantern.tenant_id, run_id, step_id attributes</text>
+  <text class="t-b" x="440" y="334">pal.tenant_id, run_id, step_id attributes</text>
   <text class="t-b" x="440" y="352">Verifiable receipts, checked at /proof</text>
   <text class="t-b" x="440" y="370">Peer-service health alerts</text>
   <rect class="node" x="808" y="270" width="352" height="130" rx="14"/>

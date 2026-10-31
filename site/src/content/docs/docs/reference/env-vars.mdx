@@ -13,7 +13,7 @@ import EnvTable from '../../../../components/docs/EnvTable.astro';
 
 Every environment variable the control plane, schedulers, runtime manager, in-VM harness and dashboard read, with its default, what it does and the line of code that reads it. **Required in prod** means the process refuses to start (or, for the harness, refuses to run the workload) when `PAL_ENV` is `prod`, `production` or `staging` and the value is missing. Flag values accept `1`, `true` or `on` unless a row says otherwise.
 
-**Naming.** Every variable is spelled `PAL_*`. The old `LANTERN_*` spelling is still read as a legacy alias, so existing deployments keep working; when both are set, `PAL_*` wins.
+**Naming.** Every variable is spelled `PAL_*`. There are no fallback or alias names.
 
 ## How to use this page
 
@@ -38,7 +38,7 @@ Type to filter by name, service or meaning; pick a group; or show only the ones 
 
 ## How this list was built
 
-`scripts/gen-env-data.mjs` greps the code on `master` for every `PAL_*` (and legacy `LANTERN_*`) read: Go `os.Getenv` and its helpers, Rust `std::env::var`, `process.env` in TypeScript, Python `os.environ`, and shell expansions in `scripts/`. Tests are excluded. That gives the name list and the "Read in" link. Defaults and meanings are written by hand in `site/src/components/docs/env-vars.json` from those reads and the startup guards (`runStartupGuards` in the control plane, `authz.rs`/`tls.rs` in the manager); the script keeps them and adds any new variable with an empty meaning, so a gap shows up as "Not documented yet" instead of going missing.
+`scripts/gen-env-data.mjs` greps the code on `master` for every `PAL_*` read: Go `os.Getenv` and its helpers, Rust `std::env::var`, `process.env` in TypeScript, Python `os.environ`, and shell expansions in `scripts/`. Tests are excluded. That gives the name list and the "Read in" link. Defaults and meanings are written by hand in `site/src/components/docs/env-vars.json` from those reads and the startup guards (`runStartupGuards` in the control plane, `authz.rs`/`tls.rs` in the manager); the script keeps them and adds any new variable with an empty meaning, so a gap shows up as "Not documented yet" instead of going missing.
 
 ## Limits
 

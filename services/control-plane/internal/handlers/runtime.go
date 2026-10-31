@@ -4,7 +4,7 @@ package handlers
 //
 // This handler is the control-plane's gatekeeper in front of the
 // (Firecracker-backed) RuntimeScheduler at :50055 — see
-// packages/proto/lantern/v1/runtime.proto for the wire contract.
+// packages/proto/pal/v1/runtime.proto for the wire contract.
 //
 // Responsibilities:
 //   1. Authn (JWT/API key) and tenancy enforcement on every call. The
@@ -54,11 +54,11 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/packages/grpctls"
-	"github.com/dshakes/lantern/services/control-plane/internal/agentidentity"
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/packages/grpctls"
+	"github.com/dshakes/pal/services/control-plane/internal/agentidentity"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // ---------- Scheduler client (stubbed, interface-shaped) ----------
@@ -170,11 +170,11 @@ type grpcSchedulerClient struct {
 	serviceToken string                           // sent to managers as x-pal-service-token
 	mgrCreds     credentials.TransportCredentials // TLS when PAL_RUNTIME_MANAGER_TLS_CA is set
 	conn         *grpc.ClientConn
-	client       lanternv1.RuntimeSchedulerClient
+	client       palv1.RuntimeSchedulerClient
 	defaultMgr   string                      // PAL_DEFAULT_MANAGER_ADDR
 	mgrMu        sync.Mutex                  // guards mgrConns
 	mgrConns     map[string]*grpc.ClientConn // nodeName -> conn
-	mgrClients   map[string]lanternv1.RuntimeManagerClient
+	mgrClients   map[string]palv1.RuntimeManagerClient
 }
 
 // schedulerTokenCreds attaches the shared service token to every outbound gRPC
@@ -225,10 +225,10 @@ func NewGRPCSchedulerClient(addr, serviceToken string, logger *zap.Logger) (*grp
 		serviceToken: serviceToken,
 		mgrCreds:     mgrCreds,
 		conn:         conn,
-		client:       lanternv1.NewRuntimeSchedulerClient(conn),
+		client:       palv1.NewRuntimeSchedulerClient(conn),
 		defaultMgr:   os.Getenv("PAL_DEFAULT_MANAGER_ADDR"),
 		mgrConns:     make(map[string]*grpc.ClientConn),
-		mgrClients:   make(map[string]lanternv1.RuntimeManagerClient),
+		mgrClients:   make(map[string]palv1.RuntimeManagerClient),
 	}, nil
 }
 
@@ -277,7 +277,7 @@ func withTenant(ctx context.Context, tenantID string) context.Context {
 
 // resolveManagerAddr maps a node name to a runtime-manager gRPC address.
 // Resolution order:
-//  1. LANTERN_NODE_ADDR_<node> (with dots/dashes replaced by underscores)
+//  1. PAL_NODE_ADDR_<node> (with dots/dashes replaced by underscores)
 //  2. PAL_DEFAULT_MANAGER_ADDR
 //  3. node + ":50054" (the runtime-manager default port)
 func (c *grpcSchedulerClient) resolveManagerAddr(node string) string {
@@ -295,7 +295,7 @@ func (c *grpcSchedulerClient) resolveManagerAddr(node string) string {
 }
 
 // managerClient returns (or lazily dials) the RuntimeManagerClient for a node.
-func (c *grpcSchedulerClient) managerClient(node string) (lanternv1.RuntimeManagerClient, error) {
+func (c *grpcSchedulerClient) managerClient(node string) (palv1.RuntimeManagerClient, error) {
 	addr := c.resolveManagerAddr(node)
 	if addr == "" {
 		return nil, fmt.Errorf("no runtime-manager address known for node %q", node)
@@ -317,7 +317,7 @@ func (c *grpcSchedulerClient) managerClient(node string) (lanternv1.RuntimeManag
 	if err != nil {
 		return nil, fmt.Errorf("dial runtime-manager %s: %w", addr, err)
 	}
-	cl := lanternv1.NewRuntimeManagerClient(conn)
+	cl := palv1.NewRuntimeManagerClient(conn)
 	c.mgrConns[node] = conn
 	c.mgrClients[node] = cl
 	c.logger.Info("dialed runtime-manager", zap.String("node", node), zap.String("addr", addr))
@@ -330,7 +330,7 @@ func (c *grpcSchedulerClient) Schedule(ctx context.Context, spec map[string]any)
 
 	agent := agentSpecFromMap(spec)
 	idemKey, _ := spec["idempotency_key"].(string)
-	req := &lanternv1.ScheduleRequest{Spec: agent, IdempotencyKey: idemKey}
+	req := &palv1.ScheduleRequest{Spec: agent, IdempotencyKey: idemKey}
 
 	resp, err := c.client.Schedule(ctx, req)
 	if err != nil {
@@ -346,7 +346,7 @@ func (c *grpcSchedulerClient) Terminate(ctx context.Context, vmID, reason string
 	// Tenant id is required by the scheduler's middleware, but the REST
 	// terminate handler already verified ownership. Pull from outgoing
 	// metadata if the caller stamped one; otherwise the scheduler will reject.
-	_, err := c.client.Terminate(ctx, &lanternv1.TerminateRequest{
+	_, err := c.client.Terminate(ctx, &palv1.TerminateRequest{
 		VmId:   vmID,
 		Reason: reason,
 	})
@@ -374,7 +374,7 @@ func (c *grpcSchedulerClient) Exec(ctx context.Context, node, vmID, command stri
 	return string(stdout), string(stderr), exit, nil
 }
 
-const execTruncatedNotice = "\n[lantern: output truncated at 1 MiB by control-plane cap]\n"
+const execTruncatedNotice = "\n[pal: output truncated at 1 MiB by control-plane cap]\n"
 
 // execStreamer is implemented by schedulers that can deliver exec output
 // incrementally (invariant #4). ExecVM uses it for Accept: text/event-stream.
@@ -407,15 +407,15 @@ func (c *grpcSchedulerClient) ExecStream(ctx context.Context, node, vmID, comman
 
 // execClientStream is the slice of the manager's bidi stream pumpExec needs.
 type execClientStream interface {
-	Send(*lanternv1.ExecRequest) error
+	Send(*palv1.ExecRequest) error
 	CloseSend() error
-	Recv() (*lanternv1.ExecResponse, error)
+	Recv() (*palv1.ExecResponse, error)
 }
 
 func pumpExec(stream execClientStream, vmID, command string, argv []string, emit func(string, []byte) error) (int32, bool, error) {
 	// The first frame MUST carry vm_id + command. We pipe no stdin, so
 	// half-close immediately and just drain the response side.
-	if err := stream.Send(&lanternv1.ExecRequest{VmId: vmID, Command: command, Argv: argv}); err != nil {
+	if err := stream.Send(&palv1.ExecRequest{VmId: vmID, Command: command, Argv: argv}); err != nil {
 		return 0, false, fmt.Errorf("send exec request: %w", err)
 	}
 	if err := stream.CloseSend(); err != nil {
@@ -478,7 +478,7 @@ func (c *grpcSchedulerClient) Cluster(ctx context.Context) (map[string]any, erro
 	// Cluster is gated by tenant_id on the scheduler side — propagate
 	// from context if the caller stamped one (Cluster handler stamps via
 	// owner-only auth).
-	resp, err := c.client.Cluster(ctx, &lanternv1.ClusterRequest{})
+	resp, err := c.client.Cluster(ctx, &palv1.ClusterRequest{})
 	if err != nil {
 		return nil, err
 	}
@@ -509,7 +509,7 @@ func (c *grpcSchedulerClient) Cluster(ctx context.Context) (map[string]any, erro
 
 func (c *grpcSchedulerClient) ListStates(ctx context.Context, tenantID string) (map[string]VMStateInfo, error) {
 	ctx = withTenant(ctx, tenantID)
-	resp, err := c.client.List(ctx, &lanternv1.ListRequest{TenantId: tenantID})
+	resp, err := c.client.List(ctx, &palv1.ListRequest{TenantId: tenantID})
 	if err != nil {
 		return nil, err
 	}
@@ -533,21 +533,21 @@ func (c *grpcSchedulerClient) ListStates(ctx context.Context, tenantID string) (
 
 // vmStateString maps the proto VmState enum to the lowercase string the
 // runtime_vms table + dashboard use.
-func vmStateString(s lanternv1.VmState) string {
+func vmStateString(s palv1.VmState) string {
 	switch s {
-	case lanternv1.VmState_VM_STATE_PENDING:
+	case palv1.VmState_VM_STATE_PENDING:
 		return "pending"
-	case lanternv1.VmState_VM_STATE_SPAWNING:
+	case palv1.VmState_VM_STATE_SPAWNING:
 		return "spawning"
-	case lanternv1.VmState_VM_STATE_RUNNING:
+	case palv1.VmState_VM_STATE_RUNNING:
 		return "running"
-	case lanternv1.VmState_VM_STATE_DRAINING:
+	case palv1.VmState_VM_STATE_DRAINING:
 		return "draining"
-	case lanternv1.VmState_VM_STATE_TERMINATED:
+	case palv1.VmState_VM_STATE_TERMINATED:
 		return "terminated"
-	case lanternv1.VmState_VM_STATE_FAILED:
+	case palv1.VmState_VM_STATE_FAILED:
 		return "failed"
-	case lanternv1.VmState_VM_STATE_PAUSED:
+	case palv1.VmState_VM_STATE_PAUSED:
 		return "paused"
 	default:
 		return "pending"
@@ -557,11 +557,11 @@ func vmStateString(s lanternv1.VmState) string {
 // agentSpecFromMap turns the REST-side spec map into the proto AgentSpec.
 // Field names mirror the conventions in runtime-scheduler/internal/handlers
 // (snake_case map keys, proto enum normalization).
-func agentSpecFromMap(spec map[string]any) *lanternv1.AgentSpec {
+func agentSpecFromMap(spec map[string]any) *palv1.AgentSpec {
 	if spec == nil {
-		return &lanternv1.AgentSpec{}
+		return &palv1.AgentSpec{}
 	}
-	a := &lanternv1.AgentSpec{}
+	a := &palv1.AgentSpec{}
 	if s, ok := spec["image_digest"].(string); ok {
 		a.ImageDigest = s
 	}
@@ -625,7 +625,7 @@ func agentSpecFromMap(spec map[string]any) *lanternv1.AgentSpec {
 		a.Limits = limitsFromMap(lims)
 	}
 	for _, r := range mapSlice(spec["egress_rules"]) {
-		er := &lanternv1.EgressRule{}
+		er := &palv1.EgressRule{}
 		er.Pattern, _ = r["pattern"].(string)
 		for _, m := range anySlice(firstOf(r, "http_methods", "httpMethods")) {
 			if s, ok := m.(string); ok {
@@ -637,7 +637,7 @@ func agentSpecFromMap(spec map[string]any) *lanternv1.AgentSpec {
 		a.EgressRules = append(a.EgressRules, er)
 	}
 	for _, r := range mapSlice(spec["secrets"]) {
-		sr := &lanternv1.SecretRef{}
+		sr := &palv1.SecretRef{}
 		sr.EnvName, _ = firstOf(r, "env_name", "envName").(string)
 		sr.SecretUri, _ = firstOf(r, "secret_uri", "secretUri").(string)
 		a.Secrets = append(a.Secrets, sr)
@@ -645,10 +645,10 @@ func agentSpecFromMap(spec map[string]any) *lanternv1.AgentSpec {
 	// DLP policy — loaded from DB by scheduleAgentSpec and injected as structured
 	// keys so the map-based plumbing doesn't need typed structs on this path.
 	if rules := mapSlice(spec["dlp_rules"]); len(rules) > 0 {
-		p := &lanternv1.DlpPolicy{}
+		p := &palv1.DlpPolicy{}
 		p.MaxInspectBytes = int64Of(firstOf(spec, "dlp_max_inspect_bytes", "dlpMaxInspectBytes"))
 		for _, r := range rules {
-			dr := &lanternv1.DlpRule{}
+			dr := &palv1.DlpRule{}
 			dr.RuleId, _ = r["rule_id"].(string)
 			dr.Detector, _ = r["detector"].(string)
 			dr.Pattern, _ = r["pattern"].(string)
@@ -665,10 +665,10 @@ func agentSpecFromMap(spec map[string]any) *lanternv1.AgentSpec {
 // `{header, secretRef, valuePrefix}` (snake_case and `secret_uri` accepted).
 // The runtime-manager's host-side broker resolves the ref and sets the header
 // on the way out; the secret never enters the VM.
-func egressInjectFromMap(r map[string]any) []*lanternv1.CredentialInjection {
-	var out []*lanternv1.CredentialInjection
+func egressInjectFromMap(r map[string]any) []*palv1.CredentialInjection {
+	var out []*palv1.CredentialInjection
 	for _, m := range mapSlice(r["inject"]) {
-		ci := &lanternv1.CredentialInjection{}
+		ci := &palv1.CredentialInjection{}
 		ci.Header, _ = m["header"].(string)
 		ci.SecretUri, _ = firstOf(m, "secretRef", "secret_ref", "secretUri", "secret_uri").(string)
 		ci.ValuePrefix, _ = firstOf(m, "valuePrefix", "value_prefix").(string)
@@ -679,7 +679,7 @@ func egressInjectFromMap(r map[string]any) []*lanternv1.CredentialInjection {
 
 // validateEgressInject rejects malformed credential-injection specs before
 // anything is scheduled: the header must be an RFC 7230 token, the ref a
-// parseable `pal.secret/...` (or legacy `lantern.secret/...`) ref, the prefix free of CR/LF, the rule an
+// parseable `pal.secret/...` ref, the prefix free of CR/LF, the rule an
 // EXACT hostname (no wildcard, IP or CIDR), and the ref must not also be
 // declared in `secrets` (that would hand the very value injection keeps out
 // of the VM to the workload). Errors name indexes only — never the ref.
@@ -687,7 +687,7 @@ func validateEgressInject(rules []map[string]any, secrets []map[string]any) erro
 	declared := map[string]bool{}
 	for _, sr := range secrets {
 		if u, _ := firstOf(sr, "secret_uri", "secretUri").(string); u != "" {
-			declared[canonicalSecretRef(u)] = true
+			declared[u] = true
 		}
 	}
 	for i, r := range rules {
@@ -704,7 +704,7 @@ func validateEgressInject(rules []map[string]any, secrets []map[string]any) erro
 			if pattern, _ := r["pattern"].(string); pattern == "" || strings.Contains(pattern, "*") || net.ParseIP(pattern) != nil || strings.Contains(pattern, "/") {
 				return fmt.Errorf("egress rule %d: credential injection requires an exact hostname pattern", i)
 			}
-			if declared[canonicalSecretRef(ci.SecretUri)] {
+			if declared[ci.SecretUri] {
 				return fmt.Errorf("egress rule %d inject %d: secretRef is also listed in secrets — an injected credential must not be vended into the VM", i, j)
 			}
 		}
@@ -840,8 +840,8 @@ func float64Of(v any) float64 {
 
 // limitsFromMap decodes the opaque limits map (camelCase REST or snake_case
 // manifest keys). timeout accepts a Go duration string ("5m") or seconds.
-func limitsFromMap(m map[string]any) *lanternv1.ResourceLimits {
-	l := &lanternv1.ResourceLimits{}
+func limitsFromMap(m map[string]any) *palv1.ResourceLimits {
+	l := &palv1.ResourceLimits{}
 	l.Vcpu, _ = m["vcpu"].(string)
 	l.Memory, _ = m["memory"].(string)
 	l.Gpu, _ = m["gpu"].(string)
@@ -860,37 +860,37 @@ func limitsFromMap(m map[string]any) *lanternv1.ResourceLimits {
 	return l
 }
 
-func parseIsolation(s string) lanternv1.IsolationClass {
+func parseIsolation(s string) palv1.IsolationClass {
 	switch strings.ToLower(s) {
 	case "trusted":
-		return lanternv1.IsolationClass_ISOLATION_TRUSTED
+		return palv1.IsolationClass_ISOLATION_TRUSTED
 	case "standard", "microvm", "firecracker":
-		return lanternv1.IsolationClass_ISOLATION_STANDARD
+		return palv1.IsolationClass_ISOLATION_STANDARD
 	case "untrusted":
-		return lanternv1.IsolationClass_ISOLATION_UNTRUSTED
+		return palv1.IsolationClass_ISOLATION_UNTRUSTED
 	case "hostile":
-		return lanternv1.IsolationClass_ISOLATION_HOSTILE
+		return palv1.IsolationClass_ISOLATION_HOSTILE
 	case "wasm":
-		return lanternv1.IsolationClass_ISOLATION_WASM
+		return palv1.IsolationClass_ISOLATION_WASM
 	case "devcontainer":
-		return lanternv1.IsolationClass_ISOLATION_DEVCONTAINER
+		return palv1.IsolationClass_ISOLATION_DEVCONTAINER
 	default:
-		return lanternv1.IsolationClass_ISOLATION_UNSPECIFIED
+		return palv1.IsolationClass_ISOLATION_UNSPECIFIED
 	}
 }
 
-func parseNetwork(s string) lanternv1.NetworkPolicy {
+func parseNetwork(s string) palv1.NetworkPolicy {
 	switch strings.ToLower(s) {
 	case "none":
-		return lanternv1.NetworkPolicy_NETWORK_NONE
+		return palv1.NetworkPolicy_NETWORK_NONE
 	case "allowlist", "allowlist_domain":
-		return lanternv1.NetworkPolicy_NETWORK_ALLOWLIST_DOMAIN
+		return palv1.NetworkPolicy_NETWORK_ALLOWLIST_DOMAIN
 	case "tenant_vpc":
-		return lanternv1.NetworkPolicy_NETWORK_TENANT_VPC
+		return palv1.NetworkPolicy_NETWORK_TENANT_VPC
 	case "open":
-		return lanternv1.NetworkPolicy_NETWORK_OPEN
+		return palv1.NetworkPolicy_NETWORK_OPEN
 	default:
-		return lanternv1.NetworkPolicy_NETWORK_UNSPECIFIED
+		return palv1.NetworkPolicy_NETWORK_UNSPECIFIED
 	}
 }
 
@@ -1013,7 +1013,7 @@ func (h *RuntimeHandler) scheduleAgentSpec(ctx context.Context, tenantID, princi
 	}
 
 	// Invariant #10: the spec we PERSIST must not carry secret material.
-	// LANTERN_AGENT_INSTANCE_TOKEN is a live bearer credential — it has to
+	// PAL_AGENT_INSTANCE_TOKEN is a live bearer credential — it has to
 	// ride the spawn request so the harness can authenticate VendSecret, but
 	// storing it means it survives in runtime_vms.spec and is served verbatim
 	// by GET /v1/runtime/vms for the whole of its TTL. Strip it from the
@@ -1162,7 +1162,7 @@ func (h *RuntimeHandler) scheduleSessionVM(ctx context.Context, tenantID, sessio
 		for k, v := range spec.Labels {
 			labels[k] = v
 		}
-		labels["lantern.session_id"] = sessionID
+		labels["pal.session_id"] = sessionID
 		specWithSession := spec
 		specWithSession.Labels = labels
 
@@ -1559,7 +1559,7 @@ func (h *RuntimeHandler) loadDLPRules(ctx context.Context, tenantID string) ([]m
 
 // ---------- DTOs ----------
 
-// agentSpecDTO is the JSON-shape of lantern.v1.AgentSpec. Kept loose on
+// agentSpecDTO is the JSON-shape of pal.v1.AgentSpec. Kept loose on
 // purpose: REST clients should be able to pass any subset and the
 // server fills in defaults. tenant_id from the body is always ignored
 // and overwritten from the JWT claims.
@@ -1812,13 +1812,13 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 	ctx := middleware.InjectTenantID(r.Context(), tenantID)
 
 	// Start a span covering the scheduling work (after auth).
-	tracer := otel.Tracer("lantern.control-plane")
+	tracer := otel.Tracer("pal.control-plane")
 	ctx, span := tracer.Start(ctx, "runtime.schedule")
-	span.SetAttributes(attribute.String("pal.tenant_id", tenantID), attribute.String("lantern.tenant_id", tenantID))
+	span.SetAttributes(attribute.String("pal.tenant_id", tenantID))
 	defer span.End()
 
 	// Decode via a raw map so we accept both the camelCase REST convention
-	// (imageDigest) AND the snake_case YAML convention that `lantern run`
+	// (imageDigest) AND the snake_case YAML convention that `pal run`
 	// forwards from agent.yaml (image_digest). Aliases are checked after the
 	// primary JSON struct decode has a chance to populate the field.
 	rawBody, err := io.ReadAll(r.Body)
@@ -1839,7 +1839,7 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 		spec.IdempotencyKey = h
 	}
 	// Alias fallback: fill fields the camelCase struct decode missed from the
-	// snake_case keys `lantern run` forwards from agent.yaml (image_digest,
+	// snake_case keys `pal run` forwards from agent.yaml (image_digest,
 	// isolation_class, egress_rules, secret_uri, ...).
 	var raw map[string]any
 	_ = json.Unmarshal(rawBody, &raw)
@@ -1857,9 +1857,9 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 	// Stamp known spec attributes immediately so they appear even if we
 	// return early (quota denial, identity failure, etc.).
 	span.SetAttributes(
-		attribute.String("pal.run_id", spec.RunID), attribute.String("lantern.run_id", spec.RunID),
-		attribute.String("pal.agent_version_id", spec.AgentVersionID), attribute.String("lantern.agent_version_id", spec.AgentVersionID),
-		attribute.String("pal.isolation_class", spec.Isolation), attribute.String("lantern.isolation_class", spec.Isolation),
+		attribute.String("pal.run_id", spec.RunID),
+		attribute.String("pal.agent_version_id", spec.AgentVersionID),
+		attribute.String("pal.isolation_class", spec.Isolation),
 	)
 
 	// Quota enforcement BEFORE we touch the scheduler.
@@ -1893,8 +1893,8 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	span.SetAttributes(
-		attribute.String("pal.vm_id", vmID), attribute.String("lantern.vm_id", vmID),
-		attribute.String("pal.agent_instance_id", instanceID), attribute.String("lantern.agent_instance_id", instanceID),
+		attribute.String("pal.vm_id", vmID),
+		attribute.String("pal.agent_instance_id", instanceID),
 	)
 
 	span.SetStatus(codes.Ok, "")
@@ -1907,7 +1907,7 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 	if h.schedulerIsStub() {
 		resp.Stub = true
 		resp.Warning = stubScheduleWarning
-		span.SetAttributes(attribute.Bool("pal.scheduler_stub", true), attribute.Bool("lantern.scheduler_stub", true))
+		span.SetAttributes(attribute.Bool("pal.scheduler_stub", true))
 		h.logger().Warn("scheduled against the STUB scheduler — no workload was spawned",
 			zap.String("vm_id", vmID), zap.String("tenant_id", tenantID))
 	}
@@ -1918,24 +1918,15 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 const redactedValue = "[redacted]"
 
 // secretSpecEnvKeys are env keys whose values are credentials, never config.
-// Both names of the token (ADR 0032): a caller-supplied PAL_ twin is dropped
-// at the stamp site, but rows written before that, or by another writer, must
-// not serve it either.
 var secretSpecEnvKeys = []string{
-	"LANTERN_AGENT_INSTANCE_TOKEN",
 	"PAL_AGENT_INSTANCE_TOKEN",
 }
 
 // stampAgentIdentity sets the VM's agent identity in a spawn env, replacing
-// anything the caller supplied under EITHER name (ADR 0032). Only the
-// LANTERN_ names are written until the writers flip (rename plan step 4); a
-// caller-chosen PAL_ twin is deleted, never forwarded, because once the
-// harness prefers PAL_ it would authenticate VendSecret with it.
+// anything the caller supplied.
 func stampAgentIdentity(env map[string]any, instanceID, instanceToken string) {
-	delete(env, "PAL_AGENT_INSTANCE_ID")
-	delete(env, "PAL_AGENT_INSTANCE_TOKEN")
-	env["LANTERN_AGENT_INSTANCE_ID"] = instanceID
-	env["LANTERN_AGENT_INSTANCE_TOKEN"] = instanceToken
+	env["PAL_AGENT_INSTANCE_ID"] = instanceID
+	env["PAL_AGENT_INSTANCE_TOKEN"] = instanceToken
 }
 
 // redactSpecSecrets returns a copy of an AgentSpec map with credential-bearing
@@ -2233,7 +2224,7 @@ func (h *RuntimeHandler) StreamLogs(w http.ResponseWriter, r *http.Request) {
 
 	streamCtx, cancel := context.WithCancel(withTenant(ctx, tenantID))
 	defer cancel()
-	stream, err := mgr.Logs(streamCtx, &lanternv1.LogsRequest{VmId: vmID, Follow: true})
+	stream, err := mgr.Logs(streamCtx, &palv1.LogsRequest{VmId: vmID, Follow: true})
 	if err != nil {
 		h.logger().Warn("logs: open stream failed", zap.String("vm_id", vmID), zap.Error(err))
 		notice := map[string]any{

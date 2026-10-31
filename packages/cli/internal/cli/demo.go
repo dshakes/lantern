@@ -40,7 +40,7 @@ func demoComposeArgs(root string, action ...string) []string {
 	args := []string{"compose",
 		"-f", filepath.Join(root, "infra", "docker", "docker-compose.yml"),
 		"-f", filepath.Join(root, "infra", "docker", "docker-compose.kiosk.yml"),
-		"-p", "lantern-demo"}
+		"-p", "pal-demo"}
 	return append(args, action...)
 }
 
@@ -93,7 +93,7 @@ no provider key is read, stored, or required.
 			defer cancel()
 			for _, u := range []string{apiHealth, demoURL} {
 				if err := waitForHTTP(ctx, u, 5*time.Minute); err != nil {
-					return fmt.Errorf("waiting for %s: %w (see `docker compose -p lantern-demo logs`)", u, err)
+					return fmt.Errorf("waiting for %s: %w (see `docker compose -p pal-demo logs`)", u, err)
 				}
 			}
 			fmt.Printf("demo ready in %s: %s\n", time.Since(start).Round(time.Second), demoURL)

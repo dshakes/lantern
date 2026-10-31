@@ -13,7 +13,7 @@
 # What standby means here:
 #   * the control plane serves reads off the local streaming replica and
 #     refuses every mutation (HTTP 503 + Retry-After, gRPC UNAVAILABLE);
-#   * it reports lantern.v1.DataPlaneService NOT_SERVING, so data-plane agents
+#   * it reports pal.v1.DataPlaneService NOT_SERVING, so data-plane agents
 #     (PAL_CONTROL_PLANE_ENDPOINTS) keep using the active region;
 #   * it runs no migrations, cron, crash recovery or janitors;
 #   * nothing executes runs: the workflow engine and runtime scheduler are

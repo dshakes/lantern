@@ -22,7 +22,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // ---------- pure unit tests (no DB) ----------
@@ -122,8 +122,8 @@ func TestSignals_AuthorizationNeverFallsBackToLegacy(t *testing.T) {
 	for _, bearer := range []string{"Bearer pal_brg_deadbeef", "Bearer not-a-jwt"} {
 		rr := httptest.NewRecorder()
 		h.IngestSignal(rr, signalReq(http.MethodPost, `{"kind":"wake","detail":"x"}`, map[string]string{
-			"Authorization":          bearer,
-			"x-lantern-signal-token": "legacy-secret",
+			"Authorization":      bearer,
+			"x-pal-signal-token": "legacy-secret",
 		}))
 		if rr.Code != http.StatusUnauthorized {
 			t.Errorf("%s + valid legacy header: got %d, want 401", bearer, rr.Code)
@@ -148,7 +148,7 @@ func TestSignals_LegacyDisabledByFlag(t *testing.T) {
 	t.Setenv("PAL_SIGNALS_LEGACY_OWNER_TENANT", "off")
 	h := newSignalHandlerForTest(t)
 	rr := httptest.NewRecorder()
-	h.IngestSignal(rr, signalReq(http.MethodPost, `{"kind":"wake","detail":"x"}`, map[string]string{"x-lantern-signal-token": "legacy-secret"}))
+	h.IngestSignal(rr, signalReq(http.MethodPost, `{"kind":"wake","detail":"x"}`, map[string]string{"x-pal-signal-token": "legacy-secret"}))
 	if rr.Code != http.StatusUnauthorized {
 		t.Errorf("legacy path with flag off: got %d, want 401", rr.Code)
 	}
@@ -512,11 +512,11 @@ func TestSignals_LegacyPathWritesFileAndMirrors(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 	f.sh.IngestSignal(rr, signalReq(http.MethodPost, `{"kind":"app_open","app":"YouTube","ts":1700000000000}`,
-		map[string]string{"x-lantern-signal-token": "legacy-secret"}))
+		map[string]string{"x-pal-signal-token": "legacy-secret"}))
 	if rr.Code != http.StatusOK || strings.TrimSpace(rr.Body.String()) != `{"ok":true}` {
 		t.Fatalf("legacy POST: %d %s", rr.Code, rr.Body.String())
 	}
-	data, err := os.ReadFile(filepath.Join(home, ".lantern", "device-signals.jsonl"))
+	data, err := os.ReadFile(filepath.Join(home, ".pal", "device-signals.jsonl"))
 	if err != nil {
 		t.Fatalf("legacy file not written: %v", err)
 	}
@@ -535,7 +535,7 @@ func TestSignals_LegacyPathWritesFileAndMirrors(t *testing.T) {
 
 	// Legacy GET still reads the file (unchanged contract).
 	rr = httptest.NewRecorder()
-	f.sh.ListSignals(rr, signalReq(http.MethodGet, "", map[string]string{"x-lantern-signal-token": "legacy-secret"}))
+	f.sh.ListSignals(rr, signalReq(http.MethodGet, "", map[string]string{"x-pal-signal-token": "legacy-secret"}))
 	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "YouTube") {
 		t.Errorf("legacy GET: %d %s", rr.Code, rr.Body.String())
 	}

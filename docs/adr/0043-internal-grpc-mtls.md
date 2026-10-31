@@ -8,7 +8,7 @@
 
 ## Context
 
-Invariant #7 made the shared service token (`x-lantern-service-token`) the trust
+Invariant #7 made the shared service token (`x-pal-service-token`) the trust
 boundary on the internal gRPC ports and called mTLS "the stronger follow-up".
 On 2026-10-29 the actual transport was:
 
@@ -34,11 +34,11 @@ token, is refused.
 
 ### One identity per process, one helper per language
 
-- Env (PAL names, LANTERN fallback per ADR 0032): `PAL_GRPC_TLS_CA` / `_CERT` /
+- Env: `PAL_GRPC_TLS_CA` / `_CERT` /
   `_KEY` — the service CA and this process's cert (serverAuth + clientAuth),
   used both to serve and to dial. `PAL_GRPC_TLS_ALLOWED_PEERS` — comma-separated
   SPIFFE IDs a server accepts.
-- Go: `packages/grpctls` (stdlib + palenv, no gRPC dependency, so no version
+- Go: `packages/grpctls` (stdlib only, no gRPC dependency, so no version
   coupling). Rust: `packages/pal-grpc-tls-rs` (`pal_grpc_tls`). Same policy, same
   error text. The three copies of `ManagerTransportCreds` now call `grpctls`.
 
@@ -46,7 +46,7 @@ token, is refused.
 
 - Configured → TLS 1.2+, CA pinned (no system roots). Servers **require and
   verify** a client cert, then check the peer's identity.
-- Identity: a per-VM guest cert (OU `lantern-vm`, minted by the runtime-manager)
+- Identity: a per-VM guest cert (OU `pal-vm`, minted by the runtime-manager)
   is always refused as a service. With an allowlist, the peer must carry one of
   the listed SPIFFE IDs (`spiffe://<trust-domain>/svc/<name>`) as a URI SAN. Go
   checks it in `VerifyConnection` (handshake); Rust in a tonic interceptor
@@ -103,7 +103,7 @@ workflow-engine, model-router and runtime-manager probe the TCP socket instead.
   must mount the certs or set `PAL_GRPC_INSECURE=1`; otherwise the control-plane,
   workflow-engine, runtime-scheduler and model-router refuse to start. That is
   intended — it is the same fail-closed stance as the service token.
-- A gRPC caller outside the mesh (e.g. `lantern` CLI pointed straight at
+- A gRPC caller outside the mesh (e.g. `pal` CLI pointed straight at
   `:50051`) cannot call AgentService/RunService on an mTLS control-plane; the
   REST API is the external surface.
 - The dedicated `pal-control-plane` / `pal-data-plane` charts are not

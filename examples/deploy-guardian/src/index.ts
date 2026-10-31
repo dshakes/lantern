@@ -396,7 +396,7 @@ export default agent<WebhookPayload, DeployGuardianOutput>({
           sha: commitSha,
           state: "failure",
           description: `Deploy blocked — risk score ${assessment.riskScore}/10`,
-          context: "lantern/deploy-guardian",
+          context: "pal/deploy-guardian",
         });
       });
     } else {
@@ -413,7 +413,7 @@ export default agent<WebhookPayload, DeployGuardianOutput>({
           sha: commitSha,
           state: "success",
           description: `Deploy approved — risk score ${assessment.riskScore}/10`,
-          context: "lantern/deploy-guardian",
+          context: "pal/deploy-guardian",
         });
 
         await ctx.notify({

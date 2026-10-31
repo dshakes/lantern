@@ -53,7 +53,7 @@ const RECONNECT_MAX: Duration = Duration::from_secs(15);
 fn log_security_audit(rep: &HarnessReport) {
     if let HarnessReport::Audit(a) = rep {
         tracing::warn!(
-            target: "lantern_audit",
+            target: "pal_audit",
             vm_id = %a.vm_id,
             action = %a.action,
             attrs = ?a.attrs,

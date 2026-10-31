@@ -18,10 +18,10 @@
 --   * The policy is dropped-then-created so re-running this migration (or
 --     retrofitting WITH CHECK onto an existing USING-only policy) is safe.
 --
--- This is gated operationally by LANTERN_RLS_ENFORCE: the privileged 'lantern'
+-- This is gated operationally by PAL_RLS_ENFORCE: the privileged 'pal'
 -- superuser pool bypasses RLS (BYPASSRLS implied by superuser), so with
 -- enforcement off — the dev/default — nothing changes. RLS only bites when a
--- handler runs on the 'lantern_app' (non-superuser) pool with app.tenant_id set.
+-- handler runs on the 'pal_app' (non-superuser) pool with app.tenant_id set.
 --
 -- EXEMPT tables (intentionally NOT given RLS — no single owning tenant_id, or
 -- deliberately cross-tenant): tenants, agent_versions, journal_events,

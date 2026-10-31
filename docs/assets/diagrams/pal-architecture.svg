@@ -1,0 +1,133 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 980" class="lx" role="img" aria-labelledby="pal-architecture-title pal-architecture-desc">
+  <title id="pal-architecture-title">PAL architecture: control plane orchestrates, data plane executes</title>
+  <desc id="pal-architecture-desc">Channels and builders enter through two gateways. The Go control plane orchestrates and never touches user code; the data plane runs it behind a fail-closed isolation gate. Runtime scheduler places work, runtime-manager spawns it, and the in-VM harness enforces egress and secrets.</desc>
+  <style class="lx-style">
+    .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
+    @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
+    .lx text{font-family:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;fill:var(--ink)}
+    .lx .mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+    .lx .canvas{fill:var(--bg)}
+    .lx .t-title{font-size:22px;font-weight:600;letter-spacing:-.01em}
+    .lx .t-sub{font-size:13px;fill:var(--ink2)}
+    .lx .t-h{font-size:14px;font-weight:600}
+    .lx .t-b{font-size:12.5px;fill:var(--ink2)}
+    .lx .t-s{font-size:11.5px;fill:var(--ink3)}
+    .lx .t-flame{fill:var(--flame)} .lx .t-glass{fill:var(--glass)} .lx .t-patina{fill:var(--patina)} .lx .t-signal{fill:var(--signal)}
+    .lx .node{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+    .lx .node-guest{fill:var(--flame-soft);stroke:var(--flame);stroke-width:1.5}
+    .lx .node-host{fill:var(--patina-soft);stroke:var(--patina);stroke-width:1.5}
+    .lx .node-glass{fill:var(--glass-soft);stroke:var(--glass);stroke-width:1.5}
+    .lx .node-deny{fill:var(--signal-soft);stroke:var(--signal);stroke-width:1.5}
+    .lx .group{fill:var(--surface2);stroke:none}
+    .lx .wall{fill:none;stroke:var(--glass);stroke-width:2.5}
+    .lx .zone{fill:none;stroke:var(--ink3);stroke-width:1.25;stroke-dasharray:6 5}
+    .lx .edge{fill:none;stroke:var(--ink2);stroke-width:1.5}
+    .lx .edge-flame{fill:none;stroke:var(--flame);stroke-width:1.75}
+    .lx .edge-glass{fill:none;stroke:var(--glass);stroke-width:1.75}
+    .lx .edge-patina{fill:none;stroke:var(--patina);stroke-width:1.75}
+    .lx .edge-deny{fill:none;stroke:var(--signal);stroke-width:1.75;stroke-dasharray:4 4}
+    .lx .head{fill:var(--ink2)} .lx .head-flame{fill:var(--flame)} .lx .head-glass{fill:var(--glass)} .lx .head-patina{fill:var(--patina)} .lx .head-deny{fill:var(--signal)}
+    .lx .dot-flame{fill:var(--flame)} .lx .dot-glass{fill:var(--glass)} .lx .dot-patina{fill:var(--patina)} .lx .dot-signal{fill:var(--signal)} .lx .dot-ink{fill:var(--ink3)}
+  </style>
+  <defs>
+    <marker id="pal-architecture-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="pal-architecture-af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-flame" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="pal-architecture-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-glass" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="pal-architecture-ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-patina" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="pal-architecture-ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-deny" d="M0 0 10 5 0 10z"/></marker>
+  </defs>
+
+  <rect class="canvas" width="1200" height="980" rx="16"/>
+  <text class="t-title" x="40" y="52">The control plane orchestrates; the data plane runs your code</text>
+  <text class="t-sub" x="40" y="76">Orchestration is Go and Rust services. Untrusted code only ever runs inside a microVM, on the data plane.</text>
+  <rect class="node" x="40" y="100" width="520" height="76" rx="10"/>
+  <text class="t-h" x="56" y="126">Channels</text>
+  <text class="t-b" x="56" y="146">WhatsApp · iMessage · Slack · Discord · Telegram</text>
+  <text class="t-b" x="56" y="164">voice (Twilio, LiveKit) · webchat /widget.js · email</text>
+  <rect class="node" x="600" y="100" width="560" height="76" rx="10"/>
+  <text class="t-h" x="616" y="126">Builders</text>
+  <text class="t-b" x="616" y="146">SDKs (TypeScript, Python, Go) · pal CLI</text>
+  <text class="t-b" x="616" y="164">dashboard · A2A peers</text>
+  <rect class="node" x="40" y="210" width="520" height="76" rx="10"/>
+  <text class="t-h" x="56" y="236">surface-gateway</text>
+  <text class="t-b mono" x="56" y="256">:8444 · Rust</text>
+  <text class="t-b" x="56" y="274">inbound webhooks · signature verification · normalization</text>
+  <rect class="node" x="600" y="210" width="560" height="76" rx="10"/>
+  <text class="t-h" x="616" y="236">gateway</text>
+  <text class="t-b mono" x="616" y="256">:8443 TLS · Rust</text>
+  <text class="t-b" x="616" y="274">JWT / API-key auth · rate limiting · streaming</text>
+  <path class="edge" d="M300 176V210" marker-end="url(#pal-architecture-a)"/>
+  <path class="edge" d="M880 176V210" marker-end="url(#pal-architecture-a)"/>
+  <rect class="zone" x="40" y="320" width="1120" height="300" rx="18"/>
+  <text class="t-s" x="1144" y="342" text-anchor="end">Control plane: orchestration, never user code</text>
+  <rect class="node" x="60" y="360" width="320" height="96" rx="10"/>
+  <text class="t-h" x="76" y="386">control-plane</text>
+  <text class="t-b mono" x="76" y="406">:8080 REST · :50051 gRPC · Go</text>
+  <text class="t-b" x="76" y="424">agents, runs, sessions, budgets (402)</text>
+  <text class="t-b" x="76" y="442">evals, receipts, memory, auth, RLS</text>
+  <rect class="node" x="420" y="360" width="320" height="96" rx="10"/>
+  <text class="t-h" x="436" y="386">workflow-engine</text>
+  <text class="t-b mono" x="436" y="406">:50052 gRPC · Go</text>
+  <text class="t-b" x="436" y="424">durable steps, event-sourced journal</text>
+  <text class="t-b" x="436" y="442">authoritative for run state</text>
+  <rect class="node" x="780" y="360" width="360" height="96" rx="10"/>
+  <text class="t-h" x="796" y="386">model-router</text>
+  <text class="t-b mono" x="796" y="406">:50053 gRPC · Rust</text>
+  <text class="t-b" x="796" y="424">model: "auto" resolved by capability</text>
+  <text class="t-b" x="796" y="442">4 routing strategies · failover</text>
+  <path class="edge" d="M700 286V306H340V360" marker-end="url(#pal-architecture-a)"/>
+  <path class="edge" d="M380 408H418" marker-end="url(#pal-architecture-a)"/>
+  <path class="edge" d="M740 408H778" marker-end="url(#pal-architecture-a)"/>
+  <path class="edge" d="M230 286V360" marker-end="url(#pal-architecture-a)"/>
+  <rect class="node" x="60" y="474" width="262" height="64" rx="10"/>
+  <text class="t-h" x="76" y="500">scheduler</text>
+  <text class="t-b" x="76" y="520">tz-aware cron</text>
+  <rect class="node" x="334" y="474" width="262" height="64" rx="10"/>
+  <text class="t-h" x="350" y="500">memory</text>
+  <text class="t-b" x="350" y="520">people graph · pgvector</text>
+  <rect class="node" x="608" y="474" width="262" height="64" rx="10"/>
+  <text class="t-h" x="624" y="500">notifier</text>
+  <text class="t-b" x="624" y="520">webhooks · email · Slack</text>
+  <rect class="node" x="882" y="474" width="262" height="64" rx="10"/>
+  <text class="t-h" x="898" y="500">billing</text>
+  <text class="t-b" x="898" y="520">usage metering · rollups</text>
+  <rect class="node" x="60" y="554" width="1080" height="44" rx="10"/>
+  <text class="t-b" x="76" y="578">Postgres (tenant-fenced rows, RLS) · Redis (live events) · S3/MinIO (bundles, snapshots)</text>
+  <rect class="zone" x="40" y="680" width="1120" height="230" rx="18"/>
+  <text class="t-s" x="1144" y="702" text-anchor="end">Data plane: your cloud (EKS, GKE, AKS, laptop)</text>
+  <path class="edge" d="M300 620V730" marker-end="url(#pal-architecture-a)"/>
+  <text class="t-s" x="312" y="660">gRPC · service token · metadata only</text>
+  <rect class="node-host" x="60" y="730" width="300" height="120" rx="10"/>
+  <text class="t-h" x="76" y="756">runtime-scheduler</text>
+  <text class="t-b mono" x="76" y="776">:50055 · Go</text>
+  <text class="t-b" x="76" y="794">HA leader election · placement:</text>
+  <text class="t-b" x="76" y="812">warm pool, region, fair share,</text>
+  <text class="t-b" x="76" y="830">cost, health · quota (402/429)</text>
+  <rect class="node-host" x="420" y="730" width="300" height="120" rx="10"/>
+  <text class="t-h" x="436" y="756">runtime-manager</text>
+  <text class="t-b mono" x="436" y="776">:50054 · Rust</text>
+  <text class="t-b" x="436" y="794">isolation gate fails closed:</text>
+  <text class="t-b" x="436" y="812">Firecracker, Kata, gVisor, Wasm</text>
+  <text class="t-b" x="436" y="830">pause, resume, fork, file API</text>
+  <rect class="wall" x="780" y="716" width="360" height="170" rx="18"/>
+  <text class="t-h t-glass" x="800" y="742">microVM (the glass)</text>
+  <rect class="node-glass" x="800" y="756" width="320" height="110" rx="10"/>
+  <text class="t-h" x="816" y="782">harness (Rust, PID 1)</text>
+  <text class="t-b" x="816" y="802">egress allowlist proxy (:3128)</text>
+  <text class="t-b" x="816" y="820">secrets socket with SO_PEERCRED</text>
+  <text class="t-b" x="816" y="838">tool runner: shell_exec, http_fetch</text>
+  <path class="edge-patina" d="M360 790H418" marker-end="url(#pal-architecture-ap)"/>
+  <path class="edge-patina" d="M720 811H798" marker-end="url(#pal-architecture-ap)"/>
+  <g transform="translate(40 940)">
+  <rect class="node" x="0" width="14" height="14" rx="3"/>
+  <text class="t-s" x="22" y="11">Control plane</text>
+  <rect class="node-host" x="137" width="14" height="14" rx="3"/>
+  <text class="t-s" x="159" y="11">Trusted host</text>
+  <rect class="node-glass" x="268" width="14" height="14" rx="3"/>
+  <text class="t-s" x="290" y="11">In-VM harness</text>
+  <rect class="wall" x="419" width="14" height="14" rx="3"/>
+  <text class="t-s" x="441" y="11">microVM wall</text>
+  <rect class="zone" x="550" width="14" height="14" rx="3"/>
+  <text class="t-s" x="572" y="11">Trust boundary</text>
+  </g>
+</svg>

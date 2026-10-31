@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dshakes/lantern/services/runtime-scheduler/internal/leader"
+	"github.com/dshakes/pal/services/runtime-scheduler/internal/leader"
 	"go.uber.org/zap"
 )
 

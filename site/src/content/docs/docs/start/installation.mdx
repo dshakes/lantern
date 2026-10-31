@@ -70,15 +70,15 @@ The stack is Postgres (agents and runs), Redis (live updates), MinIO (agent bund
 
 ## Dev credentials
 
-Seeded automatically on first boot. They keep the legacy name; these are the literal seeded values.
+Seeded automatically on first boot; these are the literal seeded values.
 
 | Service | Value |
 | --- | --- |
-| PostgreSQL | `postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable` |
+| PostgreSQL | `postgres://pal:pal@localhost:5432/pal?sslmode=disable` |
 | Redis | `redis://localhost:6379` |
-| MinIO | `http://localhost:9000`, console `:9001`, creds `lantern / lanternsecret` |
-| Dashboard | `admin@lantern.dev` / `lantern` at [localhost:3001](http://localhost:3001) |
-| JWT secret | `lantern-dev-jwt-secret-do-not-use-in-production` |
+| MinIO | `http://localhost:9000`, console `:9001`, creds `pal / palsecret` |
+| Dashboard | `admin@pal.local` / `pal` at [localhost:3001](http://localhost:3001) |
+| JWT secret | `pal-dev-jwt-secret-do-not-use-in-production` |
 | Dev tenant ID | `00000000-0000-0000-0000-000000000001` (slug: `dev`) |
 | Dev user ID | `00000000-0000-0000-0000-000000000002` (role: `owner`) |
 

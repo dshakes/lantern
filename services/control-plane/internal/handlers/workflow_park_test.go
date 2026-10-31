@@ -22,7 +22,7 @@ package handlers
 //
 // Gated on DATABASE_URL. Run with:
 //
-//	DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern_ga_gate?sslmode=disable \
+//	DATABASE_URL=postgres://pal:pal@localhost:5432/pal_ga_gate?sslmode=disable \
 //	    go test -p 1 ./internal/handlers/ -run 'Park' -count=1 -v
 
 import (
@@ -35,8 +35,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
-	"github.com/dshakes/lantern/services/control-plane/internal/workflow"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/workflow"
 )
 
 // zeroConfidenceEstimator always returns 0.0, forcing a confidence-gate divert

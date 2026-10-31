@@ -31,7 +31,7 @@ inserts a `pal_region_fence` row is unaffected.
    subchart; nothing to replicate.
 4. Verify the standby: `GET /readyz` is 200, `POST /v1/runs` returns 503 with
    `Retry-After`, and
-   `grpcurl <standby>:50051 grpc.health.v1.Health/Check -d '{"service":"lantern.v1.DataPlaneService"}'`
+   `grpcurl <standby>:50051 grpc.health.v1.Health/Check -d '{"service":"pal.v1.DataPlaneService"}'`
    reports `NOT_SERVING`.
 5. Point data planes at both regions:
    `controlPlane.endpoints: ["<primary>:443", "<standby>:443"]`. `GET :8090/status`

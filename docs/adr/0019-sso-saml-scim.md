@@ -25,7 +25,7 @@ What exists today (grounded):
   `tenants(id, slug, name, tier, k8s_namespace)`. First OAuth login creates a
   fresh tenant (org) and an `owner` user.
 - **Session issuance.** `generateToken(userID, tenantID, email, name, role)` →
-  signed `LanternClaims` JWT is the single choke point every auth path funnels
+  signed `PalClaims` JWT is the single choke point every auth path funnels
   through. SAML/SCIM reuse it verbatim.
 - **API-key path** for programmatic access with scopes (`api_keys.go`) — SCIM
   service auth reuses this rather than inventing a new credential.
@@ -42,7 +42,7 @@ resolves against.
 Add SAML as a third auth provider alongside the OIDC providers, and SCIM as a
 token-authed provisioning surface. Both resolve to an existing tenant via a new
 `sso_connections` row; both terminate in the existing `generateToken` choke
-point. **No new session model, no new user table** — reuse `LanternClaims`,
+point. **No new session model, no new user table** — reuse `PalClaims`,
 `users`, `tenants`.
 
 ### Schema (new)
@@ -110,13 +110,13 @@ Standard SCIM surface, authed by the per-connection bearer token
   user. Hard-deleting would orphan `runs`, `journal_events`, receipts and break
   audit history (ADR 0018).
 - **Group→role mapping** lives on the connection so a customer can map
-  `Okta group "Lantern-Admins" → admin`.
+  `Okta group "PAL-Admins" → admin`.
 - Every SCIM mutation and every SAML login writes an `audit_log` row (ADR 0018).
 
 ### Session issuance reuse
 
-Both flows end at `generateToken(...) → LanternClaims JWT → one-time code →
-dashboard`. `LanternClaims` is unchanged; `auth_provider="saml"` is the only new
+Both flows end at `generateToken(...) → PalClaims JWT → one-time code →
+dashboard`. `PalClaims` is unchanged; `auth_provider="saml"` is the only new
 value the rest of the system sees. JWT TTL, refresh, and the API-key path are
 untouched.
 
@@ -148,6 +148,6 @@ untouched.
   taken from the URL/connection and never from assertion or RelayState content.
 - **Risk / invariant:** this adds a new authentication trust boundary. Every
   isolation invariant (RLS, tenant scoping) still holds because both flows
-  terminate in a `tenant_id`-bound `LanternClaims`; the danger is entirely in
+  terminate in a `tenant_id`-bound `PalClaims`; the danger is entirely in
   the resolution step, which is why tenant binding is URL/connection-driven and
   fail-closed.

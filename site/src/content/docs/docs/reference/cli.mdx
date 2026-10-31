@@ -11,7 +11,7 @@ sidebar:
 
 import { Aside } from '@astrojs/starlight/components';
 
-One static Go binary, `pal`. Until the rename release ships, its source lives at `packages/cli/cmd/pal`; the install line below builds it under the name `pal`, so every command on this site works as written (`lantern` is the legacy name and still works as an alias). It boots the local stack, scaffolds and runs agents, gates CI on evals, drives sandbox VMs, and installs the data plane in your cloud.
+One static Go binary, `pal`. Its source lives at `packages/cli/cmd/pal`. It boots the local stack, scaffolds and runs agents, gates CI on evals, drives sandbox VMs, and installs the data plane in your cloud.
 
 Just looking? `pal demo` needs Docker and no API key. To build your own, `pal dev` boots the stack and `pal onboard` walks you through your first agent.
 
@@ -25,7 +25,7 @@ pal --version
 
 ## demo
 
-Starts the self-contained demo (kiosk mode): Docker only, no API key. Each visitor gets a private workspace with sample agents that is deleted after 30 minutes; answers are recorded replays from a local fixture server. Run it from inside a PAL checkout. It builds and starts Postgres, Redis, the control plane, the dashboard and the replay server as the compose project `lantern-demo`, waits for `/healthz` and the demo page (up to 5 minutes), then opens `http://localhost:3001/kiosk`.
+Starts the self-contained demo (kiosk mode): Docker only, no API key. Each visitor gets a private workspace with sample agents that is deleted after 30 minutes; answers are recorded replays from a local fixture server. Run it from inside a PAL checkout. It builds and starts Postgres, Redis, the control plane, the dashboard and the replay server as the compose project `pal-demo`, waits for `/healthz` and the demo page (up to 5 minutes), then opens `http://localhost:3001/kiosk`.
 
 Flags: `--no-open` (don't open the browser), `--down` (stop and delete all demo data). Host ports default to 8080 and 3001; override with `KIOSK_API_PORT` and `KIOSK_WEB_PORT`. See [Demo](/docs/start/demo/).
 

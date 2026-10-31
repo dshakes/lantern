@@ -118,7 +118,7 @@ resource "google_project_iam_member" "nodes" {
 # ---------------------------------------------------------------------------
 
 resource "google_storage_bucket" "bundles" {
-  name          = "${var.project_id}-lantern-bundles"
+  name          = "${var.project_id}-pal-bundles"
   location      = var.region
   force_destroy = false
 
@@ -181,7 +181,7 @@ resource "google_container_cluster" "this" {
 # ---------------------------------------------------------------------------
 
 resource "google_container_node_pool" "pal" {
-  name     = "lantern-nodes"
+  name     = "pal-nodes"
   location = local.location
   cluster  = local.create_cluster ? google_container_cluster.this[0].name : var.existing_cluster_name
 
@@ -201,7 +201,7 @@ resource "google_container_node_pool" "pal" {
     ]
 
     labels = {
-      "lantern.run/component" = "data-plane"
+      "pal.dev/component" = "data-plane"
     }
 
     workload_metadata_config {
@@ -222,7 +222,7 @@ resource "google_container_node_pool" "pal" {
 resource "google_service_account_iam_member" "workload_identity" {
   service_account_id = google_service_account.data_plane.name
   role               = "roles/iam.workloadIdentityUser"
-  member             = "serviceAccount:${var.project_id}.svc.id.goog[lantern/pal-data-plane]"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[pal/pal-data-plane]"
 }
 
 # ---------------------------------------------------------------------------
@@ -258,7 +258,7 @@ provider "helm" {
 
 resource "kubernetes_namespace" "pal" {
   metadata {
-    name = "lantern"
+    name = "pal"
 
     labels = {
       "app.kubernetes.io/part-of"    = "pal-data-plane"
@@ -274,7 +274,7 @@ resource "kubernetes_namespace" "pal" {
 # ---------------------------------------------------------------------------
 
 resource "helm_release" "pal_data_plane" {
-  name      = "lantern-dp"
+  name      = "pal-dp"
   namespace = kubernetes_namespace.pal.metadata[0].name
   chart     = "${path.module}/../../helm/pal-data-plane"
   # Local chart: Bitnami postgresql/redis deps (Chart.lock) are not vendored,
@@ -335,19 +335,3 @@ resource "helm_release" "pal_data_plane" {
   ]
 }
 
-# ADR 0032: addresses renamed lantern -> pal. `moved` keeps existing state in place
-# (no destroy/recreate). Remove once every deployment has applied this version.
-moved {
-  from = kubernetes_namespace.lantern
-  to   = kubernetes_namespace.pal
-}
-
-moved {
-  from = helm_release.lantern_data_plane
-  to   = helm_release.pal_data_plane
-}
-
-moved {
-  from = google_container_node_pool.lantern
-  to   = google_container_node_pool.pal
-}

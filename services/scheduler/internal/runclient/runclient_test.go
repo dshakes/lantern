@@ -13,7 +13,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/test/bufconn"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
 )
 
 // capturingRunService is an in-process RunServiceServer that records the
@@ -21,18 +21,18 @@ import (
 // incoming gRPC metadata. CreateRun returns runErr when set, else a Run whose
 // id is runID.
 type capturingRunService struct {
-	lanternv1.UnimplementedRunServiceServer
+	palv1.UnimplementedRunServiceServer
 
 	runID  string
 	runErr error
 
-	gotReq          *lanternv1.CreateRunRequest
+	gotReq          *palv1.CreateRunRequest
 	gotTenantID     string
 	gotServiceToken string
 	gotMetadata     bool
 }
 
-func (s *capturingRunService) CreateRun(ctx context.Context, req *lanternv1.CreateRunRequest) (*lanternv1.Run, error) {
+func (s *capturingRunService) CreateRun(ctx context.Context, req *palv1.CreateRunRequest) (*palv1.Run, error) {
 	s.gotReq = req
 	if md, ok := metadata.FromIncomingContext(ctx); ok {
 		s.gotMetadata = true
@@ -46,17 +46,17 @@ func (s *capturingRunService) CreateRun(ctx context.Context, req *lanternv1.Crea
 	if s.runErr != nil {
 		return nil, s.runErr
 	}
-	return &lanternv1.Run{Id: s.runID}, nil
+	return &palv1.Run{Id: s.runID}, nil
 }
 
 // newTestClient spins up a bufconn-backed RunService and returns a Client wired
 // to it through an insecure in-memory dialer.
-func newTestClient(t *testing.T, svc lanternv1.RunServiceServer, serviceToken string) *Client {
+func newTestClient(t *testing.T, svc palv1.RunServiceServer, serviceToken string) *Client {
 	t.Helper()
 
 	lis := bufconn.Listen(1024 * 1024)
 	grpcSrv := grpc.NewServer()
-	lanternv1.RegisterRunServiceServer(grpcSrv, svc)
+	palv1.RegisterRunServiceServer(grpcSrv, svc)
 
 	go func() {
 		_ = grpcSrv.Serve(lis)
@@ -77,7 +77,7 @@ func newTestClient(t *testing.T, svc lanternv1.RunServiceServer, serviceToken st
 
 	return &Client{
 		conn:         conn,
-		rpc:          lanternv1.NewRunServiceClient(conn),
+		rpc:          palv1.NewRunServiceClient(conn),
 		logger:       zaptest.NewLogger(t),
 		serviceToken: serviceToken,
 	}
@@ -186,7 +186,7 @@ func TestCreateRun(t *testing.T) {
 			if svc.gotReq.GetAgentName() != tt.agentName {
 				t.Errorf("agent_name = %q, want %q", svc.gotReq.GetAgentName(), tt.agentName)
 			}
-			if svc.gotReq.GetTriggerKind() != lanternv1.TriggerKind_TRIGGER_KIND_SCHEDULE {
+			if svc.gotReq.GetTriggerKind() != palv1.TriggerKind_TRIGGER_KIND_SCHEDULE {
 				t.Errorf("trigger_kind = %v, want SCHEDULE", svc.gotReq.GetTriggerKind())
 			}
 

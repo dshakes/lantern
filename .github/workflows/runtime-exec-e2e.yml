@@ -17,7 +17,7 @@ on:
       - "services/control-plane/internal/handlers/runtime*.go"
       - "services/runtime-manager/**"
       - "services/runtime-scheduler/**"
-      - "packages/proto/lantern/v1/runtime.proto"
+      - "packages/proto/pal/v1/runtime.proto"
       - ".github/workflows/runtime-exec-e2e.yml"
   workflow_dispatch: {}
 
@@ -102,11 +102,11 @@ jobs:
           SCHEDULER_URL=http://localhost:8085 \
           NODE_NAME=ci-node \
           NODE_ADVERTISE_ADDR=localhost:50054 \
-          RUST_LOG=info,lantern_runtime_manager::scheduler_heartbeat=debug \
+          RUST_LOG=info,pal_runtime_manager::scheduler_heartbeat=debug \
           LISTEN_ADDR=0.0.0.0:50054 \
           AGENT_IMAGE=python:3.11-slim \
           LOG_LEVEL=info \
-          ./services/runtime-manager/target/debug/lantern-runtime-manager \
+          ./services/runtime-manager/target/debug/pal-runtime-manager \
             > /tmp/manager.log 2>&1 &
           for _ in $(seq 1 60); do
             (exec 3<>/dev/tcp/127.0.0.1/50054) 2>/dev/null && exec 3>&- 3<&- && break
@@ -177,11 +177,11 @@ jobs:
         run: |
           echo "----- runtime-manager -----";  tail -100 /tmp/manager.log   || true
           echo "----- runtime-scheduler ---";  tail -100 /tmp/scheduler.log || true
-          echo "----- containers ----------";  docker ps -a --filter "name=lantern-run" || true
+          echo "----- containers ----------";  docker ps -a --filter "name=pal-run" || true
 
       - name: Tear down
         if: always()
         run: |
-          docker ps -aq --filter "name=lantern-run" | xargs -r docker rm -f || true
-          pkill -f lantern-runtime-manager || true
+          docker ps -aq --filter "name=pal-run" | xargs -r docker rm -f || true
+          pkill -f pal-runtime-manager || true
           pkill -f 'bin/scheduler' || true

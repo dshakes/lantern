@@ -12,8 +12,8 @@ func TestDerivePublicURL(t *testing.T) {
 		t.Errorf("plain: got %q", got)
 	}
 	r.Header.Set("X-Forwarded-Proto", "https")
-	r.Header.Set("X-Forwarded-Host", "lantern.example.org")
-	if got := derivePublicURL(r); got != "https://lantern.example.org" {
+	r.Header.Set("X-Forwarded-Host", "pal.example.org")
+	if got := derivePublicURL(r); got != "https://pal.example.org" {
 		t.Errorf("forwarded: got %q", got)
 	}
 	t.Setenv("PAL_PUBLIC_BASE_URL", "https://public.example.net/")

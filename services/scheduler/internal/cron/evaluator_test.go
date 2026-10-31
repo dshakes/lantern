@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dshakes/lantern/services/scheduler/internal/cron"
+	"github.com/dshakes/pal/services/scheduler/internal/cron"
 )
 
 // ---------------------------------------------------------------------------

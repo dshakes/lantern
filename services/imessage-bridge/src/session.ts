@@ -6411,7 +6411,7 @@ export class IMessageSession {
   // entry point for both inbound (contact → user) and outbound
   // (user → contact) messages — the user's own typing on Messages.app
   // arrives here with isFromMe=true and is treated as either:
-  //   - a /bot or /pal (legacy /lantern) command (executed + reply via self-chat)
+  //   - a /bot or /pal (legacy /pal) command (executed + reply via self-chat)
   //   - a takeover signal (pause auto-reply for that contact)
   // Inbound messages run the full natural-reply pipeline with all the
   // futurism: persona/style, escalation, quiet hours, calendar, facts,
@@ -6751,7 +6751,7 @@ export class IMessageSession {
       }
 
       // Owner commands. Three paths:
-      //   (a) explicit slash commands: /bot, /pal, /lantern (back-compat)
+      //   (a) explicit slash commands: /bot, /pal, /pal (back-compat)
       //   (b) natural language: "pause for 2h", "mute everyone",
       //       "status", "pal, hush", etc.
       //   (c) voice command — the user sends themselves a voice
@@ -11456,7 +11456,7 @@ export class IMessageSession {
             to: ownerEmail,
             subject,
             body,
-            label: "lantern",
+            label: "pal",
             skipInbox: false,
           }),
         });
@@ -11598,7 +11598,7 @@ export class IMessageSession {
       await authedFetch(`/v1/connectors/gmail/execute?action=send_message`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to, subject, body: text, label: "lantern", skipInbox: true }),
+        body: JSON.stringify({ to, subject, body: text, label: "pal", skipInbox: true }),
       });
     } catch (err) {
       this.logger.warn({ err }, "email mirror failed");

@@ -22,7 +22,7 @@ import (
 func writeSpec(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "agent.yaml")
-	body := "apiVersion: lantern.dev/v1\nkind: AgentSpec\nspec:\n  image_digest: demo:latest\n  isolation: trusted\n"
+	body := "apiVersion: pal.dev/v1\nkind: AgentSpec\nspec:\n  image_digest: demo:latest\n  isolation: trusted\n"
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatalf("write spec: %v", err)
 	}

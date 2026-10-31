@@ -45,27 +45,27 @@ pub struct Config {
     pub node_region: String,
     pub node_zone: String,
     /// `runtimeClassName` for gVisor-isolated pods (UNTRUSTED / STANDARD /
-    /// DEVCONTAINER). Set via `LANTERN_RUNTIMECLASS_GVISOR` (e.g. `gvisor`).
+    /// DEVCONTAINER). Set via `PAL_RUNTIMECLASS_GVISOR` (e.g. `gvisor`).
     /// When unset, STANDARD and DEVCONTAINER degrade to bare runc (allowed);
     /// UNTRUSTED is refused (fail-closed) — only UNTRUSTED/HOSTILE ever fail closed.
     pub runtimeclass_gvisor: Option<String>,
     /// `runtimeClassName` for Kata microVM pods (HOSTILE).
-    /// Set via `LANTERN_RUNTIMECLASS_KATA` (e.g. `kata-qemu`).
+    /// Set via `PAL_RUNTIMECLASS_KATA` (e.g. `kata-qemu`).
     /// When unset, HOSTILE is refused (fail-closed).
     pub runtimeclass_kata: Option<String>,
-    /// `runtimeClassName` for Wasm pods. Set via `LANTERN_RUNTIMECLASS_WASM`.
+    /// `runtimeClassName` for Wasm pods. Set via `PAL_RUNTIMECLASS_WASM`.
     /// Optional — when unset the Wasm in-process backend is preferred; when
     /// set the K8s backend uses this class for WASM isolation.
     pub runtimeclass_wasm: Option<String>,
     /// `runtimeClassName` for confidential-compute (Kata-CC on SEV-SNP/TDX).
-    /// Set via `LANTERN_RUNTIMECLASS_KATA_CC` (e.g. `kata-qemu-snp`).
+    /// Set via `PAL_RUNTIMECLASS_KATA_CC` (e.g. `kata-qemu-snp`).
     /// When unset, confidential workloads are refused (fail-closed) — a
     /// non-confidential Kata VM is NOT an acceptable substitute.
     pub runtimeclass_kata_cc: Option<String>,
     /// Allow STANDARD/UNSPECIFIED/DEVCONTAINER workloads to run on bare runc
     /// (shared-kernel) when gVisor is not configured.
     ///
-    /// Set `LANTERN_ALLOW_RUNC_STANDARD=1` to opt in.  Default **false**.
+    /// Set `PAL_ALLOW_RUNC_STANDARD=1` to opt in.  Default **false**.
     ///
     /// When false (the safe default): STANDARD/UNSPECIFIED/DEVCONTAINER require
     /// either gVisor (preferred) or this flag — a bare runc pod is refused.
@@ -73,10 +73,10 @@ pub struct Config {
     /// gVisor, emitting a `tracing::warn!`.  Only enable this flag for local
     /// development or staging clusters without gVisor installed.
     pub allow_runc_standard: bool,
-    /// Host-asserted software measurement gate (`LANTERN_MEASUREMENT_GATE`).
+    /// Host-asserted software measurement gate (`PAL_MEASUREMENT_GATE`).
     /// `off` | `warn` | `enforce`; default `warn`.
     pub measurement_gate: crate::measurement::MeasurementGate,
-    /// Known-good measurement hex strings (`LANTERN_REFERENCE_MEASUREMENTS`,
+    /// Known-good measurement hex strings (`PAL_REFERENCE_MEASUREMENTS`,
     /// comma-separated). Empty = no reference set configured.
     pub reference_measurements: Vec<String>,
     /// Optional path to a separately-installed harness binary
@@ -103,13 +103,13 @@ impl Config {
             std::env::var("DOCKER_SOCKET").unwrap_or_else(|_| "/var/run/docker.sock".to_string());
 
         let agent_image = std::env::var("AGENT_IMAGE")
-            .unwrap_or_else(|_| "ghcr.io/lantern/agent-runner:latest".to_string());
+            .unwrap_or_else(|_| "ghcr.io/pal/agent-runner:latest".to_string());
 
         let bundle_s3_endpoint = std::env::var("BUNDLE_S3_ENDPOINT")
             .unwrap_or_else(|_| "http://localhost:9000".to_string());
 
         let bundle_s3_bucket =
-            std::env::var("BUNDLE_S3_BUCKET").unwrap_or_else(|_| "lantern-bundles".to_string());
+            std::env::var("BUNDLE_S3_BUCKET").unwrap_or_else(|_| "pal-bundles".to_string());
 
         let log_level = std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
 
@@ -133,25 +133,25 @@ impl Config {
         let node_region = std::env::var("NODE_REGION").unwrap_or_else(|_| "local".to_string());
         let node_zone = std::env::var("NODE_ZONE").unwrap_or_else(|_| "local-a".to_string());
 
-        // Filter empty/whitespace values: `LANTERN_RUNTIMECLASS_GVISOR=""` must
+        // Filter empty/whitespace values: `PAL_RUNTIMECLASS_GVISOR=""` must
         // not produce `Some("")` — an empty runtimeClassName in K8s silently
         // falls back to the cluster's default (runc), bypassing the isolation gate.
-        let runtimeclass_gvisor = pal_env::var("PAL_RUNTIMECLASS_GVISOR")
+        let runtimeclass_gvisor = std::env::var("PAL_RUNTIMECLASS_GVISOR")
             .ok()
             .filter(|s| !s.trim().is_empty());
-        let runtimeclass_kata = pal_env::var("PAL_RUNTIMECLASS_KATA")
+        let runtimeclass_kata = std::env::var("PAL_RUNTIMECLASS_KATA")
             .ok()
             .filter(|s| !s.trim().is_empty());
-        let runtimeclass_wasm = pal_env::var("PAL_RUNTIMECLASS_WASM")
+        let runtimeclass_wasm = std::env::var("PAL_RUNTIMECLASS_WASM")
             .ok()
             .filter(|s| !s.trim().is_empty());
-        let runtimeclass_kata_cc = pal_env::var("PAL_RUNTIMECLASS_KATA_CC")
+        let runtimeclass_kata_cc = std::env::var("PAL_RUNTIMECLASS_KATA_CC")
             .ok()
             .filter(|s| !s.trim().is_empty());
 
         // Explicit developer opt-in: set to "1" or "true" to allow bare runc
         // for STANDARD/UNSPECIFIED/DEVCONTAINER without gVisor.  Default false.
-        let allow_runc_standard = pal_env::var("PAL_ALLOW_RUNC_STANDARD")
+        let allow_runc_standard = std::env::var("PAL_ALLOW_RUNC_STANDARD")
             .ok()
             .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
             .unwrap_or(false);
@@ -258,7 +258,7 @@ mod tests {
         use crate::backends::k8s::{RuntimeClassConfig, k8s_satisfies_isolation};
         use crate::proto::IsolationClass;
 
-        // Simulate what happens when LANTERN_RUNTIMECLASS_GVISOR="" in env.
+        // Simulate what happens when PAL_RUNTIMECLASS_GVISOR="" in env.
         let gvisor_from_env = filter_runtimeclass(""); // → None
         let cfg = RuntimeClassConfig {
             gvisor: gvisor_from_env,
@@ -269,7 +269,7 @@ mod tests {
         };
         assert!(
             !k8s_satisfies_isolation(&cfg, IsolationClass::Untrusted),
-            "empty LANTERN_RUNTIMECLASS_GVISOR must not satisfy UNTRUSTED"
+            "empty PAL_RUNTIMECLASS_GVISOR must not satisfy UNTRUSTED"
         );
     }
 }

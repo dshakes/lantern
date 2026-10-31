@@ -5,7 +5,7 @@ package handlers
 // Skips cleanly when DATABASE_URL is unset (same convention as
 // run_events_test.go / runtime_test.go). Run with:
 //
-//	DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable \
+//	DATABASE_URL=postgres://pal:pal@localhost:5432/pal?sslmode=disable \
 //	  go test -race -run 'StreamRun|RunEvent' ./internal/handlers/ -v -count=1
 
 import (
@@ -19,9 +19,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // fakeStreamEventsServer implements RunService_StreamRunEventsServer
@@ -32,22 +32,22 @@ type fakeStreamEventsServer struct {
 	grpc.ServerStream // embedded — only Context + Send are exercised
 	ctx               context.Context
 	mu                sync.Mutex
-	sent              []*lanternv1.StreamEvent
+	sent              []*palv1.StreamEvent
 }
 
 func (f *fakeStreamEventsServer) Context() context.Context { return f.ctx }
 
-func (f *fakeStreamEventsServer) Send(ev *lanternv1.StreamEvent) error {
+func (f *fakeStreamEventsServer) Send(ev *palv1.StreamEvent) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.sent = append(f.sent, ev)
 	return nil
 }
 
-func (f *fakeStreamEventsServer) snapshot() []*lanternv1.StreamEvent {
+func (f *fakeStreamEventsServer) snapshot() []*palv1.StreamEvent {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	out := make([]*lanternv1.StreamEvent, len(f.sent))
+	out := make([]*palv1.StreamEvent, len(f.sent))
 	copy(out, f.sent)
 	return out
 }
@@ -90,7 +90,7 @@ func TestStreamRunEvents_ReplayTerminal(t *testing.T) {
 	defer cancel()
 	fake := &fakeStreamEventsServer{ctx: ctx}
 
-	err := runSvc.StreamRunEvents(&lanternv1.StreamRunEventsRequest{RunId: runID}, fake)
+	err := runSvc.StreamRunEvents(&palv1.StreamRunEventsRequest{RunId: runID}, fake)
 	if err != nil {
 		t.Fatalf("StreamRunEvents returned error: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestStreamRunEvents_TailUntilTerminal(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- runSvc.StreamRunEvents(&lanternv1.StreamRunEventsRequest{RunId: runID}, fake)
+		done <- runSvc.StreamRunEvents(&palv1.StreamRunEventsRequest{RunId: runID}, fake)
 	}()
 
 	// Give the handler time to replay seq 1 and enter the tail loop, then
@@ -185,7 +185,7 @@ func TestStreamRunEvents_TenantScoping(t *testing.T) {
 	defer cancel()
 	fake := &fakeStreamEventsServer{ctx: ctx}
 
-	err := runSvc.StreamRunEvents(&lanternv1.StreamRunEventsRequest{RunId: runID}, fake)
+	err := runSvc.StreamRunEvents(&palv1.StreamRunEventsRequest{RunId: runID}, fake)
 	if status.Code(err) != codes.NotFound {
 		t.Errorf("cross-tenant stream: want NotFound, got %v", err)
 	}
@@ -201,7 +201,7 @@ func TestStreamRunEvents_MissingRunID(t *testing.T) {
 	ctx := middleware.InjectTenantID(context.Background(), devTenantID)
 	fake := &fakeStreamEventsServer{ctx: ctx}
 
-	err := runSvc.StreamRunEvents(&lanternv1.StreamRunEventsRequest{RunId: ""}, fake)
+	err := runSvc.StreamRunEvents(&palv1.StreamRunEventsRequest{RunId: ""}, fake)
 	if status.Code(err) != codes.InvalidArgument {
 		t.Errorf("missing run_id: want InvalidArgument, got %v", err)
 	}

@@ -8,7 +8,7 @@ pub struct Config {
     pub jwt_secret: String,
     pub log_level: String,
     /// Comma-separated list of allowed CORS origins, e.g.
-    /// "https://app.lantern.run,http://localhost:3001".
+    /// "https://app.pal.example.com,http://localhost:3001".
     /// Defaults to "http://localhost:3001" when unset.
     pub allowed_origins: Vec<String>,
     /// Legacy `PAL_CONTROL_PLANE_TLS_CA`: server-auth-only TLS to a control-plane
@@ -41,7 +41,7 @@ impl Config {
             .filter(|s| !s.is_empty())
             .collect();
 
-        let control_plane_tls_ca = pal_env::var("PAL_CONTROL_PLANE_TLS_CA").ok();
+        let control_plane_tls_ca = std::env::var("PAL_CONTROL_PLANE_TLS_CA").ok();
 
         Ok(Config {
             listen_addr,

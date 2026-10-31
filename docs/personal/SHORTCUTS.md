@@ -22,7 +22,7 @@ If you're running PAL on your home Mac, your iPhone needs to
 reach it. Options:
 
 - **Same Wi-Fi**: use your Mac's local IP (e.g. `http://192.168.1.42:8080`).
-- **Tailscale**: install on both, use the magic DNS (`http://lantern.tail-XXXX.ts.net:8080`).
+- **Tailscale**: install on both, use the magic DNS (`http://pal.tail-XXXX.ts.net:8080`).
 - **Cloudflare Tunnel**: free, exposes localhost to the public web with TLS.
 - **Production deploy**: just use your real URL.
 
@@ -31,7 +31,7 @@ reach it. Options:
 Open Shortcuts.app on iPhone → `+` → add these. For each:
 
 - **Action**: `Get Contents of URL`
-- **URL**: `<your-lantern-url>/v1/shortcuts/<action>`
+- **URL**: `<your-pal-url>/v1/shortcuts/<action>`
 - **Method**: matches the table below
 - **Headers**: `Authorization: Bearer <your-api-key>`
 - **Show When Run**: ON (so you see the response)
@@ -59,7 +59,7 @@ iMessage is ready, bot on, 1 paused."
 
 ```bash
 TOKEN="lnt_xxx..."  # your API key
-PAL_URL="https://your.lantern.url"
+PAL_URL="https://your.pal.url"
 
 # Status
 curl -X GET "$PAL_URL/v1/shortcuts/status" \
@@ -73,7 +73,7 @@ curl -X POST "$PAL_URL/v1/shortcuts/pause" \
 curl -X POST "$PAL_URL/v1/shortcuts/resume" \
   -H "Authorization: Bearer $TOKEN"
 
-# Post a self-chat note (handy for "hey siri, tell lantern I'm at lunch")
+# Post a self-chat note (handy for "hey siri, tell pal I'm at lunch")
 curl -X POST "$PAL_URL/v1/shortcuts/say" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \

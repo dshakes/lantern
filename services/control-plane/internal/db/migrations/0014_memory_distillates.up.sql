@@ -81,9 +81,9 @@ DO $$BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.role_table_grants
         WHERE table_name   = 'memory_distillates'
-          AND grantee      = 'lantern_app'
+          AND grantee      = 'pal_app'
           AND privilege_type = 'SELECT'
     ) THEN
-        GRANT SELECT, INSERT, UPDATE, DELETE ON memory_distillates TO lantern_app;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON memory_distillates TO pal_app;
     END IF;
 END$$;

@@ -14,7 +14,7 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
 )
 
 // fakeModelServer is an in-process ModelService that records the last
@@ -22,13 +22,13 @@ import (
 // test can assert the engine builds the request correctly and maps the
 // response into the step result.
 type fakeModelServer struct {
-	lanternv1.UnimplementedModelServiceServer
-	lastReq *lanternv1.CompleteRequest
-	resp    *lanternv1.CompleteResponse
+	palv1.UnimplementedModelServiceServer
+	lastReq *palv1.CompleteRequest
+	resp    *palv1.CompleteResponse
 	err     error
 }
 
-func (f *fakeModelServer) Complete(_ context.Context, req *lanternv1.CompleteRequest) (*lanternv1.CompleteResponse, error) {
+func (f *fakeModelServer) Complete(_ context.Context, req *palv1.CompleteRequest) (*palv1.CompleteResponse, error) {
 	f.lastReq = req
 	if f.err != nil {
 		return nil, f.err
@@ -38,12 +38,12 @@ func (f *fakeModelServer) Complete(_ context.Context, req *lanternv1.CompleteReq
 
 // newFakeModelClient spins up the fake server on a bufconn listener and returns
 // a connected ModelServiceClient plus a cleanup func.
-func newFakeModelClient(t *testing.T, fake *fakeModelServer) (lanternv1.ModelServiceClient, func()) {
+func newFakeModelClient(t *testing.T, fake *fakeModelServer) (palv1.ModelServiceClient, func()) {
 	t.Helper()
 
 	lis := bufconn.Listen(1024 * 1024)
 	srv := grpc.NewServer()
-	lanternv1.RegisterModelServiceServer(srv, fake)
+	palv1.RegisterModelServiceServer(srv, fake)
 
 	go func() {
 		// Serve returns once the listener is closed in cleanup; ignore that error.
@@ -66,7 +66,7 @@ func newFakeModelClient(t *testing.T, fake *fakeModelServer) (lanternv1.ModelSer
 		srv.Stop()
 		_ = lis.Close()
 	}
-	return lanternv1.NewModelServiceClient(conn), cleanup
+	return palv1.NewModelServiceClient(conn), cleanup
 }
 
 // TestExecuteLLMCall_BuildsRequestAndMapsResponse verifies that an llm_call step
@@ -75,9 +75,9 @@ func newFakeModelClient(t *testing.T, fake *fakeModelServer) (lanternv1.ModelSer
 // CompleteResponse (text, tokens, cost) is mapped into the step output.
 func TestExecuteLLMCall_BuildsRequestAndMapsResponse(t *testing.T) {
 	fake := &fakeModelServer{
-		resp: &lanternv1.CompleteResponse{
+		resp: &palv1.CompleteResponse{
 			ModelUsed: "vendor-model-x",
-			Message:   &lanternv1.Message{Role: "assistant", Content: "hello from the router"},
+			Message:   &palv1.Message{Role: "assistant", Content: "hello from the router"},
 			TokensIn:  12,
 			TokensOut: 7,
 			CostUsd:   0.0009,
@@ -108,10 +108,10 @@ func TestExecuteLLMCall_BuildsRequestAndMapsResponse(t *testing.T) {
 	if req == nil {
 		t.Fatal("model router received no request")
 	}
-	if req.GetCapability() != lanternv1.Capability_CAPABILITY_REASONING_LARGE {
+	if req.GetCapability() != palv1.Capability_CAPABILITY_REASONING_LARGE {
 		t.Errorf("capability = %v, want REASONING_LARGE", req.GetCapability())
 	}
-	if req.GetOptimize() != lanternv1.OptimizeTarget_OPTIMIZE_BALANCED {
+	if req.GetOptimize() != palv1.OptimizeTarget_OPTIMIZE_BALANCED {
 		t.Errorf("optimize = %v, want BALANCED", req.GetOptimize())
 	}
 	if req.GetTenantId() != "tenant-99" {
@@ -168,7 +168,7 @@ func TestExecuteLLMCall_BuildsRequestAndMapsResponse(t *testing.T) {
 // verbatim and that a trailing prompt is appended as a user turn.
 func TestExecuteLLMCall_ExplicitMessages(t *testing.T) {
 	fake := &fakeModelServer{
-		resp: &lanternv1.CompleteResponse{Message: &lanternv1.Message{Content: "ok"}},
+		resp: &palv1.CompleteResponse{Message: &palv1.Message{Content: "ok"}},
 	}
 	client, cleanup := newFakeModelClient(t, fake)
 	defer cleanup()
@@ -189,7 +189,7 @@ func TestExecuteLLMCall_ExplicitMessages(t *testing.T) {
 	}
 
 	req := fake.lastReq
-	if req.GetCapability() != lanternv1.Capability_CAPABILITY_AUTO {
+	if req.GetCapability() != palv1.Capability_CAPABILITY_AUTO {
 		t.Errorf("capability = %v, want AUTO", req.GetCapability())
 	}
 	if got := len(req.GetMessages()); got != 2 {
@@ -215,7 +215,7 @@ func TestExecuteLLMCall_NilClient(t *testing.T) {
 // TestExecuteLLMCall_NoMessages verifies an empty payload is rejected rather
 // than dispatched to the router.
 func TestExecuteLLMCall_NoMessages(t *testing.T) {
-	fake := &fakeModelServer{resp: &lanternv1.CompleteResponse{}}
+	fake := &fakeModelServer{resp: &palv1.CompleteResponse{}}
 	client, cleanup := newFakeModelClient(t, fake)
 	defer cleanup()
 
@@ -234,13 +234,13 @@ func TestExecuteLLMCall_NoMessages(t *testing.T) {
 // ExecToolRequest and returns a canned ExecToolResponse, so the test can assert
 // the engine builds the right ExecTool request and maps the response.
 type fakeRuntimeServer struct {
-	lanternv1.UnimplementedRuntimeManagerServer
-	lastReq *lanternv1.ExecToolRequest
-	resp    *lanternv1.ExecToolResponse
+	palv1.UnimplementedRuntimeManagerServer
+	lastReq *palv1.ExecToolRequest
+	resp    *palv1.ExecToolResponse
 	err     error
 }
 
-func (f *fakeRuntimeServer) ExecTool(_ context.Context, req *lanternv1.ExecToolRequest) (*lanternv1.ExecToolResponse, error) {
+func (f *fakeRuntimeServer) ExecTool(_ context.Context, req *palv1.ExecToolRequest) (*palv1.ExecToolResponse, error) {
 	f.lastReq = req
 	if f.err != nil {
 		return nil, f.err
@@ -250,12 +250,12 @@ func (f *fakeRuntimeServer) ExecTool(_ context.Context, req *lanternv1.ExecToolR
 
 // newFakeRuntimeClient spins up the fake runtime manager on a bufconn listener
 // and returns a connected RuntimeManagerClient plus a cleanup func.
-func newFakeRuntimeClient(t *testing.T, fake *fakeRuntimeServer) (lanternv1.RuntimeManagerClient, func()) {
+func newFakeRuntimeClient(t *testing.T, fake *fakeRuntimeServer) (palv1.RuntimeManagerClient, func()) {
 	t.Helper()
 
 	lis := bufconn.Listen(1024 * 1024)
 	srv := grpc.NewServer()
-	lanternv1.RegisterRuntimeManagerServer(srv, fake)
+	palv1.RegisterRuntimeManagerServer(srv, fake)
 
 	go func() { _ = srv.Serve(lis) }()
 
@@ -275,7 +275,7 @@ func newFakeRuntimeClient(t *testing.T, fake *fakeRuntimeServer) (lanternv1.Runt
 		srv.Stop()
 		_ = lis.Close()
 	}
-	return lanternv1.NewRuntimeManagerClient(conn), cleanup
+	return palv1.NewRuntimeManagerClient(conn), cleanup
 }
 
 // TestExecuteToolCall_BuildsRequestAndMapsResult verifies a tool_call step
@@ -288,8 +288,8 @@ func TestExecuteToolCall_BuildsRequestAndMapsResult(t *testing.T) {
 		t.Fatalf("build result struct: %v", err)
 	}
 	fake := &fakeRuntimeServer{
-		resp: &lanternv1.ExecToolResponse{
-			Status: lanternv1.ToolStatus_TOOL_STATUS_OK,
+		resp: &palv1.ExecToolResponse{
+			Status: palv1.ToolStatus_TOOL_STATUS_OK,
 			Result: result,
 		},
 	}
@@ -375,8 +375,8 @@ func TestExecuteToolCall_NilClient(t *testing.T) {
 // the step with the manager's detail rather than returning a result.
 func TestExecuteToolCall_ErrorStatus(t *testing.T) {
 	fake := &fakeRuntimeServer{
-		resp: &lanternv1.ExecToolResponse{
-			Status: lanternv1.ToolStatus_TOOL_STATUS_ERROR,
+		resp: &palv1.ExecToolResponse{
+			Status: palv1.ToolStatus_TOOL_STATUS_ERROR,
 			Error:  "rate limited by upstream",
 		},
 	}
@@ -400,8 +400,8 @@ func TestExecuteToolCall_ErrorStatus(t *testing.T) {
 // typed ErrRuntimeManagerUnavailable so callers can detect the gap.
 func TestExecuteToolCall_UnavailableStatus(t *testing.T) {
 	fake := &fakeRuntimeServer{
-		resp: &lanternv1.ExecToolResponse{
-			Status: lanternv1.ToolStatus_TOOL_STATUS_UNAVAILABLE,
+		resp: &palv1.ExecToolResponse{
+			Status: palv1.ToolStatus_TOOL_STATUS_UNAVAILABLE,
 			Error:  "in-VM tool execution not yet wired",
 		},
 	}
@@ -420,7 +420,7 @@ func TestExecuteToolCall_UnavailableStatus(t *testing.T) {
 // TestExecuteToolCall_MissingToolName verifies a payload without a tool name is
 // rejected before any RPC is made.
 func TestExecuteToolCall_MissingToolName(t *testing.T) {
-	fake := &fakeRuntimeServer{resp: &lanternv1.ExecToolResponse{Status: lanternv1.ToolStatus_TOOL_STATUS_OK}}
+	fake := &fakeRuntimeServer{resp: &palv1.ExecToolResponse{Status: palv1.ToolStatus_TOOL_STATUS_OK}}
 	client, cleanup := newFakeRuntimeClient(t, fake)
 	defer cleanup()
 
@@ -440,15 +440,15 @@ func TestExecuteToolCall_MissingToolName(t *testing.T) {
 func TestCapabilityFromString(t *testing.T) {
 	cases := []struct {
 		in   string
-		want lanternv1.Capability
+		want palv1.Capability
 	}{
-		{"reasoning-large", lanternv1.Capability_CAPABILITY_REASONING_LARGE},
-		{"reasoning_large", lanternv1.Capability_CAPABILITY_REASONING_LARGE},
-		{"REASONING-LARGE", lanternv1.Capability_CAPABILITY_REASONING_LARGE},
-		{"chat-small", lanternv1.Capability_CAPABILITY_CHAT_SMALL},
-		{"auto", lanternv1.Capability_CAPABILITY_AUTO},
-		{"", lanternv1.Capability_CAPABILITY_AUTO},
-		{"nonsense", lanternv1.Capability_CAPABILITY_AUTO},
+		{"reasoning-large", palv1.Capability_CAPABILITY_REASONING_LARGE},
+		{"reasoning_large", palv1.Capability_CAPABILITY_REASONING_LARGE},
+		{"REASONING-LARGE", palv1.Capability_CAPABILITY_REASONING_LARGE},
+		{"chat-small", palv1.Capability_CAPABILITY_CHAT_SMALL},
+		{"auto", palv1.Capability_CAPABILITY_AUTO},
+		{"", palv1.Capability_CAPABILITY_AUTO},
+		{"nonsense", palv1.Capability_CAPABILITY_AUTO},
 	}
 	for _, c := range cases {
 		if got := capabilityFromString(c.in); got != c.want {
@@ -461,14 +461,14 @@ func TestCapabilityFromString(t *testing.T) {
 func TestOptimizeFromString(t *testing.T) {
 	cases := []struct {
 		in   string
-		want lanternv1.OptimizeTarget
+		want palv1.OptimizeTarget
 	}{
-		{"cheap", lanternv1.OptimizeTarget_OPTIMIZE_CHEAP},
-		{"fast", lanternv1.OptimizeTarget_OPTIMIZE_FAST},
-		{"best", lanternv1.OptimizeTarget_OPTIMIZE_BEST},
-		{"balanced", lanternv1.OptimizeTarget_OPTIMIZE_BALANCED},
-		{"", lanternv1.OptimizeTarget_OPTIMIZE_UNSPECIFIED},
-		{"nonsense", lanternv1.OptimizeTarget_OPTIMIZE_UNSPECIFIED},
+		{"cheap", palv1.OptimizeTarget_OPTIMIZE_CHEAP},
+		{"fast", palv1.OptimizeTarget_OPTIMIZE_FAST},
+		{"best", palv1.OptimizeTarget_OPTIMIZE_BEST},
+		{"balanced", palv1.OptimizeTarget_OPTIMIZE_BALANCED},
+		{"", palv1.OptimizeTarget_OPTIMIZE_UNSPECIFIED},
+		{"nonsense", palv1.OptimizeTarget_OPTIMIZE_UNSPECIFIED},
 	}
 	for _, c := range cases {
 		if got := optimizeFromString(c.in); got != c.want {

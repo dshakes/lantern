@@ -25,9 +25,7 @@
 
 set -euo pipefail
 
-# Works on either side of the PAL cutover (ADR 0032): dev.pal.* once installed.
-LABEL_PREFIX=dev.lantern LOG_DIR="$HOME/Library/Logs/Lantern"
-if [ -e "$HOME/Library/LaunchAgents/dev.pal.api.plist" ]; then LABEL_PREFIX=dev.pal LOG_DIR="$HOME/Library/Logs/PAL"; fi
+LABEL_PREFIX=dev.pal LOG_DIR="$HOME/Library/Logs/PAL"
 
 PLIST="$HOME/Library/LaunchAgents/$LABEL_PREFIX.imessage-bridge.plist"
 LABEL="$LABEL_PREFIX.imessage-bridge"

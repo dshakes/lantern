@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -16,16 +17,16 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/db"
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/db"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // SignalHandler exposes a token-gated personal device-signals endpoint.
 //
 // The owner's iPhone Shortcuts POST app-context signals here THROUGH the
 // existing cloudflared tunnel (which fronts the API on :8080, not the
-// dashboard on :3001). The bridge reads ~/.lantern/device-signals.jsonl and
+// dashboard on :3001). The bridge reads ~/.pal/device-signals.jsonl and
 // summarizes the signals into owner context. A parallel dashboard route at
 // apps/web/app/api/signals/route.ts writes the SAME contract on :3001 — this
 // handler exists so the write path is reachable over the tunnel.
@@ -215,7 +216,7 @@ func (h *SignalHandler) logger() *zap.Logger {
 	return h.srv.Logger.Named("signals")
 }
 
-// signalEntry is one line in ~/.lantern/device-signals.jsonl. The on-disk
+// signalEntry is one line in ~/.pal/device-signals.jsonl. The on-disk
 // field names (app/kind/detail/metric/value/ts) are the contract the bridge's
 // device-signals reader expects — do not rename without updating the bridge.
 // omitempty keeps lines compact: app_open lines omit metric/value; health
@@ -238,19 +239,18 @@ const (
 	signalFileKeepLine = 4000
 )
 
+// legacySignalTokenHeader is the header iPhone Shortcuts installed before the
+// rename send. Accepted for one release, until the owner re-points them at
+// x-pal-signal-token (ADR 0032); the only legacy wire name kept.
+const legacySignalTokenHeader = "x-lantern-signal-token"
+
 // authorize enforces the shared-token gate. Returns true when the request is
 // allowed to proceed; otherwise it has already written a 401 and the caller
 // must return. Fails closed: an unset env or a missing/mismatched header is a
 // 401. The token is never logged.
 func (h *SignalHandler) authorize(w http.ResponseWriter, r *http.Request) bool {
 	expected := os.Getenv("PAL_SIGNAL_TOKEN")
-	// x-pal-signal-token, or the legacy x-lantern-signal-token that the
-	// owner's iPhone Shortcuts send (accepted forever, ADR 0032). One value is
-	// compared: the PAL header when present, else the legacy one.
-	provided := r.Header.Get("x-pal-signal-token")
-	if provided == "" {
-		provided = r.Header.Get("x-lantern-signal-token")
-	}
+	provided := cmp.Or(r.Header.Get("x-pal-signal-token"), r.Header.Get(legacySignalTokenHeader))
 	if expected == "" || provided == "" ||
 		subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {
 		// Log the rejection (never the token) — a silent 401 is undebuggable.
@@ -261,7 +261,7 @@ func (h *SignalHandler) authorize(w http.ResponseWriter, r *http.Request) bool {
 		case expected == "":
 			reason = "PAL_SIGNAL_TOKEN unset on the server — this API instance cannot accept signals"
 		case provided == "":
-			reason = "request missing x-pal-signal-token (or x-lantern-signal-token) header"
+			reason = "request missing x-pal-signal-token header"
 		}
 		h.logger().Warn("signal rejected (401)", zap.String("reason", reason), zap.String("from", r.RemoteAddr))
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
@@ -271,7 +271,7 @@ func (h *SignalHandler) authorize(w http.ResponseWriter, r *http.Request) bool {
 }
 
 // signalsFilePath returns <state dir>/device-signals.jsonl (see palStateDir;
-// ~/.lantern on existing installs), honoring HOME so tests can isolate writes
+// ~/.pal on existing installs), honoring HOME so tests can isolate writes
 // to a temp dir.
 func signalsFilePath() (dir, path string, err error) {
 	dir, err = palStateDir()
@@ -435,7 +435,7 @@ func (h *SignalHandler) ListSignals(w http.ResponseWriter, r *http.Request) {
 }
 
 // appendSignal appends one compact JSON line to the device-signals file,
-// creating ~/.lantern (0700) and the file (0600) as needed, then bounds the
+// creating ~/.pal (0700) and the file (0600) as needed, then bounds the
 // file: if it grows past signalFileMaxLines it is rewritten keeping the last
 // signalFileKeepLine lines.
 func appendSignal(entry signalEntry) error {

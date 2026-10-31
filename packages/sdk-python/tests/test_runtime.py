@@ -60,7 +60,13 @@ async def test_resume_errors(status: int):
 
 
 async def test_fork_body_and_partial_failure():
-    t = _T(body={"sourceVmId": "vm1", "snapshotId": "s", "forks": [{"vmId": "a", "state": "running"}, {"vmId": "b", "state": "failed", "error": "boom"}]})
+    t = _T(
+        body={
+            "sourceVmId": "vm1",
+            "snapshotId": "s",
+            "forks": [{"vmId": "a", "state": "running"}, {"vmId": "b", "state": "failed", "error": "boom"}],
+        }
+    )
     r = await _client(t).runtime.fork("vm1", count=2)
     assert json.loads(t.requests[-1].content) == {"count": 2}
     assert r.forks[1].error == "boom"
@@ -119,7 +125,7 @@ async def test_read_file_raw_text_and_truncation():
 
 
 async def test_read_file_truncation_legacy_header_fallback():
-    t = _Raw(200, b"x", {"X-Lantern-Truncated": "true"})
+    t = _Raw(200, b"x", {"X-Pal-Truncated": "true"})
     assert (await _client(t).runtime.read_file("vm1", "a"))["truncated"] is True  # type: ignore[arg-type]
     t = _Raw(200, b"x", {})
     assert (await _client(t).runtime.read_file("vm1", "a"))["truncated"] is False  # type: ignore[arg-type]

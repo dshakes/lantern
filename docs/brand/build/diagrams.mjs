@@ -433,7 +433,7 @@ add('runtime-egress', { T: 14, product: 'runtime', title: 'Egress: allowlisted, 
   // broker
   s += box(390, 134, 250, 270, { rx: 20, fill: C.s2, stroke: C.cyan, sw: 1.5 });
   s += tx(408, 160, 'Egress broker', { w: 650, size: 14.5 }) + tx(622, 160, 'on the host', { size: 11, fill: C.t3, anchor: 'end' });
-  const rows = [['allowlist', 'api.github.com only'], ['inject credential', 'lantern.secret/github'], ['DLP scan', 'card_number · secret_key']];
+  const rows = [['allowlist', 'api.github.com only'], ['inject credential', 'pal.secret/github'], ['DLP scan', 'card_number · secret_key']];
   rows.forEach(([a, b], i) => { const y = 180 + i * 70; s += box(408, y, 214, 56, { rx: 12, fill: C.s1 }) + tx(424, y + 23, a, { w: 600, size: 13 }) + tx(424, y + 42, b, { size: 11, fill: C.t3, mono: 1 }); });
   s += line('M322 353 C356 353 356 270 390 270', { stroke: C.cyan, sw: 1.8, op: 0.6 });
   s += tx(352, 324, 'vsock', { size: 10.5, fill: C.rtText, mono: 1, anchor: 'middle' });

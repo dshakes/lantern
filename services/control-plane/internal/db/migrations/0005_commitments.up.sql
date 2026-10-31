@@ -7,7 +7,7 @@
 --
 -- Mirrors 0004_life_events.up.sql exactly in RLS posture (ENABLE + FORCE +
 -- tenant_isolation policy with both USING and WITH CHECK referencing
--- app.tenant_id) and in the GRANT pattern so the lantern_app role can
+-- app.tenant_id) and in the GRANT pattern so the pal_app role can
 -- run DML under RLS enforcement.
 
 CREATE TABLE IF NOT EXISTS commitments (
@@ -40,9 +40,9 @@ CREATE INDEX IF NOT EXISTS commitments_tenant_status_nudge
 	ON commitments (tenant_id, status, next_nudge_at);
 
 -- Grant DML to the non-superuser app role. Without this, RLS-enforced queries on
--- the lantern_app pool fail with "permission denied" before the row-level policy
+-- the pal_app pool fail with "permission denied" before the row-level policy
 -- is even evaluated.
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE commitments TO lantern_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE commitments TO pal_app;
 
 -- RLS: enable + force + tenant_isolation policy, byte-for-byte matching 0003/0004.
 DO $$

@@ -6,7 +6,7 @@ If you are an AI assistant: read this top-to-bottom before your first edit. Then
 
 ---
 
-> **Rename note (ADR 0032):** the product is now **PAL**. Real identifiers (`LANTERN_*` env vars, the `lantern` CLI, packages, `lantern.v1`, the repo URL) keep their current names; env vars also accept `PAL_*` equivalents (`PAL_X` wins when both are set). This file documents the `PAL_*` names; `LANTERN_*` names are still accepted as legacy aliases.
+> **Naming (ADR 0032):** the product is **PAL**, and every identifier uses the PAL names: env `PAL_*`, CLI `pal`, proto `pal.v1`, module `github.com/dshakes/pal`.
 
 ## Project in one sentence
 
@@ -28,19 +28,19 @@ This is a **polyglot monorepo on purpose**. Pick the right tool for the layer; d
 | Website: landing + docs (`site/`)                                    | **Astro + Starlight**       | Static, content-first; replaced the Next.js landing/docs apps |
 | Primary SDK                                                          | **TypeScript**              | Where the agent ecosystem lives                               |
 | Secondary SDKs                                                       | **Python 3.11+**, **Go**    | Python for AI/ML users, Go for infra users                    |
-| CLI (`lantern`)                                                      | **Go / Cobra**              | Static binary, cross-compile easy, reuses our gRPC client     |
+| CLI (`pal`)                                                      | **Go / Cobra**              | Static binary, cross-compile easy, reuses our gRPC client     |
 | API contracts                                                        | **protobuf3**               | Single source of truth for cross-service types                |
 
 **Do not introduce a new language without an ADR.** See `docs/adr/0001-language-stack.md`.
 
 ### Python SDK parity status (`packages/sdk-python`)
 
-**Management surface** (`LanternClient` in `lantern/client.py`): at parity with `packages/sdk-go/client.go`.
+**Management surface** (`PalClient` in `pal/client.py`): at parity with `packages/sdk-go/client.go`.
 Covered namespaces: `agents`, `runs` (incl. `forecast`), `sessions`, `connectors`, `budgets`, `evals`, `experiments`, `marketplace`, `mcp`, `receipts`, `feedback`, `rehearsals`.
 
-**Runtime context** (`AgentContext` in `lantern/types.py`): partial — interface stubs exist (`llm`, `tools`, `mem`, `connectors`, `mcp`, `a2a`, `context`) but all raise `NotImplementedError`. Full runtime wiring is a separate effort.
+**Runtime context** (`AgentContext` in `pal/types.py`): partial — interface stubs exist (`llm`, `tools`, `mem`, `connectors`, `mcp`, `a2a`, `context`) but all raise `NotImplementedError`. Full runtime wiring is a separate effort.
 
-**Framework integrations** (`lantern/integrations/`): optional extras, each importing its framework lazily so the base SDK stays dependency-free. `deepagents_sandbox.LanternSandbox` implements LangChain deepagents' `SandboxBackendProtocol` over the microVM runtime (`POST /v1/runtime/schedule` + `/vms/{id}/exec`), so a deepagents agent's shell/filesystem runs under PAL Runtime's egress allowlist, secret vending, and tenant quota rather than on the host (invariant #5). Install from a checkout with `pip install "./packages/sdk-python[deepagents]"` (registry packages are not published yet, and the PyPI name `lantern-sdk` belongs to an unrelated project); conformance tests skip when the extra is absent. Sync `runtime_client.py` on purpose — the backend protocol is sync and bridging the async `LanternClient` mid-event-loop is fragile.
+**Framework integrations** (`pal/integrations/`): optional extras, each importing its framework lazily so the base SDK stays dependency-free. `deepagents_sandbox.PalSandbox` implements LangChain deepagents' `SandboxBackendProtocol` over the microVM runtime (`POST /v1/runtime/schedule` + `/vms/{id}/exec`), so a deepagents agent's shell/filesystem runs under PAL Runtime's egress allowlist, secret vending, and tenant quota rather than on the host (invariant #5). Install from a checkout with `pip install "./packages/sdk-python[deepagents]"` (registry packages are not published yet, and the PyPI name `pal-sdk` belongs to an unrelated project); conformance tests skip when the extra is absent. Sync `runtime_client.py` on purpose — the backend protocol is sync and bridging the async `PalClient` mid-event-loop is fragile.
 
 **Known endpoint fixes (2026-06)**:
 - `connectors.execute` — was `POST /v1/connectors/{id}/actions/{action}` (404). Fixed to `POST /v1/connectors/{id}/execute?action={action}` per Go handler.
@@ -58,10 +58,10 @@ These are **load-bearing**. Violating them silently will cause incidents. If you
 4. **Streaming is end-to-end.** Token streams flow runtime -> gateway -> SDK -> dashboard with no buffering points other than backpressure-aware channels. No service may collect a full response and then forward.
 5. **Untrusted code runs in a microVM.** User-supplied code, Python `exec`, browser automation, anything that loads packages from the internet -- Firecracker or Kata only. Never a bare pod.
 6. **Models are addressed by capability, not name.** SDK code says `model: "auto"` or `model: "reasoning-large"`. The model router maps to a concrete vendor model. Never hardcode `gpt-5` in service code.
-7. **Multi-tenant by default.** Every row has `tenant_id`; every gRPC call carries a `tenant_id` in metadata; every K8s namespace is `lantern-t-<tenant_id>`. No cross-tenant joins, ever. The control-plane (`:50051`), **workflow-engine (`:50052`), and runtime-scheduler (`:50055`)** gRPC ports are all **trust boundaries**: only callers presenting the shared service token (`x-lantern-service-token`, validated against `PAL_GRPC_SERVICE_TOKEN`) may set a `tenant_id`. Without that interceptor any caller reachable to those ports could spoof any tenant. Additionally, every run-mutating engine RPC (`CancelRun`/`ResumeRun`/`SignalRun`) scopes its DB access by the interceptor-verified `tenant_id` and returns `NotFound` on mismatch (no existence leak) — the token gate alone is not enough; the queries must filter too. See the wiring env vars below. **Every internal gRPC hop also runs mutual TLS (ADR 0043), on top of the token — both are required:** `PAL_GRPC_TLS_CA/_CERT/_KEY` (one service identity per process) + `PAL_GRPC_TLS_ALLOWED_PEERS` (SPIFFE IDs `spiffe://pal.internal/svc/<name>` each server accepts; per-VM guest certs, OU `lantern-vm`, are always refused). Helpers: Go `packages/grpctls`, Rust `packages/pal-grpc-tls-rs`. A prod-like `PAL_ENV` refuses to serve or dial service-mesh gRPC without it unless `PAL_GRPC_INSECURE=1` (loud WARN); dev stays plaintext. `:50051` demands the cert per method (`RequireServiceCert`) so the customer-VPC `DataPlaneService` tunnel keeps its own auth. The runtime-manager keeps its own CA (it signs VM certs). Helm: `mtls.enabled` (cert-manager; on in `values-prod.yaml`). Local: `make dev-certs`.
+7. **Multi-tenant by default.** Every row has `tenant_id`; every gRPC call carries a `tenant_id` in metadata; every K8s namespace is `pal-t-<tenant_id>`. No cross-tenant joins, ever. The control-plane (`:50051`), **workflow-engine (`:50052`), and runtime-scheduler (`:50055`)** gRPC ports are all **trust boundaries**: only callers presenting the shared service token (`x-pal-service-token`, validated against `PAL_GRPC_SERVICE_TOKEN`) may set a `tenant_id`. Without that interceptor any caller reachable to those ports could spoof any tenant. Additionally, every run-mutating engine RPC (`CancelRun`/`ResumeRun`/`SignalRun`) scopes its DB access by the interceptor-verified `tenant_id` and returns `NotFound` on mismatch (no existence leak) — the token gate alone is not enough; the queries must filter too. See the wiring env vars below. **Every internal gRPC hop also runs mutual TLS (ADR 0043), on top of the token — both are required:** `PAL_GRPC_TLS_CA/_CERT/_KEY` (one service identity per process) + `PAL_GRPC_TLS_ALLOWED_PEERS` (SPIFFE IDs `spiffe://pal.internal/svc/<name>` each server accepts; per-VM guest certs, OU `pal-vm`, are always refused). Helpers: Go `packages/grpctls`, Rust `packages/pal-grpc-tls-rs`. A prod-like `PAL_ENV` refuses to serve or dial service-mesh gRPC without it unless `PAL_GRPC_INSECURE=1` (loud WARN); dev stays plaintext. `:50051` demands the cert per method (`RequireServiceCert`) so the customer-VPC `DataPlaneService` tunnel keeps its own auth. The runtime-manager keeps its own CA (it signs VM certs). Helm: `mtls.enabled` (cert-manager; on in `values-prod.yaml`). Local: `make dev-certs`.
 8. **Idempotency is required for every external side-effect.** Webhook deliveries, model API calls, K8s create -- all carry an idempotency key derived from `(run_id, step_id, attempt)`. LLM provider calls (OpenAI + Anthropic, in `internal/handlers/llm_proxy.go`) now send an `Idempotency-Key` header on every request builder: the inline executor stamps a run-scoped base (`WithLLMIdempotencyBase`, from `idempotencyKey(run_id, "llm:main", attempt)`) onto the ctx, so a rate-limit backoff retry to the same provider — or a crash-replay — dedups at the provider instead of double-billing; failover targets get a per-provider-suffixed key, and the key also folds in a hash of the request body so distinct requests within one run no longer collide. Ad-hoc `/v1/completions` (no run) falls back to a deterministic hash of `(provider, model, messages)`. Key derivation lives in `internal/handlers/llm_idempotency.go`; it is a one-way hash of identifiers (never carries secret material).
-9. **Observability is not optional.** Every service emits OTel traces with `tenant_id`, `run_id`, `step_id`, `agent_version`. A service that can't be traced is broken. In the control-plane, **both entry points emit enriched spans**: HTTP requests are wrapped by `otelhttp.NewHandler` (span name = low-cardinality route template, e.g. `GET /v1/runs/{id}/events`), and gRPC methods get spans from the tracing interceptors. Both funnel through `internal/middleware.EnrichSpan` to stamp `lantern.tenant_id` / `lantern.user_id` / `lantern.run_id` / `lantern.step_id` — use that helper (and those exact keys) for any new span enrichment so HTTP/gRPC/step spans stay filterable by the same attributes. All of it is no-op-safe when telemetry is disabled (no OTLP endpoint / `PAL_OTEL_ENABLED` unset).
-10. **Secrets never appear in logs, traces, or run state.** Use the `lantern.secret/...` ref form; the runtime resolves at execution time.
+9. **Observability is not optional.** Every service emits OTel traces with `tenant_id`, `run_id`, `step_id`, `agent_version`. A service that can't be traced is broken. In the control-plane, **both entry points emit enriched spans**: HTTP requests are wrapped by `otelhttp.NewHandler` (span name = low-cardinality route template, e.g. `GET /v1/runs/{id}/events`), and gRPC methods get spans from the tracing interceptors. Both funnel through `internal/middleware.EnrichSpan` to stamp `pal.tenant_id` / `pal.user_id` / `pal.run_id` / `pal.step_id` — use that helper (and those exact keys) for any new span enrichment so HTTP/gRPC/step spans stay filterable by the same attributes. All of it is no-op-safe when telemetry is disabled (no OTLP endpoint / `PAL_OTEL_ENABLED` unset).
+10. **Secrets never appear in logs, traces, or run state.** Use the `pal.secret/...` ref form; the runtime resolves at execution time.
 
 ---
 
@@ -89,11 +89,11 @@ make dev
 
 | Service         | Value                                                               |
 | --------------- | ------------------------------------------------------------------- |
-| PostgreSQL      | `postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable` |
+| PostgreSQL      | `postgres://pal:pal@localhost:5432/pal?sslmode=disable` |
 | Redis           | `redis://localhost:6379`                                            |
-| MinIO           | `lantern:lanternsecret` at `localhost:9000` (console `:9001`)       |
-| Dashboard login | `admin@lantern.dev` / `lantern` (email+password)                    |
-| JWT secret      | `lantern-dev-jwt-secret-do-not-use-in-production`                   |
+| MinIO           | `pal:palsecret` at `localhost:9000` (console `:9001`)       |
+| Dashboard login | `admin@pal.local` / `pal` (email+password)                    |
+| JWT secret      | `pal-dev-jwt-secret-do-not-use-in-production`                   |
 | Dev tenant ID   | `00000000-0000-0000-0000-000000000001` (slug: `dev`)                |
 | Dev user ID     | `00000000-0000-0000-0000-000000000002` (role: `owner`)              |
 
@@ -202,7 +202,7 @@ Rule: if you're writing Tailwind classes like `rounded-xl border border-zinc-800
 
 **Theming (light + dark, YC-flat).** The dashboard is theme-aware. **Dark is the
 default**; a `☀/☾` toggle in the top bar flips `data-theme` on `<html>` (persisted
-to `localStorage['lantern-theme']`; a no-flash inline script in `app/layout.tsx`
+to `localStorage['pal-theme']`; a no-flash inline script in `app/layout.tsx`
 sets it pre-paint). The flip is **central**: `app/globals.css` remaps the neutral
 scale under `:root[data-theme="light"]` (Tailwind v4 emits every `--color-zinc-*` /
 `--color-surface-*` as a CSS var), so ~2,900 utilities re-skin with no per-component
@@ -274,11 +274,11 @@ Migrations live in `services/control-plane/internal/db/migrate.go` (idempotent `
 | `billing_accounts`      | Stripe customer/subscription, plan, dunning clock (ADR 0049)                                                                                                                                     | `tenant_id`, `stripe_customer_id`, `plan_id`, `status`, `grace_until`, `downgraded_at`                                       |
 | `billing_meter_exports` | One Stripe meter export per (tenant, meter, day); idempotency record                                                                                                                             | `tenant_id`, `meter`, `period_start`, `value`, `idempotency_key`, `status`                                                   |
 
-Row-Level Security now covers **all tenant-scoped tables** (migration `0003_rls_all_tenant_tables`), not just `agents`/`runs`. Each gets `ENABLE` + `FORCE ROW LEVEL SECURITY` and a `tenant_isolation` policy with BOTH `USING` and `WITH CHECK` = `tenant_id::text = current_setting('app.tenant_id', true)`. The policies are inert until RLS enforcement is active — see ADR 0042 for the secure-default rules: in production `PAL_APP_DB_PASSWORD` being set implicitly activates RLS (no flag needed); without it the server is FATAL at startup unless `PAL_RLS_ENFORCE=0` is set (acknowledged opt-out with WARN). The privileged `lantern` superuser pool bypasses RLS; `lantern_app` is subject to it. Use `Server.WithTenant(ctx, fn)` for tenant-scoped queries — it sets the `app.tenant_id` GUC so RLS admits the read/write. The exempt set (no single `tenant_id` or intentionally cross-tenant): `tenants`, `agent_versions`, `journal_events`, `run_locks`, `marketplace_agents`, `mcp_servers`, `marketplace_invocations`, `billing_plans`, `billing_webhook_events`. `TestRLSEnforcement_AllTenantTables` is a permanent catalog gate-test: adding a new tenant table without RLS (or without an explicit exemption) fails it. See ADR 0011.
+Row-Level Security now covers **all tenant-scoped tables** (migration `0003_rls_all_tenant_tables`), not just `agents`/`runs`. Each gets `ENABLE` + `FORCE ROW LEVEL SECURITY` and a `tenant_isolation` policy with BOTH `USING` and `WITH CHECK` = `tenant_id::text = current_setting('app.tenant_id', true)`. The policies are inert until RLS enforcement is active — see ADR 0042 for the secure-default rules: in production `PAL_APP_DB_PASSWORD` being set implicitly activates RLS (no flag needed); without it the server is FATAL at startup unless `PAL_RLS_ENFORCE=0` is set (acknowledged opt-out with WARN). The privileged `pal` superuser pool bypasses RLS; `pal_app` is subject to it. Use `Server.WithTenant(ctx, fn)` for tenant-scoped queries — it sets the `app.tenant_id` GUC so RLS admits the read/write. The exempt set (no single `tenant_id` or intentionally cross-tenant): `tenants`, `agent_versions`, `journal_events`, `run_locks`, `marketplace_agents`, `mcp_servers`, `marketplace_invocations`, `billing_plans`, `billing_webhook_events`. `TestRLSEnforcement_AllTenantTables` is a permanent catalog gate-test: adding a new tenant table without RLS (or without an explicit exemption) fails it. See ADR 0011.
 
-**Handler cutover to `WithTenant` is staged by group.** The reusable enforcement-on test harness is `internal/handlers/rls_integration_test.go` — `newEnforcedServer(t)` builds a `Server` whose `TenantPool()` connects as the non-superuser `lantern_app` role over its own DSN, so RLS is *genuinely* enforced (not GUC-simulated like `internal/db/rls_test.go`). Every cutover batch reuses this harness to prove (a) same-tenant reads/writes still return rows and (b) cross-tenant is blocked. **Cut over:** sessions (P1.1) · connectors (P1.1b batch 1) · and the **P1.1b remainder, now complete**: identity/people/memory (`identity.go`, `memory_ingest.go`) · voice/runtime (`voice.go`, `runtime.go`, `runtime_report.go`, `runtime_secrets.go`) · evals/experiments/budgets (`evals.go`, `experiments.go`, `budgets.go`, `forecaster.go`) · surfaces/schedules/deployments/api_keys (`surfaces.go`, `schedules.go`, `deployments.go`, `api_keys.go`, `dataplane.go`) · whatsapp/feedback/receipts/takeover (`whatsapp_personal.go`, `feedback.go`, `receipts.go`, `takeover.go`, `rehearse.go`, `marketplace*.go`). Proven by the `RLS`-prefixed tests in `internal/handlers/*_rls_test.go`. **0 non-exempt tenant-scoped `srv.Pool.<method>` sites remain in those files** — each remaining `srv.Pool` call there carries a `// rls-exempt: <reason>` (auth/trust-boundary resolution, public marketplace/receipt-verify reads, RLS-exempt child tables like `journal_events`, background sweeps with no request tenant). Shared helpers that take a raw `*Pool` and self-scope by `tenant_id` (`CheckBudget`/`RecordUsage`/`AdjustUsageCost`, `compareToBaseline`, `PickVariant`/`promoteAgentVersion`, `executeConnectorAction`) stay on `Pool` by design. **The final batch (the last 12 files) is now CUTOVER COMPLETE:** `auth.go`, `gdpr.go`, `recovery.go`, `a2a.go`, `rest.go` (run executor + workflow interpreter), `runs.go`, `run_events.go`, `templates.go`, `mcp_registry.go`, `slack_command.go`, `jarvis.go`, `llm_proxy.go`. **The count of non-exempt tenant-scoped `srv.Pool.<method>` sites across the ENTIRE `internal/handlers` package is now 0** — every remaining `srv.Pool` site carries a `// rls-exempt: <reason>` (pre-auth tenant resolution in `auth.go`/`slack_command.go`; admin/system purge in `gdpr.go`; background recovery sweep; public `is_public`-gated A2A discovery/invoke; the detached inline run executor in `rest.go` whose `runs` writes are keyed by an already-authorized run id and whose safety-net writes use a tenant-less `context.Background()`; `resolveProviderKey`/`providerAvailable` in `llm_proxy.go` self-scoped by an explicit `tenant_id` arg deep in the LLM failover loop; global catalog `mcp_servers`; and RLS-exempt child tables `journal_events`/`run_locks`). Proven by `RLSRuns_*` (runs CRUD) + `RLSMCPAttachments_*` plus the full suite green and `go test -race ./internal/handlers/ -run RLS` clean. **RLS is now safe to enable per-env** — set `PAL_APP_DB_PASSWORD` (and run `ALTER ROLE lantern_app PASSWORD '<strong>'` first). In production, setting `PAL_APP_DB_PASSWORD` is enough; `PAL_RLS_ENFORCE=1` is optional. Run a batch's tests with `DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable` (the harness sets the `lantern_app` password itself via `ALTER ROLE`).
+**Handler cutover to `WithTenant` is staged by group.** The reusable enforcement-on test harness is `internal/handlers/rls_integration_test.go` — `newEnforcedServer(t)` builds a `Server` whose `TenantPool()` connects as the non-superuser `pal_app` role over its own DSN, so RLS is *genuinely* enforced (not GUC-simulated like `internal/db/rls_test.go`). Every cutover batch reuses this harness to prove (a) same-tenant reads/writes still return rows and (b) cross-tenant is blocked. **Cut over:** sessions (P1.1) · connectors (P1.1b batch 1) · and the **P1.1b remainder, now complete**: identity/people/memory (`identity.go`, `memory_ingest.go`) · voice/runtime (`voice.go`, `runtime.go`, `runtime_report.go`, `runtime_secrets.go`) · evals/experiments/budgets (`evals.go`, `experiments.go`, `budgets.go`, `forecaster.go`) · surfaces/schedules/deployments/api_keys (`surfaces.go`, `schedules.go`, `deployments.go`, `api_keys.go`, `dataplane.go`) · whatsapp/feedback/receipts/takeover (`whatsapp_personal.go`, `feedback.go`, `receipts.go`, `takeover.go`, `rehearse.go`, `marketplace*.go`). Proven by the `RLS`-prefixed tests in `internal/handlers/*_rls_test.go`. **0 non-exempt tenant-scoped `srv.Pool.<method>` sites remain in those files** — each remaining `srv.Pool` call there carries a `// rls-exempt: <reason>` (auth/trust-boundary resolution, public marketplace/receipt-verify reads, RLS-exempt child tables like `journal_events`, background sweeps with no request tenant). Shared helpers that take a raw `*Pool` and self-scope by `tenant_id` (`CheckBudget`/`RecordUsage`/`AdjustUsageCost`, `compareToBaseline`, `PickVariant`/`promoteAgentVersion`, `executeConnectorAction`) stay on `Pool` by design. **The final batch (the last 12 files) is now CUTOVER COMPLETE:** `auth.go`, `gdpr.go`, `recovery.go`, `a2a.go`, `rest.go` (run executor + workflow interpreter), `runs.go`, `run_events.go`, `templates.go`, `mcp_registry.go`, `slack_command.go`, `jarvis.go`, `llm_proxy.go`. **The count of non-exempt tenant-scoped `srv.Pool.<method>` sites across the ENTIRE `internal/handlers` package is now 0** — every remaining `srv.Pool` site carries a `// rls-exempt: <reason>` (pre-auth tenant resolution in `auth.go`/`slack_command.go`; admin/system purge in `gdpr.go`; background recovery sweep; public `is_public`-gated A2A discovery/invoke; the detached inline run executor in `rest.go` whose `runs` writes are keyed by an already-authorized run id and whose safety-net writes use a tenant-less `context.Background()`; `resolveProviderKey`/`providerAvailable` in `llm_proxy.go` self-scoped by an explicit `tenant_id` arg deep in the LLM failover loop; global catalog `mcp_servers`; and RLS-exempt child tables `journal_events`/`run_locks`). Proven by `RLSRuns_*` (runs CRUD) + `RLSMCPAttachments_*` plus the full suite green and `go test -race ./internal/handlers/ -run RLS` clean. **RLS is now safe to enable per-env** — set `PAL_APP_DB_PASSWORD` (and run `ALTER ROLE pal_app PASSWORD '<strong>'` first). In production, setting `PAL_APP_DB_PASSWORD` is enough; `PAL_RLS_ENFORCE=1` is optional. Run a batch's tests with `DATABASE_URL=postgres://pal:pal@localhost:5432/pal?sslmode=disable` (the harness sets the `pal_app` password itself via `ALTER ROLE`).
 
-A dev tenant (`slug: dev`) and admin user (`admin@lantern.dev` / `lantern`) are seeded on startup.
+A dev tenant (`slug: dev`) and admin user (`admin@pal.local` / `pal`) are seeded on startup.
 
 ---
 
@@ -310,7 +310,7 @@ Redis rate-limited per IP (+ email), fail-open on Redis errors;
 `PAL_TRUSTED_PROXIES` controls `X-Forwarded-For` trust. Full reference:
 `site/src/content/docs/docs/` (accounts page).
 
-**Free tier + starter gallery (W2-S).** New tenants (password `Signup` and first Google login) get a hard-fail tenant-wide cap (`agent_budgets` row `agent_name='*'`) and a `runtime_quotas` row in the sign-up transaction (`handlers/tenant_defaults.go`; `DO NOTHING` on conflict, so owner edits survive; the seeded dev tenant is untouched). Env: `PAL_FREE_TIER_COST_USD_PER_DAY` (default 2.00), `PAL_FREE_TIER_MAX_VMS` (2), `PAL_FREE_TIER_RUNTIME_COST_USD_PER_DAY` (1.00); `off`/`0` skips that cap. `POST /v1/runs` returns `403 {code:"email_unverified"}` for an unverified local user when `requireEmailVerification()` (prod); OAuth users are stored verified. `GET /v1/agents/templates` marks six `gallery` templates (support-desk, pr-triage, incident-responder, daily-digest, data-analyst, telegram-assistant; models `fast`/`balanced`; only gallery templates expose `systemPrompt`) which the onboarding goal step offers as cards. OTel counter `lantern.onboarding.step.total{lantern.onboarding_step,lantern.onboarding_event}` fires on `PUT /v1/onboarding` step transitions.
+**Free tier + starter gallery (W2-S).** New tenants (password `Signup` and first Google login) get a hard-fail tenant-wide cap (`agent_budgets` row `agent_name='*'`) and a `runtime_quotas` row in the sign-up transaction (`handlers/tenant_defaults.go`; `DO NOTHING` on conflict, so owner edits survive; the seeded dev tenant is untouched). Env: `PAL_FREE_TIER_COST_USD_PER_DAY` (default 2.00), `PAL_FREE_TIER_MAX_VMS` (2), `PAL_FREE_TIER_RUNTIME_COST_USD_PER_DAY` (1.00); `off`/`0` skips that cap. `POST /v1/runs` returns `403 {code:"email_unverified"}` for an unverified local user when `requireEmailVerification()` (prod); OAuth users are stored verified. `GET /v1/agents/templates` marks six `gallery` templates (support-desk, pr-triage, incident-responder, daily-digest, data-analyst, telegram-assistant; models `fast`/`balanced`; only gallery templates expose `systemPrompt`) which the onboarding goal step offers as cards. OTel counter `pal.onboarding.step.total{pal.onboarding_step,pal.onboarding_event}` fires on `PUT /v1/onboarding` step transitions.
 
 ### Agents
 
@@ -332,7 +332,7 @@ capability-only model, grounded defaults. Typed errors:
 
 ### Agentic onboarding
 
-The dashboard `/onboarding` page and `lantern onboard` share one flow: goal →
+The dashboard `/onboarding` page and `pal onboard` share one flow: goal →
 LLM-designed spec (generate-spec) → approve/edit → provider key **test call** →
 create → first run streamed over SSE → optional sandbox run (schedule + exec,
 reported as unavailable on the stub scheduler) → next steps. Every step
@@ -346,7 +346,7 @@ nested maps), so a key can never be persisted. Scopes are wired in
 `OnboardingHandler.RegisterRoutes` (under test). The page
 derives the resume step from recorded facts (`resumeStep`) and re-verifies the
 provider every session. The CLI's `--yes` or a non-TTY stdin never prompts.
-`lantern doctor` has a soft "Sandbox runtime" section (stub vs. real
+`pal doctor` has a soft "Sandbox runtime" section (stub vs. real
 scheduler, scheduler/manager reachability, KVM/Firecracker).
 
 | Method   | Path                      | Description                                                         |
@@ -428,7 +428,7 @@ the local owner profile + `bridge.env` (backed up, 0600, read back).
 
 | Method | Path                   | Description                                                                              |
 | ------ | ---------------------- | ---------------------------------------------------------------------------------------- |
-| `POST` | `/v1/runs`             | Create and execute a run. Optional `callbackUrl` (HTTPS in prod) fires a signed POST on terminal status (`X-Lantern-Signature: v1=<hmac-sha256-hex>`, per-tenant key). See ADR 0033. |
+| `POST` | `/v1/runs`             | Create and execute a run. Optional `callbackUrl` (HTTPS in prod) fires a signed POST on terminal status (`X-Pal-Signature: v1=<hmac-sha256-hex>`, per-tenant key). See ADR 0033. |
 | `GET`  | `/v1/runs`             | List runs                                                                                |
 | `GET`  | `/v1/runs/{id}`        | Get run details                                                                          |
 | `GET`  | `/v1/runs/{id}/events` | Stream run events (SSE)                                                                  |
@@ -498,7 +498,7 @@ a zone is configured; before this it fired at 09:00 UTC). The same
 | `POST`   | `/v1/hooks/{id}`               | **Public.** Signed delivery → run (`trigger_kind=webhook`) via `CreateRun`  |
 
 `internal/handlers/triggers.go`; tables `agent_triggers` + `agent_trigger_deliveries`
-(migration 0024, RLS). Providers: `generic` (`X-Lantern-Signature: t=,v1=` over
+(migration 0024, RLS). Providers: `generic` (`X-Pal-Signature: t=,v1=` over
 `<t>.<body>`, ±5 min), `github` (`X-Hub-Signature-256`), `sentry`
 (`Sentry-Hook-Signature`), `pagerduty` (`X-PagerDuty-Signature: v1=`). HMAC-SHA256,
 constant-time. Unknown/disabled/agent-gone → 404, bad signature → 401, >1 MiB → 413,
@@ -508,7 +508,7 @@ id): duplicate → `200 {"duplicate":true}`, no second run; a failed run creatio
 the delivery so the provider's retry works. Secret encrypted via `internal/secrets`.
 Mutators carry `agents:write`. Env: `PAL_HOOK_RATE_PER_MIN` (default 60),
 `PAL_HOOK_BURST` (default 10). SDKs `triggers.*` / `CreateTrigger…`; CLI
-`lantern hooks`; dashboard `/agents/[name]/triggers`.
+`pal hooks`; dashboard `/agents/[name]/triggers`.
 
 ### Completions (LLM proxy)
 
@@ -583,7 +583,7 @@ error and the transport ignores overrides regardless.
 
 | Method | Path                           | Description                                                                                                                                                                     |
 | ------ | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST` | `/internal/auth/introspect-key` | Validate a raw API key for the gateway. Body `{"key":"..."}`, header `x-lantern-service-token` (= `PAL_GRPC_SERVICE_TOKEN`). 200 `{tenantId, scopes}` or 401; 403 fail-closed in prod when the token env is unset. |
+| `POST` | `/internal/auth/introspect-key` | Validate a raw API key for the gateway. Body `{"key":"..."}`, header `x-pal-service-token` (= `PAL_GRPC_SERVICE_TOKEN`). 200 `{tenantId, scopes}` or 401; 403 fail-closed in prod when the token env is unset. |
 
 The gateway's `X-API-Key` hot path calls this endpoint (60s in-memory cache
 keyed by SHA-256 of the key; fail-closed on any error). Gateway env:
@@ -621,8 +621,8 @@ with a scope it could not itself exercise (privilege escalation;
 
 ### Kiosk / demo mode (ADR 0029)
 
-`lantern demo` / `make demo` run the stack with `infra/docker/docker-compose.kiosk.yml`
-(project `lantern-demo`). `POST /v1/kiosk/session` exists only when `PAL_KIOSK=1`
+`pal demo` / `make demo` run the stack with `infra/docker/docker-compose.kiosk.yml`
+(project `pal-demo`). `POST /v1/kiosk/session` exists only when `PAL_KIOSK=1`
 (404 otherwise; unscoped by design, listed in `routes_scope_test.go`). It creates a
 `kiosk-<rand>` tenant (marker in `tenants.settings`, no migration), seeds agents/runs
 in `handlers/kiosk.go`, and returns a JWT with role `kiosk` + explicit scopes
@@ -800,13 +800,13 @@ The dashboard `/evaluations` page renders these (quality-trend sparkline + top-f
 
 ### Verifiable receipts
 
-Tamper-evident Ed25519-signed proof of execution (HMAC-SHA256 legacy/dev fallback when `PAL_RECEIPT_ED25519_SEED` is unset). Every receipt includes the SHA-256 of the run's `journal_events` stream so any post-hoc tampering invalidates the signature. Self-hosted deployments expose the signing algorithm and key fingerprint via `/.well-known/lantern-receipts` for external verifiers.
+Tamper-evident Ed25519-signed proof of execution (HMAC-SHA256 legacy/dev fallback when `PAL_RECEIPT_ED25519_SEED` is unset). Every receipt includes the SHA-256 of the run's `journal_events` stream so any post-hoc tampering invalidates the signature. Self-hosted deployments expose the signing algorithm and key fingerprint via `/.well-known/pal-receipts` for external verifiers.
 
 | Method | Path                            | Description                                          |
 | ------ | ------------------------------- | ---------------------------------------------------- |
 | `POST` | `/v1/runs/{id}/receipt`         | Issue + persist a signed receipt for a completed run |
 | `POST` | `/v1/runs/receipts/verify`      | Verify a receipt signature (no auth required)        |
-| `GET`  | `/.well-known/lantern-receipts` | Signing algorithm + key fingerprint                  |
+| `GET`  | `/.well-known/pal-receipts` | Signing algorithm + key fingerprint                  |
 
 ### Run feedback (RLHF loop)
 
@@ -1006,7 +1006,7 @@ because a restricted connection with no GUC matches no rows and the engine would
 stop picking up work. Unset (the default, and every dev setup) falls back to the
 single pool — GUC set, RLS not enforced, behaviour unchanged.
 
-**Before enabling enforcement, check the `lantern_app` GRANTs.** A tenant-scoped
+**Before enabling enforcement, check the `pal_app` GRANTs.** A tenant-scoped
 transaction in the engine touches `runs`, `agents`, `journal_events`,
 `run_locks` and `step_state` — the journal write and the run-status update are
 one transaction. Missing grants do not restrict rows, they fail ordinary work
@@ -1098,7 +1098,7 @@ executors (`internal/engine/step_executor.go`) do real dispatch:
 
 ### Ops: Helm completeness, metrics, backups (W1-D)
 
-`infra/helm/lantern` now ships every service `values-prod.yaml` needs: `runtime-scheduler`
+`infra/helm/pal` now ships every service `values-prod.yaml` needs: `runtime-scheduler`
 (2 replicas, leader election; needs `secrets.schedulerNodeToken`) and `surface-gateway`, an HPA
 per stateless tier (`<component>.autoscaling.enabled`, needs metrics-server), PDBs, and
 default-deny `NetworkPolicy` (`networkPolicy.enabled`, CNI must enforce) with per-target allow
@@ -1106,11 +1106,11 @@ rules; `networkPolicy.extraEgress` for managed Postgres/Redis on private IPs. Pr
 Secrets for the control-plane/scheduler are still operator-supplied (the chart cannot mint them).
 The control-plane serves Prometheus `/metrics` on its own listener `PAL_METRICS_ADDR` (default `:9464`, never the `:8080` API port) (OTel instruments bridged by
 `internal/telemetry/metrics.go`; unauthenticated, so scrape via `networkPolicy.metricsFrom`, never
-expose through the ingress). The `lantern-instrumented-slos` alert group in
+expose through the ingress). The `pal-instrumented-slos` alert group in
 `infra/monitoring/prometheus/alerts.yml` is enabled against those series. `backup.enabled` adds a
 `pg_dump` CronJob to S3/MinIO (off by default in `values-prod.yaml`; enabling it requires
 `backup.s3Bucket`); restore drill: `scripts/db-restore-drill.sh`, runbook
-`docs/runbooks/db-restore.md`. `scripts/check-app-grants.sh` verifies the `lantern_app` GRANTs.
+`docs/runbooks/db-restore.md`. `scripts/check-app-grants.sh` verifies the `pal_app` GRANTs.
 CI: `helm-install` job in `.github/workflows/runtime-cluster-e2e.yml` (kind + Calico, `values-ci.yaml`)
 restores the CronJob's real dump from in-cluster S3 and checks a marker table survived.
 
@@ -1193,7 +1193,7 @@ env vars are unset, dashboard falls back to direct bridge probe.
 The owner's iPhone Shortcuts POST rich device-context signals to the
 control-plane on `:8080` THROUGH the existing cloudflared tunnel (which fronts
 the API, not the dashboard on `:3001`). The bridge reads
-`~/.lantern/device-signals.jsonl` (one compact JSON object per line —
+`~/.pal/device-signals.jsonl` (one compact JSON object per line —
 `{app?, kind, detail?, metric?, value?, ts}`) and summarizes them into owner
 context. A parallel dashboard route at `apps/web/app/api/signals/route.ts`
 writes the same contract on `:3001`; this endpoint is the tunnel-reachable twin.
@@ -1204,7 +1204,7 @@ scope `bridge:signals:write`/`:read`) or a JWT/API key (`write`/`read`, kiosk
 refused); rows go to `device_signals` (RLS, migration 0033, 30-day retention via
 `PAL_SIGNALS_RETENTION_DAYS`). **Without** `Authorization` the legacy
 single-owner path is unchanged: `PAL_SIGNAL_TOKEN` shared secret
-(`x-lantern-signal-token` or `x-pal-signal-token`, constant-time compare,
+(`x-pal-signal-token` or `x-pal-signal-token`, constant-time compare,
 **fails closed** when unset), appended to the JSONL file the live bridge reads
 (mode 0600, trimmed to the last 4000 lines past 5000) and mirrored best-effort
 into `device_signals` for ONE tenant, `PAL_SIGNALS_LEGACY_OWNER_TENANT` (default
@@ -1232,7 +1232,7 @@ Validation: `kind` is always required (≤40 chars). For `kind=app_open`, `app` 
 
 | Env var                 | Purpose                                                                                              |
 | ----------------------- | ---------------------------------------------------------------------------------------------------- |
-| `PAL_SIGNAL_TOKEN`  | Shared secret for the legacy `/v1/signals` path (sent as `x-lantern-signal-token`). Unset → legacy path is 401 fail-closed |
+| `PAL_SIGNAL_TOKEN`  | Shared secret for the legacy `/v1/signals` path (sent as `x-pal-signal-token`; the pre-rename header is accepted for one release). Unset → legacy path is 401 fail-closed |
 | `PAL_SIGNALS_LEGACY_OWNER_TENANT` | Tenant the legacy shared-token path mirrors into (default dev tenant); `off` disables the legacy path |
 | `PAL_SIGNALS_RETENTION_DAYS` | Tenant `device_signals` retention (default 30) |
 
@@ -1273,7 +1273,7 @@ fixture stack (throwaway DB, `llm-replay` + `connector-replay`, surface-gateway)
 daily-digest (schedule -> Slack post), telegram-assistant (signed update -> reply),
 voice-receptionist (signed Twilio webhooks -> TwiML / `<Reject>` / `agent_usage_daily`
 reconciled). Not part of `make test-e2e`. Examples live in `examples/{daily-digest,
-telegram-assistant,voice-receptionist}` (`agent.yaml` carries `system_prompt` + `workflow`, so `lantern deploy` creates the whole agent; the tests read it too).
+telegram-assistant,voice-receptionist}` (`agent.yaml` carries `system_prompt` + `workflow`, so `pal deploy` creates the whole agent; the tests read it too).
 
 Pitfalls fixed here, worth remembering: never read `jsonb` with `::text::bytea` (a JSON
 backslash is invalid bytea input; `TestNoJSONBTextBytea` guards it); a reused SQL param
@@ -1335,7 +1335,7 @@ health), `runtime-manager` spawns the workload in the right isolation
 (Firecracker / Kata / K8s Job / Wasmtime / devcontainer), and the
 in-VM `harness` (Rust, baked into the image) enforces egress allowlist,
 vends short-TTL JWT secrets, and streams heartbeats + logs back. Full
-contract is in `packages/proto/lantern/v1/runtime.proto`; arch overview is
+contract is in `packages/proto/pal/v1/runtime.proto`; arch overview is
 `docs/architecture/04b-microvm-productionization.md`; rationale per
 component is in ADRs 0002–0008. Quota is per tenant; cap exceeded returns
 HTTP 402.
@@ -1344,7 +1344,7 @@ HTTP 402.
 is PID 1 and the last in-VM trust boundary around secrets + egress. Three
 controls, all fail-safe:
 
-- **Secrets socket peer auth.** `/run/lantern/secrets.sock` authenticates every
+- **Secrets socket peer auth.** `/run/pal/secrets.sock` authenticates every
   connecting peer with `SO_PEERCRED` (kernel-attested uid/pid, unspoofable). It
   only vends to the workload uid the manager injects as `PAL_WORKLOAD_UID`
   (plus the harness's own uid). Unset → dev path: a loud one-time WARN, allow.
@@ -1377,8 +1377,8 @@ controls, all fail-safe:
 - **Privilege drop + env isolation.** The workload, VM exec and shell children
   run as `PAL_WORKLOAD_UID`/`GID`, not the harness uid, so SO_PEERCRED, the
   egress REDIRECT and cert-key isolation actually bind. Children get an explicit
-  env: every `LANTERN_*` key is withheld except an allowlist of non-secret
-  identity/locator values (`WORKLOAD_VISIBLE_LANTERN_KEYS` in `supervisor.rs`).
+  env: every `PAL_*` key is withheld except an allowlist of non-secret
+  identity/locator values (`WORKLOAD_VISIBLE_PAL_KEYS` in `supervisor.rs`).
   In prod `parse_env` refuses to start without a workload uid
   (`require_workload_identity`). Restore: a VM restored from a snapshot
   re-identifies (new vm_id/cert/agent identity) rather than running with the
@@ -1412,7 +1412,7 @@ controls, all fail-safe:
   a mismatch is refused). Injected refs resolve via `resolve_scoped` with the
   VM's registry tenant — the control-plane relay binds them to that tenant.
   Schedule accepts `egress[].inject {header, secretRef, valuePrefix}` (400 on a
-  non-`lantern.secret/` ref). Hardened per review: plain-HTTP injection 403 unless
+  non-`pal.secret/` ref). Hardened per review: plain-HTTP injection 403 unless
   `PAL_EGRESS_PLAIN_INJECT=1` + port 80; injected requests must be bound to
   the exact approved host (target authority + exactly one `Host:`); injecting
   rules are exact hostnames; 128 conns/VM, 10 s handshake, 300 s idle; prod
@@ -1456,7 +1456,7 @@ loopback + `169.254.169.254` direct). Broker mode (from `spawn.json`):
 | `PAL_REFERENCE_MEASUREMENTS` | _(empty)_ | Comma-separated expected SHA-256 hex measurements (each must be 64 hex or startup fails). Empty = no comparison; `enforce` + empty in prod → refuses to start. |
 | `FC_HARNESS_PATH` | _(unset)_ | Path to a separately-installed harness binary for measurement. 32 zero bytes when unset (harness baked into rootfs). |
 
-The measurement is **HOST-ASSERTED** — computed by the manager from the files it reads (by path; Firecracker opens them later — a documented TOCTOU). It proves what the host recorded it launched, NOT what ran inside the VM (hardware attestation, ADR 0023, is a separate stronger guarantee requiring CC hardware). Embedded in: the per-VM X.509 cert (OID `1.3.6.1.4.1.99999.3` — a PLACEHOLDER; a registered IANA PEN is required before production), `sched_vms`/`runtime_vms.software_measurement` (write-once via the reconciler), and signed run receipts (`softwareMeasurement`). **Reproducible:** per-VM identity (vm/run id, IPs, per-VM cert paths/CA, `PAL_AGENT_INSTANCE_ID`/`_TOKEN`, trace parent, the whole `lantern.env.*` cmdline copy) and secrets (declared-secret refs, exec token, injection specs, values of env keys with a whole `_`-segment TOKEN/SECRET/PASSWORD/PASSWD/KEY/APIKEY/CREDENTIAL(S)/AUTH/PAT/DSN — so `MAX_TOKENS` stays measured — and URL userinfo scrubbed from every env value) are excluded; a blanked value is UNMEASURED input, so never approve a reference for a spec whose workload executes a secret-named value — put credentials in `declared_secrets`, so VMs from the same images+spec measure identically. **Restore/resume/fork INHERIT** the source's spawn measurement from `SnapshotMeta.software_measurement` (set by the manager, never by a caller) and re-check it against the current references; a snapshot without one is refused under `enforce` with references. The snapshot store (incl. S3) is inside the trust boundary — `SnapshotMeta` is unsigned (signing is a follow-up). **Firecracker cmdline carries no caller env** (the guest echoes it to the console the manager logs): only `PAL_ENV`/`PAL_MANAGER_ADDR`/`PAL_WORKLOAD_UID`, whitespace-sanitized; `spawn.json` is the env channel. The value is never logged. `enforce` with references is fail-closed when the measurement cannot be computed.
+The measurement is **HOST-ASSERTED** — computed by the manager from the files it reads (by path; Firecracker opens them later — a documented TOCTOU). It proves what the host recorded it launched, NOT what ran inside the VM (hardware attestation, ADR 0023, is a separate stronger guarantee requiring CC hardware). Embedded in: the per-VM X.509 cert (OID `1.3.6.1.4.1.99999.3` — a PLACEHOLDER; a registered IANA PEN is required before production), `sched_vms`/`runtime_vms.software_measurement` (write-once via the reconciler), and signed run receipts (`softwareMeasurement`). **Reproducible:** per-VM identity (vm/run id, IPs, per-VM cert paths/CA, `PAL_AGENT_INSTANCE_ID`/`_TOKEN`, trace parent, the whole `pal.env.*` cmdline copy) and secrets (declared-secret refs, exec token, injection specs, values of env keys with a whole `_`-segment TOKEN/SECRET/PASSWORD/PASSWD/KEY/APIKEY/CREDENTIAL(S)/AUTH/PAT/DSN — so `MAX_TOKENS` stays measured — and URL userinfo scrubbed from every env value) are excluded; a blanked value is UNMEASURED input, so never approve a reference for a spec whose workload executes a secret-named value — put credentials in `declared_secrets`, so VMs from the same images+spec measure identically. **Restore/resume/fork INHERIT** the source's spawn measurement from `SnapshotMeta.software_measurement` (set by the manager, never by a caller) and re-check it against the current references; a snapshot without one is refused under `enforce` with references. The snapshot store (incl. S3) is inside the trust boundary — `SnapshotMeta` is unsigned (signing is a follow-up). **Firecracker cmdline carries no caller env** (the guest echoes it to the console the manager logs): only `PAL_ENV`/`PAL_MANAGER_ADDR`/`PAL_WORKLOAD_UID`, whitespace-sanitized; `spawn.json` is the env channel. The value is never logged. `enforce` with references is fail-closed when the measurement cannot be computed.
 
 | Method   | Path                             | Description                                                                                             |
 | -------- | -------------------------------- | ------------------------------------------------------------------------------------------------------- |
@@ -1468,9 +1468,9 @@ The measurement is **HOST-ASSERTED** — computed by the manager from the files 
 | `POST`   | `/v1/runtime/vms/{id}/fork`      | Body `{count}` (1..`PAL_MAX_FORK_COUNT`, default 100, ceiling 1000) → `{sourceVmId, snapshotId, forks:[{vmId,state,error?}]}`. Each fork gets its own vm_id, cert and agent identity. Fork spawns are issued with bounded concurrency (`PAL_FORK_CONCURRENCY`, default 16). The mem snapshot is hard-linked (MAP_PRIVATE CoW) into each jail so pages are shared via the host page cache until written — O(1) disk I/O per fork. The disk (rootfs) snapshot is staged via `FICLONE` ioctl (O(1) CoW on XFS/btrfs). **Default on non-reflink FS** (ext4, Lima, GitHub KVM): falls back to full byte copy with a once-per-process WARN + per-staging `disk_staging="full_copy"` metric (`bytes`, `elapsed_ms`) — pause/resume/fork keep working. Set `PAL_REQUIRE_REFLINK=1` on XFS/btrfs nodes to enforce FICLONE (fail with typed error instead of fallback). Manager logs `disk_staging=ficlone` per fork on success. Forking a RUNNING VM needs Firecracker ≥1.12 + jailer |
 | `DELETE` | `/v1/runtime/vms/{id}?grace=30s` | Drain + terminate                                                                                       |
 | `GET`    | `/v1/runtime/vms/{id}/logs`      | SSE log stream from the harness                                                                         |
-| `POST`   | `/v1/runtime/vms/{id}/exec`      | One-shot exec into a running VM (operator debugging). **execve-style**: `command` is the executable, `argv` its args — no implicit shell (shell lines go as `/bin/sh` + `["-c", …]`, matching `lantern vm exec <id> -- <cmd> [args]` and the in-VM harness). Dispatches control-plane → runtime-manager DIRECTLY over the `RuntimeManager.Exec` bidi stream (the scheduler places workloads; the manager owns the exec channel), capped at 1 MiB/stream in control-plane memory since output comes from an untrusted workload. Send `Accept: text/event-stream` to stream instead: events `stdout`\|`stderr`\|`exit`\|`error` (invariant #4). Live regression test: `internal/handlers/runtime_exec_e2e_test.go` (opt-in `PAL_RUNTIME_E2E=1`) |
+| `POST`   | `/v1/runtime/vms/{id}/exec`      | One-shot exec into a running VM (operator debugging). **execve-style**: `command` is the executable, `argv` its args — no implicit shell (shell lines go as `/bin/sh` + `["-c", …]`, matching `pal vm exec <id> -- <cmd> [args]` and the in-VM harness). Dispatches control-plane → runtime-manager DIRECTLY over the `RuntimeManager.Exec` bidi stream (the scheduler places workloads; the manager owns the exec channel), capped at 1 MiB/stream in control-plane memory since output comes from an untrusted workload. Send `Accept: text/event-stream` to stream instead: events `stdout`\|`stderr`\|`exit`\|`error` (invariant #4). Live regression test: `internal/handlers/runtime_exec_e2e_test.go` (opt-in `PAL_RUNTIME_E2E=1`) |
 | `GET`    | `/v1/runtime/vms/{id}/files`      | List a dir under `/workspace` (`?path=`, default root) → `{path, entries:[{name,type,size}], truncated}`. Via `RuntimeManager.ExecTool` → harness `list_dir` (confined to `/workspace`, workload fsuid); VM ownership checked (404 cross-tenant), `tenant_id` stamped on the RPC. `runtime:read` |
-| `GET`    | `/v1/runtime/vms/{id}/files/content` | `?path=` → raw UTF-8 text (harness `read_file`, 1 MiB cap; cut reads set `X-Lantern-Truncated: true`). Tool error → 400 (path escape) / 404 (missing); `UNAVAILABLE` (non-Firecracker / no harness) → 503. `runtime:read` |
+| `GET`    | `/v1/runtime/vms/{id}/files/content` | `?path=` → raw UTF-8 text (harness `read_file`, 1 MiB cap; cut reads set `X-Pal-Truncated: true`). Tool error → 400 (path escape) / 404 (missing); `UNAVAILABLE` (non-Firecracker / no harness) → 503. `runtime:read` |
 | `PUT`    | `/v1/runtime/vms/{id}/files/content` | `?path=`, body = file bytes (UTF-8, >1 MiB → 413) → `{path, bytesWritten}` (harness `write_file`). Idempotency key = sha256(vm_id, path, body). Contents never logged. `runtime:admin` (same as exec) |
 | `GET`    | `/v1/runtime/cluster`            | Owner-only. Node load + warm-pool capacity                                                              |
 | `GET`    | `/v1/runtime/audit`              | Recent runtime audit events for the tenant                                                              |
@@ -1496,9 +1496,9 @@ Detectors: `card_number` | `secret_key` | `email` | `phone` | `custom_regex` (pa
 
 **Clock-skew protection.** `LastActivityAt` is always stamped with the scheduler's own receive time, never the guest wall clock (`last_activity_unix_ms` is used only as a change signal). A just-resumed VM whose guest clock is behind by the paused duration therefore starts its idle clock at the resume time, not at the pre-pause guest timestamp. Any `RUNNING` transition (spawn or resume) also resets `LastActivityAt` to zero, so the sweeper ignores the VM until the first fresh harness heartbeat arrives.
 
-CLI surface (`lantern run`, `lantern vm …` incl. `lantern vm pause|resume|fork [--count N]`) and dashboard pages
+CLI surface (`pal run`, `pal vm …` incl. `pal vm pause|resume|fork [--count N]`) and dashboard pages
 (`/runtime`, `/runtime/{vm}` — Pause/Resume/Fork) consume these endpoints. SDKs: TS `client.runtime.{schedule,pause,resume,fork,execStream,listFiles,readFile,writeFile}` (`VmScheduleSpec` for typed schedule with `idleTimeoutSecs`),
-Python `client.runtime.{schedule,pause,resume,fork,exec_stream,list_files,read_file,write_file}` (pass `idle_timeout_secs` in spec dict), Go `ScheduleVM`/`PauseVM`/`ResumeVM`/`ForkVM`/`ListFiles`/`ReadFile`/`WriteFile` (`VMScheduleSpec.IdleTimeoutSecs`); CLI `lantern run --idle-timeout N`. End-to-end demo
+Python `client.runtime.{schedule,pause,resume,fork,exec_stream,list_files,read_file,write_file}` (pass `idle_timeout_secs` in spec dict), Go `ScheduleVM`/`PauseVM`/`ResumeVM`/`ForkVM`/`ListFiles`/`ReadFile`/`WriteFile` (`VMScheduleSpec.IdleTimeoutSecs`); CLI `pal run --idle-timeout N`. End-to-end demo
 agents in `examples/headless-agents/{01-hello,02-web-scraper,03-stateful-research,04-ml-inference}/`.
 
 **Local sandbox detection (ADR 0045).** `dev` prints one `sandbox:` line and `doctor` a "Sandbox mode" check from `detectSandbox` (`packages/cli/internal/cli/sandbox_mode.go`): `firecracker` (Linux+KVM, manager `:50054`), `lima` (macOS, Lima `firecracker-dev` Running + `make lima-runtime` manager forwarded on `:52054`), `docker` (manager on `:50054` without KVM) or `stub` (says the fix). A mode is chosen only when its manager answers on TCP; non-stub starts/reuses the scheduler and sets `PAL_SCHEDULER_GRPC_ADDR` on the API.
@@ -1543,7 +1543,7 @@ agents in `examples/headless-agents/{01-hello,02-web-scraper,03-stateful-researc
   rather than silently falling back. Off in every shipped values file (node
   filesystems vary); add it under `runtimeManager.env` once your nodes are XFS/btrfs.
 - `PAL_RUNTIME_SECRET_TOKEN` — pre-shared token the runtime-manager sends
-  as `X-Lantern-Runtime-Token` to `POST /v1/runtime/secrets/resolve`. Set on
+  as `X-Pal-Runtime-Token` to `POST /v1/runtime/secrets/resolve`. Set on
   both the control-plane (to accept) and the manager (to send). When unset on
   the control-plane the endpoint returns 403 (fail-closed). See ADR 0008.
 - `PAL_CONTROL_PLANE_URL` — base URL the runtime-manager uses to call the
@@ -1552,7 +1552,7 @@ agents in `examples/headless-agents/{01-hello,02-web-scraper,03-stateful-researc
   dev `EnvSecretResolver` is used.
 - `PAL_GRPC_SERVICE_TOKEN` — shared service token authenticating callers to
   the control-plane gRPC port (`:50051`). Set on **both** the control-plane (to
-  accept) and the gateway (to send as `x-lantern-service-token`). A
+  accept) and the gateway (to send as `x-pal-service-token`). A
   `UnaryServiceAuthInterceptor`/`StreamServiceAuthInterceptor` runs **before**
   the tenant-extraction interceptor and constant-time-compares the token, so only
   authenticated callers may set `tenant_id`. **Fail-closed:** when
@@ -1570,15 +1570,15 @@ agents in `examples/headless-agents/{01-hello,02-web-scraper,03-stateful-researc
   control-plane, gateway, workflow-engine, runtime-scheduler, **model-router
   (`:50053`, which carries tenant provider keys; fail-closed in prod)**, and
   **runtime-manager (`:50054`)**. The manager adds per-call authz (ADR 0025): a
-  tonic interceptor refuses per-VM certs (`OU=lantern-vm`) with
+  tonic interceptor refuses per-VM certs (`OU=pal-vm`) with
   `PERMISSION_DENIED` on every `RuntimeManager` method (guests reach only
-  `RuntimeHarness`) and requires `x-lantern-service-token`; its callers (scheduler
+  `RuntimeHarness`) and requires `x-pal-service-token`; its callers (scheduler
   dialer, control-plane exec client, workflow-engine ExecTool client) attach the
   token, so set it on the callers before the manager. Manager refuses to start
   in prod without it.
 
 **Production guards (`PAL_ENV=prod/production/staging`).** The Helm chart
-(`infra/helm/lantern`) now defaults `PAL_ENV=production`, wires `JWT_SECRET`
+(`infra/helm/pal`) now defaults `PAL_ENV=production`, wires `JWT_SECRET`
 into the control-plane from the chart secret (`jwt-secret`), and ships
 `values-prod.yaml` — previously `PAL_ENV` defaulted to `""`, which left every
 prod guard off. In prod the control-plane additionally: refuses to start with
@@ -1596,7 +1596,7 @@ Kyverno (`infra/k8s/supply-chain/`, tested with `kyverno test`) — the control
 plane does NOT verify bundle signatures, and `agent_versions.digest` is not a
 content digest.
 
-Real protoc Go codegen at `gen/go/lantern/v1/` is hand-maintained stubs.
+Real protoc Go codegen at `gen/go/pal/v1/` is hand-maintained stubs.
 These are **tracked in git** (NOT gitignored) — they are a build-critical Go
 module that services depend on via `replace ../../gen/go` and that the Docker
 builds `COPY`, so a clean clone must have them. Only the regenerable
@@ -1627,7 +1627,7 @@ tonic-generated server.
 - Do not add a new dependency without checking it against `cargo-audit` / `npm audit` / `govulncheck`.
 - Do not add error handling for situations that cannot happen ("just in case"). Trust internal invariants; validate at boundaries.
 - Do not write defensive shims for "future flexibility". YAGNI.
-- Do not hand-roll a retry loop. Use `pkg/retry` (Go), `lantern-retry` (Rust), `@lantern/retry` (TS).
+- Do not hand-roll a retry loop. Use `pkg/retry` (Go), `pal-retry` (Rust), `@pal/retry` (TS).
 - Do not call an LLM directly. Always go through the model router; otherwise you bypass caching, routing, and metering.
 - Do not introduce a new database. Postgres + Redis + S3 + pgvector cover everything we currently need.
 - Do not skip tests with `t.Skip()`, `it.skip(...)`, or `#[ignore]` to "fix later". Either delete the test or fix it.
@@ -1650,7 +1650,7 @@ modules give the assistant stable identity (owner corrections > AddressBook,
 place; stale overrides yield to fresh iPhone signals, `presence.ts`),
 thread-peek (answer from the real chat.db / wa-history thread, `thread-peek.ts`),
 location privacy per contact (`disclosure.ts`), and cross-app self-context
-synthesis (`working-memory.ts`). State is `0600` JSONL under `~/.lantern/`;
+synthesis (`working-memory.ts`). State is `0600` JSONL under `~/.pal/`;
 nothing touches the control plane. The highest-PII stores (`episodes.jsonl`,
 `topic-index.jsonl`, `dislike-patterns.jsonl`) are additionally **AES-256-GCM
 encrypted at rest** via `bridge-core/src/secure-store.ts` (`enc1:` line
@@ -1670,7 +1670,7 @@ lines still read and age out — no migration). **Full reference + owner self-ch
   `PAL_PERSONAL_DOCS_ROOTS` (defaults: `~/Documents`, `~/Desktop`,
   iCloud Drive). All reads go through `isAllowedPath` which blocks
   traversal.
-- **OCR cache 0600.** `~/.lantern/ocr-cache/<sha1>.txt` files are written
+- **OCR cache 0600.** `~/.pal/ocr-cache/<sha1>.txt` files are written
   with mode 0600 (owner-only) because OCR'd text often contains passport
   numbers, license #s, and other PII.
 - **Mute vs. killswitch (owner, 2026-09-07).** `mute` means "don't SEND", not
@@ -1705,7 +1705,7 @@ lines still read and age out — no migration). **Full reference + owner self-ch
   real LLM-hallucination bug where the model would claim the reminder
   was set without ever emitting a `[CALENDAR:...]` marker.
 
-### Owner profile (`~/.lantern/owner-profile.md`)
+### Owner profile (`~/.pal/owner-profile.md`)
 
 The bridge reads this markdown file (hot-reloaded every 30s or on mtime
 change) and injects sections as ground truth into every reply prompt. File
@@ -1763,11 +1763,11 @@ person.
   canonical person row. Handles from different channels that belong to the
   same person are grouped after a `POST /v1/people/merge`.
 - **14-day episodic memory.** Every substantive exchange is indexed as a
-  `(date, topic, outcome)` episode in `~/.lantern/episodes.jsonl` (mode
+  `(date, topic, outcome)` episode in `~/.pal/episodes.jsonl` (mode
   0600). The 5 most-recent episodes per contact are injected into the reply
   prompt. Cross-contact mentions (owner self-chats "Sujith landed") are
   tagged so Sujith's next inbound surfaces that episode via `forMentions`.
-- **7-day topic index.** `~/.lantern/topic-index.jsonl` (mode 0600) stores
+- **7-day topic index.** `~/.pal/topic-index.jsonl` (mode 0600) stores
   topic-tagged messages. `SocialGraph.related()` retrieves messages from
   OTHER contacts that mentioned the same topics, injected as a
   "## Related context from OTHER threads" block. The prompt instructs the
@@ -1776,7 +1776,7 @@ person.
 ### Overnight message replay (quiet hours)
 
 Messages arriving inside quiet hours are queued to
-`~/.lantern/<bridge>/quiet-queue.jsonl` (mode 0600) and replayed when the
+`~/.pal/<bridge>/quiet-queue.jsonl` (mode 0600) and replayed when the
 window reopens, with natural morning pacing. The queue is drained in
 chronological order; `PAL_QUIET_QUEUE_MAX` caps its size (default 200).
 Quiet hours default: 01:00–06:00 owner-local time, overridable via
@@ -1839,7 +1839,7 @@ message length.
 
 When the owner taps 👎 on a bot reply:
 1. The `(inbound, bad_reply, good_reply)` triple is appended to
-   `~/.lantern/dislikes.jsonl` (mode 0600).
+   `~/.pal/dislikes.jsonl` (mode 0600).
 2. On a schedule (or threshold hit), `runDislikeConsolidation()` mines the
    full log for patterns that recur across ≥3 rejections (exclamation marks,
    long replies, filler openers, hedging, over-formal phrasing).
@@ -1871,7 +1871,7 @@ Four nudge kinds, by priority:
 | `overdue-reply` | Contact unanswered for >2 days | "you haven't gotten back to Madhu in 3 days — want me to take a crack at it?" |
 | `commitment` | Open promise tracked >4h | "still on your plate: send Raju the deck — want me to handle it?" |
 
-Nudges carry stable `dedupeKey`s persisted to `~/.lantern/<bridge>/fired-nudges.json`
+Nudges carry stable `dedupeKey`s persisted to `~/.pal/<bridge>/fired-nudges.json`
 so the same nudge never fires twice in a day. Respect quiet hours.
 Disable with `PAL_PROACTIVE_NUDGES=0`.
 
@@ -2144,7 +2144,7 @@ Privacy posture (HARD rules):
   assistant prompt (`handleOwnerDocQuery`) — NEVER into a contact reply. A
   contact must never learn what apps the owner uses.
 - **Summaries, not raw logs.** Only the distilled per-app rollup + one sentence
-  is kept; the rolling cache is `~/.lantern/mac-usage.json` (mode 0600). No raw
+  is kept; the rolling cache is `~/.pal/mac-usage.json` (mode 0600). No raw
   per-event log is persisted.
 - **Fails closed.** The reader copies `~/Library/Application Support/Knowledge/
   knowledgeC.db` to a tempfile and opens it read-only; any failure (no Full
@@ -2204,7 +2204,7 @@ self-chat as `✅ closed: <title> — saw: "<evidence>"` (prefix registered in
 | `PAL_VOICE_SMS_HEADSUP`           | `on` (default) / `off`. When on, a one-line heads-up SMS ("…'s assistant — …'s calling you in a few seconds about X") is texted to the recipient from the Twilio DID right before a conference dial, so an unknown caller-ID isn't ignored. Best-effort; never blocks the call. |
 | `PAL_TWILIO_NUMBER` / `PAL_TWILIO_SMS_FROM` | (Optional) E.164 Twilio number used as the SMS **from** when an iMessage send fails to a non-iMessage (SMS/RCS-only) number — the bridge re-delivers the reply as SMS so the contact still hears back. Unset → no SMS fallback. |
 | `PAL_VOICE_CLONE`                 | (Optional) **deepfake-class; OFF by default.** Set `1`/`true`/`on` to speak outbound calls in the owner's OWN cloned voice via ElevenLabs `<Play>` instead of generic Polly `<Say>`. Requires `PAL_ELEVENLABS_API_KEY` + `PAL_ELEVENLABS_VOICE_ID` + `PAL_VOICE_CACHE_PUBLIC_URL`. Any missing → clean Polly fallback. The 2-party-consent announcement still fires regardless. |
-| `LANTERN_ELEVENLABS_API_KEY`          | (Optional) ElevenLabs API key for voice-clone TTS (legacy alias `LANTERN_ELEVENLABS_KEY` accepted). Only used when `LANTERN_VOICE_CLONE` is on. Never logged. |
+| `PAL_ELEVENLABS_API_KEY`          | (Optional) ElevenLabs API key for voice-clone TTS. Only used when `PAL_VOICE_CLONE` is on. Never logged. |
 | `PAL_ELEVENLABS_VOICE_ID`         | (Optional) ElevenLabs voice id to synthesize in (the owner's cloned voice). Only used when `PAL_VOICE_CLONE` is on. |
 
 ### RCS messaging (to & fro)
@@ -2218,8 +2218,8 @@ The iMessage bridge handles RCS in both directions:
 ### Always-on
 
 WhatsApp + API + dashboard run under user LaunchAgents
-(`~/Library/LaunchAgents/dev.lantern.*.plist`). Bridge env overrides go in
-`~/.lantern/bridge.env` (sourced by `scripts/launchd/run-bridge-wrapper.sh` at
+(`~/Library/LaunchAgents/dev.pal.*.plist`). Bridge env overrides go in
+`~/.pal/bridge.env` (sourced by `scripts/launchd/run-bridge-wrapper.sh` at
 every start, overrides plist env) — takes effect with a plain
 `launchctl kickstart -k`, no bootout/bootstrap needed. The iMessage bridge needs
 Full Disk Access (chat.db) + Automation permission (Messages.app), which
@@ -2257,7 +2257,7 @@ network errors (ECONNREFUSED, socket hang-up, etc.) are retried up to
 backoff between `0` and `PAL_BRIDGE_RETRY_MAX_MS` (default 4000 ms,
 base step `PAL_BRIDGE_RETRY_BASE_MS` = 500 ms). 401 / 403 / 404 /
 409 are never retried — the existing dead-session 404/409 recovery path
-is preserved inside the outer loop. Note: `@lantern/retry` does not yet
+is preserved inside the outer loop. Note: `@pal/retry` does not yet
 exist as a shared package; `retry.ts` is a local shim to be replaced
 when that canonical package ships.
 
@@ -2292,7 +2292,7 @@ needs a one-time re-pair; `POST /session/:tenant/reset` wipes creds and
 
 ## Proto workflow
 
-Protos live in `packages/proto/lantern/v1/`. Core files: `agents.proto`, `runs.proto`, `models.proto`, `engine.proto`, plus per-service contracts such as `dataplane.proto`, `runtime.proto`, `billing.proto` (`lantern.v1.BillingService` — usage metering + budgets), and `scheduler.proto` (`lantern.v1.SchedulerService` — cron + one-shot triggers).
+Protos live in `packages/proto/pal/v1/`. Core files: `agents.proto`, `runs.proto`, `models.proto`, `engine.proto`, plus per-service contracts such as `dataplane.proto`, `runtime.proto`, `billing.proto` (`pal.v1.BillingService` — usage metering + budgets), and `scheduler.proto` (`pal.v1.SchedulerService` — cron + one-shot triggers).
 
 Note: the `memory` service has **no** proto on purpose — memory is served over REST by the control-plane (`/v1/memory/*`, `/v1/people/*`); a gRPC MemoryService would duplicate that surface. See [ADR 0013](docs/adr/0013-billing-scheduler-grpc-memory-rest.md).
 
@@ -2320,11 +2320,11 @@ Never hand-edit files under `gen/`. If a proto change breaks a service, fix the 
 ## Preferred local-dev command
 
 ```bash
-lantern dev   # boots Postgres+Redis+MinIO+API+dashboard+WhatsApp bridge
+pal dev   # boots Postgres+Redis+MinIO+API+dashboard+WhatsApp bridge
 ```
 
 The four-Makefile-target dance below still works for power users, but
-`lantern dev` is the daily-driver.
+`pal dev` is the daily-driver.
 
 ## Make targets (still supported)
 
@@ -2368,6 +2368,6 @@ See `.claude/agents/README.md` for invocation patterns.
 
 - **Architecture question** -> read `docs/architecture/`, then ask the user.
 - **Decision question** -> read `docs/adr/`, then ask the user.
-- **API question** -> look at the proto in `packages/proto/lantern/v1/` or the REST routes in `services/control-plane/cmd/server/main.go`.
+- **API question** -> look at the proto in `packages/proto/pal/v1/` or the REST routes in `services/control-plane/cmd/server/main.go`.
 - **"Where does X live"** -> grep first, ask second.
 - **"Should I do X"** -> if X is risky/destructive, ask. Otherwise just do it well.

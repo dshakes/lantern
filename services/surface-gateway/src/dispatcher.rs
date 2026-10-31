@@ -19,7 +19,7 @@ pub struct Dispatcher {
     /// (gRPC port) with x-pal-service-token auth (invariant #7).
     control_plane: ControlPlaneClient,
     /// Name of the PAL agent that handles inbound surface messages.
-    /// Set LANTERN_AGENT_NAME; run creation returns an error when unset.
+    /// Set PAL_AGENT_NAME; run creation returns an error when unset.
     agent_name: Option<String>,
     /// Resolves each inbound event's platform-native id (chat_id, team_id,
     /// phone_number_id, …) to the real PAL tenant UUID.  Without this
@@ -58,7 +58,7 @@ impl Dispatcher {
         // phone_number_id, Twilio destination number, Discord guild_id).  Those are
         // NOT PAL tenant UUIDs.  Before forwarding to the control-plane we must
         // replace the platform id with the real PAL tenant UUID, or reject the
-        // event if the gateway is mis-configured (LANTERN_TENANT_ID not set).
+        // event if the gateway is mis-configured (PAL_TENANT_ID not set).
         //
         // The raw platform id is preserved in the trace span for debugging but must
         // never reach the control-plane as a tenant discriminator.
@@ -229,8 +229,7 @@ impl Dispatcher {
     ) -> Result<String, AppError> {
         let agent_name = self.agent_name.as_deref().ok_or_else(|| {
             AppError::Internal(
-                "LANTERN_AGENT_NAME is not set — cannot create run without an agent name"
-                    .to_string(),
+                "PAL_AGENT_NAME is not set — cannot create run without an agent name".to_string(),
             )
         })?;
 

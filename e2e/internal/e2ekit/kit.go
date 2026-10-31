@@ -69,15 +69,15 @@ const (
 	probeTimeout    = 2 * time.Second
 
 	defaultBaseURL  = "http://localhost:8080"
-	defaultEmail    = "admin@lantern.dev"
-	defaultPassword = "lantern"
+	defaultEmail    = "admin@pal.local"
+	defaultPassword = "pal"
 )
 
 // DefaultBase returns the API base URL.
-// Env priority: LANTERN_E2E_API_URL (canonical) → LANTERN_API_URL (alias) → localhost:8080.
+// Env priority: PAL_E2E_API_URL (canonical) → PAL_API_URL (alias) → localhost:8080.
 // Identical precedence to e2e/runtime's baseURL() — keep them in sync.
 func DefaultBase() string {
-	for _, key := range []string{"PAL_E2E_API_URL", "LANTERN_E2E_API_URL", "PAL_API_URL", "LANTERN_API_URL"} {
+	for _, key := range []string{"PAL_E2E_API_URL", "PAL_API_URL"} {
 		if v := os.Getenv(key); v != "" {
 			return strings.TrimRight(v, "/")
 		}
@@ -86,11 +86,11 @@ func DefaultBase() string {
 }
 
 // DefaultEmail returns the login email from env or the default.
-func DefaultEmail() string { return EnvOr("PAL_E2E_EMAIL", EnvOr("LANTERN_E2E_EMAIL", defaultEmail)) }
+func DefaultEmail() string { return EnvOr("PAL_E2E_EMAIL", defaultEmail) }
 
 // DefaultPassword returns the login password from env or the default.
 func DefaultPassword() string {
-	return EnvOr("PAL_E2E_PASSWORD", EnvOr("LANTERN_E2E_PASSWORD", defaultPassword))
+	return EnvOr("PAL_E2E_PASSWORD", defaultPassword)
 }
 
 // EnvOr returns env[key] or def when unset/empty.

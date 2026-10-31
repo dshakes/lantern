@@ -1,8 +1,6 @@
 # Context is the repo root; ship only what the gateway build reads.
 *
-!packages/pal-env-rs
 !packages/pal-grpc-tls-rs
 !services/gateway
-packages/pal-env-rs/target
 packages/pal-grpc-tls-rs/target
 services/gateway/target

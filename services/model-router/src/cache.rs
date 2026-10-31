@@ -63,7 +63,7 @@ impl PromptCache {
         }
 
         let hash = hex::encode(hasher.finalize());
-        Some(format!("lantern:prompt_cache:{hash}"))
+        Some(format!("pal:prompt_cache:{hash}"))
     }
 
     /// Try to get a cached response. Returns None on miss or if the request is not cacheable.

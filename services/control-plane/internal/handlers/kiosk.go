@@ -12,7 +12,7 @@ package handlers
 //
 // No provider key is ever created: the kiosk tenant has no llm_provider_configs
 // row and the token cannot reach settings:write. LLM calls are served by the
-// fixture server (cmd/llm-replay, W2-0) via LANTERN_LLM_BASEURL_*.
+// fixture server (cmd/llm-replay, W2-0) via PAL_LLM_BASEURL_*.
 
 import (
 	"context"
@@ -30,8 +30,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/db"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/db"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 const (
@@ -193,7 +193,7 @@ func (h *KioskHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		if err = tx.QueryRow(ctx, `
 			INSERT INTO tenants (slug, name, tier, k8s_namespace, settings)
 			VALUES ($1, 'Demo visitor', 'personal', $2, $3::jsonb) RETURNING id`,
-			slug, "lantern-t-"+slug, string(settings)).Scan(&tenantID); err != nil {
+			slug, "pal-t-"+slug, string(settings)).Scan(&tenantID); err != nil {
 			return err
 		}
 		if err = tx.QueryRow(ctx, `

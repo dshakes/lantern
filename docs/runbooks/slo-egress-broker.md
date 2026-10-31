@@ -12,8 +12,8 @@ burning at 14.4x (1h/5m) or 6x (6h/30m), i.e. 2% to 5% of the 28-day budget is g
 
 ## What the SLI measures
 
-`lantern_egress_broker_decisions_total{outcome}` on runtime-manager `:9466` (broker mode only,
-`LANTERN_EGRESS_MODE=broker`, ADR 0026). `allow` and `deny` are correct decisions; `error` is a platform fault:
+`pal_egress_broker_decisions_total{outcome}` on runtime-manager `:9466` (broker mode only,
+`PAL_EGRESS_MODE=broker`, ADR 0026). `allow` and `deny` are correct decisions; `error` is a platform fault:
 DNS resolution failed/timed out, upstream connect failed, or credential-resolution failed for an injecting
 rule. Only `error` burns the SLO. Policy denies are deliberately *not* an SLO breach.
 
@@ -22,10 +22,10 @@ rule. Only `error` burns the SLO. Policy denies are deliberately *not* an SLO br
 1. DNS: the manager host resolver (`resolv.conf`, VPC resolver health).
 2. Upstream connect failed: the destination is down, or the node's egress path (NAT, security group) is broken.
    Test from the manager host.
-3. Credential resolution failed: the relay to the control-plane secret resolver (`LANTERN_CONTROL_PLANE_URL`,
-   `LANTERN_RUNTIME_SECRET_TOKEN`, ADR 0008). Check the control-plane `/v1/runtime/secrets/resolve` 5xx/403s.
+3. Credential resolution failed: the relay to the control-plane secret resolver (`PAL_CONTROL_PLANE_URL`,
+   `PAL_RUNTIME_SECRET_TOKEN`, ADR 0008). Check the control-plane `/v1/runtime/secrets/resolve` 5xx/403s.
 4. Audit trail: `egress` audit events with `decision=deny` and a `reason` attribute are in the manager log
-   (`target=lantern_audit`); this identifies the failing reason and host.
+   (`target=pal_audit`); this identifies the failing reason and host.
 
 ## Triage: `EgressBrokerDenySpike` (ticket)
 

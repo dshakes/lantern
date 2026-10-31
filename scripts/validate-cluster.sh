@@ -221,7 +221,7 @@ run_always_on_legs() {
 
 # ---------- 3. Execution leg (g): gVisor -----------------------------------
 
-NS="lantern-t-validate"
+NS="pal-t-validate"
 
 assert_gvisor() {
   section "(g) [execution] UNTRUSTED runs INSIDE gVisor (runsc)"
@@ -256,7 +256,7 @@ assert_gvisor() {
     if [[ "$phase" != "Running" && "$phase" != "Succeeded" ]]; then
       fail_leg "(g) gVisor pod runs" \
         "phase='${phase:-Pending}' after 120s" \
-        "RuntimeClass 'gvisor' handler 'runsc' missing or node not labelled lantern.dev/runtimeclass=gvisor"
+        "RuntimeClass 'gvisor' handler 'runsc' missing or node not labelled pal.dev/runtimeclass=gvisor"
       kc -n "$NS" delete pod untrusted-gvisor-exec --ignore-not-found >/dev/null 2>&1
       return
     fi
@@ -272,7 +272,7 @@ assert_gvisor() {
     local node; node=$(kc -n "$NS" get pod untrusted-gvisor-exec \
       -o jsonpath='{.spec.nodeName}' 2>/dev/null)
     local rc_label; rc_label=$(kc get node "$node" \
-      -o jsonpath='{.metadata.labels.lantern\.dev/runtimeclass}' 2>/dev/null)
+      -o jsonpath='{.metadata.labels.pal\.dev/runtimeclass}' 2>/dev/null)
     if [[ "$rc_label" == "gvisor" ]]; then
       pass_leg "(g) gVisor sandbox confirmed" \
         "node '$node' is gvisor-labelled (/proc/version unstamped on this runsc build)"
@@ -320,7 +320,7 @@ assert_kata() {
     if [[ "$phase" != "Running" && "$phase" != "Succeeded" ]]; then
       fail_leg "(h) Kata pod runs" \
         "phase='${phase:-Pending}' after 180s" \
-        "RuntimeClass 'kata' handler missing or node not labelled lantern.dev/runtimeclass=kata"
+        "RuntimeClass 'kata' handler missing or node not labelled pal.dev/runtimeclass=kata"
       kc -n "$NS" delete pod hostile-kata-exec --ignore-not-found >/dev/null 2>&1
       return
     fi
@@ -363,11 +363,11 @@ assert_no_cotenancy() {
   others=$(kc get pods --all-namespaces \
     --field-selector "spec.nodeName=${KATA_POD_NODE}" \
     -o jsonpath='{range .items[*]}{.metadata.namespace}{"\n"}{end}' 2>/dev/null \
-    | grep -E '^lantern-t-' | grep -v "^${NS}\$" | sort -u || true)
+    | grep -E '^pal-t-' | grep -v "^${NS}\$" | sort -u || true)
 
   if [[ -z "$others" ]]; then
     pass_leg "(i) dedicated Kata node" \
-      "no other lantern-t-* tenant shares node '$KATA_POD_NODE' (taint enforced)"
+      "no other pal-t-* tenant shares node '$KATA_POD_NODE' (taint enforced)"
   else
     fail_leg "(i) dedicated Kata node" \
       "node '$KATA_POD_NODE' also runs: $(printf '%s' "$others" | tr '\n' ' ')" \

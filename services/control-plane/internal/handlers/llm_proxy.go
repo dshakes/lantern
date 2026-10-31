@@ -28,10 +28,10 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/grounding"
-	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
-	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
-	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/pal/services/control-plane/internal/grounding"
+	"github.com/dshakes/pal/services/control-plane/internal/middleware"
+	"github.com/dshakes/pal/services/control-plane/internal/secrets"
+	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
 // LlmProxyHandler proxies completion requests to upstream LLM providers
@@ -430,15 +430,15 @@ type LLMUsageDetail struct {
 // A child OTel span is created for every call using the GenAI semantic
 // conventions (gen_ai.system, gen_ai.request.model, gen_ai.operation.name,
 // gen_ai.usage.input_tokens, gen_ai.usage.output_tokens) plus the
-// PAL-specific pal.cost_usd attribute (plus the legacy lantern.cost_usd). Spans are recorded only when
+// PAL-specific pal.cost_usd attribute. Spans are recorded only when
 // a real TracerProvider is installed; the default no-op provider makes this
 // a zero-cost no-op.
 //
 // Extended cache/reasoning counts are set as additional span attributes:
 //
 //	gen_ai.usage.reasoning_tokens
-//	lantern.usage.cache_read_tokens
-//	lantern.usage.cache_write_tokens
+//	pal.usage.cache_read_tokens
+//	pal.usage.cache_write_tokens
 func (h *LlmProxyHandler) callLLMSync(ctx context.Context, provider, model, apiKey, prompt string) (result string, tokensIn, tokensOut int64, costUsd float64, err error) {
 	_, _, _, _, _ = h.callLLMSyncDetailed(ctx, provider, model, apiKey, prompt,
 		func(r string, ti, to int64, c float64, d LLMUsageDetail, e error) {
@@ -457,7 +457,7 @@ func (h *LlmProxyHandler) callLLMSyncDetailed(
 	provider, model, apiKey, prompt string,
 	cb func(result string, tokensIn, tokensOut int64, costUsd float64, detail LLMUsageDetail, err error),
 ) (result string, tokensIn, tokensOut int64, costUsd float64, err error) {
-	tracer := otel.Tracer("lantern.control-plane")
+	tracer := otel.Tracer("pal.control-plane")
 	spanName := "chat " + model
 	if model == "" {
 		spanName = "chat " + provider
@@ -479,13 +479,13 @@ func (h *LlmProxyHandler) callLLMSyncDetailed(
 			attribute.String("gen_ai.operation.name", "chat"),
 			attribute.Int64("gen_ai.usage.input_tokens", tokensIn),
 			attribute.Int64("gen_ai.usage.output_tokens", tokensOut),
-			attribute.Float64("pal.cost_usd", costUsd), attribute.Float64("lantern.cost_usd", costUsd),
+			attribute.Float64("pal.cost_usd", costUsd),
 		)
 		// Extended FinOps attributes (zero when not applicable).
 		span.SetAttributes(
 			attribute.Int64("gen_ai.usage.reasoning_tokens", detail.ReasoningTokens),
-			attribute.Int64("pal.usage.cache_read_tokens", detail.CacheReadTokens), attribute.Int64("lantern.usage.cache_read_tokens", detail.CacheReadTokens),
-			attribute.Int64("pal.usage.cache_write_tokens", detail.CacheWriteTokens), attribute.Int64("lantern.usage.cache_write_tokens", detail.CacheWriteTokens),
+			attribute.Int64("pal.usage.cache_read_tokens", detail.CacheReadTokens),
+			attribute.Int64("pal.usage.cache_write_tokens", detail.CacheWriteTokens),
 		)
 		span.End()
 		if cb != nil {

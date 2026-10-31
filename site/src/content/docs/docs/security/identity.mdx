@@ -4,7 +4,7 @@ description: Per-instance Ed25519 identity and short-TTL secret vending for micr
 glance:
   what: "Each spawn gets its own Ed25519 identity, and secrets are vended to it at runtime with a 300-second TTL, authenticated by kernel-attested peer credentials."
   why: "The spec holds only a reference, never a key, and a leaked value expires in minutes."
-  how: "Add a secrets entry with secret_uri: lantern.secret://... to your spec; use broker mode if even a short-lived value in the VM is too much."
+  how: "Add a secrets entry with secret_uri: pal.secret://... to your spec; use broker mode if even a short-lived value in the VM is too much."
 sidebar:
   order: 3
 ---
@@ -25,30 +25,30 @@ At spawn, the runtime issues the instance its own Ed25519 keypair. The identity 
 The instance's public identity is verifiable at a well-known endpoint, so a downstream service can confirm it is talking to a genuine PAL Runtime-issued instance:
 
 ```
-GET /.well-known/lantern-agent-identity
+GET /.well-known/pal-agent-identity
 ```
 
 ## Short-TTL secret vending
 
-The workload never ships with secrets. Instead it requests them at runtime via the harness's secrets socket (`/run/lantern/secrets.sock`), which authenticates every connecting peer with `SO_PEERCRED` (kernel-attested uid and pid, not spoofable). The harness only vends to the workload uid injected by the manager as `PAL_WORKLOAD_UID`. Secrets have a 300-second TTL.
+The workload never ships with secrets. Instead it requests them at runtime via the harness's secrets socket (`/run/pal/secrets.sock`), which authenticates every connecting peer with `SO_PEERCRED` (kernel-attested uid and pid, not spoofable). The harness only vends to the workload uid injected by the manager as `PAL_WORKLOAD_UID`. Secrets have a 300-second TTL.
 
-The control-plane resolves `lantern.secret/...` references through a relay endpoint protected by a pre-shared `X-Lantern-Runtime-Token` header (SHA-256 compared, set via `PAL_RUNTIME_SECRET_TOKEN`; the endpoint returns 403 when unset).
+The control-plane resolves `pal.secret/...` references through a relay endpoint protected by a pre-shared `X-Pal-Runtime-Token` header (SHA-256 compared, set via `PAL_RUNTIME_SECRET_TOKEN`; the endpoint returns 403 when unset).
 
 <Aside type="caution">
 The relay is authenticated by the pre-shared token. The manager-to-control-plane hop also uses mutual TLS when `PAL_GRPC_TLS_*` is configured (ADR 0043).
 </Aside>
 
-## The `lantern.secret/...` ref form
+## The `pal.secret/...` ref form
 
 In the spec you reference a secret, you do not embed it. The runtime resolves the reference at execution time, so the raw value never appears in the image, logs, traces or run state. From demo 02:
 
 ```yaml
 secrets:
   - env_name: USER_AGENT
-    secret_uri: lantern.secret://__tenant__/key/scraper-user-agent
+    secret_uri: pal.secret://__tenant__/key/scraper-user-agent
 ```
 
-The `lantern.secret/...` ref form is the same convention used across the platform (see [Security](/docs/security/)). The runtime is where it is resolved, inside the isolation boundary, at the moment the workload needs it.
+The `pal.secret/...` ref form is the same convention used across the platform (see [Security](/docs/security/)). The runtime is where it is resolved, inside the isolation boundary, at the moment the workload needs it.
 
 <Aside type="caution">
 Pair secret vending with the right [isolation class](/docs/runtime/isolation/). A workload that loads internet packages and also holds a secret should be `untrusted` with an egress allowlist, so a compromised dependency can't exfiltrate the vended value to an arbitrary host.
@@ -56,11 +56,11 @@ Pair secret vending with the right [isolation class](/docs/runtime/isolation/). 
 
 ## Broker mode: credentials never enter the VM
 
-Vending still puts a short-lived value inside the VM, so a compromised workload can read it while it is valid. The opt-in broker mode (`PAL_EGRESS_MODE=broker`, Firecracker only) closes that gap for outbound API calls: the VM has no network device, and the host broker resolves the `lantern.secret` ref and injects the header on the way out. The workload never holds the value. See [Egress and credentials](/docs/security/egress/).
+Vending still puts a short-lived value inside the VM, so a compromised workload can read it while it is valid. The opt-in broker mode (`PAL_EGRESS_MODE=broker`, Firecracker only) closes that gap for outbound API calls: the VM has no network device, and the host broker resolves the `pal.secret` ref and injects the header on the way out. The workload never holds the value. See [Egress and credentials](/docs/security/egress/).
 
 ## Operating notes
 
-- **The manager never holds the decryption key.** `PAL_CREDENTIAL_KEY` lives only on the control plane, which resolves a `lantern.secret/` ref over `POST /v1/runtime/secrets/resolve`. A compromised manager node cannot decrypt a tenant's secrets on its own.
+- **The manager never holds the decryption key.** `PAL_CREDENTIAL_KEY` lives only on the control plane, which resolves a `pal.secret/` ref over `POST /v1/runtime/secrets/resolve`. A compromised manager node cannot decrypt a tenant's secrets on its own.
 - **The relay is fail-closed.** It needs the pre-shared `PAL_RUNTIME_SECRET_TOKEN` on both the control plane and the manager (unset on the control plane: 403), and is not reachable with an end-user JWT.
 - **Per-VM mTLS.** The manager binds the `vm_id` reported on a vend to the mTLS peer certificate, so a workload cannot claim to be another VM. When the VM terminates its instance token stops working.
 - **Dev stub.** Without a manager, the harness reads secrets from its own environment when `PAL_ALLOW_SECRET_STUB=1`. Never set it in production.

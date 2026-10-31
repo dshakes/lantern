@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600" class="lx" role="img" aria-labelledby="personal-harness-flow-title personal-harness-flow-desc">
   <title id="personal-harness-flow-title">An iPhone signal reaches your replies without ever naming your location</title>
-  <desc id="personal-harness-flow-desc">Phone-trigger flow of the personal harness. iPhone Shortcuts triggers, driving, place, status and rhythm, each post a signal through a Shortcut. The post travels through a cloudflared tunnel to POST /v1/signals on the control plane, which checks the x-lantern-signal-token header with a constant-time compare and fails closed, then appends one line to device-signals.jsonl at mode 0600. On every owner turn the bridge reads that file with freshIphoneSignalsLine, builds a presence summary, and uses it as owner context in self-chat and in the availability concierge. The owner can ask where they are or whether they are free. Contacts who ask whether the owner is around receive availability only, never a place.</desc>
+  <desc id="personal-harness-flow-desc">Phone-trigger flow of the personal harness. iPhone Shortcuts triggers, driving, place, status and rhythm, each post a signal through a Shortcut. The post travels through a cloudflared tunnel to POST /v1/signals on the control plane, which checks the x-pal-signal-token header with a constant-time compare and fails closed, then appends one line to device-signals.jsonl at mode 0600. On every owner turn the bridge reads that file with freshIphoneSignalsLine, builds a presence summary, and uses it as owner context in self-chat and in the availability concierge. The owner can ask where they are or whether they are free. Contacts who ask whether the owner is around receive availability only, never a place.</desc>
   <style class="lx-style">
     .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
     @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
@@ -65,7 +65,7 @@
   <text class="t-b" x="374" y="200">the API on :8080</text>
   <rect class="node" x="360" y="240" width="240" height="78" rx="10"/>
   <text class="t-h mono" x="374" y="264">POST /v1/signals</text>
-  <text class="t-b" x="374" y="284">x-lantern-signal-token,</text>
+  <text class="t-b" x="374" y="284">x-pal-signal-token,</text>
   <text class="t-b" x="374" y="300">constant-time, fails closed</text>
   <rect class="node" x="360" y="340" width="240" height="78" rx="10"/>
   <text class="t-h mono" x="374" y="364">device-signals.jsonl</text>
@@ -103,7 +103,7 @@
   <text class="t-b" x="964" y="406">no place</text>
   <path class="edge" d="M890 339H920V200H948" marker-end="url(#personal-harness-flow-a)"/>
   <path class="edge-flame" d="M890 421H935V380H948" marker-end="url(#personal-harness-flow-af)"/>
-  <text class="t-s" x="40" y="510">Kill switch: LANTERN_IPHONE_SIGNALS=off. The bridge keeps only a distilled summary; the shortcut endpoint is fail-closed without LANTERN_SIGNAL_TOKEN.</text>
+  <text class="t-s" x="40" y="510">Kill switch: PAL_IPHONE_SIGNALS=off. The bridge keeps only a distilled summary; the shortcut endpoint is fail-closed without PAL_SIGNAL_TOKEN.</text>
   <g transform="translate(40 550)">
     <rect class="node" x="0" width="14" height="14" rx="3"/><text class="t-s" x="22" y="11">Component</text>
     <rect class="zone" x="112" width="14" height="14" rx="3"/><text class="t-s" x="134" y="11">Owner-only boundary (your Mac)</text>

@@ -29,8 +29,8 @@ use tokio_rustls::server::TlsStream;
 /// in dev mode when they are absent.  Exits the process in production when
 /// the config cannot be built.
 pub fn build_server_config() -> anyhow::Result<Option<Arc<ServerConfig>>> {
-    let cert_path = pal_env::var("PAL_TLS_CERT").ok();
-    let key_path = pal_env::var("PAL_TLS_KEY").ok();
+    let cert_path = std::env::var("PAL_TLS_CERT").ok();
+    let key_path = std::env::var("PAL_TLS_KEY").ok();
 
     match (cert_path, key_path) {
         (Some(cert), Some(key)) => {
@@ -41,15 +41,15 @@ pub fn build_server_config() -> anyhow::Result<Option<Arc<ServerConfig>>> {
             if is_prod_env() {
                 // FAIL CLOSED: never serve credentials in cleartext in prod.
                 eprintln!(
-                    "FATAL: LANTERN_TLS_CERT and LANTERN_TLS_KEY are required in \
-                     production (LANTERN_ENV={:?}). Refusing to start without TLS.",
-                    pal_env::var("PAL_ENV").unwrap_or_default()
+                    "FATAL: PAL_TLS_CERT and PAL_TLS_KEY are required in \
+                     production (PAL_ENV={:?}). Refusing to start without TLS.",
+                    std::env::var("PAL_ENV").unwrap_or_default()
                 );
                 std::process::exit(1);
             }
             tracing::warn!(
-                "LANTERN_TLS_CERT/LANTERN_TLS_KEY not set; serving PLAINTEXT on :8443. \
-                 This is unsafe outside dev/test. Set LANTERN_ENV=prod to make this fatal."
+                "PAL_TLS_CERT/PAL_TLS_KEY not set; serving PLAINTEXT on :8443. \
+                 This is unsafe outside dev/test. Set PAL_ENV=prod to make this fatal."
             );
             Ok(None)
         }
@@ -59,7 +59,7 @@ pub fn build_server_config() -> anyhow::Result<Option<Arc<ServerConfig>>> {
 /// Returns `true` when `PAL_ENV` indicates a production-like environment.
 pub fn is_prod_env() -> bool {
     matches!(
-        pal_env::var("PAL_ENV")
+        std::env::var("PAL_ENV")
             .unwrap_or_default()
             .to_lowercase()
             .as_str(),

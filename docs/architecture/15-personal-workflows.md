@@ -91,7 +91,7 @@ This means:
 
 The trade-off: if the user forgets their passphrase, **we cannot recover their workflows** (we can recover their account metadata, runs history, and dashboard, but not their credentials). The mobile app encourages users to print or save a recovery phrase at signup.
 
-For users who want a less paranoid mode, there's an "easy mode" that uses a Lantern-managed KMS key instead of a user passphrase. Same key separation, but PAL can in principle decrypt — used by users who care more about not losing access than maximum privacy.
+For users who want a less paranoid mode, there's an "easy mode" that uses a PAL-managed KMS key instead of a user passphrase. Same key separation, but PAL can in principle decrypt — used by users who care more about not losing access than maximum privacy.
 
 ---
 

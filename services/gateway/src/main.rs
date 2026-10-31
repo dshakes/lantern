@@ -48,7 +48,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(
         listen_addr = %config.listen_addr,
         control_plane_addr = %config.control_plane_addr,
-        "starting lantern-gateway"
+        "starting pal-gateway"
     );
 
     let listen_addr = config.listen_addr;
@@ -59,8 +59,8 @@ async fn main() -> anyhow::Result<()> {
     let introspector = introspect::ApiKeyIntrospector::from_env().map(std::sync::Arc::new);
     if introspector.is_none() {
         tracing::warn!(
-            "API-key auth disabled: set LANTERN_CONTROL_PLANE_URL and \
-             LANTERN_GRPC_SERVICE_TOKEN to enable X-API-Key introspection"
+            "API-key auth disabled: set PAL_CONTROL_PLANE_URL and \
+             PAL_GRPC_SERVICE_TOKEN to enable X-API-Key introspection"
         );
     }
 

@@ -4,9 +4,9 @@ Proves:
   * GPU scheduling: requires `limits.gpu="1"` from the spec; scheduler
     routes to a node with available GPU capacity.
   * OTel traces: emits one span per inference batch through the unix
-    socket the harness exposes at /run/lantern/otlp.sock.
+    socket the harness exposes at /run/pal/otlp.sock.
   * Cost reporting: writes accumulated cost (in USD) to
-    /run/lantern/cost.txt after each batch; harness reads + reports
+    /run/pal/cost.txt after each batch; harness reads + reports
     via Heartbeat.
 
 Real PAL image would have torch + onnxruntime-gpu + the model
@@ -23,8 +23,8 @@ import sys
 import time
 from pathlib import Path
 
-OTLP_SOCK = "/run/lantern/otlp.sock"
-COST_FILE = Path("/run/lantern/cost.txt")
+OTLP_SOCK = "/run/pal/otlp.sock"
+COST_FILE = Path("/run/pal/cost.txt")
 COST_PER_TOKEN_USD = 0.0000002  # 2e-7, ~ T4 cents/hr / typical throughput
 
 

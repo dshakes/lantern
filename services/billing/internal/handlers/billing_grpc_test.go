@@ -15,9 +15,9 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/billing/internal/middleware"
-	"github.com/dshakes/lantern/services/billing/internal/server"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/billing/internal/middleware"
+	"github.com/dshakes/pal/services/billing/internal/server"
 )
 
 // newBillingTestServer registers the real BillingService (behind the tenant
@@ -25,7 +25,7 @@ import (
 // client. The server has a nil Pool: the RPCs exercised here all fail at the
 // request-validation boundary before any DB access, which is exactly what a
 // registration smoke test wants to prove — the service is wired and answering.
-func newBillingTestServer(t *testing.T) lanternv1.BillingServiceClient {
+func newBillingTestServer(t *testing.T) palv1.BillingServiceClient {
 	t.Helper()
 
 	logger := zaptest.NewLogger(t)
@@ -35,7 +35,7 @@ func newBillingTestServer(t *testing.T) lanternv1.BillingServiceClient {
 	)
 
 	svc := NewBillingService(&server.Server{Logger: logger})
-	lanternv1.RegisterBillingServiceServer(grpcSrv, svc)
+	palv1.RegisterBillingServiceServer(grpcSrv, svc)
 	reflection.Register(grpcSrv)
 
 	go func() { _ = grpcSrv.Serve(lis) }()
@@ -53,7 +53,7 @@ func newBillingTestServer(t *testing.T) lanternv1.BillingServiceClient {
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 
-	return lanternv1.NewBillingServiceClient(conn)
+	return palv1.NewBillingServiceClient(conn)
 }
 
 func tenantCtx(tenantID string) context.Context {
@@ -80,7 +80,7 @@ func TestBillingService_Registered(t *testing.T) {
 			name: "EmitUsage rejects empty events (handler reached)",
 			ctx:  tenantCtx("tenant-1"),
 			call: func(ctx context.Context) error {
-				_, err := client.EmitUsage(ctx, &lanternv1.EmitUsageRequest{})
+				_, err := client.EmitUsage(ctx, &palv1.EmitUsageRequest{})
 				return err
 			},
 			wantErr: codes.InvalidArgument,
@@ -89,7 +89,7 @@ func TestBillingService_Registered(t *testing.T) {
 			name: "SetBudget rejects non-positive limit (handler reached)",
 			ctx:  tenantCtx("tenant-1"),
 			call: func(ctx context.Context) error {
-				_, err := client.SetBudget(ctx, &lanternv1.SetBudgetRequest{})
+				_, err := client.SetBudget(ctx, &palv1.SetBudgetRequest{})
 				return err
 			},
 			wantErr: codes.InvalidArgument,
@@ -98,7 +98,7 @@ func TestBillingService_Registered(t *testing.T) {
 			name: "GetUsage requires from/to (handler reached)",
 			ctx:  tenantCtx("tenant-1"),
 			call: func(ctx context.Context) error {
-				_, err := client.GetUsage(ctx, &lanternv1.GetUsageRequest{})
+				_, err := client.GetUsage(ctx, &palv1.GetUsageRequest{})
 				return err
 			},
 			wantErr: codes.InvalidArgument,
@@ -107,7 +107,7 @@ func TestBillingService_Registered(t *testing.T) {
 			name: "tenant interceptor rejects missing metadata",
 			ctx:  context.Background(),
 			call: func(ctx context.Context) error {
-				_, err := client.EmitUsage(ctx, &lanternv1.EmitUsageRequest{})
+				_, err := client.EmitUsage(ctx, &palv1.EmitUsageRequest{})
 				return err
 			},
 			wantErr: codes.Unauthenticated,
@@ -130,8 +130,8 @@ func TestBillingService_ReflectionLists(t *testing.T) {
 	client := newBillingTestServer(t)
 	_ = client // same process; build a reflection client over a fresh conn
 
-	if !reflectionLists(t, billingDialer(t), "lantern.v1.BillingService") {
-		t.Fatal("lantern.v1.BillingService not listed by server reflection")
+	if !reflectionLists(t, billingDialer(t), "pal.v1.BillingService") {
+		t.Fatal("pal.v1.BillingService not listed by server reflection")
 	}
 }
 
@@ -143,7 +143,7 @@ func billingDialer(t *testing.T) reflectionpb.ServerReflectionClient {
 	logger := zaptest.NewLogger(t)
 	lis := bufconn.Listen(1024 * 1024)
 	grpcSrv := grpc.NewServer()
-	lanternv1.RegisterBillingServiceServer(grpcSrv, NewBillingService(&server.Server{Logger: logger}))
+	palv1.RegisterBillingServiceServer(grpcSrv, NewBillingService(&server.Server{Logger: logger}))
 	reflection.Register(grpcSrv)
 
 	go func() { _ = grpcSrv.Serve(lis) }()

@@ -123,7 +123,7 @@ func TestReceipt_Ed25519_IssueVerifyRoundTrip(t *testing.T) {
 //  3. Verify the signature using ONLY the public key + canonical JSON bytes.
 //
 // No private key is referenced after derivation; the test verifies that the
-// public key alone (as published at /.well-known/lantern-receipts) is
+// public key alone (as published at /.well-known/pal-receipts) is
 // sufficient for offline verification.
 func TestReceipt_Ed25519_ExternalVerify(t *testing.T) {
 	seedB64 := generateTestSeed(t)
@@ -156,7 +156,7 @@ func TestReceipt_Ed25519_ExternalVerify(t *testing.T) {
 
 	// Step 3: external verifier obtains public key from WellKnown.
 	hwk := &ReceiptHandler{srv: nil}
-	wkReq := httptest.NewRequest(http.MethodGet, "/.well-known/lantern-receipts", nil)
+	wkReq := httptest.NewRequest(http.MethodGet, "/.well-known/pal-receipts", nil)
 	wkRec := httptest.NewRecorder()
 	hwk.WellKnown(wkRec, wkReq)
 
@@ -310,7 +310,7 @@ func TestReceipt_HMAC_WellKnownWhenNoEd25519(t *testing.T) {
 	t.Setenv("PAL_RECEIPT_SECRET", "wk-hmac-secret")
 
 	h := &ReceiptHandler{srv: nil}
-	r := httptest.NewRequest(http.MethodGet, "/.well-known/lantern-receipts", nil)
+	r := httptest.NewRequest(http.MethodGet, "/.well-known/pal-receipts", nil)
 	rr := httptest.NewRecorder()
 	h.WellKnown(rr, r)
 
@@ -378,7 +378,7 @@ func TestReceipt_Ed25519_WellKnownShape(t *testing.T) {
 	}
 
 	h := &ReceiptHandler{srv: nil}
-	r := httptest.NewRequest(http.MethodGet, "/.well-known/lantern-receipts", nil)
+	r := httptest.NewRequest(http.MethodGet, "/.well-known/pal-receipts", nil)
 	rr := httptest.NewRecorder()
 	h.WellKnown(rr, r)
 

@@ -43,7 +43,7 @@ run-api: ## Run the control-plane API server locally
 	@bash scripts/kill-port.sh 8080 50051
 	if [ -f .env.local ]; then set -a; . ./.env.local; set +a; fi; \
 	cd services/control-plane && \
-	DATABASE_URL="postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable" \
+	DATABASE_URL="postgres://pal:pal@localhost:5432/pal?sslmode=disable" \
 	REDIS_URL="redis://localhost:6379" \
 	S3_ENDPOINT="http://localhost:9000" \
 	LOG_LEVEL="debug" \
@@ -69,7 +69,7 @@ run-api-runtime: ## Run the control-plane API wired to the real runtime-schedule
 	@bash scripts/kill-port.sh 8080 50051
 	. scripts/launchd/service-env.sh; \
 	cd services/control-plane && \
-	DATABASE_URL="postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable" \
+	DATABASE_URL="postgres://pal:pal@localhost:5432/pal?sslmode=disable" \
 	REDIS_URL="redis://localhost:6379" \
 	S3_ENDPOINT="http://localhost:9000" \
 	LOG_LEVEL="debug" \
@@ -78,7 +78,7 @@ run-api-runtime: ## Run the control-plane API wired to the real runtime-schedule
 run-api-free: ## Run the API but route LLM calls through local `claude` CLI ($0 — uses Claude Max subscription)
 	@bash scripts/kill-port.sh 8080 50051
 	cd services/control-plane && \
-	DATABASE_URL="postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable" \
+	DATABASE_URL="postgres://pal:pal@localhost:5432/pal?sslmode=disable" \
 	REDIS_URL="redis://localhost:6379" \
 	S3_ENDPOINT="http://localhost:9000" \
 	LOG_LEVEL="debug" \
@@ -107,11 +107,11 @@ autostart-uninstall: ## Remove all PAL Runtime LaunchAgents
 	@bash scripts/launchd/install.sh --uninstall
 
 autostart-status: ## Show currently-loaded PAL Runtime LaunchAgents + recent log lines
-	@launchctl list | grep -iE "dev\.(pal|lantern)" || echo "(no PAL launchagents loaded — run 'make autostart-install')"
+	@launchctl list | grep -iE "dev\.pal" || echo "(no PAL launchagents loaded — run 'make autostart-install')"
 	@echo ""
 	@for s in infra api dashboard whatsapp-bridge imessage-bridge; do \
 		echo "—— $$s last 3 lines ——"; \
-		tail -3 "$$HOME/Library/Logs/Lantern/$$s.err.log" 2>/dev/null || echo "(no log yet)"; \
+		tail -3 "$$HOME/Library/Logs/PAL/$$s.err.log" 2>/dev/null || echo "(no log yet)"; \
 	done
 
 regression: ## Run the full alpha-readiness regression test suite
@@ -177,9 +177,9 @@ proto: ## Regenerate code from proto definitions
 	protoc --proto_path=packages/proto \
 		--go_out=gen/go --go_opt=paths=source_relative \
 		--go-grpc_out=gen/go --go-grpc_opt=paths=source_relative \
-		packages/proto/lantern/v1/*.proto
+		packages/proto/pal/v1/*.proto
 	@echo "Generating TypeScript types..."
-	npx ts-proto --out=gen/ts packages/proto/lantern/v1/*.proto
+	npx ts-proto --out=gen/ts packages/proto/pal/v1/*.proto
 	@echo "Done."
 
 # ---------- Test ----------
@@ -191,14 +191,12 @@ test-go: ## Run Go tests
 	cd services/workflow-engine && go test -race -count=1 ./...
 	cd services/scheduler && go test -race -count=1 ./...
 	cd services/runtime-scheduler && CGO_ENABLED=0 go test ./...
-	cd packages/palenv && go test -race -count=1 ./...
 	cd packages/grpctls && go test -race -count=1 ./...
 
 test-rust: ## Run Rust tests
 	cd services/gateway && cargo test
 	cd services/model-router && cargo test
 	cd services/runtime-manager && cargo test
-	cd packages/pal-env-rs && cargo test
 	cd packages/pal-grpc-tls-rs && cargo test
 
 test-ts: ## Run TypeScript tests
@@ -208,7 +206,7 @@ test-ts: ## Run TypeScript tests
 test-python: ## Run Python tests
 	cd packages/sdk-python && python3 -m pytest tests/ -v
 
-test-e2e: ## Run live-stack e2e suites (FAILS when stack is down; set E2E_ALLOW_SKIP=1 to skip instead). Set LANTERN_E2E_API_URL or LANTERN_API_URL to target a non-default stack — see e2e/README.md
+test-e2e: ## Run live-stack e2e suites (FAILS when stack is down; set E2E_ALLOW_SKIP=1 to skip instead). Set PAL_E2E_API_URL or PAL_API_URL to target a non-default stack — see e2e/README.md
 	$(MAKE) e2e-lint
 	cd e2e/runtime && go test -tags e2e -count=1 -v ./...
 	cd e2e/quickstart && go test -tags e2e -count=1 -p 1 -v ./...
@@ -248,17 +246,17 @@ test-db: ## Start dev Postgres if needed, then run Go tests that require a live 
 	@echo "==> Waiting for Postgres to be ready (up to 30s)..."
 	@for i in $$(seq 1 30); do \
 		docker compose -f infra/docker/docker-compose.yml exec -T postgres \
-			pg_isready -U lantern -d lantern -q 2>/dev/null && break; \
+			pg_isready -U pal -d pal -q 2>/dev/null && break; \
 		echo "  attempt $$i/30 — not ready yet"; sleep 1; \
 	done
 	@docker compose -f infra/docker/docker-compose.yml exec -T postgres \
-		pg_isready -U lantern -d lantern -q || (echo "ERROR: Postgres never became ready" && exit 1)
+		pg_isready -U pal -d pal -q || (echo "ERROR: Postgres never became ready" && exit 1)
 	@echo "==> Running Go tests with DATABASE_URL..."
 	cd services/control-plane && \
-		DATABASE_URL="postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable" \
+		DATABASE_URL="postgres://pal:pal@localhost:5432/pal?sslmode=disable" \
 		go test -race -count=1 ./...
 	cd services/runtime-scheduler && \
-		DATABASE_URL="postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable" \
+		DATABASE_URL="postgres://pal:pal@localhost:5432/pal?sslmode=disable" \
 		go test -race -count=1 ./...
 
 rls-validate: ## Validate RLS policies + handler cutover before flipping PAL_RLS_ENFORCE=1
@@ -267,14 +265,13 @@ rls-validate: ## Validate RLS policies + handler cutover before flipping PAL_RLS
 # ---------- Lint ----------
 
 lint: lint-go lint-rust lint-ts ## Lint everything
-	bash scripts/env-read-check.sh
+	bash scripts/brand-check.sh --enforce
 
 lint-go: ## Lint Go code (same modules as CI sdlc-lint)
 	cd services/control-plane && golangci-lint run ./...
 	cd services/workflow-engine && golangci-lint run ./...
 	cd services/runtime-scheduler && golangci-lint run ./...
 	cd services/scheduler && golangci-lint run ./...
-	cd packages/palenv && golangci-lint run ./...
 	cd packages/grpctls && golangci-lint run ./...
 
 lint-rust: lint-rust-fmt ## Lint Rust code
@@ -283,7 +280,6 @@ lint-rust: lint-rust-fmt ## Lint Rust code
 	cd services/runtime-manager && cargo clippy -- -D warnings
 	cd services/surface-gateway && cargo clippy -- -D warnings
 	cd services/harness && cargo clippy -- -D warnings
-	cd packages/pal-env-rs && cargo clippy --all-targets -- -D warnings
 	cd packages/pal-grpc-tls-rs && cargo clippy --all-targets -- -D warnings
 
 lint-rust-fmt: ## Check rustfmt on every Rust crate (matches CI sdlc-lint)

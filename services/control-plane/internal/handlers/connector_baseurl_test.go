@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/connectorreplay"
+	"github.com/dshakes/pal/services/control-plane/internal/connectorreplay"
 )
 
 const replayToken = "tok-secret-do-not-leak"

@@ -90,7 +90,7 @@ present situation is readable on every reply path that could be asked about it.*
    (`owner-profile-auto-update.ts`) currently fires only on self-chat with a
    teaching verb. Extend the same extractor to (a) the owner's *sent*
    messages to anyone ("we're opening Sep 10" said to a friend is a fact),
-   and (b) a `lantern teach "<fact>"` CLI entry so anything said to an
+   and (b) a `pal teach "<fact>"` CLI entry so anything said to an
    assistant can be written down. Both route through the existing
    `## Now` / `## Public` / `## Facts` writer; nothing new is invented.
 3. **Contact path reads working memory.** `WorkingAction` gains an optional

@@ -2,7 +2,7 @@
 
 > **Read this first.** Every other architecture doc assumes you've read this one.
 >
-> **In one line:** PAL runs production agents on a control-plane / data-plane split, with every step journaled to Postgres, every model call routed by capability, and untrusted code confined to microVMs. **Try it:** `lantern dev`, then follow [`headless-agent-quickstart`](../guides/headless-agent-quickstart.md).
+> **In one line:** PAL runs production agents on a control-plane / data-plane split, with every step journaled to Postgres, every model call routed by capability, and untrusted code confined to microVMs. **Try it:** `pal dev`, then follow [`headless-agent-quickstart`](../guides/headless-agent-quickstart.md).
 
 ## Mission
 
@@ -93,7 +93,7 @@ The durable execution heart of PAL. Event-sourced: every step start, step comple
 
 Owns all interaction with physical compute. Receives "schedule this run on this isolation class" gRPC calls from the workflow engine and runtime scheduler. Builds a Kubernetes pod spec and sets `runtimeClassName` from the isolation class ([ADR 0009](../adr/0009-kubernetes-default-runtime-substrate.md)): `runc` (TRUSTED), `gvisor` (STANDARD/UNTRUSTED), `kata-qemu` or `kata-fc` (HOSTILE), `crun+wasm` (WASM). Fail-closed: never downgrades UNTRUSTED/HOSTILE to a bare pod. Owns warm pools and snapshot/restore for fast cold starts (<200ms target). Enforces seccomp + egress filtering for untrusted classes. Streams stdout/stderr/events back over gRPC to the engine and gateway.
 
-On the microVM tier (Firecracker) the manager also owns the sandbox lifecycle — **pause** (snapshot + stop), **resume** (restore under the same `vm_id`), **fork** (N children from one snapshot) — and the **spawn contract**: a `spawn.json` on the read-only cert drive tells the in-VM harness what to run, which egress rules apply, and which uid to drop to. Every `RuntimeManager` RPC is authorized per call: callers present `x-lantern-service-token`; a per-VM cert (`OU=lantern-vm`) is refused everywhere except that VM's own harness channel. See [ADR 0025](../adr/0025-sandbox-spawn-contract-and-manager-authz.md).
+On the microVM tier (Firecracker) the manager also owns the sandbox lifecycle — **pause** (snapshot + stop), **resume** (restore under the same `vm_id`), **fork** (N children from one snapshot) — and the **spawn contract**: a `spawn.json` on the read-only cert drive tells the in-VM harness what to run, which egress rules apply, and which uid to drop to. Every `RuntimeManager` RPC is authorized per call: callers present `x-pal-service-token`; a per-VM cert (`OU=pal-vm`) is refused everywhere except that VM's own harness channel. See [ADR 0025](../adr/0025-sandbox-spawn-contract-and-manager-authz.md).
 
 ### Model Router (Rust)
 
@@ -105,7 +105,7 @@ The single point of contact with all LLM providers. Implements a Vercel-AI-Gatew
 - **Semantic cache** (embedding-based near-duplicate hit on read-only prompts)
 - **Provider failover** (transparent retry against the next provider on 5xx / rate limit)
 - **Per-tenant budgets** with hard cuts and warning webhooks
-- **Service-token auth** on its gRPC port (`x-lantern-service-token`, same shared token as the other internal services; invariant #7)
+- **Service-token auth** on its gRPC port (`x-pal-service-token`, same shared token as the other internal services; invariant #7)
 - **Streaming generation IDs** injected on the first token (Vercel pattern) so dashboard reconnects can resume
 
 ### Memory Service (Go)
@@ -170,12 +170,12 @@ The control-plane workflow interpreter owns the execution loop. No VM is spawned
    └─ Interpreter resumes at the first uncompleted step (journal replay)
 ```
 
-### Path B — Headless microVM run (`POST /v1/runtime/schedule` · `lantern run` CLI)
+### Path B — Headless microVM run (`POST /v1/runtime/schedule` · `pal run` CLI)
 
 The agent bundle runs as a process inside a hardened pod or microVM; the harness is PID 1. Crash-replay of the spawn itself is handled by the scheduler/manager lifecycle; step-level journaling is the engine's job (see the two-tier note below).
 
 ```
-1. `lantern run my-agent.yaml --input '{...}'`
+1. `pal run my-agent.yaml --input '{...}'`
    └─▶ CLI → Gateway → Control Plane: POST /v1/runtime/schedule
 
 2. Control Plane:

@@ -39,7 +39,7 @@ available there.
 inspection point. On a node without one (guest egress mode, or a non-Firecracker
 backend) the manager **refuses** a spawn/restore whose policy has a `block`
 rule (`FAILED_PRECONDITION`), and records audit-only rules as not enforced (a
-`lantern_audit` log line, `decision=not_enforced`). A VM with DLP never comes
+`pal_audit` log line, `decision=not_enforced`). A VM with DLP never comes
 from the warm pool (that broker was built for another request). Restores
 (pause/resume, idle auto-resume, fork) carry the restoring request's policy into
 the new incarnation's broker.
@@ -84,7 +84,7 @@ rule that silently matches nothing or a mode silently downgraded to `audit`.
 |------|-----------|
 | `off` | Rule is inactive (compiled out) |
 | `audit` | Emit a `dlp` audit event (`decision=audit`); let the request through |
-| `block` | Emit a `dlp` audit event (`decision=block`); return `403 Forbidden` (`X-Lantern-Reason: dlp-block`) |
+| `block` | Emit a `dlp` audit event (`decision=block`); return `403 Forbidden` (`X-Pal-Reason: dlp-block`) |
 
 **Body reading.** The broker reads the body before dialling, following the
 request's own framing: Content-Length → exactly `min(len, cap)` bytes; chunked

@@ -49,7 +49,7 @@ agent code: ctx.llm.complete({ prompt, tools, history? })
               └──────────────────┘
 ```
 
-The Context Manager is implemented in the SDK (`@lantern/sdk/context`) so it runs inside the agent sandbox, not as a separate service. This keeps it deterministic with the workflow journal — the same input → the same prompt → the same model decision → the same response (modulo provider non-determinism the Spectrum tracks).
+The Context Manager is implemented in the SDK (`@pal/sdk/context`) so it runs inside the agent sandbox, not as a separate service. This keeps it deterministic with the workflow journal — the same input → the same prompt → the same model decision → the same response (modulo provider non-determinism the Spectrum tracks).
 
 ---
 

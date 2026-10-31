@@ -12,12 +12,12 @@ sidebar:
 
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Every sample here was checked against the SDK source on `master` (`packages/sdk-ts`, `packages/sdk-python`, `packages/sdk-go`). The TypeScript package is `@pal-runtime/sdk`, the Python package is `pal-runtime` (import `pal`), and the Go module keeps its path `github.com/dshakes/lantern/packages/sdk-go` (package `lantern`). For the raw endpoints see the [API reference](/docs/reference/api/).
+Every sample here was checked against the SDK source on `master` (`packages/sdk-ts`, `packages/sdk-python`, `packages/sdk-go`). The TypeScript package is `@pal-runtime/sdk`, the Python package is `pal-runtime` (import `pal`), and the Go module keeps its path `github.com/dshakes/pal/packages/sdk-go` (package `pal`). For the raw endpoints see the [API reference](/docs/reference/api/).
 
 ## Install
 
 <Aside type="caution" title="Not on a registry yet">
-None of the three is published. Install from a checkout. Do not `pip install lantern-sdk` from PyPI: that name belongs to an unrelated project.
+None of the three is published. Install from a checkout. Do not `pip install pal-sdk` from PyPI: that name belongs to an unrelated project.
 </Aside>
 
 <Tabs syncKey="lang">
@@ -39,14 +39,14 @@ pip install "./packages/sdk-python[deepagents]"
 </TabItem>
 <TabItem label="Go" icon="seti:go">
 ```bash
-go get github.com/dshakes/lantern/packages/sdk-go
+go get github.com/dshakes/pal/packages/sdk-go
 ```
 </TabItem>
 </Tabs>
 
 ## Client setup
 
-All three read `PAL_API_KEY` and `PAL_API_URL` when you pass nothing (the old `LANTERN_*` names still work). The built-in default URL (`https://api.lantern.run`) is not a live service, so always set `PAL_API_URL` to your own control plane, for example `http://localhost:8080`.
+All three read `PAL_API_KEY` and `PAL_API_URL` when you pass nothing (the old `PAL_*` names still work). The built-in default URL (`https://api.pal.example.com`) is not a live service, so always set `PAL_API_URL` to your own control plane, for example `http://localhost:8080`.
 
 <Tabs syncKey="lang">
 <TabItem label="TypeScript" icon="seti:typescript">
@@ -73,7 +73,7 @@ async with PalClient(
 </TabItem>
 <TabItem label="Go" icon="seti:go">
 ```go
-import pal "github.com/dshakes/lantern/packages/sdk-go"
+import pal "github.com/dshakes/pal/packages/sdk-go"
 
 c := pal.New(
     pal.WithBaseURL("http://localhost:8080"), // or PAL_API_URL

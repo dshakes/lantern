@@ -32,14 +32,15 @@ back to the PAL control plane via a secure gRPC tunnel.`,
 
 func newInfraInstallCommand() *cobra.Command {
 	var (
-		cloud              string
-		region             string
-		clusterName        string
-		existingCluster    string
-		instanceType       string
-		nodeCount          int
-		outputDir          string
-		firecrackerEnabled bool
+		cloud                string
+		region               string
+		clusterName          string
+		existingCluster      string
+		instanceType         string
+		nodeCount            int
+		outputDir            string
+		firecrackerEnabled   bool
+		controlPlaneEndpoint string
 	)
 
 	cmd := &cobra.Command{
@@ -60,9 +61,12 @@ Supported clouds: aws, gcp, azure`,
 			if tenantID == "" {
 				return fmt.Errorf("--tenant-id is required (or set PAL_TENANT_ID)")
 			}
+			if err := validateControlPlaneEndpoint(controlPlaneEndpoint); err != nil {
+				return err
+			}
 
 			if outputDir == "" {
-				outputDir = fmt.Sprintf("lantern-data-plane-%s", cloud)
+				outputDir = fmt.Sprintf("pal-data-plane-%s", cloud)
 			}
 
 			if isJSON() {
@@ -92,7 +96,7 @@ Supported clouds: aws, gcp, azure`,
 			}
 
 			// Generate the Terraform config files.
-			if err := generateTerraformConfig(cloud, region, clusterName, existingCluster, instanceType, nodeCount, tenantID, outputDir, firecrackerEnabled); err != nil {
+			if err := generateTerraformConfig(cloud, region, clusterName, existingCluster, instanceType, nodeCount, tenantID, controlPlaneEndpoint, outputDir, firecrackerEnabled); err != nil {
 				return fmt.Errorf("generate config: %w", err)
 			}
 
@@ -104,7 +108,7 @@ Supported clouds: aws, gcp, azure`,
 			fmt.Fprintf(os.Stderr, "\n  1. Review the generated configuration:\n")
 			fmt.Fprintf(os.Stderr, "     %scd %s && cat main.tf%s\n", colorCyan, outputDir, colorReset)
 			fmt.Fprintf(os.Stderr, "\n  2. Set your agent token:\n")
-			fmt.Fprintf(os.Stderr, "     %sexport TF_VAR_agent_token=\"<token from lantern.run/settings/data-planes>\"%s\n", colorCyan, colorReset)
+			fmt.Fprintf(os.Stderr, "     %sexport TF_VAR_agent_token=\"<token from your control plane: Settings → Data planes>\"%s\n", colorCyan, colorReset)
 			fmt.Fprintf(os.Stderr, "\n  3. Apply the Terraform:\n")
 			fmt.Fprintf(os.Stderr, "     %sterraform init && terraform plan && terraform apply%s\n", colorCyan, colorReset)
 			fmt.Fprintf(os.Stderr, "\n  4. Verify the connection:\n")
@@ -117,11 +121,12 @@ Supported clouds: aws, gcp, azure`,
 
 	cmd.Flags().StringVar(&cloud, "cloud", "", "Cloud provider: aws, gcp, or azure (required)")
 	cmd.Flags().StringVar(&region, "region", "us-east-1", "Cloud region")
-	cmd.Flags().StringVar(&clusterName, "cluster-name", "lantern-data-plane", "Name for the new Kubernetes cluster")
+	cmd.Flags().StringVar(&clusterName, "cluster-name", "pal-data-plane", "Name for the new Kubernetes cluster")
 	cmd.Flags().StringVar(&existingCluster, "existing-cluster", "", "Name of an existing cluster to use (skips cluster creation)")
 	cmd.Flags().StringVar(&instanceType, "instance-type", "", "Instance type for nodes (default: cloud-specific)")
 	cmd.Flags().IntVar(&nodeCount, "node-count", 3, "Number of nodes")
-	cmd.Flags().StringVar(&outputDir, "output-dir", "", "Directory for generated Terraform files (default: lantern-data-plane-<cloud>)")
+	cmd.Flags().StringVar(&outputDir, "output-dir", "", "Directory for generated Terraform files (default: pal-data-plane-<cloud>)")
+	cmd.Flags().StringVar(&controlPlaneEndpoint, "control-plane-endpoint", "", "URL of YOUR control plane (required; https://, or http://localhost)")
 	cmd.Flags().BoolVar(&firecrackerEnabled, "firecracker", false, "Enable Firecracker microVM support (requires bare-metal or nested virt)")
 
 	_ = cmd.MarkFlagRequired("cloud")
@@ -150,7 +155,7 @@ func newInfraStatusCommand() *cobra.Command {
 			fmt.Fprintln(os.Stderr)
 			printInfo("To check manually:")
 			fmt.Fprintf(os.Stderr, "  kubectl -n pal logs -l app.kubernetes.io/component=data-plane-agent -f\n")
-			fmt.Fprintf(os.Stderr, "  kubectl -n lantern port-forward svc/lantern-dp-lantern-data-plane-data-plane-agent 8090:8090\n")
+			fmt.Fprintf(os.Stderr, "  kubectl -n pal port-forward svc/pal-dp-pal-data-plane-data-plane-agent 8090:8090\n")
 			fmt.Fprintf(os.Stderr, "  curl http://localhost:8090/status\n")
 
 			return nil
@@ -180,9 +185,9 @@ func newInfraUpgradeCommand() *cobra.Command {
 			printWarning("This is a spike -- upgrade not yet wired to the backend.")
 			fmt.Fprintln(os.Stderr)
 			printInfo("To upgrade manually:")
-			fmt.Fprintf(os.Stderr, "  helm upgrade lantern-dp infra/helm/pal-data-plane \\\n")
+			fmt.Fprintf(os.Stderr, "  helm upgrade pal-dp infra/helm/pal-data-plane \\\n")
 			fmt.Fprintf(os.Stderr, "    --set global.image.tag=%s \\\n", version)
-			fmt.Fprintf(os.Stderr, "    -n lantern\n")
+			fmt.Fprintf(os.Stderr, "    -n pal\n")
 
 			return nil
 		},
@@ -218,7 +223,7 @@ func newInfraUninstallCommand() *cobra.Command {
 			printWarning("This is a spike -- uninstall not yet wired to the backend.")
 			fmt.Fprintln(os.Stderr)
 			printInfo("To uninstall manually:")
-			fmt.Fprintf(os.Stderr, "  helm uninstall lantern-dp -n lantern\n")
+			fmt.Fprintf(os.Stderr, "  helm uninstall pal-dp -n pal\n")
 			fmt.Fprintf(os.Stderr, "  terraform destroy\n")
 
 			return nil
@@ -233,7 +238,7 @@ func newInfraUninstallCommand() *cobra.Command {
 // --- helpers ---
 
 // generateTerraformConfig writes a terraform.tfvars file for the specified cloud.
-func generateTerraformConfig(cloud, region, clusterName, existingCluster, instanceType string, nodeCount int, tenantID, outputDir string, firecrackerEnabled bool) error {
+func generateTerraformConfig(cloud, region, clusterName, existingCluster, instanceType string, nodeCount int, tenantID, controlPlaneEndpoint, outputDir string, firecrackerEnabled bool) error {
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return fmt.Errorf("create output dir: %w", err)
 	}
@@ -257,7 +262,7 @@ func generateTerraformConfig(cloud, region, clusterName, existingCluster, instan
 	}
 
 	// Write terraform.tfvars.
-	tfvars := generateTFVars(cloud, region, clusterName, existingCluster, instanceType, nodeCount, tenantID, firecrackerEnabled)
+	tfvars := generateTFVars(cloud, region, clusterName, existingCluster, instanceType, nodeCount, tenantID, controlPlaneEndpoint, firecrackerEnabled)
 	if err := os.WriteFile(filepath.Join(outputDir, "terraform.tfvars"), []byte(tfvars), 0o644); err != nil {
 		return fmt.Errorf("write terraform.tfvars: %w", err)
 	}
@@ -271,10 +276,10 @@ func generateMainTF(cloud, region string) string {
 		return `# PAL Data Plane — AWS
 #
 # Generated by: pal infra install --cloud aws
-# Docs: https://docs.lantern.run/deploy/aws
+# Docs: https://dshakes.github.io/pal/deploy/aws
 
-module "lantern_data_plane" {
-  source = "github.com/dshakes/lantern//infra/terraform/aws"
+module "pal_data_plane" {
+  source = "github.com/dshakes/pal//infra/terraform/aws"
 
   cluster_name                   = var.cluster_name
   region                         = var.region
@@ -289,7 +294,7 @@ module "lantern_data_plane" {
 
 variable "cluster_name" {
   type    = string
-  default = "lantern-data-plane"
+  default = "pal-data-plane"
 }
 
 variable "region" {
@@ -314,7 +319,6 @@ variable "existing_cluster_name" {
 
 variable "pal_control_plane_endpoint" {
   type    = string
-  default = "https://api.lantern.run"
 }
 
 variable "tenant_id" {
@@ -332,15 +336,15 @@ variable "firecracker_enabled" {
 }
 
 output "cluster_endpoint" {
-  value = module.lantern_data_plane.cluster_endpoint
+  value = module.pal_data_plane.cluster_endpoint
 }
 
 output "kubeconfig_command" {
-  value = module.lantern_data_plane.kubeconfig_command
+  value = module.pal_data_plane.kubeconfig_command
 }
 
 output "data_plane_status" {
-  value = module.lantern_data_plane.data_plane_status
+  value = module.pal_data_plane.data_plane_status
 }
 `
 
@@ -348,10 +352,10 @@ output "data_plane_status" {
 		return `# PAL Data Plane — GCP
 #
 # Generated by: pal infra install --cloud gcp
-# Docs: https://docs.lantern.run/deploy/gcp
+# Docs: https://dshakes.github.io/pal/deploy/gcp
 
-module "lantern_data_plane" {
-  source = "github.com/dshakes/lantern//infra/terraform/gcp"
+module "pal_data_plane" {
+  source = "github.com/dshakes/pal//infra/terraform/gcp"
 
   project_id                     = var.project_id
   cluster_name                   = var.cluster_name
@@ -371,7 +375,7 @@ variable "project_id" {
 
 variable "cluster_name" {
   type    = string
-  default = "lantern-data-plane"
+  default = "pal-data-plane"
 }
 
 variable "region" {
@@ -396,7 +400,6 @@ variable "existing_cluster_name" {
 
 variable "pal_control_plane_endpoint" {
   type    = string
-  default = "https://api.lantern.run"
 }
 
 variable "tenant_id" {
@@ -414,15 +417,15 @@ variable "firecracker_enabled" {
 }
 
 output "cluster_endpoint" {
-  value = module.lantern_data_plane.cluster_endpoint
+  value = module.pal_data_plane.cluster_endpoint
 }
 
 output "kubeconfig_command" {
-  value = module.lantern_data_plane.kubeconfig_command
+  value = module.pal_data_plane.kubeconfig_command
 }
 
 output "data_plane_status" {
-  value = module.lantern_data_plane.data_plane_status
+  value = module.pal_data_plane.data_plane_status
 }
 `
 
@@ -430,10 +433,10 @@ output "data_plane_status" {
 		return `# PAL Data Plane — Azure
 #
 # Generated by: pal infra install --cloud azure
-# Docs: https://docs.lantern.run/deploy/azure
+# Docs: https://dshakes.github.io/pal/deploy/azure
 
-module "lantern_data_plane" {
-  source = "github.com/dshakes/lantern//infra/terraform/azure"
+module "pal_data_plane" {
+  source = "github.com/dshakes/pal//infra/terraform/azure"
 
   cluster_name                   = var.cluster_name
   location                       = var.location
@@ -448,7 +451,7 @@ module "lantern_data_plane" {
 
 variable "cluster_name" {
   type    = string
-  default = "lantern-data-plane"
+  default = "pal-data-plane"
 }
 
 variable "location" {
@@ -478,7 +481,6 @@ variable "existing_resource_group" {
 
 variable "pal_control_plane_endpoint" {
   type    = string
-  default = "https://api.lantern.run"
 }
 
 variable "tenant_id" {
@@ -496,15 +498,15 @@ variable "firecracker_enabled" {
 }
 
 output "cluster_endpoint" {
-  value = module.lantern_data_plane.cluster_endpoint
+  value = module.pal_data_plane.cluster_endpoint
 }
 
 output "kubeconfig_command" {
-  value = module.lantern_data_plane.kubeconfig_command
+  value = module.pal_data_plane.kubeconfig_command
 }
 
 output "data_plane_status" {
-  value = module.lantern_data_plane.data_plane_status
+  value = module.pal_data_plane.data_plane_status
 }
 `
 
@@ -513,7 +515,7 @@ output "data_plane_status" {
 	}
 }
 
-func generateTFVars(cloud, region, clusterName, existingCluster, instanceType string, nodeCount int, tenantID string, firecrackerEnabled bool) string {
+func generateTFVars(cloud, region, clusterName, existingCluster, instanceType string, nodeCount int, tenantID, controlPlaneEndpoint string, firecrackerEnabled bool) string {
 	var b strings.Builder
 
 	b.WriteString(fmt.Sprintf("# Generated by: pal infra install --cloud %s\n", cloud))
@@ -552,8 +554,23 @@ func generateTFVars(cloud, region, clusterName, existingCluster, instanceType st
 	b.WriteString(fmt.Sprintf("tenant_id = %q\n", tenantID))
 	b.WriteString("# agent_token = \"<set via TF_VAR_agent_token or here>\"\n")
 	b.WriteString("\n")
-	b.WriteString(fmt.Sprintf("pal_control_plane_endpoint = %q\n", "https://api.lantern.run"))
+	b.WriteString(fmt.Sprintf("pal_control_plane_endpoint = %q\n", controlPlaneEndpoint))
 	b.WriteString(fmt.Sprintf("firecracker_enabled = %t\n", firecrackerEnabled))
 
 	return b.String()
+}
+
+// validateControlPlaneEndpoint refuses an empty or plain-http endpoint: the
+// data-plane agent sends its bootstrap token there, so there is no default
+// and only https:// (or a localhost http:// for development) is accepted.
+func validateControlPlaneEndpoint(u string) error {
+	switch {
+	case u == "":
+		return fmt.Errorf("--control-plane-endpoint is required (the URL of your control plane)")
+	case strings.HasPrefix(u, "https://"):
+		return nil
+	case strings.HasPrefix(u, "http://localhost"), strings.HasPrefix(u, "http://127.0.0.1"):
+		return nil
+	}
+	return fmt.Errorf("--control-plane-endpoint must be an https:// URL (http:// only for localhost), got %q", u)
 }

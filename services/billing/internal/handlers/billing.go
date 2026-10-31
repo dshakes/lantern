@@ -12,18 +12,18 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/billing/internal/middleware"
-	"github.com/dshakes/lantern/services/billing/internal/server"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/billing/internal/middleware"
+	"github.com/dshakes/pal/services/billing/internal/server"
 )
 
-var tracer = otel.Tracer("lantern.billing")
+var tracer = otel.Tracer("pal.billing")
 
-// BillingService implements the lantern.v1.BillingService gRPC server. Wire
+// BillingService implements the pal.v1.BillingService gRPC server. Wire
 // types come from gen/go (the proto is the source of truth, invariant #6);
 // tenant is read from gRPC metadata (invariant #7), never the request body.
 type BillingService struct {
-	lanternv1.UnimplementedBillingServiceServer
+	palv1.UnimplementedBillingServiceServer
 
 	srv *server.Server
 }
@@ -44,7 +44,7 @@ func setRLSTenantID(ctx context.Context, tx pgx.Tx, tenantID string) error {
 }
 
 // EmitUsage batch-inserts usage events for metering.
-func (s *BillingService) EmitUsage(ctx context.Context, req *lanternv1.EmitUsageRequest) (*lanternv1.EmitUsageResponse, error) {
+func (s *BillingService) EmitUsage(ctx context.Context, req *palv1.EmitUsageRequest) (*palv1.EmitUsageResponse, error) {
 	ctx, span := tracer.Start(ctx, "BillingService.EmitUsage")
 	defer span.End()
 
@@ -116,14 +116,14 @@ func (s *BillingService) EmitUsage(ctx context.Context, req *lanternv1.EmitUsage
 		zap.Int32("rejected", rejected),
 	)
 
-	return &lanternv1.EmitUsageResponse{
+	return &palv1.EmitUsageResponse{
 		Accepted: accepted,
 		Rejected: rejected,
 	}, nil
 }
 
 // CheckBudget returns the current budget status for a tenant.
-func (s *BillingService) CheckBudget(ctx context.Context, _ *lanternv1.CheckBudgetRequest) (*lanternv1.BudgetStatus, error) {
+func (s *BillingService) CheckBudget(ctx context.Context, _ *palv1.CheckBudgetRequest) (*palv1.BudgetStatus, error) {
 	ctx, span := tracer.Start(ctx, "BillingService.CheckBudget")
 	defer span.End()
 
@@ -156,7 +156,7 @@ func (s *BillingService) CheckBudget(ctx context.Context, _ *lanternv1.CheckBudg
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			// No budget set — return unlimited.
-			return &lanternv1.BudgetStatus{}, nil
+			return &palv1.BudgetStatus{}, nil
 		}
 		return nil, status.Errorf(codes.Internal, "failed to query budget: %v", err)
 	}
@@ -207,7 +207,7 @@ func (s *BillingService) CheckBudget(ctx context.Context, _ *lanternv1.CheckBudg
 		usagePct = (totalSpend / monthlyLimitUSD) * 100
 	}
 
-	bs := &lanternv1.BudgetStatus{
+	bs := &palv1.BudgetStatus{
 		MonthlyLimitUsd:   monthlyLimitUSD,
 		CurrentSpendUsd:   totalSpend,
 		RemainingUsd:      remaining,
@@ -230,7 +230,7 @@ func (s *BillingService) CheckBudget(ctx context.Context, _ *lanternv1.CheckBudg
 }
 
 // GetUsage returns aggregated usage for a tenant over a time range.
-func (s *BillingService) GetUsage(ctx context.Context, req *lanternv1.GetUsageRequest) (*lanternv1.GetUsageResponse, error) {
+func (s *BillingService) GetUsage(ctx context.Context, req *palv1.GetUsageRequest) (*palv1.GetUsageResponse, error) {
 	ctx, span := tracer.Start(ctx, "BillingService.GetUsage")
 	defer span.End()
 
@@ -293,10 +293,10 @@ func (s *BillingService) GetUsage(ctx context.Context, req *lanternv1.GetUsageRe
 	}
 	defer rows.Close()
 
-	var aggregations []*lanternv1.UsageAggregation
+	var aggregations []*palv1.UsageAggregation
 	var totalCost float64
 	for rows.Next() {
-		var agg lanternv1.UsageAggregation
+		var agg palv1.UsageAggregation
 		if err := rows.Scan(&agg.EventType, &agg.TotalQuantity, &agg.TotalCostUsd); err != nil {
 			return nil, status.Errorf(codes.Internal, "scan failed: %v", err)
 		}
@@ -307,14 +307,14 @@ func (s *BillingService) GetUsage(ctx context.Context, req *lanternv1.GetUsageRe
 		return nil, status.Errorf(codes.Internal, "row iteration failed: %v", err)
 	}
 
-	return &lanternv1.GetUsageResponse{
+	return &palv1.GetUsageResponse{
 		Aggregations: aggregations,
 		TotalCostUsd: totalCost,
 	}, nil
 }
 
 // SetBudget creates or updates a budget for a tenant.
-func (s *BillingService) SetBudget(ctx context.Context, req *lanternv1.SetBudgetRequest) (*lanternv1.SetBudgetResponse, error) {
+func (s *BillingService) SetBudget(ctx context.Context, req *palv1.SetBudgetRequest) (*palv1.SetBudgetResponse, error) {
 	ctx, span := tracer.Start(ctx, "BillingService.SetBudget")
 	defer span.End()
 
@@ -367,11 +367,11 @@ func (s *BillingService) SetBudget(ctx context.Context, req *lanternv1.SetBudget
 		zap.Bool("hard_limit", req.HardLimit),
 	)
 
-	return &lanternv1.SetBudgetResponse{Success: true}, nil
+	return &palv1.SetBudgetResponse{Success: true}, nil
 }
 
 // validateUsageEvent validates a single usage event.
-func validateUsageEvent(e *lanternv1.UsageEvent) error {
+func validateUsageEvent(e *palv1.UsageEvent) error {
 	if e.EventType == "" {
 		return fmt.Errorf("event_type is required")
 	}

@@ -9,7 +9,7 @@
 ## Goals of the spec
 
 1. **Declarative first, code second.** A user can describe an agent in YAML and never write a line of code. They can also write the whole thing in TypeScript or Python and skip YAML entirely. Both compile to the same bundle.
-2. **Portable.** A bundle is a self-contained, content-addressed tarball. Same bundle runs locally (`lantern dev`), on K8s Jobs, in a Firecracker microVM, or in a Wasmtime sandbox.
+2. **Portable.** A bundle is a self-contained, content-addressed tarball. Same bundle runs locally (`pal dev`), on K8s Jobs, in a Firecracker microVM, or in a Wasmtime sandbox.
 3. **Versioned and signed.** Every bundle has a semver, an immutable digest, and an optional cosign signature (verified at image admission, not by the control plane — see *Bundle digest and signing*).
 4. **Composable.** Agents can call other agents (sub-agents) through a typed RPC, and the runtime treats this as a step in the parent's workflow.
 
@@ -28,14 +28,14 @@ my-agent/
 │   └── search.ts
 ├── prompts/            OPTIONAL — versioned prompt templates
 │   └── plan.md
-├── tests/              OPTIONAL — agent-level tests (run by `lantern test`)
-└── .lanternignore        OPTIONAL — files to exclude from the bundle
+├── tests/              OPTIONAL — agent-level tests (run by `pal test`)
+└── .palignore        OPTIONAL — files to exclude from the bundle
 ```
 
-After `lantern build`:
+After `pal build`:
 
 ```
-.lantern/build/
+.pal/build/
 ├── bundle.tar.zst      content-addressed, the thing that gets pushed
 ├── manifest.lock.json  resolved manifest with digests
 └── snapshot.fcs        OPTIONAL — Firecracker snapshot for fast cold start
@@ -48,7 +48,7 @@ After `lantern build`:
 Minimal example:
 
 ```yaml
-lantern: 1                     # spec version, integer
+pal: 1                     # spec version, integer
 name: research-agent         # [a-z0-9-]{1,63}
 version: 0.3.1               # semver
 runtime: nodejs-22           # see "Runtimes" section below
@@ -58,7 +58,7 @@ entry: src/index.ts          # main file relative to bundle root
 Full example with every field:
 
 ```yaml
-lantern: 1
+pal: 1
 name: research-agent
 version: 0.3.1
 description: A research agent that plans, searches, and synthesizes.
@@ -92,9 +92,9 @@ models:
 
 # Tools the agent is allowed to call
 tools:
-  - lantern.web                  # built-in: web search + fetch
-  - lantern.python               # built-in: sandboxed Python interpreter
-  - lantern.fs                   # built-in: scoped filesystem
+  - pal.web                  # built-in: web search + fetch
+  - pal.python               # built-in: sandboxed Python interpreter
+  - pal.fs                   # built-in: scoped filesystem
   - ./tools/search.ts          # custom tool
 
 # Memory backends
@@ -130,14 +130,14 @@ triggers:
   - kind: schedule
     cron: "0 9 * * MON"
   - kind: webhook
-    secret: lantern.secret/github_webhook
+    secret: pal.secret/github_webhook
   - kind: event
     topic: documents.created
 
 # Notifications when runs reach terminal states
 notify:
   on_failure:
-    - slack: lantern.secret/slack_oncall
+    - slack: pal.secret/slack_oncall
   on_complete:
     - email: research@acme.dev
   on_approval_required:
@@ -177,19 +177,19 @@ labels:
 | `container` | BYO Dockerfile |
 | `devcontainer` | A devcontainer.json — long-running, IDE-like |
 
-The runtime determines the base image, the language SDK injected as `@lantern/sdk`, and the snapshot strategy.
+The runtime determines the base image, the language SDK injected as `@pal/sdk`, and the snapshot strategy.
 
 ---
 
 ## Programmatic surface — TypeScript
 
 ```ts
-import { agent, step, tool } from "@lantern/sdk";
+import { agent, step, tool } from "@pal/sdk";
 
 export default agent({
   name: "research-agent",
   // The whole agent.yaml fields are accepted here too;
-  // lantern build merges yaml + decorator and writes manifest.lock.json.
+  // pal build merges yaml + decorator and writes manifest.lock.json.
   async run({ input, ctx }) {
     // ctx.llm   — model router client
     // ctx.tools — typed accessor to declared tools
@@ -253,12 +253,12 @@ This is a typed gRPC call to the control plane that schedules a child run, block
 ## Bundle digest and signing
 
 ```
-$ lantern build
+$ pal build
 ✓ bundle.tar.zst  sha256:1f2e...  18.2 MB
 ✓ manifest.lock.json
-$ cosign sign --key lantern.key bundle.tar.zst
-$ lantern push
-✓ pushed to lantern.dev/acme/research-agent@sha256:1f2e...
+$ cosign sign --key pal.key bundle.tar.zst
+$ pal push
+✓ pushed to registry.pal.example.com/acme/research-agent@sha256:1f2e...
 ```
 
 What is enforced today (ADR 0044): the control plane does **not** verify bundle

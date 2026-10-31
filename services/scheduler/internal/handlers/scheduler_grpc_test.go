@@ -16,9 +16,9 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
-	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	"github.com/dshakes/lantern/services/scheduler/internal/middleware"
-	"github.com/dshakes/lantern/services/scheduler/internal/server"
+	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/services/scheduler/internal/middleware"
+	"github.com/dshakes/pal/services/scheduler/internal/server"
 )
 
 // newSchedulerTestServer registers the real SchedulerService (behind the
@@ -26,7 +26,7 @@ import (
 // nil Pool and a no-op run creator: the RPCs exercised here all fail at the
 // request-validation boundary before any DB access, proving the service is
 // wired and answering.
-func newSchedulerTestServer(t *testing.T) lanternv1.SchedulerServiceClient {
+func newSchedulerTestServer(t *testing.T) palv1.SchedulerServiceClient {
 	t.Helper()
 
 	logger := zaptest.NewLogger(t)
@@ -37,14 +37,14 @@ func newSchedulerTestServer(t *testing.T) lanternv1.SchedulerServiceClient {
 
 	noopCreate := func(context.Context, string, string, json.RawMessage) (string, error) { return "run-noop", nil }
 	svc := NewSchedulerService(&server.Server{Logger: logger}, noopCreate)
-	lanternv1.RegisterSchedulerServiceServer(grpcSrv, svc)
+	palv1.RegisterSchedulerServiceServer(grpcSrv, svc)
 	reflection.Register(grpcSrv)
 
 	go func() { _ = grpcSrv.Serve(lis) }()
 	t.Cleanup(grpcSrv.Stop)
 
 	conn := dialBufconn(t, lis)
-	return lanternv1.NewSchedulerServiceClient(conn)
+	return palv1.NewSchedulerServiceClient(conn)
 }
 
 func dialBufconn(t *testing.T, lis *bufconn.Listener) *grpc.ClientConn {
@@ -86,7 +86,7 @@ func TestSchedulerService_Registered(t *testing.T) {
 			name: "Trigger requires agent_name (handler reached)",
 			ctx:  tenantCtx("tenant-1"),
 			call: func(ctx context.Context) error {
-				_, err := client.Trigger(ctx, &lanternv1.TriggerRequest{})
+				_, err := client.Trigger(ctx, &palv1.TriggerRequest{})
 				return err
 			},
 			wantErr: codes.InvalidArgument,
@@ -95,7 +95,7 @@ func TestSchedulerService_Registered(t *testing.T) {
 			name: "RegisterSchedule requires agent_name (handler reached)",
 			ctx:  tenantCtx("tenant-1"),
 			call: func(ctx context.Context) error {
-				_, err := client.RegisterSchedule(ctx, &lanternv1.RegisterScheduleRequest{})
+				_, err := client.RegisterSchedule(ctx, &palv1.RegisterScheduleRequest{})
 				return err
 			},
 			wantErr: codes.InvalidArgument,
@@ -104,7 +104,7 @@ func TestSchedulerService_Registered(t *testing.T) {
 			name: "DeleteSchedule requires schedule_id (handler reached)",
 			ctx:  tenantCtx("tenant-1"),
 			call: func(ctx context.Context) error {
-				_, err := client.DeleteSchedule(ctx, &lanternv1.DeleteScheduleRequest{})
+				_, err := client.DeleteSchedule(ctx, &palv1.DeleteScheduleRequest{})
 				return err
 			},
 			wantErr: codes.InvalidArgument,
@@ -113,7 +113,7 @@ func TestSchedulerService_Registered(t *testing.T) {
 			name: "tenant interceptor rejects missing metadata",
 			ctx:  context.Background(),
 			call: func(ctx context.Context) error {
-				_, err := client.Trigger(ctx, &lanternv1.TriggerRequest{})
+				_, err := client.Trigger(ctx, &palv1.TriggerRequest{})
 				return err
 			},
 			wantErr: codes.Unauthenticated,
@@ -137,15 +137,15 @@ func TestSchedulerService_ReflectionLists(t *testing.T) {
 	lis := bufconn.Listen(1024 * 1024)
 	grpcSrv := grpc.NewServer()
 	noopCreate := func(context.Context, string, string, json.RawMessage) (string, error) { return "", nil }
-	lanternv1.RegisterSchedulerServiceServer(grpcSrv, NewSchedulerService(&server.Server{Logger: logger}, noopCreate))
+	palv1.RegisterSchedulerServiceServer(grpcSrv, NewSchedulerService(&server.Server{Logger: logger}, noopCreate))
 	reflection.Register(grpcSrv)
 
 	go func() { _ = grpcSrv.Serve(lis) }()
 	t.Cleanup(grpcSrv.Stop)
 
 	rc := reflectionpb.NewServerReflectionClient(dialBufconn(t, lis))
-	if !reflectionLists(t, rc, "lantern.v1.SchedulerService") {
-		t.Fatal("lantern.v1.SchedulerService not listed by server reflection")
+	if !reflectionLists(t, rc, "pal.v1.SchedulerService") {
+		t.Fatal("pal.v1.SchedulerService not listed by server reflection")
 	}
 }
 

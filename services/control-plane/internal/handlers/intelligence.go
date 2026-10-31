@@ -25,7 +25,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/dshakes/lantern/services/control-plane/internal/grounding"
+	"github.com/dshakes/pal/services/control-plane/internal/grounding"
 )
 
 // ---------------------------------------------------------------------------
@@ -44,7 +44,7 @@ const (
 // classifyTurnComplexity scores the turn and returns a routing tier.
 //
 // Signals (in roughly descending importance):
-//  1. Explicit hint from the caller via X-Pal-Turn-Hint (or legacy X-Lantern-Turn-Hint) header / hint arg.
+//  1. Explicit hint from the caller via X-Pal-Turn-Hint header / hint arg.
 //  2. Hard content: scheduling + reasoning keyword density.
 //  3. Total token estimate (byte length / 4 as a proxy).
 //  4. Whether tools are in play (multi-step turns).

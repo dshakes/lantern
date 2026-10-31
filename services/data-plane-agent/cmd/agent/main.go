@@ -14,18 +14,22 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/dshakes/lantern/packages/palenv"
-	"github.com/dshakes/lantern/services/data-plane-agent/internal/dispatcher"
-	"github.com/dshakes/lantern/services/data-plane-agent/internal/reporter"
-	"github.com/dshakes/lantern/services/data-plane-agent/internal/tunnel"
+	"github.com/dshakes/pal/services/data-plane-agent/internal/dispatcher"
+	"github.com/dshakes/pal/services/data-plane-agent/internal/reporter"
+	"github.com/dshakes/pal/services/data-plane-agent/internal/tunnel"
 )
 
 func main() {
-	palenv.Bridge()
 	cfg := loadConfig()
 
 	logger := mustInitLogger(cfg.LogLevel)
 	defer logger.Sync() //nolint:errcheck
+
+	// No built-in default: the agent sends its bootstrap token to this
+	// endpoint, so it must be the operator's own control plane.
+	if cfg.ControlPlaneEndpoint == "" && len(cfg.ControlPlaneEndpoints) == 0 {
+		logger.Fatal("CONTROL_PLANE_ENDPOINT (or the endpoints list) is required")
+	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
@@ -156,7 +160,7 @@ type config struct {
 
 func loadConfig() config {
 	return config{
-		ControlPlaneEndpoint:    envOrDefault("CONTROL_PLANE_ENDPOINT", "https://api.lantern.run"),
+		ControlPlaneEndpoint:    os.Getenv("CONTROL_PLANE_ENDPOINT"),
 		ControlPlaneEndpoints:   splitEndpoints(os.Getenv("PAL_CONTROL_PLANE_ENDPOINTS")),
 		FailbackInterval:        envDuration("PAL_CONTROL_PLANE_FAILBACK_INTERVAL", 60*time.Second),
 		TenantID:                envOrDefault("TENANT_ID", ""),

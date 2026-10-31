@@ -6,10 +6,10 @@
 // env var.  The token never reaches the browser.
 //
 // Env vars (server-only, NOT NEXT_PUBLIC):
-//   LANTERN_BRIDGE_TOKEN            — shared secret for the WhatsApp bridge
-//   LANTERN_IMESSAGE_BRIDGE_TOKEN   — shared secret for the iMessage bridge
-//   NEXT_PUBLIC_LANTERN_BRIDGE_URL  — bridge base URL (URL is not a secret)
-//   NEXT_PUBLIC_LANTERN_IMESSAGE_BRIDGE_URL
+//   PAL_BRIDGE_TOKEN            — shared secret for the WhatsApp bridge
+//   PAL_IMESSAGE_BRIDGE_TOKEN   — shared secret for the iMessage bridge
+//   NEXT_PUBLIC_PAL_BRIDGE_URL  — bridge base URL (URL is not a secret)
+//   NEXT_PUBLIC_PAL_IMESSAGE_BRIDGE_URL
 
 import { NextRequest, NextResponse } from "next/server";
 
@@ -19,20 +19,20 @@ function bridgeConfig(channel: Channel): { url: string; token: string } {
   if (channel === "imessage") {
     return {
       url: (
-        (process.env.PAL_IMESSAGE_BRIDGE_URL || process.env.LANTERN_IMESSAGE_BRIDGE_URL) ||
-        (process.env.NEXT_PUBLIC_PAL_IMESSAGE_BRIDGE_URL || process.env.NEXT_PUBLIC_LANTERN_IMESSAGE_BRIDGE_URL) ||
+        process.env.PAL_IMESSAGE_BRIDGE_URL ||
+        (process.env.NEXT_PUBLIC_PAL_IMESSAGE_BRIDGE_URL || process.env.NEXT_PUBLIC_PAL_IMESSAGE_BRIDGE_URL) ||
         "http://localhost:3200"
       ).replace(/\/$/, ""),
-      token: (process.env.PAL_IMESSAGE_BRIDGE_TOKEN || process.env.LANTERN_IMESSAGE_BRIDGE_TOKEN) || "",
+      token: process.env.PAL_IMESSAGE_BRIDGE_TOKEN || "",
     };
   }
   return {
     url: (
-      (process.env.PAL_BRIDGE_URL || process.env.LANTERN_BRIDGE_URL) ||
-      (process.env.NEXT_PUBLIC_PAL_BRIDGE_URL || process.env.NEXT_PUBLIC_LANTERN_BRIDGE_URL) ||
+      process.env.PAL_BRIDGE_URL ||
+      (process.env.NEXT_PUBLIC_PAL_BRIDGE_URL || process.env.NEXT_PUBLIC_PAL_BRIDGE_URL) ||
       "http://localhost:3100"
     ).replace(/\/$/, ""),
-    token: (process.env.PAL_BRIDGE_TOKEN || process.env.LANTERN_BRIDGE_TOKEN) || "",
+    token: process.env.PAL_BRIDGE_TOKEN || "",
   };
 }
 

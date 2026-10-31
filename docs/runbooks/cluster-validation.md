@@ -18,8 +18,8 @@ The PAL runtime dispatches UNTRUSTED agent workloads to gVisor (user-space kerne
 |---|---|
 | A Kubernetes cluster | EKS, GKE, AKS, or self-hosted with `kata-deploy` |
 | `gvisor` RuntimeClass | Backed by a node pool running `runsc` (GKE Agent Sandbox, or `gvisor-containerd-shim` on self-hosted) |
-| `kata` RuntimeClass | Backed by a dedicated, **tainted** node pool (`lantern.dev/runtimeclass=kata:NoSchedule`). On GKE this can be a second sandbox pool; on self-hosted use `kata-deploy`. |
-| Node labels | `lantern.dev/runtimeclass=gvisor` / `lantern.dev/runtimeclass=kata` on the respective pools |
+| `kata` RuntimeClass | Backed by a dedicated, **tainted** node pool (`pal.dev/runtimeclass=kata:NoSchedule`). On GKE this can be a second sandbox pool; on self-hosted use `kata-deploy`. |
+| Node labels | `pal.dev/runtimeclass=gvisor` / `pal.dev/runtimeclass=kata` on the respective pools |
 | `kubectl` | Any recent version; accessible from the machine running the harness |
 | A kubeconfig | Pointing at the cluster with cluster-admin or equivalent permissions |
 
@@ -34,7 +34,7 @@ The harness does **not** provision the cluster. Use `infra/k8s/gke-agent-sandbox
 KUBECONFIG=/path/to/kubeconfig.yaml make validate-cluster
 
 # Option B — CLI flag
-lantern vm validate --kubeconfig /path/to/kubeconfig.yaml
+pal vm validate --kubeconfig /path/to/kubeconfig.yaml
 
 # Option C — direct script (same as A)
 bash scripts/validate-cluster.sh --kubeconfig /path/to/kubeconfig.yaml
@@ -43,7 +43,7 @@ bash scripts/validate-cluster.sh --kubeconfig /path/to/kubeconfig.yaml
 All three run identically. The `--context` flag selects a specific context when the kubeconfig contains multiple clusters:
 
 ```bash
-lantern vm validate --kubeconfig ./k.yaml --context gke_project_us-central1_cluster
+pal vm validate --kubeconfig ./k.yaml --context gke_project_us-central1_cluster
 ```
 
 ---
@@ -76,14 +76,14 @@ Any failure here exits nonzero — fix the cluster's base isolation before the e
 ### Step 3 — gVisor execution leg (g)
 
 - If `RuntimeClass gvisor` is **ABSENT**: leg is **SKIPPED** (operator needs to provision the pool). Exit 0 for this leg; the report says SKIPPED.
-- If **PRESENT**: applies `infra/k8s/manifests/92-untrusted-gvisor-exec.yaml`, waits for the pod to run, then reads `/proc/version` and asserts it contains `"gVisor"` (the user-space kernel marker). Falls back to checking the node's `lantern.dev/runtimeclass=gvisor` label on runsc builds that do not stamp `/proc/version`.
+- If **PRESENT**: applies `infra/k8s/manifests/92-untrusted-gvisor-exec.yaml`, waits for the pod to run, then reads `/proc/version` and asserts it contains `"gVisor"` (the user-space kernel marker). Falls back to checking the node's `pal.dev/runtimeclass=gvisor` label on runsc builds that do not stamp `/proc/version`.
 
 ### Step 4 — Kata execution legs (h/i)
 
 - If `RuntimeClass kata` is **ABSENT**: both legs **SKIPPED**.
 - If **PRESENT**:
   - **(h)** Applies `infra/k8s/manifests/93-hostile-kata-exec.yaml`. Waits for the pod. Reads `uname -r` inside the guest and asserts it differs from the host node's kernel (a Kata microVM has its own guest kernel; a bare runc pod would share the host kernel — identical kernels = fail-open breach).
-  - **(i)** Confirms the node the Kata pod landed on has **no other `lantern-t-*` tenant pods** (the taint must make it dedicated).
+  - **(i)** Confirms the node the Kata pod landed on has **no other `pal-t-*` tenant pods** (the taint must make it dedicated).
 
 ### Step 5 — Report
 
@@ -133,15 +133,15 @@ PROJECT=my-gcp-project REGION=us-central1 bash infra/k8s/gke-agent-sandbox-setup
 
 The script creates:
 - A base GKE cluster with network policy enabled
-- A gVisor node pool (GKE Sandbox, `--sandbox type=gvisor`) labelled `lantern.dev/runtimeclass=gvisor`
-- A dedicated "Kata" pool (second sandbox pool, labelled + tainted `lantern.dev/runtimeclass=kata:NoSchedule`)
+- A gVisor node pool (GKE Sandbox, `--sandbox type=gvisor`) labelled `pal.dev/runtimeclass=gvisor`
+- A dedicated "Kata" pool (second sandbox pool, labelled + tainted `pal.dev/runtimeclass=kata:NoSchedule`)
 - RuntimeClass objects `gvisor` and `kata`
-- The `lantern-t-validate` namespace (PSA `restricted`)
+- The `pal-t-validate` namespace (PSA `restricted`)
 
 After the script completes, run the harness:
 
 ```bash
-lantern vm validate --kubeconfig ~/.kube/config
+pal vm validate --kubeconfig ~/.kube/config
 ```
 
 ---

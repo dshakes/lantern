@@ -63,7 +63,7 @@ Fill in:
 
 ### Step 2 — Set the env var
 
-Add to `~/.lantern/env` (or the LaunchAgent plist for the iMessage bridge):
+Add to `~/.pal/env` (or the LaunchAgent plist for the iMessage bridge):
 
 ```bash
 export PAL_TWILIO_NUMBER="+15125550100"
@@ -79,7 +79,7 @@ Send a message from the bridge to a phone number that is SMS/RCS-only (not
 registered with iMessage). Watch the bridge log:
 
 ```bash
-tail -f ~/Library/Logs/Lantern/imessage-bridge.out.log | grep -i "twilio\|sms fallback"
+tail -f ~/Library/Logs/PAL/imessage-bridge.out.log | grep -i "twilio\|sms fallback"
 ```
 
 A successful fallback logs:
@@ -196,7 +196,7 @@ Once the RBM agent is approved and the webhook is wired, enable the gate:
 export PAL_RCS_INBOUND=on
 ```
 
-Add to `~/.lantern/env` or the control-plane LaunchAgent plist, then restart
+Add to `~/.pal/env` or the control-plane LaunchAgent plist, then restart
 the control-plane. Setting `PAL_RCS_INBOUND` to anything other than the
 exact string `on` (case-insensitive) leaves the lane disabled.
 
