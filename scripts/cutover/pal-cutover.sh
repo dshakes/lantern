@@ -1109,10 +1109,10 @@ health() {  # health old|new
   line="$( [[ -n "$tok" ]] && echo "Authorization: Bearer $tok")"
   local deadline=$(( $(date +%s) + HEALTH_TIMEOUT_SECS )) st=""
   while [[ $(date +%s) -lt $deadline ]]; do
-    st="$(http "$WA_URL/session/$TENANT_ID/status" "$line" body | json_field connected)"
-    [[ "$st" == true ]] && break; sleep 5
+    st="$(http "$WA_URL/session/$TENANT_ID/status" "$line" body | json_field status)"
+    [[ "$st" == connected ]] && break; sleep 5
   done
-  [[ "$st" == true ]] && ok "WhatsApp session connected (no QR)" || bad "WhatsApp session not connected (status.connected=${st:-?}) — check the err log before re-pairing"
+  [[ "$st" == connected ]] && ok "WhatsApp session connected (no QR)" || bad "WhatsApp session not connected (status=${st:-?}) — check the err log before re-pairing"
   [[ "$(http "$WA_URL/session/$TENANT_ID/has-creds" "$line" body | json_field hasCreds)" == true ]] && ok "WhatsApp creds present" || bad "WhatsApp has-creds=false"
   bridge_token "$envf" "$IM_TOKEN_KEY"; tok="$TOKEN"
   line="$( [[ -n "$tok" ]] && echo "Authorization: Bearer $tok")"

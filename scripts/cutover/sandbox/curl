@@ -38,7 +38,7 @@ case "$svc:$path" in
     case "$hdr" in "x-pal-signal-token: $t"|"x-lantern-signal-token: $t") reply 200 '[]';; *) reply 401 '{}';; esac ;;
   whatsapp-bridge:*/status)
     authed "${pre}BRIDGE_TOKEN" || reply 401 '{"error":"unauthorized"}'
-    reply 200 '{"exists":true,"connected":true}' ;;
+    reply 200 '{"status":"connected","paired":true}' ;;
   whatsapp-bridge:*/has-creds)
     authed "${pre}BRIDGE_TOKEN" || reply 401 '{"error":"unauthorized"}'
     [[ -s "$STUB_WA_CREDS/$STUB_TENANT/creds.json" ]] && reply 200 '{"hasCreds":true}' || reply 200 '{"hasCreds":false}' ;;
