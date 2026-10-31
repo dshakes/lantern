@@ -116,7 +116,7 @@ func (h *ConnectorExecutor) Execute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// An agent calling as itself (ADR 0052) presents an agent token bound to
+	// An agent calling as itself (ADR 0055) presents an agent token bound to
 	// pal:connectors; its tenant comes from the VERIFIED token and the action
 	// must be in its policy. Otherwise this is the user/API-key path.
 	var tenantID string

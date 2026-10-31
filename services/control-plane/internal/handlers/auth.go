@@ -107,7 +107,7 @@ type PalClaims struct {
 	Scopes []string `json:"scopes,omitempty"`
 	// Typ is set on every NON-session token the platform mints (agent-instance,
 	// agent, dataplane-session). A user session never carries it, so
-	// ValidateToken rejects any token that does (ADR 0052 §7).
+	// ValidateToken rejects any token that does (ADR 0055 §7).
 	Typ string `json:"typ,omitempty"`
 }
 
@@ -1237,7 +1237,7 @@ func (h *AuthHandler) WithScope(required Scope, next http.HandlerFunc) http.Hand
 }
 
 // WithScopeOrAgent is WithScope for the routes an AGENT may call as itself
-// (ADR 0052): a request carrying X-Pal-Agent-Token skips the user/API-key
+// (ADR 0055): a request carrying X-Pal-Agent-Token skips the user/API-key
 // scope check and goes to next, which MUST verify the agent token for its
 // audience and enforce the agent's policy (always on — agent principals are
 // never governed by PAL_AUTHZ_ENFORCE). Only wire agent-aware handlers here:

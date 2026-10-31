@@ -1,5 +1,5 @@
 // Package agentpolicy is the pure, I/O-free evaluator for per-agent
-// least-privilege policy (ADR 0052). The control-plane and the
+// least-privilege policy (ADR 0055). The control-plane and the
 // workflow-engine both import it so a tool decision is computed by exactly one
 // implementation no matter which service dispatches the tool.
 //
@@ -52,7 +52,7 @@ const (
 )
 
 // Budget holds the count-based ceilings a policy imposes. Zero = unlimited.
-// Spend ceilings stay in agent_budgets (ADR 0052 §4).
+// Spend ceilings stay in agent_budgets (ADR 0055 §4).
 type Budget struct {
 	MaxToolCallsPerRun     int `json:"maxToolCallsPerRun"`
 	MaxA2AInboundPerMinute int `json:"maxA2AInboundPerMinute"`

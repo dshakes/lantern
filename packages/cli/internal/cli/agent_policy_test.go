@@ -1,7 +1,7 @@
 package cli
 
 // agent_policy_test.go — `pal agent policy|identity|audit` against a mock
-// control-plane mirroring the ADR 0052 REST shapes.
+// control-plane mirroring the ADR 0055 REST shapes.
 
 import (
 	"bytes"

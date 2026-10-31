@@ -59,7 +59,7 @@ type AgentCard struct {
 	InputSchema  json.RawMessage   `json:"inputSchema"`
 	OutputSchema json.RawMessage   `json:"outputSchema"`
 	Provider     AgentCardProvider `json:"provider"`
-	// SpiffeID is the agent's principal (ADR 0052); an agent caller mints a
+	// SpiffeID is the agent's principal (ADR 0055); an agent caller mints a
 	// token with this as its audience. JwksURI serves the verifying key.
 	SpiffeID string `json:"spiffeId,omitempty"`
 	JwksURI  string `json:"jwksUri,omitempty"`
@@ -73,7 +73,7 @@ type AgentCardAuth struct {
 	Audience    string `json:"audience,omitempty"`
 }
 
-// agentCardIdentity fills the card's identity fields (ADR 0052 §8): agents
+// agentCardIdentity fills the card's identity fields (ADR 0055 §8): agents
 // authenticate as themselves with a short-lived, audience-bound agent token —
 // never a long-lived API key.
 func agentCardIdentity(card *AgentCard, tenantID, agentID string) {
@@ -299,7 +299,7 @@ func (h *A2AHandler) InvokeAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The caller is either an AGENT presenting its own short-lived token
-	// (ADR 0052 — the agent→agent path) or a human / API key.
+	// (ADR 0055 — the agent→agent path) or a human / API key.
 	agentTok := strings.TrimSpace(r.Header.Get(AgentTokenHeader))
 	var callerTenant string
 	if agentTok != "" {

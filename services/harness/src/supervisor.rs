@@ -106,7 +106,7 @@ const WORKLOAD_VISIBLE_PAL_KEYS: [&str; 16] = [
     // Manager-stamped from the authenticated spawn (the SDK reads the tenant).
     "PAL_TENANT_ID",
     "PAL_AGENT_VERSION_ID",
-    // The agent principal this VM runs as (ADR 0052) — locators, not credentials.
+    // The agent principal this VM runs as (ADR 0055) — locators, not credentials.
     "PAL_AGENT_ID",
     "PAL_AGENT_SPIFFE_ID",
     "PAL_ENV",

@@ -1,0 +1,50 @@
+---
+title: Channels
+description: "Put an agent you build on Telegram, WhatsApp Cloud, Slack, Discord, a web chat widget or a phone number."
+---
+
+An agent you build can answer on more than the REST API. A **surface** is a channel connection (a Telegram bot, a WhatsApp Business number, a Slack app, a web chat widget, a phone number) that the **surface gateway** receives and turns into a run of the agent assigned to it. pal's own iMessage and WhatsApp bridges are covered in [Connect your channels](/docs/pal/surfaces/).
+
+## Pick a channel
+
+Set a surface up under **Channels** in the dashboard, then enable it on the agent's **Channels** tab. An agent answers only on surfaces assigned to it.
+
+| Channel | How it connects | Limits |
+| --- | --- | --- |
+| Telegram | Create a bot with `@BotFather` and add its token under **Channels**. The gateway checks `X-Telegram-Bot-Api-Secret-Token` against `TELEGRAM_SECRET_TOKEN`, runs the agent, and posts the output with `sendMessage`. | The agent needs a promoted version (run it once first). Plain text, sent once when the run ends. A run over 3 minutes gets no reply. |
+| WhatsApp Cloud | The surface gateway has a Cloud API adapter for a business number. POSTs are verified with `X-Hub-Signature-256` (`WHATSAPP_APP_SECRET`). | Same reply loop as Telegram. |
+| Slack | Events and bot messages through the surface gateway; slash commands at `POST /v1/surfaces/slack/command`. | In production, unsigned slash commands are refused unless `SLACK_SIGNING_SECRET` is set. A run completes without posting back. |
+| Discord | An adapter ships in the surface gateway. Configure it under **Channels** with your bot credentials. | A run completes without posting back. |
+| Web chat | One script tag; uses the same `/v1/sessions` endpoints as the dashboard and streams over SSE. Copy the snippet from `/embed`. | The key is visible in the browser, so scope it to sessions and messages. |
+| Phone | Twilio (inbound calls, TwiML) and LiveKit (realtime). See below. | The inbound reply is a fixed greeting today; a realtime conversation needs the LiveKit worker. |
+
+Only Telegram and WhatsApp Cloud get replies posted back by the surface gateway. Try Telegram end to end with `examples/telegram-assistant`.
+
+```html
+<!-- widget.js is served by the dashboard app; copy the exact snippet from /embed -->
+<script src="http://localhost:3001/widget.js"
+  data-api-key="YOUR_SCOPED_API_KEY"
+  data-agent="your-agent-name"
+  data-api-base="http://localhost:8080"
+  data-theme="dark"
+  data-position="bottom-right"
+  async defer></script>
+```
+
+## Phone numbers
+
+A phone number routes inbound calls to an agent. Call spend counts against the same budget as runs: a Twilio call over a hard-fail budget is declined with `<Reject>` (no carrier cost), and a LiveKit join token is refused with HTTP 402. A flat estimate is recorded on connect, and the provider's status callback reconciles it to the real duration when the call ends. Billing is by started minute.
+
+Both Twilio endpoints verify `X-Twilio-Signature` and answer a bad or missing one with 403 before touching any state. Try it with `examples/voice-receptionist`.
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `POST` | `/v1/voice/numbers` | Link a phone number to an agent (provider and config) |
+| `GET` | `/v1/voice/numbers` | List linked numbers |
+| `DELETE` | `/v1/voice/numbers/{id}` | Unlink a number |
+| `GET` | `/v1/voice/calls` | Recent calls with duration and cost |
+| `POST` | `/v1/voice/token` | Mint a short-lived LiveKit join token |
+| `POST` | `/v1/voice/webhook/{provider}` | Inbound call webhook (Twilio TwiML or LiveKit JWT) |
+| `POST` | `/v1/voice/calls/status/{provider}` | Call-end callback. Point Twilio's "call status changes" webhook here. |
+
+Outbound calls can show your own number as caller ID with `PAL_VOICE_CALLER_ID`; it must be a Twilio number or a verified caller ID. Speaking in a cloned voice is covered in [Teach it your voice](/docs/pal/voice/#settings).

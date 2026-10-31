@@ -1,4 +1,4 @@
-# ADR 0052 — Agent identity and per-agent least-privilege policy
+# ADR 0055 — Agent identity and per-agent least-privilege policy
 
 - Status: Accepted
 - Date: 2026-10-30
@@ -112,7 +112,7 @@ action not matched by an allow rule is **denied**. `legacy_permissive` allows
 everything but is still evaluated and audited, so its blast radius is visible.
 
 **Default-deny for new agents, legacy-permissive for existing ones.** Migration
-0037 backfills every existing agent with a `legacy_permissive` policy (the live
+0038 backfills every existing agent with a `legacy_permissive` policy (the live
 bridges and every current agent keep working byte-for-byte), and installs an
 `AFTER INSERT ON agents` trigger that gives every new agent an empty `enforce`
 policy. The dashboard Security tab shows a warning on legacy-permissive agents,

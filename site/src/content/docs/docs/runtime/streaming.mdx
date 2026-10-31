@@ -1,10 +1,6 @@
 ---
-title: Token streaming
-description: The message_delta, message_completed and message_error SSE contract for session replies, and the SDK async iterator.
-glance:
-  what: "Session replies arrive as three named SSE events on GET /v1/sessions/{id}/events: message_delta, message_completed and message_error."
-  why: "Words appear as the model writes them, with no buffering between the provider and your UI."
-  how: "Iterate client.sessions.streamMessage(sessionId, { content }) and write each delta as it arrives."
+title: Streaming
+description: The message_delta, message_completed and message_error SSE events for session replies, and the SDK async iterator.
 sidebar:
   order: 10
 ---
@@ -12,109 +8,27 @@ sidebar:
 import { Aside } from '@astrojs/starlight/components';
 import { TokenStreaming } from '../../../../components/diagrams';
 
+Session replies arrive as three named server-sent events on `GET /v1/sessions/{id}/events`: **`message_delta`**, **`message_completed`** and **`message_error`**. Provider tokens flow through the control plane and Redis pub/sub to connected clients with no buffering in between, so words appear as the model writes them. You render deltas as they land and treat `message_completed` as the final text.
+
 <TokenStreaming client:visible />
 
-Provider deltas flow through the control plane and Redis pub/sub to connected SSE clients. Tool-free turns stream every token; tool-using turns arrive as one `message_completed`.
-
 <Aside title="Sessions only">
-This contract covers interactive sessions. Headless microVM runs stream `step_started` / `step_completed` / `step_failed` events, not token deltas.
+This contract covers interactive sessions. Headless microVM runs stream `step_started`, `step_completed` and `step_failed` events, not token deltas. Tool-free turns stream every token; tool-using turns arrive as one `message_completed`.
 </Aside>
 
 ## The three events
 
-A single assistant turn produces events in this order.
+A turn produces events in this order. `turnId` is stable across the turn.
 
-### `message_delta`
+| Event | When | Payload |
+| --- | --- | --- |
+| `message_delta` | Once per token chunk. Not emitted for tool-bearing turns | `sessionId`, `turnId`, `seq` (monotone per turn, starts at 1), `delta` |
+| `message_completed` | Exactly once, after all deltas | `sessionId`, `turnId`, `text` (full assembled reply), `usage` (`tokensIn`, `tokensOut`, `costUsd`) |
+| `message_error` | The LLM call fails after at least one delta was sent | `sessionId`, `turnId`, `error`. Discard the partial reply for this `turnId` |
 
-Emitted for each token chunk during streaming. Not emitted for tool-bearing turns (see the limitation below).
+On the wire:
 
-```json
-{
-  "sessionId": "sess_abc123",
-  "turnId":    "tur_xyz789",
-  "seq":       1,
-  "delta":     "Hello"
-}
-```
-
-`turnId` is stable across all events in the turn. `seq` is a monotone per-turn counter that starts at 1. `delta` is a text fragment of one or more tokens.
-
-### `message_completed`
-
-Emitted exactly once per turn, after all deltas (or immediately for tool-bearing turns that do not stream). Contains the full assembled text and usage metadata.
-
-```json
-{
-  "sessionId": "sess_abc123",
-  "turnId":    "tur_xyz789",
-  "text":      "Hello, how can I help you today?",
-  "usage": {
-    "tokensIn":  42,
-    "tokensOut": 12,
-    "costUsd":   0.000018
-  }
-}
-```
-
-### `message_error`
-
-Emitted when the LLM call fails mid-stream after at least one delta has been sent. Clients should discard any partial response accumulated so far for this `turnId`.
-
-```json
-{
-  "sessionId": "sess_abc123",
-  "turnId":    "tur_xyz789",
-  "error":     "provider error — partial response discarded"
-}
-```
-
-<Aside type="caution" title="Failure before the first delta">
-If the provider fails before any delta is sent, no `message_error` is emitted. The turn ends with a legacy `agent.message` (a canned "give me a sec" reply) plus `session.status_idle`, which `streamMessage()` ignores, so set a timeout around the iterator (derived from code, not run).
-</Aside>
-
-<Aside type="caution" title="Tool-bearing turns do not stream deltas">
-When the session has tools attached, the LLM call runs through a non-streaming tool-use loop (up to 5 rounds). For those turns the client receives a single `message_completed` without any preceding `message_delta` events.
-</Aside>
-
-## SDK: `sessions.streamMessage()`
-
-The TypeScript SDK exposes token streaming as an async iterator. It handles sequence reordering, unknown event filtering, and legacy server compatibility automatically.
-
-```ts
-import { PalClient } from "@pal-runtime/sdk";
-
-const client = new PalClient({ apiKey: "..." });
-
-for await (const event of client.sessions.streamMessage(sessionId, {
-  content: "Summarise the last quarter in 3 bullets.",
-})) {
-  if (event.type === "delta") {
-    process.stdout.write(event.delta);        // stream tokens as they arrive
-  } else if (event.type === "completed") {
-    console.log("\nTotal cost:", event.usage.costUsd);
-  }
-}
-```
-
-The iterator yields a discriminated-union type `SessionStreamEvent`:
-
-```ts
-type SessionStreamEvent =
-  | { type: "delta";     delta: string }
-  | { type: "completed"; text: string; usage: { tokensIn: number; tokensOut: number; costUsd: number } };
-```
-
-Out-of-order `seq` values are buffered and yielded in order. A `message_error` from the server throws a typed `MessageStreamError`. Unknown event kinds are silently ignored so old and new server versions are both handled.
-
-## SSE transport
-
-Named SSE events are delivered on the existing session event stream:
-
-```
-GET /v1/sessions/{id}/events
-Authorization: Bearer <token>
-
-# Server-sent events:
+```text
 event: message_delta
 data: {"sessionId":"...","turnId":"...","seq":1,"delta":"Hello"}
 
@@ -125,12 +39,33 @@ event: message_completed
 data: {"sessionId":"...","turnId":"...","text":"Hello, world","usage":{...}}
 ```
 
-Legacy clients that subscribe to `agent.message` events continue to receive them; the new named events are additive. The `_event` key in the payload tells the session event bus which SSE event name to emit.
+Legacy clients that subscribe to `agent.message` keep receiving it; the named events are additive.
 
-## Provider streaming
+<Aside type="caution" title="Failure before the first delta">
+If the provider fails before any delta is sent, no `message_error` is emitted. The turn ends with a legacy `agent.message` (a canned "give me a sec" reply) plus `session.status_idle`, which `streamMessage()` ignores. Put a timeout around the iterator.
+</Aside>
 
-The control-plane calls the model provider in streaming mode via `streamWithFailover`. Each chunk from the provider triggers an `onDelta` callback that publishes a `message_delta` to the Redis session channel, which the SSE handler fans out to connected clients. The `Idempotency-Key` header is set on the provider request (invariant #8) so a crash-retry dedups at the provider.
+## Read the stream with the SDK
 
-Provider failover: if the primary provider fails before any deltas have been sent, the failover chain retries on the next configured provider. If the primary fails after deltas have been sent, a `message_error` is emitted and the partial response is discarded.
+`sessions.streamMessage()` is an async iterator. It reorders out-of-order `seq` values, ignores unknown event kinds, and throws a typed `MessageStreamError` on `message_error`.
 
-The dashboard session chat and the webchat widget (`/widget.js`) consume these same events. Span attributes for LLM calls are in [Observability](/docs/observability/).
+```ts
+import { PalClient } from "@pal-runtime/sdk";
+
+const client = new PalClient({ apiKey: "...", baseUrl: "http://localhost:8080" });
+
+for await (const event of client.sessions.streamMessage(sessionId, {
+  content: "Summarise the last quarter in 3 bullets.",
+})) {
+  if (event.type === "delta") process.stdout.write(event.delta);
+  else if (event.type === "completed") console.log("\nCost:", event.usage.costUsd);
+}
+```
+
+Events are a union: `{ type: "delta"; delta: string }` or `{ type: "completed"; text: string; usage: { tokensIn; tokensOut; costUsd } }`.
+
+## How it works underneath
+
+The control plane calls the provider in streaming mode (`streamWithFailover`). Each chunk publishes a `message_delta` to the Redis session channel, and the SSE handler fans it out. The provider request carries an `Idempotency-Key`, so a crash retry dedups at the provider.
+
+If the primary provider fails before any delta, the failover chain retries on the next provider ([Models and routing](/docs/build/models/#failover)). If it fails after a delta, you get `message_error`. The dashboard chat and the webchat widget (`/widget.js`) consume these same events. For run events (not session tokens), see [Durable execution](/docs/runtime/durable-execution/#inspecting-and-recovering-a-run).

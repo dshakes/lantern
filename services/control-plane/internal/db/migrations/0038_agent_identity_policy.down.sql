@@ -1,4 +1,4 @@
--- Reverts 0037 (ADR 0052). Drops the audit trail too: take a backup first if
+-- Reverts 0038 (ADR 0055). Drops the audit trail too: take a backup first if
 -- it must be retained.
 ALTER TABLE runtime_vms DROP COLUMN IF EXISTS agent_id;
 DROP TRIGGER IF EXISTS agents_default_deny_policy ON agents;

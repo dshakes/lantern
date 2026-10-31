@@ -186,7 +186,7 @@ func (h *MarketplaceHandler) Invoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Buyer = an agent acting as itself (token bound to pal:marketplace/<slug>,
-	// ADR 0052) or a human / API key.
+	// ADR 0055) or a human / API key.
 	z := currentAgentAuthz()
 	buyerAgent, aerr := z.agentCallerFromRequest(r, marketplaceAudPfx+slug)
 	var (
@@ -238,7 +238,7 @@ func (h *MarketplaceHandler) Invoke(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "marketplace agent not found"})
 		return
 	}
-	// The seller agent's inbound policy must admit this buyer (ADR 0052 §4).
+	// The seller agent's inbound policy must admit this buyer (ADR 0055 §4).
 	if seller.ID != "" {
 		seller.Name, seller.TenantID = agentName, sellerTenant
 		callerID := "tenant:" + buyerTenant

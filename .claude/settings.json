@@ -11,5 +11,10 @@
         "ref": "v0.6.0"
       }
     }
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git push:*)"
+    ]
   }
 }

@@ -1,6 +1,6 @@
 package agentidentity
 
-// Agent-principal tokens (ADR 0052). Distinct from the per-VM agent-instance
+// Agent-principal tokens (ADR 0055). Distinct from the per-VM agent-instance
 // token above: an agent token names an AGENT (a SPIFFE-style principal), is
 // bound to exactly one audience, lives minutes, and is EdDSA-only so it can
 // never be confused with an HS256 user session.

@@ -1,26 +1,21 @@
 ---
 title: Evaluations
-description: Eval suites, CI regression gates, baselines, A/B experiments, human feedback and rehearsals.
-glance:
-  what: "Eval suites score an agent against fixed cases; a run that scores below the pinned branch baseline gets HTTP 422."
-  why: "A prompt change can quietly make an agent worse, and a 422 fails CI before users see it."
-  how: "POST /v1/eval-suites, post a run to /v1/eval-runs, then pin it with pal test --set-baseline."
+description: Eval suites, a CI regression gate, baselines, human feedback and rehearsals.
 sidebar:
   order: 7
 ---
+
 import { BudgetEvalGate } from '../../../../components/diagrams';
+
+An **eval suite** is a set of inputs with expected results for one agent. You run it like a test suite, pin today's score as the **baseline**, and the API answers **HTTP 422** when a later run scores lower. Everything here is on the REST API the dashboard uses; the exhaustive list is in the [REST API](/docs/reference/api/).
 
 <BudgetEvalGate client:visible />
 
-An eval suite is a set of inputs with expected results. Run it like a test suite, pin today's score as the baseline, and the API answers 422 when a later run scores lower. Everything here is on the REST API the dashboard uses.
+## Suites
 
-## Eval suites
+A suite is a named list of cases. A case has a `name`, an `input` string, and an `expected` string and/or an `assert` object. Suites are upserted by `(tenant, agent, name)`.
 
-A suite is a named list of cases for one agent. A case has a `name`, an `input` string, and an `expected` string and/or an `assert` object. Suites are upserted by `(tenant, agent, name)`.
-
-PAL stores `expected` and `assert` with the case; your runner (or `pal test`) decides pass/fail and reports `passed` and `score` per case. The one assertion the server checks itself is `{"grounded":true}`, which forces a case to fail when the output claims an action nothing backed.
-
-### Create or update a suite
+PAL stores `expected` and `assert` with the case. Your runner (or `pal test`) decides pass or fail and reports `passed` and `score` per case. The one assertion the server checks itself is `{"grounded":true}`, which forces a case to fail when the output claims an action nothing backed.
 
 ```http
 POST /v1/eval-suites
@@ -28,209 +23,105 @@ POST /v1/eval-suites
   "agentName": "research-agent",
   "name": "factual-accuracy",
   "cases": [
-    {
-      "name": "case-1",
-      "input": "What year did WWII end?",
-      "expected": "1945",
-      "assert": { "contains": "1945" }
-    }
+    { "name": "case-1", "input": "What year did WWII end?",
+      "expected": "1945", "assert": { "contains": "1945" } }
   ]
 }
-
-Response: 200 OK
-{ "id": "suite-uuid", "agentName": "research-agent", "name": "factual-accuracy" }
 ```
 
-### Other suite endpoints
-
-```http
-GET    /v1/eval-suites              — list all suites (bare array)
-GET    /v1/eval-suites?agentName=  — filter by agent
-GET    /v1/eval-suites/{id}        — get suite
-DELETE /v1/eval-suites/{id}        — delete suite
-```
+Also `GET /v1/eval-suites` (optionally `?agentName=`), `GET /v1/eval-suites/{id}` and `DELETE /v1/eval-suites/{id}`.
 
 ## Recording a run and the CI gate
 
-Run the agent on each case yourself (or use `pal test`, which waits for each run to finish; `--timeout` caps the wait, default 2m), then post the per-case results. The server computes the score (mean of case scores) and compares it with the pinned baseline for the same agent and branch. A score more than 0.01 below the baseline returns **HTTP 422**, which fails a CI step. With no baseline pinned, nothing regresses.
+Run the agent on each case yourself, or use `pal test`, which waits for each run to finish (`--timeout` caps the wait, default 2m). Then post the per-case results. The server computes the score (mean of case scores) and compares it with the pinned baseline for the same agent and branch. A score more than 0.01 below the baseline returns **422**, which fails a CI step. With no baseline pinned, nothing regresses.
 
 ```http
 POST /v1/eval-runs
 {
-  "suiteId": "suite-uuid",
-  "agentVersion": "v2",
-  "commitSha": "abc1234",
-  "branch": "main",
-  "durationMs": 4200,
-  "totalCostUsd": 0.12,
-  "caseResults": [
-    { "name": "case-1", "passed": true, "score": 0.95, "actual": "1945" }
-  ]
+  "suiteId": "suite-uuid", "agentVersion": "v2", "commitSha": "abc1234", "branch": "main",
+  "caseResults": [ { "name": "case-1", "passed": true, "score": 0.95, "actual": "1945" } ]
 }
 
-Response: 200 OK — no regression
-{ "id": "run-uuid", "passed": true, "score": 0.95, "casesTotal": 1,
-  "casesPassed": 1, "regressed": false, "baselineScore": 0.94 }
+200 OK
+{ "id": "run-uuid", "passed": true, "score": 0.95, "regressed": false, "baselineScore": 0.94 }
 
-Response: 422 Unprocessable Entity — regressed vs. baseline
-{ "id": "run-uuid", "score": 0.91, "regressed": true, "baselineScore": 0.94, ... }
+422 Unprocessable Entity   (regressed against the baseline)
+{ "id": "run-uuid", "score": 0.91, "regressed": true, "baselineScore": 0.94 }
 ```
 
-A complete pipeline (run, post, stop on 422, deploy, receipt) is in the [Eval-gated deploy](/docs/start/examples/) example.
-
-```http
-GET /v1/eval-runs?suiteId=&agentName=&branch=  — list runs (bare array)
-```
+List runs with `GET /v1/eval-runs?suiteId=&agentName=&branch=`. A full pipeline (run, post, stop on 422, deploy, receipt) is in [Examples](/docs/start/examples/).
 
 ## Baselines
 
-Pin an eval run as the baseline for an agent and branch. Later runs on that branch are compared against it. From the CLI: `pal test --agent a --suite s --set-baseline`.
+Pin an eval run as the baseline for an agent and branch; later runs on that branch are compared against it.
 
-```http
-POST /v1/eval-baselines
-{ "agentName": "research-agent", "branch": "main", "evalRunId": "run-uuid" }
-→ { "status": "baseline set" }
-
-GET /v1/eval-baselines?agentName=research-agent&branch=main
-→ { "agentName", "branch", "evalRunId", "score", "setAt" }   (404 {"error":"no baseline"} when unset)
+```bash
+pal test --agent research-agent --suite factual-accuracy --set-baseline   # run, then pin this run
 ```
 
-## Eval observability
+Over REST, `POST /v1/eval-baselines` with `{ "agentName", "branch", "evalRunId" }` pins one, and `GET /v1/eval-baselines?agentName=&branch=` reads it (404 `{"error":"no baseline"}` when unset).
 
-Two read-only endpoints over existing `eval_runs` data for the dashboard quality-trend sparkline and top-failing-cases view.
+## Reading the history
 
-### Failure clusters
+Two read-only endpoints over existing `eval_runs` data feed the dashboard's quality-trend sparkline and top-failing-cases view.
 
-```http
-GET /v1/eval-observability/failures?agentName=research-agent&branch=main&limit=50
+| Endpoint | Returns |
+| --- | --- |
+| `GET /v1/eval-observability/failures?agentName=&branch=&limit=` | `clusters`: failing cases grouped across recent runs, worst first (`case`, `failures`, `seen`, `failRate`, `sampleError`, `firstSeen`, `lastSeen`), and `runsScanned`. `limit` is the number of runs scanned (default 50, cap 200) |
+| `GET /v1/eval-observability/trends?agentName=&branch=&limit=` | `points`, oldest first (`runId`, `createdAt`, `score`, `passRate`, `passed`, `costUsd`, `agentVersion`, `commitSha`), plus `latestVsMean` and `regressing` (the latest score is below the mean of earlier ones) |
 
-Response:
-{
-  "clusters": [
-    {
-      "case": "What year did WWII end?",
-      "failures": 3,
-      "seen": 5,
-      "failRate": 0.6,
-      "sampleError": "Agent said 1944 instead of 1945",
-      "firstSeen": "2026-07-01T...",
-      "lastSeen": "2026-07-20T..."
-    }
-  ],
-  "runsScanned": 50
-}
-```
+## Human feedback and rehearsals
 
-### Score trend
-
-```http
-GET /v1/eval-observability/trends?agentName=research-agent&branch=main
-
-Response:
-{
-  "points": [
-    {
-      "runId": "run-uuid",
-      "createdAt": "2026-07-01T...",
-      "score": 0.94,
-      "passRate": 0.9,
-      "passed": 9,
-      "costUsd": 0.12,
-      "agentVersion": "v1",
-      "commitSha": "abc1234"
-    }
-  ],
-  "latestVsMean": -0.03,
-  "regressing": true
-}
-```
-
-## A/B experiments
-
-An experiment records scores for two agent versions and can promote the winner. `PickVariant` implements a deterministic FNV-1a split, but nothing in the run path calls it yet, so **experiments do not route traffic today**: you assign variants and `record` each outcome yourself. With `autoPromote` on, PAL promotes the leader once both arms have enough runs and one leads by more than 0.02. This is a fixed margin, not a significance test.
-
-### Create an experiment
-
-```http
-POST /v1/experiments
-{
-  "agentName": "research-agent",
-  "name": "prompt-v2-test",
-  "variantAVersion": "v1",
-  "variantBVersion": "v2",
-  "trafficSplitB": 20,        // percent of traffic to B (0-100)
-  "autoPromote": true,        // promote the leader at +0.02 score
-  "minRunsToPromote": 100     // per arm; default 100
-}
-
-Response: 200 OK
-{ "id": "exp-uuid" }
-```
-
-### Record an outcome
-
-```http
-POST /v1/experiments/{id}/record
-{
-  "variant": "b",   // "a" | "b"
-  "score": 0.95     // 0-1; the stored score is a running mean per variant
-}
-
-// Auto-promotion fires when:
-// - both arms have >= minRunsToPromote runs
-// - one arm's mean score beats the other by more than 0.02
-```
-
-### Conclude manually
-
-```http
-POST /v1/experiments/{id}/conclude
-{
-  "winner": "b",     // "a" | "b" | "tie"
-  "promote": true    // flip the agent's current version to the winner
-}
-```
-
-### Other experiment endpoints
-
-```http
-GET /v1/experiments         — list (bare array)
-GET /v1/experiments/{id}    — get with aScore / bScore and run counts
-```
-
-## Human feedback
-
-Collect thumbs-up / thumbs-down reactions on individual runs. Score is 1–5; 4–5 is positive, 1–2 is negative. Runs scored 2 or lower are pulled in by rehearsals.
+Collect reactions on individual runs. Score is 1 to 5; 4 to 5 is positive, 1 to 2 is negative.
 
 ```http
 POST /v1/runs/{id}/feedback
-{
-  "score": 2,
-  "comment": "The agent missed the follow-up question",
-  "preferredOutput": "It should have asked for clarification first"
-}
-
-GET /v1/runs/{id}/feedback                   — per-run history (bare array)
-GET /v1/agents/{name}/feedback               — aggregate summary
-  → { totalFeedback, avgScore, thumbsUp, thumbsDown, last7DaysAvgScore, ... }
+{ "score": 2, "comment": "The agent missed the follow-up question",
+  "preferredOutput": "It should have asked for clarification first" }
 ```
 
-## Rehearsals
+`GET /v1/runs/{id}/feedback` lists a run's history; `GET /v1/agents/{name}/feedback` returns the aggregate (`totalFeedback`, `avgScore`, `thumbsUp`, `thumbsDown`, `last7DaysAvgScore`).
 
-Pull past failed or low-scored runs (feedback score of 2 or lower) as synthetic test cases, then replay them against a candidate version before you flip traffic. The endpoint returns the cases; `pal test --rehearse` runs them.
+**Rehearsals** pull past failed runs and runs scored 2 or lower as synthetic test cases, so you can replay them against a candidate version before you flip traffic. The endpoint returns the cases; `pal test --rehearse` runs them.
 
 ```http
 POST /v1/runs/rehearse
-{
-  "agentName": "research-agent",
-  "window": "7d",            // look-back (default 7d)
-  "limit": 20,               // default 25, max 200
-  "includeFailures": true,   // status=failed runs (default true)
-  "includeLowScore": true    // feedback score <= 2 (default true)
-}
-
-Response: { "agentName", "window", "cases": [{ "originalRunId", "input",
-  "expectedOutput", ... }], "count", "reason"? }
+{ "agentName": "research-agent", "window": "7d", "limit": 20,
+  "includeFailures": true, "includeLowScore": true }
 ```
 
+Defaults: `window` 7d, `limit` 25 (max 200), both `include*` flags true.
+
+## A/B experiments
+
+An experiment records scores for two agent versions and can promote the winner. `PickVariant` implements a deterministic FNV-1a split, but nothing in the run path calls it, so **experiments do not route traffic today**. You assign variants yourself and `record` each outcome.
+
+```http
+POST /v1/experiments
+{ "agentName": "research-agent", "name": "prompt-v2-test",
+  "variantAVersion": "v1", "variantBVersion": "v2",
+  "trafficSplitB": 20, "autoPromote": true, "minRunsToPromote": 100 }
+
+POST /v1/experiments/{id}/record      { "variant": "b", "score": 0.95 }     # running mean per variant
+POST /v1/experiments/{id}/conclude    { "winner": "b", "promote": true }    # "a" | "b" | "tie"
+```
+
+`trafficSplitB` is stored, not applied. With `autoPromote` on, PAL promotes the leader once both arms have at least `minRunsToPromote` runs (default 100) and one leads by more than 0.02. That is a fixed margin, not a significance test. `GET /v1/experiments` and `GET /v1/experiments/{id}` list and read them.
+
 Span attributes and traces: [Observability](/docs/observability/).
+
+## CI gates for your agent repo
+
+`pal ci init` writes a GitHub Actions workflow and a generic `.pal/ci.sh` that run, in order,
+manifest lint, a policy/security lint, the hermetic eval suite with the baseline regression gate,
+and a budget check. All pass/fail decisions are deterministic code; a model never grades the gate.
+The run writes `pal-ci-report.json` and a PR comment.
+
+```bash
+pal ci init --suite ci --dry-run   # preview the files
+pal ci init --suite ci             # write them
+pal ci lint                        # the two offline gates, no credentials
+```
+
+Set the repo secret `PAL_API_KEY` and variables `PAL_API_URL` and `PAL_CI_STAGING_ACK=1`. The key
+must belong to a **staging** workspace: the gate deploys the PR's manifest there before evaluating it.

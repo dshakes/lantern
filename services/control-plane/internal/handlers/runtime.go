@@ -946,7 +946,7 @@ func (h *RuntimeHandler) scheduleAgentSpec(ctx context.Context, tenantID, princi
 		return "", "", "", "", time.Time{}, fmt.Errorf("load DLP policy: %w", err)
 	}
 
-	// Agent binding (ADR 0052): a VM that runs AS an agent may only get the
+	// Agent binding (ADR 0055): a VM that runs AS an agent may only get the
 	// egress and secrets that agent's policy allows. Checked before anything is
 	// spawned; a denial is a typed *AgentPolicyDeniedError (HTTP 403).
 	agent, err := h.authorizeScheduleForAgent(ctx, tenantID, spec)
@@ -1592,7 +1592,7 @@ type agentSpecDTO struct {
 	Idempotent        bool              `json:"idempotent,omitempty"`
 	RestoreSnapshotID string            `json:"restoreSnapshotId,omitempty"`
 	AgentVersionID    string            `json:"agentVersionId,omitempty"`
-	// AgentName binds the VM to that agent's identity + policy (ADR 0052);
+	// AgentName binds the VM to that agent's identity + policy (ADR 0055);
 	// agentVersionId binds it to the agent owning that version.
 	AgentName string `json:"agentName,omitempty"`
 	RunID     string `json:"runId,omitempty"`

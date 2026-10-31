@@ -398,7 +398,7 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 
 	isBridgeAgent := agentName == "whatsapp-assistant" || agentName == "imessage-assistant"
 
-	// Agent identity (ADR 0052): a registered agent acts as its own principal,
+	// Agent identity (ADR 0055): a registered agent acts as its own principal,
 	// so every tool it calls this turn is checked against its policy. An
 	// unregistered name (bridge personas) keeps the caller's authority.
 	if actx, _, aerr := currentAgentAuthz().Establish(ctx, tenantID, agentName, "session:"+sessionID); aerr != nil {

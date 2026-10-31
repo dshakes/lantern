@@ -1,4 +1,4 @@
--- 0037: Agent identity + per-agent least-privilege policy (ADR 0052).
+-- 0038: Agent identity + per-agent least-privilege policy (ADR 0055).
 --
 -- Three tenant-scoped tables (all under RLS, invariant #7):
 --   agent_identities      one principal per agent; NO private key is stored —
@@ -54,7 +54,7 @@ CREATE INDEX IF NOT EXISTS agent_policies_tenant_idx ON agent_policies (tenant_i
 DO $$
 BEGIN
 	IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = current_user AND (rolsuper OR rolbypassrls)) THEN
-		RAISE WARNING '0037_agent_identity_policy: % does not bypass RLS; agents hidden by FORCE ROW LEVEL SECURITY are not backfilled (the control-plane classifies them lazily by created_at)', current_user;
+		RAISE WARNING '0038_agent_identity_policy: % does not bypass RLS; agents hidden by FORCE ROW LEVEL SECURITY are not backfilled (the control-plane classifies them lazily by created_at)', current_user;
 	END IF;
 END
 $$;
@@ -62,7 +62,7 @@ $$;
 INSERT INTO agent_policies (agent_id, tenant_id, mode, document, updated_by)
 SELECT a.id, a.tenant_id, 'legacy_permissive',
        '{"tools":["*"],"connectors":{"*":["*"]},"mcpServers":["*"],"egressHosts":["*"],"a2aTargets":["*"],"a2aInbound":["*"],"secrets":["*"],"budget":{"maxToolCallsPerRun":0,"maxA2AInboundPerMinute":0}}'::jsonb,
-       'system:migration-0037'
+       'system:migration-0038'
 FROM agents a
 ON CONFLICT (agent_id) DO NOTHING;
 

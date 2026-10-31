@@ -31,6 +31,54 @@ import (
 	"golang.org/x/term"
 )
 
+// stepLine describes a step_started / step_completed event. The server's
+// payload carries the step kind as "type" (inline LLM path and workflow
+// interpreter) and no duration, so only what is present is shown — never an
+// empty "(kind: )" or a made-up "(0ms)".
+func stepLine(ev *internal.SSEEvent) string {
+	p := ev.Payload
+	str := func(keys ...string) string {
+		for _, k := range keys {
+			if v, ok := p[k].(string); ok && v != "" {
+				return v
+			}
+		}
+		return ""
+	}
+	num := func(k string) float64 {
+		if v, ok := p[k].(float64); ok {
+			return v
+		}
+		return 0
+	}
+	id := str("step_id")
+	if id == "" {
+		id = ev.StepID
+	}
+	if id == "" {
+		id = str("name")
+	}
+	var details []string
+	if kind := str("type", "kind", "node_type"); kind != "" {
+		details = append(details, kind)
+	}
+	verb := "→ step started"
+	if ev.Kind == "step_completed" {
+		verb = "✓ step completed"
+		if ms := num("duration_ms"); ms > 0 {
+			details = append(details, fmt.Sprintf("%.0fms", ms))
+		}
+		if in, out := num("tokens_in"), num("tokens_out"); in > 0 || out > 0 {
+			details = append(details, fmt.Sprintf("%.0f→%.0f tokens", in, out))
+		}
+	}
+	line := verb + ": " + id
+	if len(details) > 0 {
+		line += " (" + strings.Join(details, ", ") + ")"
+	}
+	return line
+}
+
 // renderSSEEvent pretty-prints a single SSE event to stderr with colors.
 // This mirrors the gRPC stream renderer in runs.go but works on the REST
 // SSE event format (kind + payload map).
@@ -60,20 +108,12 @@ func renderSSEEvent(ev *internal.SSEEvent) {
 
 	prefix := "   "
 	switch ev.Kind {
-	case "step_started":
-		stepID := getString("step_id")
-		if stepID == "" {
-			stepID = ev.StepID
+	case "step_started", "step_completed":
+		color := colorBlue
+		if ev.Kind == "step_completed" {
+			color = colorGreen
 		}
-		fmt.Fprintf(os.Stderr, "%s%s→ step started: %s (kind: %s)%s\n",
-			prefix, colorBlue, stepID, getString("kind"), colorReset)
-	case "step_completed":
-		stepID := getString("step_id")
-		if stepID == "" {
-			stepID = ev.StepID
-		}
-		fmt.Fprintf(os.Stderr, "%s%s✓ step completed: %s (%.0fms)%s\n",
-			prefix, colorGreen, stepID, getFloat("duration_ms"), colorReset)
+		fmt.Fprintf(os.Stderr, "%s%s%s%s\n", prefix, color, stepLine(ev), colorReset)
 	case "step_failed":
 		stepID := getString("step_id")
 		if stepID == "" {
@@ -184,6 +224,13 @@ type onboardConfig struct {
 	yes         bool          // --yes: accept all defaults non-interactively
 	description string        // --description: seed the agent generation prompt
 	forceTTY    bool          // tests: treat stdin as a terminal
+	steps       bool          // --steps: the step wizard instead of the conversation
+}
+
+// chatMode: the conversation is the default on a terminal; any flag that asks
+// for unattended behavior keeps the wizard (and --yes never prompts).
+func (c *onboardConfig) chatMode() bool {
+	return !c.yes && !c.steps && c.description == "" && c.provider == "" && c.apiKey == "" && c.isTTY()
 }
 
 // isTTY reports whether prompts may be shown.
@@ -234,6 +281,7 @@ func newOnboardCommand() *cobra.Command {
 		apiKeyFlag      string
 		yesFlag         bool
 		descriptionFlag string
+		stepsFlag       bool
 	)
 
 	cmd := &cobra.Command{
@@ -251,6 +299,13 @@ reasoning via the model router), shows the proposal, and creates it once you
 confirm. The first run uses the design's own first task. If the design call
 fails, pal says why and falls back to a general quickstart agent.
 
+On a terminal this is a conversation with PAL's onboarding agent (the same
+agent as the dashboard's /onboarding): say what you want in your own words,
+and it asks follow-ups, designs, creates and runs the agent with you, explains
+failures and fixes. Keys are typed at a hidden prompt, never into the chat.
+--steps keeps the step-by-step wizard; if the agent can't reach the model, the
+wizard takes over and says so.
+
 Flags --provider and --api-key bypass the interactive provider prompt.
 Flag --yes (or a non-terminal stdin) never prompts: CI mode, with
 --description seeding the design.`,
@@ -262,6 +317,7 @@ Flag --yes (or a non-terminal stdin) never prompts: CI mode, with
 				apiKey:      apiKeyFlag,
 				yes:         yesFlag,
 				description: descriptionFlag,
+				steps:       stepsFlag,
 			}
 			return runOnboard(cfg)
 		},
@@ -271,6 +327,7 @@ Flag --yes (or a non-terminal stdin) never prompts: CI mode, with
 	cmd.Flags().StringVar(&apiKeyFlag, "api-key", "", "API key for the provider (used with --provider, never echoed)")
 	cmd.Flags().BoolVarP(&yesFlag, "yes", "y", false, "Non-interactive: accept defaults for all prompts")
 	cmd.Flags().StringVar(&descriptionFlag, "description", "", "One-line description for the generated agent (implies --yes for this prompt)")
+	cmd.Flags().BoolVar(&stepsFlag, "steps", false, "Use the step-by-step wizard instead of the conversation")
 
 	return cmd
 }
@@ -312,6 +369,20 @@ func runOnboard(cfg *onboardConfig) error {
 	// onboardEnsureProvider prints the full "3. LLM provider ... ✓/✗" line(s)
 	// itself because the no-provider path needs to interleave prompts.
 	client := internal.NewRESTClient(restURL, "", token)
+
+	// ── Conversation (default on a terminal) ────────────────────────────────
+	if cfg.chatMode() {
+		fmt.Fprintln(os.Stderr, strings.Repeat("─", 48))
+		err := runOnboardingChat(&chatSession{
+			product: "runtime", client: client, restURL: restURL, token: token,
+			reader: cfg.lineReader(), out: os.Stderr,
+		})
+		if !errors.Is(err, errChatFallback) {
+			return err
+		}
+		fmt.Fprintln(os.Stderr, "Continuing step by step.")
+	}
+
 	if err := onboardEnsureProvider(cfg, client, restURL, token); err != nil {
 		return err
 	}

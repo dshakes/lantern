@@ -1,19 +1,88 @@
 ---
-title: VM lifecycle
-description: The sandbox state machine, from schedule to terminate, including idle-suspend, pause, resume and copy-on-write forks.
-glance:
-  what: "Every state a sandbox microVM can be in, and every transition the scheduler drives."
-  why: "Pause, idle-suspend and fork change what you pay for and what survives; the guarantees differ per transition."
-  how: "Select a state or arrow for its trigger, API call and guarantees, then play the lifecycle sequence."
+title: microVM lifecycle
+description: The sandbox state machine from schedule to terminate, including idle suspend, pause, resume and copy-on-write forks.
 sidebar:
   order: 3
 ---
 
-import { VmLifecycle, SandboxLifecycleSequence } from '../../../../components/diagrams';
+import { VmLifecycle } from '../../../../components/diagrams';
+
+
+Every sandbox microVM is in one of seven states, and the **runtime scheduler** drives every transition under a per-VM lock; only the leader replica mutates. Pause, idle suspend and fork change what you pay for and what survives, and the guarantees differ per transition. The API, SDK calls and costs are in [Sandbox lifecycle](/docs/runtime/sandbox-lifecycle/).
 
 <VmLifecycle client:visible />
 
-<SandboxLifecycleSequence client:visible />
+## States
+
+| State | Meaning |
+| --- | --- |
+| `PENDING` | The scheduler accepted the request and awaits placement. |
+| `SPAWNING` | A node is assigned and the VM is bootstrapping. Also the state of a resume or fork child while the manager restores it. |
+| `RUNNING` | The harness is reporting heartbeats. Holds one concurrent-VM quota slot. |
+| `DRAINING` | Graceful shutdown started. A pause in progress is persisted here with the `scheduler:pausing` marker, so a crash never reloads it as `PAUSED`. |
+| `PAUSED` | Snapshotted and stopped. Holds no quota slot; snapshot storage is kept. Resumable. |
+| `FAILED` | Spawn or health failure; the reason is in the `StatusEvent`. |
+| `TERMINATED` | Resources released. |
+
+## Transitions
+
+| From | To | Trigger |
+| --- | --- | --- |
+| start | `PENDING` | `POST /v1/runtime/schedule` |
+| `PENDING` | `SPAWNING` | Placed on a node |
+| `SPAWNING` | `RUNNING` | First harness heartbeat |
+| `SPAWNING` | `FAILED` | Spawn fails |
+| `RUNNING` | `DRAINING` | Pause, idle timeout or delete |
+| `DRAINING` | `PAUSED` | Snapshot and stop succeeded |
+| `DRAINING` | `RUNNING` | Stop failed; the VM keeps its slot |
+| `DRAINING` | `TERMINATED` | Drained after delete |
+| `PAUSED` | `SPAWNING` | Resume or auto-resume |
+| `SPAWNING` | `PAUSED` | Restore failed; resumable again |
+| `RUNNING` | `SPAWNING` (children) | Fork x N |
+
+## Sequences
+
+### Schedule
+
+1. `POST /v1/runtime/schedule` carries an AgentSpec: image, isolation, limits, egress, secrets and optional `idleTimeoutSecs`.
+2. `RuntimeScheduler.Schedule` runs. Over the tenant's quota, the control plane answers 402.
+3. The scheduler places the VM (`PENDING`, then `SPAWNING`), choosing the node by warm pool, region, fair share, cost and health.
+4. `Spawn { spec, handle }`: the manager writes `spawn.json` to the read-only cert drive and boots the VM.
+5. The harness heartbeats every 5 s. PID 1 is up, so the VM is `RUNNING`. Each beat carries `has_active_exec` and `last_activity_unix_ms`.
+6. The control plane returns `{ vm_id }`. The sandbox is addressable by that id from here on.
+
+### Idle suspend and auto-resume
+
+1. The guest reports `has_active_exec = false`: no workload or exec child is alive. The activity tracker stamps when the last one exited.
+2. The idle sweeper ticks every 10 s, on the leader only. A VM is eligible when it is `RUNNING`, has `idle_timeout_secs > 0`, and has been idle longer than the timeout.
+3. `Snapshot { vm_id }` runs through the same crash-safe path as an operator pause, marked `scheduler:idle-pausing`.
+4. `Stop` removes the VM from the node. Its snapshot stays.
+5. The VM becomes `PAUSED` with reason "auto-suspended (idle timeout)", and its quota slot is freed.
+6. A later `POST .../vms/{id}/exec` reaches `ensureVMRunning`, which calls Resume because `idle_timeout_secs > 0`. `FailedPrecondition` means the VM is already running.
+7. `Spawn { restore_snapshot_id }` reserves quota first (402 if over) and restores under the same `vm_id`.
+8. The original exec proceeds, and the control plane audits `auto_resume`.
+
+The sweeper does not update the control plane's shadow row, so `GET /v1/runtime/vms` shows an auto-suspended VM as `running`. A VM paused manually is never auto-resumed: exec answers 409.
+
+### Pause and resume
+
+1. `POST .../vms/{id}/pause`. Only a `RUNNING` VM can be paused.
+2. The scheduler persists the snapshot id before `Stop`, then marks the VM `DRAINING` (`scheduler:pausing`).
+3. `Stop { reason: paused }`. If it fails, the VM returns to `RUNNING` and keeps its slot.
+4. `PAUSED` plus `snapshot_id` returns. Exactly one of the RPC or reconciliation releases the quota slot.
+5. `POST .../vms/{id}/resume` runs `TryReserveTenantVMs`, then `SPAWNING` (`scheduler:resuming`).
+6. `Spawn` restores from the snapshot under the same `vm_id`. A failed spawn leaves the VM `PAUSED`.
+7. The restored guest takes a new incarnation's certificate and exec token, so credentials frozen into the snapshot are refused.
+
+### Fork x N
+
+1. `POST .../vms/{id}/fork { count }`, with `count` from 1 to `PAL_MAX_FORK_COUNT` (default 100, ceiling 1000).
+2. The control plane issues one agent identity per child. Inheriting the source's would let N sandboxes act as one.
+3. The scheduler reserves N slots, all or nothing, before any snapshot I/O.
+4. `Snapshot { keep_running }`: a running source keeps running; a paused source forks from its pause snapshot.
+5. `Spawn` runs N times with new `vm_id`s, at most `PAL_FORK_CONCURRENCY` at a time (default 16). A child that fails is reported and its slot released.
+6. The manager hard-links the read-only `mem` file into each jail, so pages are shared through the host page cache (`MAP_PRIVATE` copy-on-write) until a guest writes.
+7. The response is `forks [{ vmId, state, error? }]`; each child is `RUNNING` or `FAILED`.
 
 ## Reference
 

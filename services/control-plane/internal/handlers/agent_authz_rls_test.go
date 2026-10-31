@@ -1,6 +1,6 @@
 package handlers
 
-// Integration tests for agent identity + per-agent policy (ADR 0052) on the
+// Integration tests for agent identity + per-agent policy (ADR 0055) on the
 // RLS-ENFORCED harness (newEnforcedServer: tenant-scoped work runs as the
 // non-superuser pal_app role). Point DATABASE_URL at a FRESH database.
 
@@ -40,7 +40,7 @@ func newAuthzEnv(t *testing.T) *authzEnv {
 	return &authzEnv{e: e, z: z, auth: auth, api: NewAgentIdentityHandler(e.srv, auth, z, nil)}
 }
 
-// seedAgent inserts an agent through the privileged pool. The 0037 trigger
+// seedAgent inserts an agent through the privileged pool. The 0038 trigger
 // gives it a default-deny policy.
 func (a *authzEnv) seedAgent(t *testing.T, tenantID, name string) agentRef {
 	t.Helper()

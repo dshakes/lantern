@@ -11,8 +11,8 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -26,8 +26,10 @@ import (
 )
 
 type EvalHandler struct {
-	srv  *server.Server
-	auth *AuthHandler
+	srv      *server.Server
+	auth     *AuthHandler
+	llm      *LlmProxyHandler
+	complete evalCompleteFn // LLM seam for run/generate/calibrate; nil → 503
 }
 
 func NewEvalHandler(srv *server.Server, auth *AuthHandler) *EvalHandler {
@@ -42,8 +44,12 @@ type evalCase struct {
 	Name     string         `json:"name"`
 	Input    string         `json:"input"`
 	Expected string         `json:"expected,omitempty"`
-	Assert   map[string]any `json:"assert,omitempty"` // e.g. {"contains":"foo", "minLen":10}
+	Assert   map[string]any `json:"assert,omitempty"` // e.g. {"contains":"foo", "minLen":10}; v2 keys in eval_assert.go
 	Weight   float64        `json:"weight,omitempty"`
+	// v2 (ADR 0052): independent agent samples per case and deterministic
+	// tool fixtures for hermetic runs (POST /v1/eval-suites/{id}/run).
+	Samples int        `json:"samples,omitempty"`
+	Mocks   []evalMock `json:"mocks,omitempty"`
 }
 
 type evalSuiteDTO struct {
@@ -65,6 +71,13 @@ type evalCaseResult struct {
 	Error     string  `json:"error,omitempty"`
 	LatencyMs int64   `json:"latencyMs,omitempty"`
 	CostUsd   float64 `json:"costUsd,omitempty"`
+	// v2 (server-run) detail. All optional so client-posted results keep their shape.
+	Stddev       float64           `json:"stddev,omitempty"`
+	PassRate     *float64          `json:"passRate,omitempty"`
+	Flaky        bool              `json:"flaky,omitempty"`
+	JudgeCostUsd float64           `json:"judgeCostUsd,omitempty"`
+	Assertions   []assertionResult `json:"assertions,omitempty"`
+	Samples      []evalSample      `json:"samples,omitempty"`
 }
 
 type evalRunDTO struct {
@@ -107,6 +120,18 @@ func (h *EvalHandler) UpsertSuite(w http.ResponseWriter, r *http.Request) {
 	if body.AgentName == "" || body.Name == "" || len(body.Cases) == 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agentName, name, and cases required"})
 		return
+	}
+	seen := make(map[string]bool, len(body.Cases))
+	for _, c := range body.Cases {
+		if err := validateCase(c); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if seen[c.Name] {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("duplicate case name %q", c.Name)})
+			return
+		}
+		seen[c.Name] = true
 	}
 	casesJSON, _ := json.Marshal(body.Cases)
 	var id string
@@ -428,6 +453,12 @@ func (h *EvalHandler) RecordRun(w http.ResponseWriter, r *http.Request) {
 		"regressed":     regressed,
 		"baselineScore": baselineScore,
 	}
+	// Per-case deltas vs the baseline run (informational here: the 422 for
+	// client-posted results stays the aggregate rule it has always been).
+	if b := h.loadBaseline(ctx, tenantID, agentName, body.Branch); b != nil {
+		resp["caseDeltas"] = caseDeltas(body.CaseResults, b.Cases, nil)
+		resp["baselineRunId"] = b.RunID
+	}
 	status := http.StatusOK
 	if regressed {
 		status = http.StatusUnprocessableEntity // 422 — signals CI failure
@@ -550,6 +581,14 @@ func (h *EvalHandler) SetBaseline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		// The FK to eval_runs is not tenant-scoped: pinning another tenant's
+		// run would make the baseline resolve to nothing and silently turn the
+		// regression gate off. Only the caller's own run (and agent) may be pinned.
+		var own int
+		if e := tx.QueryRow(ctx, `SELECT 1 FROM eval_runs WHERE id = $1 AND tenant_id = $2 AND agent_name = $3`,
+			body.EvalRunID, tenantID, body.AgentName).Scan(&own); e != nil {
+			return errEvalRunNotOwned
+		}
 		_, e := tx.Exec(ctx, `
 			INSERT INTO eval_baselines (tenant_id, agent_name, branch, eval_run_id)
 			VALUES ($1,$2,$3,$4)
@@ -559,6 +598,10 @@ func (h *EvalHandler) SetBaseline(w http.ResponseWriter, r *http.Request) {
 		`, tenantID, body.AgentName, body.Branch, body.EvalRunID)
 		return e
 	})
+	if errors.Is(err, errEvalRunNotOwned) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "eval run not found for this agent"})
+		return
+	}
 	if err != nil {
 		h.logger().Error("set baseline failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed"})
@@ -604,6 +647,8 @@ func (h *EvalHandler) GetBaseline(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+var errEvalRunNotOwned = errors.New("eval run not owned")
+
 // compareToBaseline returns the baseline score (if any) and whether the given
 // score represents a regression. Regression = score is > 1% worse than baseline.
 func compareToBaseline(ctx context.Context, pool *pgxpool.Pool, tenantID, agentName, branch string, score float64) (*float64, bool) {
@@ -619,6 +664,5 @@ func compareToBaseline(ctx context.Context, pool *pgxpool.Pool, tenantID, agentN
 	if err != nil {
 		return nil, false
 	}
-	regressed := score+0.01 < baseline && math.Abs(baseline-score) > 0.01
-	return &baseline, regressed
+	return &baseline, aggregateRegressed(score, baseline)
 }

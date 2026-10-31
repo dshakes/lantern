@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// ---------- Agent identity + policy (ADR 0052) ----------
+// ---------- Agent identity + policy (ADR 0055) ----------
 
 // ErrAgentPolicyDenied matches (via errors.Is) any *AgentPolicyDeniedError.
 var ErrAgentPolicyDenied = errors.New("pal: agent policy denied")

@@ -240,7 +240,7 @@ func TestExportRedacted_Catalog(t *testing.T) {
 		"api_keys.key_prefix":                      false,
 		"billing_meter_exports.idempotency_key":    false,
 		"batches.idempotency_key":                  false,
-		// ADR 0052: public key material / chain digests — not secrets, but
+		// ADR 0055: public key material / chain digests — not secrets, but
 		// redacted from GDPR export (nothing for the data subject, and the
 		// redactor's name heuristic is the conservative default).
 		"agent_identities.key_generation": true,

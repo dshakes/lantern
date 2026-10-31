@@ -12,8 +12,8 @@ import { useAuth } from "@/lib/auth";
 import { rememberMode } from "@/lib/use-workspace-mode";
 import { MODE_HOME, type WorkspaceMode } from "@/lib/workspace-nav";
 
-// pal onboarding is being built on its own branch; until it ships the pal
-// path goes to channel pairing. Flip on with NEXT_PUBLIC_PAL_ONBOARDING=1.
+// Both paths land in the onboarding conversation (ADR 0051). The pal one is
+// still gated: until NEXT_PUBLIC_PAL_ONBOARDING=1 it goes to channel pairing.
 const PAL_ONBOARDING = process.env.NEXT_PUBLIC_PAL_ONBOARDING === "1" ? "/pal/onboarding" : "/personal/setup";
 
 export default function WelcomePage() {

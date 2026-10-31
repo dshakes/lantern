@@ -1,26 +1,18 @@
 ---
 title: Budgets
-description: Per-agent spend and rate limits set as policy, enforced before the model is called.
-glance:
-  what: "Per-agent caps on dollars, tokens and runs per day (plus per-run and per-tool limits), enforced before the model is called."
-  why: "A buggy loop can burn a month of spend in an afternoon; with hardFail the next call gets HTTP 402 instead."
-  how: "PUT /v1/agents/{name}/budget with maxCostUsdPerDay and hardFail: true, or run the Try it example."
+description: Per-agent spend and rate limits set as policy and enforced before the model is called.
 sidebar:
   order: 6
 ---
 
 import Diagram from '../../../../components/Diagram.astro';
-
 import { Aside } from '@astrojs/starlight/components';
-import { BudgetEvalGate } from '../../../../components/diagrams';
 
-<BudgetEvalGate client:visible />
+A **budget** is a per-agent policy: caps on dollars, tokens and runs per day, plus per-run and per-tool limits. With `hardFail: true`, a call that would start while a limit is already reached is refused **before the model is called**: HTTP **402** on the REST paths, a failed step inside workflows. With `false`, the breach is logged and the call proceeds. If the budget cannot be read, hard-fail budgets fail closed.
 
-Per-agent spend and rate limits, set as policy. With `hardFail: true`, a call that would start while a limit is already reached is refused **before the model is called**: HTTP 402 on the REST paths, a failed step inside workflows. With `false`, the breach is logged and the call proceeds. If the budget cannot be read, hard-fail budgets fail closed.
+<Diagram name="budget-gate" alt="Before the model call, the budget gate reads the agent's recorded usage for the day. Under every cap, the call goes to the model. At or over a hard-fail cap, the caller gets HTTP 402 and no provider is contacted." />
 
-<Diagram name="budget-gate" />
-
-## Setting a budget
+## Set a budget
 
 ```http
 PUT /v1/agents/{name}/budget
@@ -31,48 +23,69 @@ Content-Type: application/json
   "maxCostUsdPerRun": 1.00,
   "maxTokensPerDay": 500000,
   "maxRunsPerDay": 100,
-  "toolLimits": {
-    "web_search": 50,
-    "slack.post_message": 100
-  },
+  "toolLimits": { "web_search": 50, "slack.post_message": 100 },
   "hardFail": true,
   "notifyAtPct": 80
 }
-
-Response: 200 OK
-{ "status": "saved" }
 ```
 
-| Field | Type | Description |
-| --- | --- | --- |
-| `maxCostUsdPerDay` | number | Max USD spend across all runs in one budget day. Blocks once the day's recorded spend exceeds it |
-| `maxCostUsdPerRun` | number | Max USD for one run. Enforced **mid-run for workflow runs only** (see [what is enforced where](#what-is-enforced-where)). Elsewhere it is checked only by the opt-in [`POST /v1/runs/forecast`](#pre-run-cost-forecast) and reported after the fact as an `anomaly_detected` event |
-| `maxTokensPerDay` | integer | Max total tokens (in + out) per day. Blocks once the day's recorded tokens reach it |
-| `maxRunsPerDay` | integer | Max runs per day. Blocks once the day's run count reaches it. Spend inside a run (workflow ai-steps, votes, tools) does not add to the count. A workflow run counts once, when it succeeds, like a plain run. **Failed runs are not counted** |
-| `toolLimits` | object | Per-tool call-count limits per day. Keys are a tool name (`web_search`) or `connector.action` for connector nodes. Enforced for workflow `tool` and `connector` nodes only |
-| `hardFail` | boolean | `true`: a reached limit blocks the call. `false`: the breach is logged and the call proceeds |
-| `notifyAtPct` | integer | Stored; defaults to 80 when omitted or outside 1-100. No alert is sent on it today |
+| Field | Meaning |
+| --- | --- |
+| `maxCostUsdPerDay` | Max USD across all runs in one budget day. Blocks once the day's recorded spend exceeds it |
+| `maxCostUsdPerRun` | Max USD for one run. Enforced mid-run for **workflow runs only** ([below](#what-is-enforced-where)). Elsewhere it is checked only by the opt-in [forecast](#pre-run-cost-forecast) and reported after the fact as an `anomaly_detected` event |
+| `maxTokensPerDay` | Max tokens (in + out) per day. Blocks once the day's recorded tokens reach it |
+| `maxRunsPerDay` | Max runs per day. A workflow run counts once, when it succeeds, like a plain run. **Failed runs are not counted**; spend inside a run does not add to the count |
+| `toolLimits` | Per-tool call counts per day. Keys are a tool name (`web_search`) or `connector.action` for connector nodes. Enforced for workflow `tool` and `connector` nodes only |
+| `hardFail` | `true`: a reached limit blocks. `false`: logged, call proceeds |
+| `notifyAtPct` | Stored (default 80 when omitted or outside 1-100). No alert is sent on it today |
 
-**Day boundary.** The daily rollup resets at local midnight using `PAL_DEFAULT_TIMEZONE` (deployment-wide IANA zone; defaults to UTC when unset). A schedule's own `timezone` affects only when its cron fires, not the budget day.
+**Day boundary.** The daily rollup resets at local midnight using `PAL_DEFAULT_TIMEZONE` (an IANA zone; UTC when unset). A schedule's own `timezone` affects only when its cron fires, not the budget day.
+
+Read and remove:
+
+```http
+GET    /v1/agents/{name}/budget     # 404 {"error":"no budget configured"} when none
+GET    /v1/budgets                  # bare array of per-agent budgets
+DELETE /v1/agents/{name}/budget
+```
+
+### Tenant-wide cap
+
+One daily cap across all agents, including agentless `/v1/completions` calls: `PUT`, `GET` and `DELETE` on `/v1/budgets/tenant` with `{ "maxCostUsdPerDay": 50, "hardFail": true }` (must be greater than 0). It is stored under the reserved agent name `*`, hidden from `GET /v1/budgets`, and the per-agent routes reject `*` as a name. A soft tenant cap never masks an agent's own hard-fail limit.
 
 ## What is enforced where
 
-Each check runs *before* the model or tool call. "Yes" means a hard-fail budget blocks; a soft budget logs and proceeds. Tenant cap is the tenant-wide daily cost cap ([below](#tenant-wide-cap)). Columns are in this order: cost/day, tokens/day, runs/day, tenant cap, per-run cap, per-tool.
+Each check runs before the model or tool call. A hard-fail budget blocks; a soft budget logs and proceeds.
 
-- **Run create (`POST /v1/runs`), session message, `/v1/completions` with `agentName`:** Yes, Yes, Yes, Yes, No, No.
-- **`/v1/completions` without `agentName`:** only the tenant cap (Yes); the rest n/a.
-- **Workflow `ai-step` (and confidence votes):** cost Yes (every call), tokens Yes (every call), runs/day No (run already admitted), tenant Yes (every call), per-run Yes (against spend accrued so far), per-tool n/a.
-- **Workflow `tool` node, `web_search`:** cost Yes, tokens Yes, runs/day No (run already admitted), tenant Yes, per-run Yes (against spend accrued so far), per-tool Yes.
-- **Workflow `tool` node, sandbox tools:** only per-tool (Yes); everything else No.
-- **Workflow `connector` node:** only per-tool (Yes, keyed `connector.action`); everything else No.
-- **`web_search` inside a session turn:** covered by the session-message check at the start of the turn; its spend is recorded after.
-- **Voice (Twilio inbound, LiveKit token):** cost Yes, tokens Yes, runs/day Yes, tenant Yes, per-run flat estimate only, per-tool No. A flat estimate is reserved on connect and reconciled to the real call duration by the provider status callback (`POST /v1/voice/calls/status/{provider}`).
+| Path | Cost/day | Tokens/day | Runs/day | Tenant cap | Per-run | Per-tool |
+| --- | --- | --- | --- | --- | --- | --- |
+| Run create, session message, `/v1/completions` with `agentName` | Yes | Yes | Yes | Yes | No | No |
+| `/v1/completions` without `agentName` | n/a | n/a | n/a | Yes | n/a | n/a |
+| Workflow `ai-step` and confidence votes | Yes | Yes | No (run already admitted) | Yes | Yes (spend so far) | n/a |
+| Workflow `tool`, `web_search` | Yes | Yes | No | Yes | Yes (spend so far) | Yes |
+| Workflow `tool`, sandbox tools | No | No | No | No | No | Yes |
+| Workflow `connector` | No | No | No | No | No | Yes (`connector.action`) |
+| Voice (Twilio inbound, LiveKit token) | Yes | Yes | Yes | Yes | Flat estimate | No |
 
-Marketplace invokes check the *seller* agent's budget and return 402 with `seller agent budget limit reached: <reason>`.
+- `web_search` inside a session turn is covered by the check at the start of the turn; its spend is recorded after.
+- Voice reserves a flat estimate on connect and reconciles it to the real call duration on the provider's status callback.
+- Marketplace invokes check the **seller** agent's budget and return 402 with `seller agent budget limit reached: <reason>`.
+
+### Per-run cap inside a workflow
+
+Workflow runs record each model call's tokens and cost onto the run as they happen. Before every `ai-step`, confidence vote and `web_search` node, the interpreter re-checks the tenant cap, the agent's daily caps and `maxCostUsdPerRun` against this run's spend so far. Hard-fail stops the run at that step with no further provider spend.
+
+<Aside type="caution">
+A single call can still overshoot the cap: the check happens before the call and the cost is added after.
+</Aside>
+
+### Per-tool limits in workflows
+
+`toolLimits` is checked before a workflow `tool` or `connector` node dispatches, and one use is counted after dispatch. A tool that was never dispatched (runtime not wired) is not counted. See [Agents](/docs/build/agents/#workflow-tool-nodes).
 
 ## What a blocked call looks like
 
-`POST /v1/runs`, hard-fail budget reached. The `reason` text names the limit that tripped:
+`POST /v1/runs` with a reached hard-fail budget. The `reason` names the limit that tripped:
 
 ```http
 HTTP 402
@@ -82,76 +95,28 @@ HTTP 402
 }
 ```
 
-Other `reason` strings:
+Other `reason` strings: `daily spend would reach $5.0123 exceeding limit $5.0000`, `daily token limit reached (500000/500000)`, `tenant-wide daily spend would reach $50.0100 exceeding tenant limit $50.0000`, `run spend $1.0042 reached per-run limit $1.0000`, `tool "web_search" budget exhausted (50/50 today)`.
 
-- `daily spend would reach $5.0123 exceeding limit $5.0000`
-- `daily token limit reached (500000/500000)`
-- `tenant-wide daily spend would reach $50.0100 exceeding tenant limit $50.0000`
-- `run spend $1.0042 reached per-run limit $1.0000`
-- `tool "web_search" budget exhausted (50/50 today)`
+| Caller | What it sees |
+| --- | --- |
+| `POST /v1/completions` | 402 `{ "error": "budget limit exceeded", "reason": "<reason>" }` |
+| Session message | No HTTP error. The session replies `sorry — this agent has reached its usage limit for today` and goes idle |
+| Workflow step | Fails with `budget limit exceeded: <reason>` |
+| Voice | Twilio `<Reject reason="busy"/>`; other providers 402 `agent voice budget exhausted`; the LiveKit token route 402 `{ "error": "agent voice budget exhausted: <reason>" }` |
 
-`POST /v1/completions` (agent-scoped or agentless) uses a shorter body:
+### When the budget cannot be read
 
-```http
-HTTP 402
-{ "error": "budget limit exceeded", "reason": "<reason>" }
-```
+A database error while reading a budget is not "no budget configured" (that allows the call). The check fails closed when the budget is hard-fail, or when the row itself could not be read (its policy is unknown, so it is treated as hard-fail). The error text is logged, never returned.
 
-**Session messages** have no HTTP error: the session replies with `sorry — this agent has reached its usage limit for today` and goes idle. **Workflow steps** fail with `budget limit exceeded: <reason>`. **Voice** returns Twilio `<Reject reason="busy"/>` or, for other providers, 402 `agent voice budget exhausted`; the LiveKit token route returns 402 `{ "error": "agent voice budget exhausted: <reason>" }`.
-
-## When the budget cannot be read
-
-A database error while reading a budget is not the same as "no budget configured" (that allows the call). The check fails closed when the budget is hard-fail, or when the row itself could not be read (its policy is unknown, so it is treated as hard-fail). The error text is logged, never returned.
-
-```http
-POST /v1/runs  ->  HTTP 503
-{
-  "error": "budget check unavailable; retry shortly",
-  "reason": "budget check unavailable"
-}
-```
-
-- **503 is returned by run create only.** `/v1/completions` answers 402 with reason `budget check unavailable`; voice declines as for a budget block (Twilio `<Reject>`, other providers a plain-text 402, the LiveKit token route 402 `agent voice budget exhausted: budget check unavailable`); sessions reply `sorry — I can't check this agent's usage limit right now, try again shortly`; workflow steps fail with `budget limit exceeded: budget check unavailable`.
-- **Soft budgets:** if the budget row was read (and says `hardFail: false`) but the usage lookup then errors, the call proceeds. If the row itself cannot be read, the call is blocked whatever the policy.
-- Every failed-closed lookup increments `pal.budget.check.errors` (see [metrics](#metrics)).
-
-## Per-run cap inside a workflow
-
-Workflow runs record each model call's tokens and cost onto the run as they happen. Before every `ai-step`, every self-consistency confidence vote and every `web_search` tool node, the interpreter re-checks: tenant cap, the agent's daily cost and token caps, and `maxCostUsdPerRun` against what this run has spent so far. Hard-fail stops the run at that step with no further provider spend; `maxRunsPerDay` is skipped so other runs finishing do not stop a run that was already admitted.
-
-<Aside type="caution">
-A single call can still overshoot the cap, since the check happens before the call and the cost is added after.
-</Aside>
-
-## Per-tool limits in workflows
-
-`toolLimits` is checked before a workflow `tool` or `connector` node dispatches, and one use is counted after dispatch. Hard-fail blocks the step; soft logs and proceeds. A tool that was never dispatched (runtime not wired) is not counted. See [workflow tool nodes](/docs/build/agents/).
-
-## Tenant-wide cap
-
-One daily cap across all agents, including agentless `/v1/completions` calls: `PUT`, `GET` and `DELETE` on `/v1/budgets/tenant` with `{ "maxCostUsdPerDay": 50, "hardFail": true }` (must be greater than 0). It is stored under the reserved agent name `*`, hidden from `GET /v1/budgets`, and the per-agent routes reject `*` as a name. A soft tenant cap never masks an agent's own hard-fail limit.
-
-## Reading and removing
-
-```http
-GET /v1/agents/{name}/budget
-Response: 200 OK
-{ "agentName": "research-agent", "maxCostUsdPerDay": 5.00, "hardFail": true, ... }
-404 {"error":"no budget configured"} when none is set
-
-GET /v1/budgets
-Response: 200 OK, bare array of per-agent budgets
-
-DELETE /v1/agents/{name}/budget
-Response: 200 OK
-{ "status": "removed" }
-```
+- **Run create** answers `503` with `{ "error": "budget check unavailable; retry shortly", "reason": "budget check unavailable" }`. Only run create returns 503.
+- `/v1/completions` answers 402 with reason `budget check unavailable`. Sessions reply `sorry — I can't check this agent's usage limit right now, try again shortly`. Workflow steps fail with `budget limit exceeded: budget check unavailable`. Voice declines as for a budget block.
+- **Soft budgets:** if the row was read and says `hardFail: false` but the usage lookup then errors, the call proceeds.
 
 ## Try it
 
 ```bash
 TOKEN=$(curl -s localhost:8080/auth/login -H 'Content-Type: application/json' \
-  -d '{"email":"admin@pal.local","password":"pal"}' | jq -r .token)
+  -d '{"email":"admin@pal.local","password":"pal"}' | jq -r .token)   # dev seed user
 
 # Cap an agent at 1 run per day, hard-fail
 curl -s -X PUT localhost:8080/v1/agents/demo/budget \
@@ -168,56 +133,43 @@ Usage is recorded when a run finishes, so create the second run after the first 
 
 ## Pre-run cost forecast
 
-`POST /v1/runs/forecast` estimates tokens and cost from the agent's `succeeded` runs over the last 30 days (average tokens per run, plus about one token per four characters of input) and checks the estimate against the agent's budget. It answers `402` instead of `200` when a hard-fail budget would be breached. Forecasting is opt-in: run creation does not call it.
+`POST /v1/runs/forecast` estimates tokens and cost from the agent's `succeeded` runs over the last 30 days (average tokens per run, plus about one token per four characters of input) and checks the estimate against the budget. It answers `402` instead of `200` when a hard-fail budget would be breached. Forecasting is opt-in: run creation does not call it.
 
-- **With history** the response is `calibrated: true` and the per-run cap and daily cost cap are checked against the estimate.
-- **With no succeeded runs** the estimates are omitted, `calibrated` is false, `confidence` is 0, and only `maxRunsPerDay` can block. An unknown cost never auto-blocks.
+- **With history:** `calibrated: true`, and the per-run and daily cost caps are checked against the estimate.
+- **With no succeeded runs:** estimates are omitted, `calibrated` is false, `confidence` is 0, and only `maxRunsPerDay` can block. An unknown cost never auto-blocks.
 - `confidence` grows with sample size: `min(0.95, 0.3 + 0.03 × √runs)`.
 
 ```http
 POST /v1/runs/forecast
-Content-Type: application/json
-
 { "agentName": "research-agent", "input": "quantum computing" }
 
-Response: 200 OK   (values illustrative)
+200 OK   (values illustrative)
 {
   "agentName": "research-agent",
-  "model": "...",
-  "provider": "...",
   "estimatedTokensIn": 800,
   "estimatedTokensOut": 2000,
   "estimatedCostUsd": 0.004,
   "confidence": 0.45,
   "calibrated": true,
-  "reasoning": { "historical_runs": 25, "input_token_estimate": 5, ... },
-  "budget": { "maxCostUsdPerRun": 1, "spentTodayUsd": 0.12, "runsToday": 4,
-              "maxRunsPerDay": 100, "hardFail": true, ... },
   "wouldExceedBudget": false
-}
-
-// Over budget (HTTP 402 when hardFail is true). Several reasons join with "; ":
-{
-  ...,
-  "estimatedCostUsd": 1.2,
-  "wouldExceedBudget": true,
-  "blockReason": "per-run cost $1.2000 exceeds limit $1.0000"
 }
 ```
 
-Other `blockReason` strings: `daily cost would hit $5.0400 exceeding $5.0000`, `daily run limit reached (100/100)`. `blockReason` is omitted when nothing would block.
+When it would exceed (HTTP 402 if `hardFail`), `wouldExceedBudget` is true and `blockReason` explains, for example `per-run cost $1.2000 exceeds limit $1.0000`; several reasons join with `; `. Others: `daily cost would hit $5.0400 exceeding $5.0000`, `daily run limit reached (100/100)`. `blockReason` is omitted when nothing would block.
 
 ## Not enforced yet
 
-- **Per-run cap mid-run on single-call paths.** A plain (non-workflow) run, a session turn and a completion make one model call, so there is no point to stop at. `maxCostUsdPerRun` is not checked at run create (the estimate there is 0). Overshoot is reported after the run as an `anomaly_detected` journal event, which does not block anything.
-- **Pre-run cost estimates at run creation.** Run create checks recorded spend, not projected spend, so the run that crosses a daily cap is allowed; the next one is blocked. Use [`POST /v1/runs/forecast`](#pre-run-cost-forecast) to estimate ahead of time.
-- **Failed runs toward runs/day.** Only runs that succeed are counted toward `maxRunsPerDay` (a workflow run counts once on success), so an agent that keeps failing never trips the cap. Its spend still counts toward the cost and token caps.
-- **Per-tool limits outside workflows.** Session tool loops, `POST /v1/connectors/{id}/execute` and other callers do not consult `toolLimits`.
-- **Daily cost and token caps on sandbox tool and connector nodes.** Those nodes check only `toolLimits`; their ai-step neighbours carry the model spend and are checked.
-- **No reservation.** Checks read recorded usage and spend is recorded after the call, so concurrent calls can together overshoot a cap.
-- **`notifyAtPct` alerts.** The value is stored; nothing fires on it yet.
+- **Per-run cap mid-run on single-call paths.** A plain run, a session turn and a completion make one model call, so there is no point to stop at. Overshoot is reported after the run as an `anomaly_detected` event, which blocks nothing.
+- **Projected spend at run creation.** Run create checks recorded spend, so the run that crosses a daily cap is allowed and the next is blocked. Use the forecast to estimate ahead.
+- **Failed runs toward runs/day.** Only succeeded runs count. A failing agent never trips `maxRunsPerDay`, though its spend still counts toward cost and token caps.
+- **Per-tool limits outside workflows.** Session tool loops and `POST /v1/connectors/{id}/execute` do not consult `toolLimits`.
+- **Daily cost and token caps on sandbox tool and connector nodes.** Those nodes check only `toolLimits`; their `ai-step` neighbours carry the model spend and are checked.
+- **Reservation.** Checks read recorded usage and spend is recorded after the call, so concurrent calls can together overshoot a cap.
+- **`notifyAtPct` alerts.** Stored; nothing fires on it.
 
 ## Metrics
+
+Each counter is emitted under its `pal.` name.
 
 | Metric | Attributes | Meaning |
 | --- | --- | --- |

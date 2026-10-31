@@ -1,6 +1,6 @@
 package handlers
 
-// agent_identity_api.go — REST surface for agent identity + policy (ADR 0052).
+// agent_identity_api.go — REST surface for agent identity + policy (ADR 0055).
 //
 //	GET    /v1/agents/{name}/policy           agents:read
 //	PUT    /v1/agents/{name}/policy           agents:write   (optimistic concurrency on version)

@@ -19,7 +19,7 @@ import (
 )
 
 // policyTestPool applies the control-plane schema (which owns agents, runs and
-// the ADR 0052 tables) plus the engine's own migrations to DATABASE_URL. Point
+// the ADR 0055 tables) plus the engine's own migrations to DATABASE_URL. Point
 // DATABASE_URL at a FRESH database; it is never the shared one.
 func policyTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()

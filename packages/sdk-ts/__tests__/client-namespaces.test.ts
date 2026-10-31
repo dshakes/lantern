@@ -275,6 +275,43 @@ describe("PalClient namespaces (wire contract)", () => {
     expect(bodyOf(init)).toMatchObject({ suiteId: "e1", durationMs: 0, totalCostUsd: 0 });
   });
 
+  it("evalSuites.run posts to /v1/eval-suites/{id}/run and returns the result", async () => {
+    mockFetch({ id: "r1", passed: true, score: 1, regressed: false, caseResults: [] });
+    const res = await client.evalSuites.run("s 1", { branch: "main", samples: 3, cases: ["a"] });
+    const { url, init } = lastCall();
+    expect(url).toBe("http://localhost:9/v1/eval-suites/s%201/run");
+    expect(init.method).toBe("POST");
+    expect(bodyOf(init)).toEqual({ branch: "main", samples: 3, cases: ["a"] });
+    expect(res.regressed).toBe(false);
+  });
+
+  it("evalSuites.run returns the body (regressed) on 422 instead of throwing", async () => {
+    mockFetch({ id: "r2", passed: true, score: 0.5, regressed: false, regressedCases: ["a"], caseResults: [] }, 422);
+    const res = await client.evalSuites.run("s1");
+    expect(res.regressed).toBe(true);
+    expect(res.regressedCases).toEqual(["a"]);
+  });
+
+  it("evalSuites.run still throws on 402 and on an unparseable 422", async () => {
+    mockFetch({ error: "budget exceeded", code: "budget_exceeded" }, 402);
+    await expect(client.evalSuites.run("s1")).rejects.toMatchObject({ status: 402 });
+    globalThis.fetch = vi.fn().mockImplementation(async () => new Response("nope", { status: 422 }));
+    await expect(client.evalSuites.run("s1")).rejects.toMatchObject({ status: 422 });
+  });
+
+  it("evalSuites.generate and evalJudge.calibrate post to their endpoints", async () => {
+    mockFetch({ draft: { agentName: "a", name: "n", cases: [] }, requiresApproval: true });
+    const g = await client.evalSuites.generate({ agentName: "a", goal: "g", maxCases: 4 });
+    expect(lastCall().url).toBe("http://localhost:9/v1/eval-suites/generate");
+    expect(bodyOf(lastCall().init)).toEqual({ agentName: "a", goal: "g", maxCases: 4 });
+    expect(g.requiresApproval).toBe(true);
+
+    mockFetch({ stats: { n: 1, labeled: 1, agreement: 1, kappa: 1, mae: 0 }, pairs: [] });
+    await client.evalJudge.calibrate({ agentName: "a", limit: 5 });
+    expect(lastCall().url).toBe("http://localhost:9/v1/eval-judge/calibrate");
+    expect(bodyOf(lastCall().init)).toEqual({ agentName: "a", limit: 5 });
+  });
+
   it("evalBaselines.set posts agentName/branch/evalRunId to /v1/eval-baselines", async () => {
     await client.evalBaselines.set({ agentName: "triage", branch: "main", evalRunId: "run-1" });
     const { url, init } = lastCall();

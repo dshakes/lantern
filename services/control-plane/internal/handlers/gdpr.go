@@ -259,7 +259,7 @@ func purgeTenantRows(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger, t
 		}
 	}
 
-	// The agent audit trail is append-only (ADR 0052); erasure of the whole
+	// The agent audit trail is append-only (ADR 0055); erasure of the whole
 	// tenant is the one sanctioned delete, scoped to THIS tenant and this tx.
 	if _, err := tx.Exec(ctx, `SELECT set_config('pal.audit_erasure', $1, true)`, targetID); err != nil {
 		log.Error("GDPR: enable audit erasure failed", zap.Error(err))

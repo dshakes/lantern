@@ -383,7 +383,7 @@ func (se *StepExecutor) executeToolCall(ctx context.Context, state *RunState, st
 	if req.ToolName == "" {
 		return nil, fmt.Errorf("invalid tool_call payload: tool_name is required")
 	}
-	// Per-agent least privilege (ADR 0052) — before anything reaches a VM.
+	// Per-agent least privilege (ADR 0055) — before anything reaches a VM.
 	if err := se.authorizeTool(ctx, state, stepID, req.ToolName); err != nil {
 		return nil, err
 	}

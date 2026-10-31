@@ -338,7 +338,7 @@ func main() {
 	connectorExecutor := handlers.NewConnectorExecutor(srv, authHandler)
 	llmProxyHandler := handlers.NewLlmProxyHandler(srv, authHandler)
 
-	// Agent identity + per-agent policy (ADR 0052): every registered agent is
+	// Agent identity + per-agent policy (ADR 0055): every registered agent is
 	// a principal; every tool/connector/A2A/microVM dispatch is authorized
 	// against its policy. Process-wide so the free dispatch helpers see it.
 	agentAuthz := handlers.NewAgentAuthz(srv, []byte(jwtSecret))
@@ -409,6 +409,7 @@ func main() {
 	a2aHandler.SetExecutionDeps(runSvc, restHandler)
 	mcpHandler := handlers.NewMCPHandler(srv, authHandler)
 	evalHandler := handlers.NewEvalHandler(srv, authHandler)
+	evalHandler.SetLLM(llmProxyHandler) // hermetic runner + LLM judge + suite generator (ADR 0052)
 	experimentHandler := handlers.NewExperimentHandler(srv, authHandler)
 
 	// Frontier surface: verifiable receipts, RLHF feedback loop,
@@ -643,6 +644,12 @@ func main() {
 	handlers.NewOnboardingHandler(srv, authHandler, llmProxyHandler).RegisterRoutes(httpMux)
 	handlers.NewAssistHandler(srv, authHandler, llmProxyHandler).RegisterRoutes(httpMux)
 	handlers.NewPalOnboardingHandler(srv, authHandler, llmProxyHandler).RegisterRoutes(httpMux)
+	// The onboarding agent (ADR 0051): a multi-turn conversation whose server
+	// tools call back into this same mux, so every tool is a real endpoint
+	// with its own auth, scopes and validation.
+	onboardingAgent := handlers.NewOnboardingAgentHandler(srv, authHandler, llmProxyHandler)
+	onboardingAgent.RegisterRoutes(httpMux)
+	onboardingAgent.SetDispatcher(httpMux)
 
 	// LLM provider settings endpoints.
 	httpMux.HandleFunc("POST /v1/settings/llm-providers", authHandler.WithScope(handlers.ScopeSettingsWrite, llmProxyHandler.SaveLlmProvider))
@@ -816,6 +823,11 @@ func main() {
 	httpMux.HandleFunc("POST /v1/eval-suites", authHandler.WithScope(handlers.ScopeAgentsWrite, evalHandler.UpsertSuite))
 	httpMux.HandleFunc("GET /v1/eval-suites", authHandler.WithScope(handlers.ScopeAgentsRead, evalHandler.ListSuites))
 	httpMux.HandleFunc("GET /v1/eval-suites/{id}", authHandler.WithScope(handlers.ScopeAgentsRead, evalHandler.GetSuite))
+	// ADR 0052: agent-authored drafts (never saved), hermetic server-side runs
+	// (mocked tools, LLM judge, 422 on regression), judge calibration.
+	httpMux.HandleFunc("POST /v1/eval-suites/generate", authHandler.WithScope(handlers.ScopeRunsExecute, evalHandler.GenerateSuite))
+	httpMux.HandleFunc("POST /v1/eval-suites/{id}/run", authHandler.WithScope(handlers.ScopeRunsExecute, evalHandler.RunSuite))
+	httpMux.HandleFunc("POST /v1/eval-judge/calibrate", authHandler.WithScope(handlers.ScopeRunsExecute, evalHandler.CalibrateJudge))
 	httpMux.HandleFunc("DELETE /v1/eval-suites/{id}", authHandler.WithScope(handlers.ScopeAgentsWrite, evalHandler.DeleteSuite))
 	httpMux.HandleFunc("POST /v1/eval-runs", authHandler.WithScope(handlers.ScopeRunsWrite, evalHandler.RecordRun))
 	httpMux.HandleFunc("GET /v1/eval-runs", authHandler.WithScope(handlers.ScopeRunsRead, evalHandler.ListRuns))

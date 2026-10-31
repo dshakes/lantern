@@ -871,7 +871,7 @@ func (h *RuntimeSecretsHandler) ResolveSecrets(w http.ResponseWriter, r *http.Re
 		// NOTE: never log resolved values.
 	)
 
-	// --- Agent scoping (ADR 0052) ---
+	// --- Agent scoping (ADR 0055) ---
 	// A VM bound to an agent may only resolve the refs that agent's policy
 	// lists. Fail closed: if the binding cannot be read, nothing resolves.
 	vmAgent, agentErr := h.vmAgentPrincipal(ctx, req.TenantID, req.VmID)

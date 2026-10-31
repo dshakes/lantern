@@ -63,6 +63,8 @@ dashboard — not yet as CLI subcommands.`,
 	root.AddCommand(newDeployCommand())
 	root.AddCommand(newInfraCommand())
 	root.AddCommand(newTestCommand())
+	root.AddCommand(newEvalCommand())
+	root.AddCommand(newCICommand())
 	root.AddCommand(newDevCommand())
 	root.AddCommand(newDemoCommand())
 	root.AddCommand(newHooksCommand())

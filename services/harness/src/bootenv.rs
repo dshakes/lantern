@@ -96,7 +96,7 @@ pub struct SpawnContract {
 /// the manager's `service::CALLER_PAL_KEYS`.
 pub const CALLER_PAL_KEYS: [&str; 6] = [
     "PAL_AGENT_INSTANCE_ID",
-    // The agent principal the VM runs as (ADR 0052): non-secret locators.
+    // The agent principal the VM runs as (ADR 0055): non-secret locators.
     "PAL_AGENT_ID",
     "PAL_AGENT_SPIFFE_ID",
     "PAL_AGENT_INSTANCE_TOKEN",

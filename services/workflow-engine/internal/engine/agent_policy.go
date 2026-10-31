@@ -1,7 +1,7 @@
 package engine
 
 // agent_policy.go — per-agent least privilege for durable tool_call steps
-// (ADR 0052). The control plane owns identities and policy documents; the
+// (ADR 0055). The control plane owns identities and policy documents; the
 // engine reads the run's agent policy from the same database and evaluates it
 // with the SAME evaluator (packages/agentpolicy) before it ever asks the
 // runtime manager to run a tool. Deny = typed error + journal event + audit row.

@@ -1,7 +1,7 @@
 package handlers
 
 // agent_authz.go — agent identity + per-agent least-privilege policy
-// enforcement (ADR 0052).
+// enforcement (ADR 0055).
 //
 // Shape:
 //
@@ -38,7 +38,7 @@ import (
 	"github.com/dshakes/pal/services/control-plane/internal/server"
 )
 
-// Audiences (ADR 0052 §2).
+// Audiences (ADR 0055 §2).
 const (
 	AudienceDispatch   = "pal:dispatch"
 	AudienceConnectors = "pal:connectors"
@@ -282,7 +282,7 @@ type policyRow struct {
 	UpdatedBy string
 }
 
-// loadPolicy reads the agent's policy. A missing row (an agent the 0037
+// loadPolicy reads the agent's policy. A missing row (an agent the 0038
 // backfill could not see, or a race with the insert trigger) is classified by
 // the agent's created_at against the cutover marker and inserted, so a
 // pre-existing agent is never default-denied and a new one never permitted.

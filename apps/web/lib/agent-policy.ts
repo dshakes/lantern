@@ -1,4 +1,4 @@
-// Pure helpers + wire types for the agent Security tab (ADR 0052).
+// Pure helpers + wire types for the agent Security tab (ADR 0055).
 // No I/O and no React so the diff / equality / parse logic is unit-testable.
 
 export interface AgentPolicy {

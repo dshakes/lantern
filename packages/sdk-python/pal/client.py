@@ -7,6 +7,7 @@ import json
 import os
 import random
 from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import quote
 
@@ -283,7 +284,7 @@ class PalClient:
         async def delete(self, name: str) -> None:
             await self._c._request("DELETE", f"/v1/agents/{name}")
 
-        # -- policy + identity (ADR 0052) --------------------------------
+        # -- policy + identity (ADR 0055) --------------------------------
 
         async def get_policy(self, name: str) -> AgentPolicyResult:
             """Get the agent's policy (GET /v1/agents/{name}/policy)."""
@@ -799,6 +800,84 @@ class PalClient:
                 },
             )
             return EvalRunResult.from_dict(data or {})
+
+        async def run_suite(
+            self,
+            suite_id: str,
+            *,
+            branch: str = "",
+            commit_sha: str = "",
+            agent_version: str = "",
+            samples: int | None = None,
+            judge_samples: int | None = None,
+            judge_model: str = "",
+            max_cost_usd: float | None = None,
+            cases: list[str] | None = None,
+            set_baseline: bool = False,
+        ) -> EvalSuiteRunResult:
+            """Run a suite hermetically on the server (mocked tools, LLM judge; ADR 0052).
+
+            A regression is HTTP 422 with a full result body: it is RETURNED with
+            ``regressed=True`` rather than raised, so callers can report per-case
+            detail and then fail CI. Other errors (400/402/503) raise ``PalApiError``.
+            """
+            payload: dict[str, Any] = {
+                "branch": branch,
+                "commitSha": commit_sha,
+                "agentVersion": agent_version,
+                "samples": samples,
+                "judgeSamples": judge_samples,
+                "judgeModel": judge_model,
+                "maxCostUsd": max_cost_usd,
+                "cases": cases,
+                "setBaseline": set_baseline or None,
+            }
+            body = {k: v for k, v in payload.items() if v not in (None, "", [])}
+            try:
+                data = await self._c._request("POST", f"/v1/eval-suites/{quote(suite_id, safe='')}/run", body=body)
+            except PalApiError as e:
+                if e.status != 422:
+                    raise
+                try:
+                    data = json.loads(e.body)
+                except ValueError:
+                    raise e from None
+                data["regressed"] = True
+            return EvalSuiteRunResult.from_dict(data or {})
+
+        async def generate_suite(
+            self, agent_name: str, *, goal: str = "", max_cases: int | None = None
+        ) -> GeneratedEvalSuite:
+            """Draft a suite from the agent's instructions, runs and feedback.
+
+            Never saved: approve by passing ``result.draft`` fields to ``upsert_suite``.
+            """
+            body: dict[str, Any] = {"agentName": agent_name}
+            if goal:
+                body["goal"] = goal
+            if max_cases:
+                body["maxCases"] = max_cases
+            data = await self._c._request("POST", "/v1/eval-suites/generate", body=body)
+            return GeneratedEvalSuite.from_dict(data or {})
+
+        async def calibrate_judge(
+            self,
+            agent_name: str,
+            *,
+            rubric: str = "",
+            judge_model: str = "",
+            limit: int | None = None,
+        ) -> EvalCalibration:
+            """Re-judge runs that carry human feedback; reports agreement and Cohen's kappa."""
+            body: dict[str, Any] = {"agentName": agent_name}
+            if rubric:
+                body["rubric"] = rubric
+            if judge_model:
+                body["judgeModel"] = judge_model
+            if limit:
+                body["limit"] = limit
+            data = await self._c._request("POST", "/v1/eval-judge/calibrate", body=body)
+            return EvalCalibration.from_dict(data or {})
 
         async def list_runs(
             self,
@@ -1734,4 +1813,109 @@ class AgentAuditList:
         return cls(
             events=[AgentAuditEvent.from_dict(e) for e in (d.get("events") or [])],
             chain_valid=bool(d.get("chainValid", False)),
+        )
+
+
+@dataclass
+class EvalSuiteRunResult:
+    """Result of a hermetic server-side suite run. ``case_results`` and
+    ``case_deltas`` stay raw dicts (v2 per-sample/assertion detail)."""
+
+    id: str = ""
+    suite_id: str = ""
+    agent_name: str = ""
+    passed: bool = False
+    score: float = 0.0
+    cases_total: int = 0
+    cases_passed: int = 0
+    regressed: bool = False
+    baseline_score: float | None = None
+    regressed_cases: list[str] = field(default_factory=list)
+    flaky_cases: list[str] = field(default_factory=list)
+    case_deltas: list[dict[str, Any]] = field(default_factory=list)
+    case_results: list[dict[str, Any]] = field(default_factory=list)
+    total_cost_usd: float = 0.0
+    judge_cost_usd: float = 0.0
+    pinned_baseline: bool = False
+    stopped_early: str = ""
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> EvalSuiteRunResult:
+        return cls(
+            id=d.get("id", ""),
+            suite_id=d.get("suiteId", ""),
+            agent_name=d.get("agentName", ""),
+            passed=d.get("passed", False),
+            score=d.get("score", 0.0),
+            cases_total=d.get("casesTotal", 0),
+            cases_passed=d.get("casesPassed", 0),
+            regressed=d.get("regressed", False),
+            baseline_score=d.get("baselineScore"),
+            regressed_cases=d.get("regressedCases") or [],
+            flaky_cases=d.get("flakyCases") or [],
+            case_deltas=d.get("caseDeltas") or [],
+            case_results=d.get("caseResults") or [],
+            total_cost_usd=d.get("totalCostUsd", 0.0),
+            judge_cost_usd=d.get("judgeCostUsd", 0.0),
+            pinned_baseline=d.get("pinnedBaseline", False),
+            stopped_early=d.get("stoppedEarly", ""),
+        )
+
+
+@dataclass
+class GeneratedEvalSuite:
+    """An UNSAVED draft suite from ``evals.generate_suite``. ``draft`` has
+    ``agentName``/``name``/``description``/``cases``; save it with ``upsert_suite``."""
+
+    draft: dict[str, Any] = field(default_factory=dict)
+    provenance: list[dict[str, Any]] = field(default_factory=list)
+    dropped: list[dict[str, Any]] = field(default_factory=list)
+    evidence: dict[str, int] = field(default_factory=dict)
+    model: str = ""
+    cost_usd: float = 0.0
+    requires_approval: bool = True
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> GeneratedEvalSuite:
+        return cls(
+            draft=d.get("draft") or {},
+            provenance=d.get("provenance") or [],
+            dropped=d.get("dropped") or [],
+            evidence=d.get("evidence") or {},
+            model=d.get("model", ""),
+            cost_usd=d.get("costUsd", 0.0),
+            requires_approval=d.get("requiresApproval", True),
+        )
+
+
+@dataclass
+class EvalCalibration:
+    """Judge-vs-human agreement. ``note`` is set (and ``verdict`` empty) when
+    the agent has no human feedback yet."""
+
+    n: int = 0
+    labeled: int = 0
+    agreement: float = 0.0
+    kappa: float = 0.0
+    mae: float = 0.0
+    pairs: list[dict[str, Any]] = field(default_factory=list)
+    verdict: str = ""
+    rubric: str = ""
+    cost_usd: float = 0.0
+    note: str = ""
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> EvalCalibration:
+        st = d.get("stats") or {}
+        return cls(
+            n=st.get("n", 0),
+            labeled=st.get("labeled", 0),
+            agreement=st.get("agreement", 0.0),
+            kappa=st.get("kappa", 0.0),
+            mae=st.get("mae", 0.0),
+            pairs=d.get("pairs") or [],
+            verdict=d.get("verdict", ""),
+            rubric=d.get("rubric", ""),
+            cost_usd=d.get("costUsd", 0.0),
+            note=d.get("note", ""),
         )

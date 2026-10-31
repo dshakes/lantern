@@ -1,20 +1,55 @@
 ---
 title: Deployment topology
-description: The laptop stack for design time and the control-plane / data-plane split in the cloud, sharing one immutable bundle.
-glance:
-  what: "The same agent_version bundle runs on a laptop stack and in a data plane inside your VPC."
-  why: "What you test locally is byte-for-byte what ships; your VPC needs no inbound ports."
-  how: "Step through design time, then switch to the cloud scenario."
+description: The laptop stack for design time and the control-plane and data-plane split in the cloud, sharing one immutable bundle.
 sidebar:
   order: 6
 ---
 
-import { DeployTopology } from '../../../../components/diagrams';
+The same `agent_version` bundle runs in two places: on a **laptop stack** while you build, and in a **data plane** inside your VPC when you ship. What you test locally is the artifact that ships, and your VPC opens no inbound ports. The install steps and the picture of the cloud split are on [Production deployment](/docs/operate/deployment/).
 
-<DeployTopology client:visible />
+## Two topologies
 
-## Reference
+| | Laptop (design time) | Cloud (control plane and data plane) |
+| --- | --- | --- |
+| Started by | `pal dev` | Helm charts or generated Terraform |
+| Postgres, Redis, MinIO | Docker containers | Managed services in production |
+| API and dashboard | One process each on `:8080` and `:3001` | Control plane, anywhere you run it |
+| Where agent code runs | Inline in the control plane, or a sandbox on a local scheduler and manager | In the data plane, inside your VPC |
+| Sandboxes | Stub scheduler (fabricated vm ids) unless you wire a real manager | Real microVMs on runtime-manager nodes |
 
-- `pal dev` boots Postgres, Redis, MinIO, the API and the console; `pal doctor` reports what is missing.
-- Real Firecracker locally needs a Lima guest on Apple Silicon (M3 or later, macOS 15+). Without it the stub scheduler fabricates VM ids; production refuses to start with it.
-- In the cloud the data-plane agent dials the control plane outbound over TLS, authenticated by a bootstrap token and session JWT (internal service-to-service gRPC hops use mutual TLS, ADR 0043); Helm charts ship for the control plane, the data plane, and both together.
+`pal dev` boots Postgres, Redis, MinIO, the API and the console, and `pal doctor` reports what is missing. The stub scheduler is rejected in production: the control plane refuses to start without `PAL_SCHEDULER_GRPC_ADDR`, and the scheduler refuses to start without `PAL_DEFAULT_MANAGER_ADDR` or with `PAL_DIALER=stub`. Real Firecracker on a laptop needs a Lima guest on Apple Silicon (M3 or later, macOS 15 or later); see [microVMs on your machine](/docs/runtime/local-microvms/).
+
+## Where each process runs in the cloud
+
+| Process | Plane | Dials / listens |
+| --- | --- | --- |
+| Gateway | Control plane | Listens `:8443` (TLS); calls the control plane over gRPC |
+| Control plane | Control plane | Listens `:8080` (REST, SSE) and `:50051` (gRPC, including the data-plane tunnel) |
+| Model router | Control plane | Listens `:50053` |
+| Postgres, Redis, S3 | Control plane (shared stores) | `:5432`, `:6379`, `:9000` |
+| Data-plane agent | Data plane | Dials **out** to the control plane's `:50051`; listens on nothing external |
+| Workflow engine | Data plane | Listens `:50052` |
+| Runtime scheduler | Data plane | Listens `:50055` (gRPC) and `:8085` (REST) |
+| Runtime manager | Data plane, one per node | Listens `:50054`; serves the guests on its node |
+| Harness | Inside each microVM | Dials the manager; exec server on `:50056` in the guest |
+
+## The tunnel
+
+In the cloud topology the data-plane agent is the only link between the planes.
+
+1. The agent registers with a one-time bootstrap token and receives a session JWT (1 h TTL, rotated through `RefreshToken`).
+2. It opens a persistent `RunStream`. The control plane pushes run assignments down it; the agent reports status back.
+3. Only run metadata crosses. Prompts, credentials and customer data stay in the VPC.
+4. Each plane is bound to one tenant. If no plane is connected for a tenant, its runs execute inline in the control plane.
+
+The RPC list and the per-tenant stream cap are in [Production deployment](/docs/operate/deployment/#hybrid-step-by-step). The tunnel uses server-authenticated TLS plus the bootstrap token and session JWT. Internal service-to-service gRPC hops use mutual TLS (ADR 0043).
+
+## Charts
+
+| Chart | Installs |
+| --- | --- |
+| `infra/helm/pal` | Everything in one release |
+| `infra/helm/pal-control-plane` | The control plane half |
+| `infra/helm/pal-data-plane` | Workflow engine, runtime manager and the tunnel agent |
+
+Multi-region standby, where a second region runs the chart read-only behind a fence epoch, is covered in [Production deployment](/docs/operate/deployment/#multi-region-active-passive).

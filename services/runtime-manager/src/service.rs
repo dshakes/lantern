@@ -577,7 +577,7 @@ impl RuntimeManagerGrpc {
 /// `bootenv::CALLER_PAL_KEYS`.
 pub const CALLER_PAL_KEYS: [&str; 6] = [
     "PAL_AGENT_INSTANCE_ID",
-    // The agent principal the VM runs as (ADR 0052): non-secret locators.
+    // The agent principal the VM runs as (ADR 0055): non-secret locators.
     "PAL_AGENT_ID",
     "PAL_AGENT_SPIFFE_ID",
     "PAL_AGENT_INSTANCE_TOKEN",
@@ -3031,7 +3031,7 @@ fn extract_identity_from_report(
 mod tests {
     #[test]
     fn caller_may_set_agent_identity_locators_but_not_harness_config() {
-        // ADR 0052: the VM's agent principal reaches the harness/workload.
+        // ADR 0055: the VM's agent principal reaches the harness/workload.
         for k in [
             "PAL_AGENT_ID",
             "PAL_AGENT_SPIFFE_ID",

@@ -1,6 +1,6 @@
 package cli
 
-// agent_policy.go — `pal agent policy|identity|audit` (ADR 0052): per-agent
+// agent_policy.go — `pal agent policy|identity|audit` (ADR 0055): per-agent
 // least-privilege policy, cryptographic identity, and the audit log.
 
 import (

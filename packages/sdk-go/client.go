@@ -146,6 +146,58 @@ type EvalCase struct {
 	Expected string         `json:"expected,omitempty"`
 	Assert   map[string]any `json:"assert,omitempty"`
 	Weight   float64        `json:"weight,omitempty"`
+	// v2 (ADR 0052): independent agent samples (1..5) and deterministic tool fixtures.
+	Samples int        `json:"samples,omitempty"`
+	Mocks   []EvalMock `json:"mocks,omitempty"`
+}
+
+// EvalMock is a deterministic tool fixture for hermetic eval runs.
+type EvalMock struct {
+	Tool        string         `json:"tool"`
+	Match       map[string]any `json:"match,omitempty"`
+	Result      any            `json:"result,omitempty"`
+	Error       string         `json:"error,omitempty"`
+	Description string         `json:"description,omitempty"`
+	Parameters  map[string]any `json:"parameters,omitempty"`
+	Synthetic   bool           `json:"synthetic,omitempty"`
+}
+
+// EvalAssertionResult is one graded assertion of a case sample.
+type EvalAssertionResult struct {
+	Kind               string  `json:"kind"`
+	Passed             bool    `json:"passed"`
+	Score              float64 `json:"score"`
+	Skipped            bool    `json:"skipped,omitempty"`
+	Detail             string  `json:"detail,omitempty"`
+	Rationale          string  `json:"rationale,omitempty"`
+	Stddev             float64 `json:"stddev,omitempty"`
+	Samples            int     `json:"samples,omitempty"`
+	Model              string  `json:"model,omitempty"`
+	InjectionSuspected bool    `json:"injectionSuspected,omitempty"`
+}
+
+// EvalToolCall is a tool call recorded during a hermetic sample (the trajectory).
+type EvalToolCall struct {
+	Tool   string         `json:"tool"`
+	Args   map[string]any `json:"args,omitempty"`
+	Result any            `json:"result,omitempty"`
+	Error  string         `json:"error,omitempty"`
+	Mocked bool           `json:"mocked"`
+}
+
+// EvalSample is one independent agent sample of a case.
+type EvalSample struct {
+	Output     string                `json:"output"`
+	ToolCalls  []EvalToolCall        `json:"toolCalls,omitempty"`
+	LatencyMs  int64                 `json:"latencyMs"`
+	CostUsd    float64               `json:"costUsd"`
+	TokensIn   int64                 `json:"tokensIn,omitempty"`
+	TokensOut  int64                 `json:"tokensOut,omitempty"`
+	Model      string                `json:"model,omitempty"`
+	Passed     bool                  `json:"passed"`
+	Score      float64               `json:"score"`
+	Error      string                `json:"error,omitempty"`
+	Assertions []EvalAssertionResult `json:"assertions,omitempty"`
 }
 
 type EvalCaseResult struct {
@@ -157,6 +209,13 @@ type EvalCaseResult struct {
 	Error     string  `json:"error,omitempty"`
 	LatencyMs int64   `json:"latencyMs,omitempty"`
 	CostUsd   float64 `json:"costUsd,omitempty"`
+	// v2 (server-run) detail; absent on client-posted results.
+	Stddev       float64               `json:"stddev,omitempty"`
+	PassRate     *float64              `json:"passRate,omitempty"`
+	Flaky        bool                  `json:"flaky,omitempty"`
+	JudgeCostUsd float64               `json:"judgeCostUsd,omitempty"`
+	Assertions   []EvalAssertionResult `json:"assertions,omitempty"`
+	Samples      []EvalSample          `json:"samples,omitempty"`
 }
 
 type EvalRunResult struct {
@@ -504,6 +563,184 @@ type RecordEvalRunRequest struct {
 	DurationMs   int64            `json:"durationMs"`
 	TotalCostUsd float64          `json:"totalCostUsd"`
 	CaseResults  []EvalCaseResult `json:"caseResults"`
+}
+
+// RunEvalSuiteRequest is the payload for RunEvalSuite (ADR 0052).
+type RunEvalSuiteRequest struct {
+	Branch       string   `json:"branch,omitempty"`
+	CommitSha    string   `json:"commitSha,omitempty"`
+	AgentVersion string   `json:"agentVersion,omitempty"`
+	Samples      int      `json:"samples,omitempty"`
+	JudgeSamples int      `json:"judgeSamples,omitempty"`
+	JudgeModel   string   `json:"judgeModel,omitempty"`
+	MaxCostUsd   float64  `json:"maxCostUsd,omitempty"`
+	Cases        []string `json:"cases,omitempty"`
+	SetBaseline  bool     `json:"setBaseline,omitempty"`
+}
+
+// EvalCaseDelta is a per-case comparison against the baseline run.
+type EvalCaseDelta struct {
+	Name           string  `json:"name"`
+	Score          float64 `json:"score"`
+	BaselineScore  float64 `json:"baselineScore"`
+	Delta          float64 `json:"delta"`
+	Passed         bool    `json:"passed"`
+	BaselinePassed bool    `json:"baselinePassed"`
+	Regressed      bool    `json:"regressed"`
+	Flaky          bool    `json:"flaky,omitempty"`
+}
+
+// EvalSuiteRunResult is the response of a hermetic server-side suite run.
+type EvalSuiteRunResult struct {
+	ID             string           `json:"id"`
+	SuiteID        string           `json:"suiteId"`
+	SuiteName      string           `json:"suiteName"`
+	AgentName      string           `json:"agentName"`
+	Mode           string           `json:"mode"`
+	Passed         bool             `json:"passed"`
+	Score          float64          `json:"score"`
+	CasesTotal     int              `json:"casesTotal"`
+	CasesPassed    int              `json:"casesPassed"`
+	Regressed      bool             `json:"regressed"`
+	BaselineScore  *float64         `json:"baselineScore,omitempty"`
+	BaselineRunID  string           `json:"baselineRunId,omitempty"`
+	CaseDeltas     []EvalCaseDelta  `json:"caseDeltas,omitempty"`
+	RegressedCases []string         `json:"regressedCases,omitempty"`
+	FlakyCases     []string         `json:"flakyCases,omitempty"`
+	CaseResults    []EvalCaseResult `json:"caseResults"`
+	DurationMs     int64            `json:"durationMs"`
+	TotalCostUsd   float64          `json:"totalCostUsd"`
+	AgentCostUsd   float64          `json:"agentCostUsd"`
+	JudgeCostUsd   float64          `json:"judgeCostUsd"`
+	JudgeModel     string           `json:"judgeModel,omitempty"`
+	AgentModels    []string         `json:"agentModels,omitempty"`
+	PinnedBaseline bool             `json:"pinnedBaseline"`
+	StoppedEarly   string           `json:"stoppedEarly,omitempty"`
+}
+
+// RunEvalSuite runs a suite hermetically on the server (tool calls answered by
+// the case mocks, never real tools). On a regression the server answers 422
+// with a full result body: RunEvalSuite then returns that parsed result
+// (Regressed == true) AND the *APIError, so CI callers can both report and fail:
+//
+//	res, err := c.RunEvalSuite(ctx, id, req)
+//	var apiErr *APIError
+//	if errors.As(err, &apiErr) && apiErr.Status == 422 { /* res is populated */ }
+//
+// Any other error returns a nil result.
+func (c *Client) RunEvalSuite(ctx context.Context, suiteID string, req RunEvalSuiteRequest) (*EvalSuiteRunResult, error) {
+	var out EvalSuiteRunResult
+	err := c.do(ctx, http.MethodPost, "/v1/eval-suites/"+url.PathEscape(suiteID)+"/run", req, &out)
+	if err == nil {
+		return &out, nil
+	}
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.Status == http.StatusUnprocessableEntity {
+		if jerr := json.Unmarshal([]byte(apiErr.Body), &out); jerr == nil {
+			out.Regressed = true
+			return &out, err
+		}
+	}
+	return nil, err
+}
+
+// GenerateEvalSuiteRequest is the payload for GenerateEvalSuite.
+type GenerateEvalSuiteRequest struct {
+	AgentName string `json:"agentName"`
+	Goal      string `json:"goal,omitempty"`
+	MaxCases  int    `json:"maxCases,omitempty"`
+}
+
+// EvalCaseProvenance records where a drafted case's grounding came from.
+type EvalCaseProvenance struct {
+	Case      string   `json:"case"`
+	Source    string   `json:"source"`
+	Grounding string   `json:"grounding"`
+	Notes     []string `json:"notes,omitempty"`
+}
+
+// EvalDroppedCase is a generated case rejected by grounding.
+type EvalDroppedCase struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
+}
+
+// EvalSuiteDraft is an unsaved suite proposed by the generator.
+type EvalSuiteDraft struct {
+	AgentName   string     `json:"agentName"`
+	Name        string     `json:"name"`
+	Description string     `json:"description,omitempty"`
+	Cases       []EvalCase `json:"cases"`
+}
+
+// GenerateEvalSuiteResult is a draft suite plus its evidence. It is NEVER saved;
+// approve it by passing Draft to UpsertEvalSuite.
+type GenerateEvalSuiteResult struct {
+	Draft            EvalSuiteDraft       `json:"draft"`
+	Provenance       []EvalCaseProvenance `json:"provenance"`
+	Dropped          []EvalDroppedCase    `json:"dropped"`
+	Evidence         map[string]int       `json:"evidence"`
+	Model            string               `json:"model"`
+	CostUsd          float64              `json:"costUsd"`
+	RequiresApproval bool                 `json:"requiresApproval"`
+}
+
+// GenerateEvalSuite asks the server to draft an eval suite from the agent's
+// instructions, recent runs and feedback. Nothing is saved.
+func (c *Client) GenerateEvalSuite(ctx context.Context, req GenerateEvalSuiteRequest) (*GenerateEvalSuiteResult, error) {
+	var out GenerateEvalSuiteResult
+	if err := c.do(ctx, http.MethodPost, "/v1/eval-suites/generate", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// CalibrateEvalJudgeRequest is the payload for CalibrateEvalJudge.
+type CalibrateEvalJudgeRequest struct {
+	AgentName  string `json:"agentName"`
+	Rubric     string `json:"rubric,omitempty"`
+	JudgeModel string `json:"judgeModel,omitempty"`
+	Limit      int    `json:"limit,omitempty"`
+}
+
+// EvalCalibrationStats summarises judge-vs-human agreement.
+type EvalCalibrationStats struct {
+	N         int     `json:"n"`
+	Labeled   int     `json:"labeled"`
+	Agreement float64 `json:"agreement"`
+	Kappa     float64 `json:"kappa"`
+	MAE       float64 `json:"mae"`
+}
+
+// EvalCalibrationPair is one run re-judged against its human score.
+type EvalCalibrationPair struct {
+	RunID      string  `json:"runId"`
+	HumanScore int     `json:"humanScore"`
+	JudgeScore float64 `json:"judgeScore"`
+	JudgePass  bool    `json:"judgePassed"`
+	Rationale  string  `json:"rationale,omitempty"`
+	JudgeError string  `json:"judgeError,omitempty"`
+}
+
+// EvalCalibrationResult is the response of CalibrateEvalJudge.
+type EvalCalibrationResult struct {
+	Stats   EvalCalibrationStats  `json:"stats"`
+	Pairs   []EvalCalibrationPair `json:"pairs"`
+	Verdict string                `json:"verdict"`
+	Rubric  string                `json:"rubric"`
+	CostUsd float64               `json:"costUsd"`
+	Note    string                `json:"note,omitempty"`
+}
+
+// CalibrateEvalJudge re-judges runs that carry human feedback and reports
+// agreement (Cohen's kappa) so a rubric is trusted only as far as it agrees
+// with real users.
+func (c *Client) CalibrateEvalJudge(ctx context.Context, req CalibrateEvalJudgeRequest) (*EvalCalibrationResult, error) {
+	var out EvalCalibrationResult
+	if err := c.do(ctx, http.MethodPost, "/v1/eval-judge/calibrate", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // SetEvalBaseline pins an eval run as the baseline for a branch.
