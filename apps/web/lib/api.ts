@@ -5,6 +5,7 @@
 // throws. No fabricated rows leak into the UI as fake runs.
 import { publicApiBase } from "./public-url";
 import { isNoSessionPath } from "./no-session-paths";
+import { parseApiErrorBody } from "./eval-format";
 import type { BillingOverview } from "./billing";
 import type {
   Agent,
@@ -2157,6 +2158,54 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
     });
   }
 
+  /** Agent drafts a suite. Nothing is saved — approval is upsertEvalSuite. */
+  async generateEvalSuite(body: {
+    agentName: string;
+    goal?: string;
+    maxCases?: number;
+  }): Promise<GeneratedEvalSuite> {
+    const g = await this.request<GeneratedEvalSuite>(`/v1/eval-suites/generate`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    // Older servers may send null for empty lists.
+    return { ...g, provenance: g.provenance ?? [], dropped: g.dropped ?? [] };
+  }
+
+  /** Hermetic server-side run. 422 means "regressed" and carries the SAME
+   *  body as 200, so it resolves as a result; other errors still throw. */
+  async runEvalSuite(
+    suiteId: string,
+    body: EvalRunRequest,
+  ): Promise<EvalRunResult> {
+    try {
+      return await this.request<EvalRunResult>(
+        `/v1/eval-suites/${encodeURIComponent(suiteId)}/run`,
+        { method: "POST", body: JSON.stringify(body) },
+      );
+    } catch (err) {
+      const parsed = err instanceof Error ? parseApiErrorBody(err.message, 422) : null;
+      if (parsed) return parsed as unknown as EvalRunResult;
+      throw err;
+    }
+  }
+
+  async getEvalRun(id: string): Promise<EvalRunDetail> {
+    return this.request(`/v1/eval-runs/${encodeURIComponent(id)}`);
+  }
+
+  async calibrateEvalJudge(body: {
+    agentName: string;
+    rubric?: string;
+    judgeModel?: string;
+    limit?: number;
+  }): Promise<EvalCalibration> {
+    return this.request(`/v1/eval-judge/calibrate`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+
   async getEvalBaseline(
     agentName: string,
     branch: string,
@@ -2507,12 +2556,147 @@ export interface ForecastResult {
   blockReason?: string;
 }
 
+export interface EvalMock {
+  tool: string;
+  match?: Record<string, unknown>;
+  result?: unknown;
+  error?: string;
+  description?: string;
+  /** Fixture made up by an author/generator rather than captured. */
+  synthetic?: boolean;
+}
+
 export interface EvalCase {
   name: string;
   input: string;
   expected?: string;
   assert?: Record<string, unknown>;
   weight?: number;
+  samples?: number;
+  mocks?: EvalMock[];
+  /** Generator-only extras on draft cases. */
+  source?: string;
+  rationale?: string;
+}
+
+export interface EvalAssertion {
+  kind: string;
+  passed: boolean;
+  score: number;
+  skipped?: boolean;
+  detail?: string;
+  rationale?: string;
+  stddev?: number;
+  samples?: number;
+  model?: string;
+  injectionSuspected?: boolean;
+}
+
+export interface EvalToolCall {
+  tool: string;
+  args?: Record<string, unknown>;
+  result?: unknown;
+  error?: string;
+  mocked: boolean;
+}
+
+export interface EvalSample {
+  output: string;
+  toolCalls?: EvalToolCall[];
+  latencyMs: number;
+  costUsd: number;
+  model?: string;
+  passed: boolean;
+  score: number;
+  error?: string;
+  assertions?: EvalAssertion[];
+}
+
+export interface EvalCaseResult {
+  name: string;
+  passed: boolean;
+  score: number;
+  actual?: string;
+  expected?: string;
+  error?: string;
+  latencyMs?: number;
+  costUsd?: number;
+  stddev?: number;
+  passRate?: number;
+  flaky?: boolean;
+  judgeCostUsd?: number;
+  assertions?: EvalAssertion[];
+  samples?: EvalSample[];
+}
+
+export interface EvalCaseDelta {
+  name: string;
+  score: number;
+  baselineScore: number;
+  delta: number;
+  passed: boolean;
+  baselinePassed: boolean;
+  regressed: boolean;
+  flaky?: boolean;
+}
+
+export interface EvalRunRequest {
+  branch?: string;
+  samples?: number;
+  judgeSamples?: number;
+  judgeModel?: string;
+  maxCostUsd?: number;
+  setBaseline?: boolean;
+}
+
+/** GET /v1/eval-runs/{id}. */
+export type EvalRunDetail = EvalRun & { caseResults?: EvalCaseResult[] };
+
+/** POST /v1/eval-suites/{id}/run — 200 or 422 (regressed), same body. */
+export interface EvalRunResult {
+  id: string;
+  suiteId: string;
+  suiteName?: string;
+  agentName: string;
+  passed: boolean;
+  score: number;
+  casesTotal: number;
+  casesPassed: number;
+  regressed: boolean;
+  baselineScore?: number | null;
+  baselineRunId?: string;
+  caseDeltas?: EvalCaseDelta[] | null;
+  regressedCases?: string[] | null;
+  flakyCases?: string[] | null;
+  caseResults: EvalCaseResult[];
+  durationMs: number;
+  totalCostUsd: number;
+  agentCostUsd: number;
+  judgeCostUsd: number;
+  judgeModel?: string;
+  agentModels?: string[] | null;
+  pinnedBaseline?: boolean;
+  stoppedEarly?: string;
+}
+
+export interface GeneratedEvalSuite {
+  draft: EvalSuiteInput;
+  provenance: { case: string; source: string; grounding: string; notes?: string[] }[];
+  dropped: { name: string; reason: string }[];
+  evidence: { runs: number; feedback: number; tools: number };
+  model: string;
+  costUsd: number;
+  requiresApproval: boolean;
+  approve: { method: string; path: string };
+}
+
+export interface EvalCalibration {
+  stats: { n: number; labeled: number; agreement: number; kappa: number; mae: number };
+  pairs?: unknown[];
+  verdict?: string;
+  rubric?: string;
+  costUsd?: number;
+  note?: string;
 }
 
 export interface EvalSuite {
