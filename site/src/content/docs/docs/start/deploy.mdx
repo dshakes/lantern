@@ -1,22 +1,16 @@
 ---
 title: Deploy to the cloud
 description: "Ship an agent with one command, then put the platform itself in your cloud with Helm or Terraform."
-glance:
-  what: "Two separate deploys: pal deploy ships an agent to a running control plane; Helm or Terraform puts the platform in your cloud."
-  why: "Agents change daily and ship in seconds; the platform changes rarely and stays in your VPC so agent data never leaves your account."
-  how: "Ship the agent with pal deploy; the first time, install the platform with the Helm or Terraform tab below."
 sidebar:
   order: 4
 ---
-import Progress from '../../../../components/Progress.astro';
-
-<Progress current={4} />
-
 
 import { Aside, Tabs, TabItem, Steps } from '@astrojs/starlight/components';
-import { DeployTopology } from '../../../../components/diagrams';
+import Diagram from '../../../../components/Diagram.astro';
 
-<DeployTopology client:visible />
+There are two separate deploys. **`pal deploy`** ships an agent to a running control plane, in seconds, as often as you change the agent. **Helm or Terraform** puts the platform in your cloud, once, so agent data stays in your account.
+
+<Diagram name="your-cloud" alt="The control plane runs anywhere. The data plane runs in your VPC and dials out to the control plane, so you open no inbound ports." />
 
 <Aside type="note" title="No hosted cloud yet">
 A fully managed PAL cloud is the intended offering, not a shipped one. Today you run the control plane yourself; everything below targets your own cluster.
@@ -31,7 +25,14 @@ pal deploy --dry-run   # one read-only lookup: reports "create" or "update", cha
 pal deploy --json
 ```
 
-It reads `agent.yaml` (`name`, `description`, `model`, `system_prompt`, `labels`, `workflow`), creates or updates the agent, saves the workflow graph, then calls `POST /v1/agents/{name}/deploy`. The response carries `"status": "live"` and the agent's invoke URL. Exit codes are scriptable: `3` unauthorized, `4` quota or budget (`402`), `5` not found, `6` server error.
+`pal deploy` reads `agent.yaml` (`name`, `description`, `model`, `system_prompt`, `labels`, `workflow`), creates or updates the agent, saves the workflow graph, then calls `POST /v1/agents/{name}/deploy`. The response carries `"status": "live"` and the agent's invoke URL.
+
+| Exit code | Meaning |
+| --- | --- |
+| `3` | Unauthorized |
+| `4` | Quota or budget (`402`) |
+| `5` | Not found |
+| `6` | Server error |
 
 ## Put the platform in your cloud
 
@@ -42,7 +43,7 @@ It reads `agent.yaml` (`name`, `description`, `model`, `system_prompt`, `labels`
 
 1. Supply the secrets the chart cannot create: `secrets.jwtSecret`, `credentialKey`, `receiptSecret`, `grpcServiceToken`, `schedulerNodeToken`, `appDbPassword`, plus the control plane's gRPC TLS cert and the runtime-manager mTLS client cert.
 
-2. Install with the production values. The chart sets `PAL_ENV=production`, so every production startup guard is on and a missing secret stops the pod with its name in the log. This all-in-one chart is meant for simple self-hosted setups; split production deployments use `infra/helm/pal-control-plane` and `pal-data-plane`.
+2. Install with the production values. The chart sets `PAL_ENV=production`, so every production startup guard is on, and a missing secret stops the pod with its name in the log. This all-in-one chart suits simple self-hosted setups; split deployments use `infra/helm/pal-control-plane` and `pal-data-plane`.
 
    ```bash
    helm dependency build ./infra/helm/pal     # Redis subchart
@@ -53,7 +54,11 @@ It reads `agent.yaml` (`name`, `description`, `model`, `system_prompt`, `labels`
      --set secrets.schedulerNodeToken="$SCHEDULER_NODE_TOKEN" --set secrets.appDbPassword="$APP_DB_PASSWORD"
    ```
 
-3. Point the CLI at it: `pal --rest --api-url https://<your-host> login` (set `PAL_API_URL` and `PAL_USE_REST=1` to make this permanent). Without `--rest`, `--api-url` is a gRPC address.
+3. Point the CLI at it. Set `PAL_API_URL` and `PAL_USE_REST=1` to make this permanent. Without `--rest`, `--api-url` is a gRPC address.
+
+   ```bash
+   pal --rest --api-url https://<your-host> login
+   ```
 
 </Steps>
 
@@ -64,26 +69,21 @@ Generate a data plane for EKS, GKE or AKS. Agents then execute in that cloud whi
 
 ```bash
 pal infra install --cloud aws --region us-east-1 --node-count 3 --firecracker   # writes ./pal-data-plane-aws
-export TF_VAR_agent_token="<one-time token from Settings → Data planes>"
+export TF_VAR_agent_token="<one-time token from Deployments, Register data plane>"
 cd pal-data-plane-aws && terraform init && terraform plan && terraform apply
 ```
 
-`pal infra status` is a placeholder today; check the data-plane-agent pod logs instead.
-
-The data plane dials **out** to the control plane (`:50051`) with a one-time bootstrap token, so you open no inbound ports. Register it under **Settings → Data planes** or `POST /v1/data-planes`.
+The data plane dials **out** to the control plane (`:50051`) with a one-time bootstrap token, so you open no inbound ports. Register it under **Deployments, Register data plane** or with `POST /v1/data-planes`. `pal infra status` is a placeholder today; check the data-plane-agent pod logs instead.
 
 </TabItem>
 </Tabs>
 
-<details>
-<summary>Which topology?</summary>
+## Which topology
 
 | Topology | Control plane | Data plane | When |
 | --- | --- | --- | --- |
-| Hybrid (recommended) | one place | each workload's cloud | production; agent data stays in your VPC |
-| Fully self-hosted | your cluster | your cluster | full control, you run Postgres, Redis, Kubernetes |
-| Fully managed | — | — | not offered yet |
+| Hybrid (recommended) | One place | Each workload's cloud | Production; agent data stays in your VPC |
+| Fully self-hosted | Your cluster | Your cluster | Full control; you run Postgres, Redis and Kubernetes |
+| Fully managed | Not offered | Not offered | Not available yet |
 
-</details>
-
-Production settings, NetworkPolicy, backups and migrations: [Deployment](/docs/operate/deployment/). Every variable a production process requires: [Environment variables](/docs/reference/env-vars/#production-checklist).
+Production settings, NetworkPolicy, backups and migrations: [Production deployment](/docs/operate/deployment/). Every variable a production process requires: [Environment variables](/docs/reference/env-vars/#production-checklist). Shape of the split: [Deployment topology](/docs/architecture/deployment-topology/).

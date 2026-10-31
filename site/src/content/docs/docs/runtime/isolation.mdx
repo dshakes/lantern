@@ -1,10 +1,6 @@
 ---
-title: Isolation classes
-description: The decision tree from trusted to hostile workloads, and the fail-closed gate.
-glance:
-  what: "Each headless agent declares one of six isolation classes in agent.yaml, mapped to a Kubernetes runtimeClassName from runc up to a Kata microVM."
-  why: "Stronger walls for untrusted code, and a refusal rather than a quiet downgrade when the cluster cannot provide them."
-  how: "Walk The decision tree, then set spec.isolation as shown under In a spec."
+title: Isolation
+description: The isolation classes from trusted to hostile workloads, and the gate that refuses instead of downgrading.
 sidebar:
   order: 4
 ---
@@ -12,61 +8,49 @@ sidebar:
 import { Aside } from '@astrojs/starlight/components';
 import { IsolationClasses } from '../../../../components/diagrams';
 
+An **isolation class** answers one question: how strong should the walls around this agent be? Your own signed code gets normal walls, code that pulls internet packages or runs LLM-written code gets a syscall-intercepting sandbox, and hostile input gets a full VM with its own kernel. You set the class in the agent spec. If the node cannot provide the wall you asked for, the run is **refused**, not quietly run somewhere weaker. On Kubernetes the class maps to a `runtimeClassName` on the pod (ADR 0009).
+
 <IsolationClasses client:visible />
 
-An isolation class answers one question: how strong should the walls around this agent be? Your own code gets normal walls, internet packages or LLM-written code get a syscall-intercepting sandbox, and hostile input gets a full VM with its own kernel. On Kubernetes the class maps to a `runtimeClassName`: isolation is a tier on the pod, not a separate backend (ADR 0009).
+## Pick a class
 
-## The decision tree
+Pick the least-privileged class the workload can tolerate. Take the first row that matches:
 
-Pick the least-privileged class the workload can tolerate. Walk it top to bottom and stop at the first match:
-
-```
-Is the code first-party and signed?  ── yes ─▶ TRUSTED   (runc)
-        │ no
-Does it load packages from the internet,
-or drive a browser, or run user/LLM-generated code?  ── yes ─▶ UNTRUSTED (gVisor + egress-deny)
-        │ no
-Is the *input* adversarial / hostile?  ── yes ─▶ HOSTILE   (Kata microVM)
-        │ no
-        ────────▶ STANDARD  (gVisor, default)
-```
-
-## The classes
+1. First-party, signed code: `trusted`.
+2. Loads packages from the internet, drives a browser, or runs user or LLM-generated code: `untrusted`.
+3. The input itself is adversarial: `hostile`.
+4. None of the above: `standard`, which is also what an unset class resolves to.
 
 | Class | RuntimeClass | Use when |
 | --- | --- | --- |
-| `trusted` | `runc` | Signed first-party code only. Runs on shared nodes. No untrusted package loading, no LLM-generated code path. |
-| `standard` | `gvisor` | Default. Your own code on shared, gVisor-isolated nodes. Used when the class is left unset. |
-| `untrusted` | `gvisor` + egress-deny | Loads internet packages (PyPI/npm), drives a browser, or runs LLM-generated code. Adds an egress allowlist (a NetworkPolicy fence); pods run with the `RuntimeDefault` seccomp profile. |
-| `hostile` | `kata-qemu` (or `kata-fc`) | Adversarial workloads. Full-kernel microVM via Kubernetes on a dedicated node pool with no co-tenancy. |
-| `wasm` | `crun+wasm` | WebAssembly workloads (or in-process Wasmtime on trusted hosts). |
-| `devcontainer` | `gvisor` | Long-lived workspace: a persistent pod plus PVC that survives across calls. |
+| `trusted` | `runc` | Signed first-party code only, on shared nodes. No untrusted package loading and no LLM-generated code path. |
+| `standard` | `gvisor` | The default. Your own code on shared, gVisor-isolated nodes. |
+| `untrusted` | `gvisor` plus egress-deny | Internet packages (PyPI, npm), a browser, or LLM-generated code. Adds an egress allowlist fence (a NetworkPolicy). |
+| `hostile` | Kata (`kata-qemu` or `kata-fc`) | Adversarial workloads. A full-kernel microVM on a dedicated node pool with no co-tenancy. |
+| `wasm` | The configured Wasm RuntimeClass | WebAssembly workloads. |
+| `devcontainer` | `gvisor` | A long-lived workspace: a persistent pod and volume that survive across calls. |
 
-## Defaults and forced classes
-
-An unset class resolves to `standard`.
+The RuntimeClass names are the defaults. The manager reads the actual names from its configuration.
 
 <Aside type="caution">
-Per ADR 0002, marketplace and LLM-generated bundles are to be forced to `untrusted`, and `trusted` is to require the signing key. This is policy, not yet enforced at schedule time: a request for `trusted` is honoured as sent.
+ADR 0002 says marketplace and LLM-generated bundles are to be forced to `untrusted`, and that `trusted` is to require the signing key. That is policy, not yet enforced at schedule time: a request for `trusted` is honoured as sent.
 </Aside>
 
-## The fail-closed gate
+## The gate that refuses
 
-This is the load-bearing invariant: untrusted and hostile code never runs in a bare pod.
+Untrusted and hostile code never runs in a bare pod.
 
-- A node may satisfy `untrusted` only if it advertises the `gvisor` RuntimeClass.
-- A node may satisfy `hostile` only if it advertises `kata-qemu` / `kata-fc`.
-- A node that lacks the required hardened RuntimeClass fails closed: the run is refused. `untrusted` and `hostile` are never downgraded to `runc`.
-- `standard`, `devcontainer` and `wasm` also refuse by default, but the manager can be told to degrade them to bare `runc` with `PAL_ALLOW_RUNC_STANDARD=1`. That flag never applies to `untrusted` or `hostile`.
+- A node can satisfy `untrusted` only if it advertises the gVisor RuntimeClass.
+- A node can satisfy `hostile` only if it advertises a Kata RuntimeClass.
+- A node without the required RuntimeClass fails closed: the run is refused. `untrusted` and `hostile` are never downgraded to `runc`.
+- `standard`, `devcontainer` and `wasm` also refuse by default, but the manager can be told to run them on bare `runc` with `PAL_ALLOW_RUNC_STANDARD=1`. That flag never applies to `untrusted` or `hostile`.
 
-The requirement is enforced in two places: the manager, which refuses the spawn when the RuntimeClass is not configured, and a pod `nodeSelector` (`pal.dev/runtimeclass`) that only matches nodes labelled as having the handler.
+The requirement is enforced twice. The manager refuses to build the job when the RuntimeClass is not configured, and the pod carries a node selector on the `pal.dev/runtimeclass` node label, which only nodes labelled as having the handler match.
 
-<Aside type="caution">
-If your cluster has not provisioned the `gvisor` / `kata` RuntimeClasses, `untrusted` and `hostile` workloads are refused. That is correct, but operationally visible. The data-plane installer provisions them and a preflight check surfaces the gap before traffic.
-</Aside>
+If your cluster has not provisioned the gVisor and Kata RuntimeClasses, `untrusted` and `hostile` workloads are refused. That is correct, but you will see it. The data-plane installer provisions the classes, and a preflight check surfaces a gap before traffic.
 
 <Aside>
-gVisor intercepts syscalls in user space, so a minority of workloads hit an unimplemented syscall. Declare `hostile` (full kernel via Kata) for those.
+gVisor intercepts syscalls in user space, so a minority of workloads hit an unimplemented syscall. Declare `hostile` (a full kernel through Kata) for those.
 </Aside>
 
 ## In a spec
@@ -83,18 +67,21 @@ spec:
       rate_bps: 1048576   # 1 MiB/s
 ```
 
-Egress enforcement and secret vending for untrusted workloads are covered in [Identity and secrets](/docs/security/identity/).
+## Firecracker and broker mode
 
-## Firecracker backend and broker mode
+Where the runtime manager uses the Firecracker backend, the workload runs in its own microVM. By default the VM has a network device and the harness enforces the egress allowlist inside the guest. With `PAL_EGRESS_MODE=broker` on the manager (opt-in, Firecracker only) the VM has no network device, and egress leaves over vsock to a host broker. Kata and Kubernetes backends do not support broker mode. See [Egress](/docs/security/egress/).
 
-Where the runtime-manager uses the Firecracker backend, the workload runs in its own microVM. By default the VM has a NIC and the harness enforces the egress allowlist inside the guest. Set `PAL_EGRESS_MODE=broker` on the manager (opt-in, Firecracker only) and the VM gets no network device at all: egress leaves over vsock to a host-side broker that enforces the allowlist and injects credentials. Kata and Kubernetes backends do not support broker mode. See [Egress and credentials](/docs/security/egress/).
+The Firecracker root filesystem is writable. Only the cert and spawn drive is mounted read-only. Inside the VM, the harness runs the workload, exec sessions and shell children as the workload uid, not its own, and withholds its own configuration variables from them.
 
 ## Kubernetes backend hardening
 
-On the Kubernetes backend each workload Job is created with `automountServiceAccountToken: false` and a default-deny-egress NetworkPolicy (DNS on port 53 is the only exception) that is applied before the Job starts and removed with it. The in-VM harness then enforces the declared egress allowlist on top, so the host policy and the guest allowlist are two independent fences.
+Each workload Job is created with `automountServiceAccountToken: false` and a default-deny-egress NetworkPolicy. DNS on port 53 is the only exception. The policy is applied before the Job starts and removed with it. Pods run with the `RuntimeDefault` seccomp profile. The in-VM harness then enforces the declared allowlist on top, so the host policy and the guest allowlist are two independent fences.
 
-```bash
-make k8s-validate   # throwaway kind + Calico cluster: egress deny (incl. 169.254.169.254), seccomp, cap-drop
+```sh
+# Throwaway kind + Calico cluster: egress deny (incl. 169.254.169.254), seccomp, cap-drop
+make k8s-validate
 ```
 
-The gVisor and Kata execution legs (proving a workload runs inside the sandboxed kernel) need a cluster with those RuntimeClasses installed and are skipped without one; GitHub-hosted runners cannot nest-virtualize. Optional cluster policies (Kyverno tenant baseline, cosign image verification, Cilium host egress) live in `infra/helm/pal-data-plane/` and are off by default.
+The gVisor and Kata execution legs need a cluster with those RuntimeClasses installed and are skipped without one; GitHub-hosted runners cannot nest-virtualize. Optional cluster policies (Kyverno tenant baseline, cosign image verification, Cilium host egress) live in `infra/helm/pal-data-plane/` and are off by default.
+
+Related: [Egress](/docs/security/egress/), [Identity and secrets](/docs/security/identity/), [Security model](/docs/security/).

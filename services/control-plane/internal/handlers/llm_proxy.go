@@ -3853,6 +3853,14 @@ func (h *LlmProxyHandler) callLLMWithFailover(
 	if len(chain) == 0 {
 		return "", nil, "", "", 0, 0, fmt.Errorf("no LLM provider configured for this tenant")
 	}
+	// Maker≠checker (ADR 0052): an eval judge must not be graded by the model
+	// that produced the output. Applied before the router seam so it binds there too.
+	if ex := excludedModelsFrom(ctx); len(ex) > 0 {
+		chain = dropExcludedModels(chain, ex)
+		if len(chain) == 0 {
+			return "", nil, "", "", 0, 0, errNoDistinctModel
+		}
+	}
 
 	// Model-router cutover (P2-B5/6). Behind PAL_USE_MODEL_ROUTER
 	// (default OFF). When ON, offload PLAIN provider completions (no tools,

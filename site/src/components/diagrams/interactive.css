@@ -43,6 +43,9 @@
 .ix-canvas > svg { display: block; width: 100%; height: auto; }
 .ix-pan-hint { display: none; font-size: 12px; color: var(--lx-ink-3); margin-top: 6px; }
 @media (max-width: 760px) { .ix-pan-hint { display: block; } }
+/* Desktop and tablet: every diagram fits the content column (no inner scroll), like
+   halos' scaled SVGs. Phones keep the native-size pan, the step list and the full-map toggle. */
+@media (min-width: 761px) { .ix-canvas { overflow-x: visible; } .ix-canvas > svg { min-width: 0 !important; } }
 
 /* Nodes */
 .ix-node { cursor: pointer; }
@@ -114,10 +117,10 @@
 .ix-seq .head rect { stroke-width: 1.5; }
 .ix-seq .head.on rect { stroke: var(--lx-ink); stroke-width: 2.5; }
 .ix-seq .head .t1 { font-size: 13px; font-weight: 600; }
-.ix-seq .head .t2 { font-size: 11px; fill: var(--lx-ink-3); }
+.ix-seq .head .t2 { font-size: 12px; fill: var(--lx-ink-3); }
 .ix-msg { cursor: pointer; }
 .ix-msg path, .ix-msg line { fill: none; stroke: var(--lx-ink-3); stroke-width: 1.5; }
-.ix-msg text { font-size: 12px; fill: var(--lx-ink-2); paint-order: stroke; stroke: var(--lx-bg); stroke-width: 5px; stroke-linejoin: round; }
+.ix-msg text { font-size: 13.5px; fill: var(--lx-ink-2); paint-order: stroke; stroke: var(--lx-bg); stroke-width: 5px; stroke-linejoin: round; }
 .ix-msg .num { font-size: 10.5px; fill: var(--lx-ink-3); font-family: var(--lx-font-mono); }
 .ix-msg.k-return path, .ix-msg.k-return line { stroke-dasharray: 5 4; }
 .ix-msg.k-deny path, .ix-msg.k-deny line { stroke: var(--lx-signal); }

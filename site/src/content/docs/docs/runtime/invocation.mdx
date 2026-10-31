@@ -1,16 +1,14 @@
 ---
-title: Invocation modes
-description: "Every way to start a run - wait for the answer, stream it, fire and poll, on a cron, or from a signed webhook - and which to pick."
-glance:
-  what: "Five ways to start the same run today: synchronous, streaming, asynchronous, cron and webhook."
-  why: "They differ only in how the caller waits; the run itself, its journal, budget checks and receipts are identical."
-  how: "Find your situation in the table, then copy the request from its tab."
+title: Invoke an agent
+description: Start a run synchronously, as a stream, asynchronously, on a cron or from a signed webhook.
 sidebar:
   order: 3
 ---
 
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 import { InvocationModes } from '../../../../components/diagrams';
+
+There are five ways to start the same **run**: wait for the answer, stream it, fire and poll, put it on a cron, or let a signed webhook start it. They differ only in **how the caller waits**. The run itself, its journal, budget checks and receipts are identical. Pick the mode from the table, then copy the request from its tab.
 
 <InvocationModes client:visible />
 
@@ -21,44 +19,45 @@ import { InvocationModes } from '../../../../components/diagrams';
 | To hand off long work and check later | **Async** | a run id, immediately |
 | The agent on a timetable | **Cron** | nothing; the scheduler starts it |
 | GitHub, Sentry, PagerDuty or any HMAC sender to start it | **Webhook** | `202` with the run id |
-| Many inputs in one call, with a completion callback | **Batch** | coming soon |
+| Many inputs in one call, with a completion callback | **Batch** | a batch id; per-run results, and a callback when all finish |
 
 <Tabs>
 <TabItem label="Sync">
 
-The A2A invoke endpoint creates the run, waits for it, and returns the output. It polls for up to **60 s**; a run that has not succeeded by then answers `502` with its `runId` and status, so you can keep following it asynchronously.
+The A2A invoke endpoint creates the run, waits for it and returns the output. It polls for up to **60 s**. A run that has not succeeded by then answers `502` with its `runId` and status, so you can keep following it asynchronously.
 
 ```bash
-curl -s -X POST localhost:8080/v1/agents/my-agent/a2a/invoke \
+curl -s -X POST http://localhost:8080/v1/agents/my-agent/a2a/invoke \
   -H "Authorization: Bearer $PAL_API_KEY" -H "Content-Type: application/json" -d '{"input":{"q":"..."}}'
 # 200 {"runId":"...","status":"succeeded","output":{...}}
 ```
 
-Needs the `runs:execute` scope. Another tenant can call it only when the agent is public; see [Marketplace and A2A](/docs/build/marketplace/).
+Needs the `runs:execute` scope. Another tenant can call it only when the agent is public; see [Marketplace](/docs/build/marketplace/).
 
 </TabItem>
 <TabItem label="Stream">
 
-Create the run, then subscribe to its events over SSE. The stream replays the journal from the first event, so a late subscriber misses nothing, and closes when the run reaches `succeeded`, `failed` or `cancelled`.
+Create the run, then subscribe to its events over SSE. The stream replays the journal from the first event, so a late subscriber misses nothing. It closes when the run reaches `succeeded`, `failed` or `cancelled`.
 
 ```bash
-RUN_ID=$(curl -s -X POST localhost:8080/v1/runs -H "Authorization: Bearer $PAL_API_KEY" -H "Content-Type: application/json" \
+RUN_ID=$(curl -s -X POST http://localhost:8080/v1/runs -H "Authorization: Bearer $PAL_API_KEY" -H "Content-Type: application/json" \
   -d '{"agentName":"my-agent","input":{}}' | jq -r .id)
-curl -N localhost:8080/v1/runs/$RUN_ID/events \
+curl -N http://localhost:8080/v1/runs/$RUN_ID/events \
   -H "Authorization: Bearer $PAL_API_KEY" -H "Accept: text/event-stream"
 ```
 
-For a chat turn, sessions stream token by token instead; see [Token streaming](/docs/runtime/streaming/).
+For a chat turn, sessions stream token by token instead; see [Streaming](/docs/runtime/streaming/).
 
 </TabItem>
 <TabItem label="Async">
 
-`POST /v1/runs` returns as soon as the run is queued. Poll `GET /v1/runs/{id}` or subscribe to events later. A process restart does not lose the run: the recovery sweep re-drives it every 30 s from its journal, skipping steps that already completed ([Durable execution](/docs/runtime/durable-execution/)).
+`POST /v1/runs` returns as soon as the run is queued. Poll `GET /v1/runs/{id}` or subscribe to events later. A process restart does not lose the run: the recovery sweep re-drives it every 30 s from its journal and skips steps that already completed ([Durable execution](/docs/runtime/durable-execution/)).
 
 <Tabs syncKey="lang">
 <TabItem label="TypeScript" icon="seti:typescript">
 ```ts
 import { PalClient, type Run } from "@pal-runtime/sdk";
+
 const client = new PalClient({ apiKey: process.env.PAL_API_KEY, baseUrl: "http://localhost:8080" });
 const run = (await client.runs.create({ agent: "my-agent", input: {} })) as Run;
 // ...later
@@ -83,13 +82,15 @@ r, _ = c.GetRun(ctx, r.ID)
 </TabItem>
 </Tabs>
 
+The SDKs are not published to npm or PyPI yet; install them from the repo path ([SDKs](/docs/sdks/)). Their default base URL does not resolve, so always pass the base URL as above.
+
 </TabItem>
 <TabItem label="Cron">
 
-A schedule starts a run on a cron expression, in an IANA timezone (unset: `PAL_DEFAULT_TIMEZONE`, then UTC).
+A schedule starts a run on a cron expression in an IANA timezone. Unset, the timezone falls back to `PAL_DEFAULT_TIMEZONE`, then UTC.
 
 ```bash
-curl -s -X POST localhost:8080/v1/schedules -H "Authorization: Bearer $PAL_API_KEY" -H "Content-Type: application/json" -d '{
+curl -s -X POST http://localhost:8080/v1/schedules -H "Authorization: Bearer $PAL_API_KEY" -H "Content-Type: application/json" -d '{
   "agentName": "research-agent",
   "cronExpr": "0 9 * * 1-5",
   "timezone": "America/New_York",
@@ -107,21 +108,42 @@ A trigger gives an agent a public URL. The sender's HMAC signature is the only c
 
 ```bash
 pal hooks create my-agent --provider github
-# prints the URL (/v1/hooks/{id}) and the signing secret, once
+# prints the URL path (/v1/hooks/{id}) and the signing secret, once
 ```
 
-More: [Webhook triggers](/docs/build/triggers/).
+More: [Triggers](/docs/build/triggers/).
 
 </TabItem>
-<TabItem label="Batch (soon)">
+<TabItem label="Batch">
 
-<Aside type="note" title="Coming soon">
-Submitting many inputs in one request, with a callback when they finish, is in review and not on `master` yet. Until it lands, fan out with async runs, or use `step.map` inside one agent for parallel work that is journaled together.
-</Aside>
+Submit many inputs to one agent in one request. Each item becomes its own run, with its own journal, budget check and retries; the batch tracks them and can call you back when the last one finishes.
+
+```bash
+curl -s -X POST http://localhost:8080/v1/batches \
+  -H "Authorization: Bearer $PAL_API_KEY" -H "Content-Type: application/json" \
+  -H "Idempotency-Key: nightly-2026-10-30" \
+  -d '{"agentName":"summarizer","concurrency":10,
+       "callbackUrl":"https://example.com/hooks/batch",
+       "items":[{"input":{"url":"https://a.example"}},{"input":{"url":"https://b.example"}}]}'
+```
+
+| Call | What it does |
+| --- | --- |
+| `POST /v1/batches` | Start the batch. `concurrency` defaults to 20; at most `PAL_BATCH_MAX_ITEMS` items (default 1000). Re-sending the same `Idempotency-Key` returns the same batch |
+| `GET /v1/batches/{id}` | Counts by status (pending, running, succeeded, failed, cancelled) and total cost |
+| `GET /v1/batches/{id}/results` | Each run's output, 100 per page |
+| `POST /v1/batches/{id}/cancel` | Cancel every child that has not finished |
+
+A single run takes the same `callbackUrl` on `POST /v1/runs`. The callback is a POST of `{runId, status, output, error, costUsd, tokensIn, tokensOut}`, signed `X-Pal-Signature: v1=<HMAC-SHA256 of the body>` with a per-tenant key. It is tried up to 4 times (5xx and network errors only) and delivered **at most once**: if the control plane crashes between attempts the callback is lost, so poll the run or batch to reconcile. The SDKs do not wrap batches yet; call the REST API.
 
 </TabItem>
 </Tabs>
 
-## The same in every mode
+## What stays the same
 
-Whatever starts it, a run goes through the same path: the [budget](/docs/build/budgets/) check (a hard-fail cap returns `402` before anything executes), the journal, the isolation tier from the agent's manifest, and a [receipt](/docs/security/receipts/) you can verify afterwards.
+Whatever starts the run, it goes through the same path: the [budget](/docs/build/budgets/) check (a hard-fail cap returns `402` before anything executes), the journal, the isolation tier from the agent's manifest, and a [receipt](/docs/security/receipts/) you can verify afterwards.
+
+## Limits
+
+- Sync waits at most 60 s. Longer work belongs on stream or async.
+- Batch does not exist yet.

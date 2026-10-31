@@ -1,39 +1,86 @@
 ---
 title: Request lifecycle
-description: A run from API call to journaled result, on the inline and microVM tiers, with model routing and the budget and eval gates.
-glance:
-  what: "The exact hops a run takes: gateway, control plane, budget, scheduler, manager, microVM, model router, journal."
-  why: "Knowing where each check happens tells you where a 402, a 422 or a retry comes from."
-  how: "Play the microVM sequence, then switch scenarios in the run sequence to see the budget, crash and data-plane paths."
+description: A run from API call to journaled result, on the inline and data-plane tiers, with the model router and the budget and eval gates.
 sidebar:
   order: 2
 ---
 
-import { MicroVmRunSequence, RunSequence, ToolCallSequence, ModelRouting, BudgetEvalGate } from '../../../../components/diagrams';
+import { RunSequence, ToolCallSequence } from '../../../../components/diagrams';
 
-## On the microVM tier
 
-<MicroVmRunSequence client:visible />
-
-## A run, every path
+A run enters at `POST /v1/runs`, passes a **budget gate** before anything is created, executes either inline in the control plane or on a connected **data plane**, and writes every step to the `journal_events` table. Knowing which hop owns which check tells you where a 402, a 422 or a retry came from. The idea behind them is in [Durable execution](/docs/runtime/durable-execution/), and the component map is in [Runtime internals](/docs/runtime/architecture/).
 
 <RunSequence client:visible />
 
-## A tool call into a sandbox
+## Where each outcome comes from
+
+| You see | Raised by | When |
+| --- | --- | --- |
+| `402` on `POST /v1/runs` | `CheckBudget` in the control plane | A hard-fail budget limit is already exceeded. No run row, no compute, no tokens. |
+| `402` on `POST /v1/runtime/schedule` or resume | Scheduler quota reservation | The tenant is at its concurrent-VM or cost quota. |
+| `422` on `POST /v1/eval-runs` | Eval baseline comparison | The run is worse than its branch baseline. |
+| A provider retry that does not double-bill | `Idempotency-Key` on the provider call | A retry or crash replay reaches the same key. |
+| A run that resumes instead of restarting | Recovery sweep plus journal | The process died mid-step. |
+
+## Inline path (no data plane connected)
+
+`POST /v1/runs` requires the `runs:execute` scope. The run executes in the control plane when no data plane is connected for the tenant.
+
+1. The SDK sends `{ agentName, input }`.
+2. `CheckBudget(tenant, agent, 0)` reads daily cost, run-count and token limits from the usage rollup, before any row exists.
+3. `CreateRun` creates the run queued.
+4. The caller gets `201 Created { run }` with the run id. Execution continues on a background goroutine.
+5. Status becomes `running`.
+6. `checkCachedLLMStep` looks for an existing `step_completed` for this LLM step. On a first attempt there is none.
+7. The executor journals `step_started` before the call, so the waterfall shows the step in flight and recovery knows it began.
+8. The control plane calls the provider directly. With `PAL_USE_MODEL_ROUTER` on (default off) it calls `ModelService.Complete` first, and any router error falls through to the direct chain.
+9. The provider request carries an `Idempotency-Key` derived from the run.
+10. The completion returns text, the model used, and tokens in and out.
+11. The executor journals `step_completed` with the full output. This row is what lets a replay skip the call.
+12. Status becomes `succeeded`, with output, tokens and `cost_usd` on the run row.
+13. `RecordUsage` updates the daily rollup for the budget gate, exactly once per run.
+14. `GET /v1/runs/{id}/events` replays `journal_events` in `seq` order, then tails until the run is terminal.
+
+## Data-plane path
+
+When a data plane is connected for the tenant, the control plane does not execute the run.
+
+1. `RouteRun` pushes the assignment down the `RunStream` that the data-plane agent opened outbound.
+2. The agent calls `ExecuteRun` on its local workflow engine and streams events back.
+3. `executeAttempt` first checks for a cached result keyed `stepID:attempt`. A completed step is never re-dispatched.
+4. `llm_call` steps go through the model router with a capability, not a vendor model, and the idempotency key `run_id:step_id:attempt`.
+5. The router maps the capability to a concrete model, calls the provider, and returns `model_used`, tokens and cost.
+6. `journal.Append` writes the step. The engine is the only writer of run state, and the journal write and status update share one transaction.
+7. `StreamEvent` messages flow back to the agent, which reports status to the control plane.
+
+## A tool call into a microVM
+
+The workflow engine never runs tools. It asks the runtime manager, which hands a JSON envelope to the harness in the guest.
 
 <ToolCallSequence client:visible />
 
+1. The engine calls `ExecTool` with `tool_name`, `args`, `run_id`, `step_id`, `vm_id`, a timeout, the idempotency key and `tenant_id`.
+2. The manager's authz interceptor requires the service token and refuses any per-VM certificate.
+3. The manager resolves the VM by `vm_id`, or by scanning for `run_id`. The owning tenant must match, or the answer is `NOT_FOUND`.
+4. The manager sends `Exec __pal_tool_call__` to the harness, with the envelope in `argv[0]` and this incarnation's bearer token.
+5. The harness's tool runner acts. File tools use `openat2` with `RESOLVE_BENEATH` under `/workspace`, as the workload's fsuid.
+6. The result returns, capped at 1 MiB, as `TOOL_STATUS_OK`, `TOOL_STATUS_ERROR` (the tool ran and failed) or `TOOL_STATUS_UNAVAILABLE` (not a Firecracker VM, or no heartbeat yet). An unavailable tool is never reported as a success.
+
+The finer detail is under [Runtime internals](/docs/runtime/architecture/#a-tool-call-into-a-microvm).
+
 ## Model routing
 
-<ModelRouting client:visible />
+| Caller | Path | Notes |
+| --- | --- | --- |
+| Control-plane inline path | Provider chain directly (default) | Router only when `PAL_USE_MODEL_ROUTER` is on. Any router error falls through to the direct chain. |
+| Workflow engine `llm_call` | Always the model router | Capability-addressed; carries `tenant_id` and the idempotency key. |
+
+Tenant provider keys are AES-256-GCM encrypted at rest and never logged. Models are named by capability (`auto`, `reasoning-large`), never by vendor.
 
 ## Spend and quality gates
 
-<BudgetEvalGate client:visible />
+- A hard-fail budget stops the run with HTTP 402 before any compute or tokens are spent. See [Budgets](/docs/build/budgets/).
+- An eval run worse than its branch baseline returns HTTP 422, which fails CI. See [Evaluations](/docs/build/evaluations/).
+- Streams are end to end: `GET /v1/runs/{id}/events` flushes per event and tails until the run is terminal. See [Streaming](/docs/runtime/streaming/).
 
-## Reference
-
-- Over a budget or VM quota: **HTTP 402**, before any compute or tokens.
-- An eval run worse than its branch baseline: **HTTP 422**.
-- Every provider call carries an `Idempotency-Key` derived from `(run_id, step_id, attempt)`.
-- Streams are end to end: `GET /v1/runs/{id}/events` flushes per event and tails until the run is terminal.
+A process that dies mid-run is re-driven from the journal, not restarted. The sequence is in [Durability](/docs/architecture/durability/).

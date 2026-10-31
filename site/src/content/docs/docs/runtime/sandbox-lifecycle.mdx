@@ -1,110 +1,110 @@
 ---
 title: Sandbox lifecycle
-description: Pause, resume and fork a microVM, idle suspend, snapshots, streaming exec and file access, with REST, TypeScript, Python and CLI examples.
-glance:
-  what: "A microVM can idle-suspend, pause, resume under the same vm_id or fork into copies, and it streams exec output and serves /workspace files."
-  why: "Paused VMs free their quota slot, and forks let you try N approaches from one warmed-up state."
-  how: "pal vm fork <id> --count 3, or POST /v1/runtime/vms/{id}/fork with {\"count\": 3}."
+description: Pause, resume and fork a microVM, idle suspend, snapshots, streaming exec and file access.
 sidebar:
   order: 5
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
-import { VmLifecycle, SandboxLifecycleSequence } from '../../../../components/diagrams';
+import { SandboxLifecycleSequence } from '../../../../components/diagrams';
 
-<VmLifecycle client:visible />
+A sandbox microVM does not have to stay running. **Pause** snapshots its memory and disk and frees its concurrency slot. **Resume** loads the snapshot back into the same `vm_id`. **Fork** loads it into several new VMs at once, so you can try N approaches from one warmed-up state. A VM also **suspends itself when idle** and wakes on the next request. The state machine behind this is in [microVM lifecycle](/docs/architecture/vm-lifecycle/).
+
 <SandboxLifecycleSequence client:visible />
 
-Pause snapshots the VM's memory and disk and frees its concurrency slot. Resume loads the snapshot back into the same `vm_id`. Fork loads it into several new VMs at once. A running VM also suspends itself when idle and wakes on the next request.
+| You want | Call | Quota slot |
+| --- | --- | --- |
+| Stop paying for an idle VM, keep its state | `POST /v1/runtime/vms/{id}/pause` | Freed |
+| Get it back, same `vm_id` | `POST /v1/runtime/vms/{id}/resume` | Reserved again (402 if exhausted) |
+| N copies of a warm VM | `POST /v1/runtime/vms/{id}/fork` | N reserved up front, all or nothing |
+| Pause automatically | `idleTimeoutSecs` on the schedule request | Freed on suspend, reserved on wake |
 
 ## Idle suspend
 
-Set `idleTimeoutSecs` on the schedule request (`--idle-timeout N` on the CLI; `0` or unset means never). When a sandbox sees no exec, tool call or file request for that long, it is snapshotted and its compute and quota slot released. The scheduler sweeps every 10 s on activity reported with the 30 s node heartbeat, so suspension can trail the timeout by up to about 40 s. The next exec or file request (REST, CLI or SDK) resumes it transparently: the caller sees a slower first response (about 4 s for the in-guest exec channel to re-establish), not an error. A VM paused by an operator (`POST /pause`) is never auto-resumed.
+Set `idleTimeoutSecs` on the schedule request (`--idle-timeout N` on the CLI; `0` or unset means never). When a sandbox sees no exec, tool call or file request for that long, it is snapshotted and its compute and quota slot are released. The scheduler sweeps every 10 s (`DefaultIdleSweepInterval` in `services/runtime-scheduler/internal/handlers/idle_sweeper.go`) on activity the runtime manager reports with its 30 s node heartbeat (`INTERVAL` in `services/runtime-manager/src/scheduler_heartbeat.rs`), so suspension can trail the timeout by up to about 40 s.
 
-The snapshot stays in storage while suspended. Lifecycle latency numbers (Lima nested-virt, Apple M4 Max, aarch64, indicative, not bare metal) are in `docs/benchmarks/runtime-latency.md`.
+The next exec or file request (REST, CLI or SDK) resumes the VM transparently. The caller sees a slower first response while the restored guest re-identifies and reconnects, not an error. In the committed benchmark ([`docs/benchmarks/runtime-latency.md`](repo:/blob/master/docs/benchmarks/runtime-latency.md), nested virtualization on a laptop) a restored VM answered its first exec after 2,491 ms (p50). A VM paused by an operator (`POST /pause`) is never auto-resumed: exec answers 409.
 
 ## Forks
 
-Forks share the parent snapshot's memory copy-on-write, so N forks cost one snapshot's memory plus whatever each child writes. Each fork gets its own private copy of the captured disk. The per-call cap defaults to 100 and is set with `PAL_MAX_FORK_COUNT` (ceiling 1000).
+Forks share the parent snapshot's memory copy-on-write, so N forks cost one snapshot's memory plus whatever each child writes. Each fork gets its own private copy of the captured disk, its own `vm_id`, certificate and agent identity. The per-call cap defaults to 100; set `PAL_MAX_FORK_COUNT` (ceiling 1000) to change it.
 
 ## Snapshots
 
-A snapshot captures the VM's guest memory, its vmstate and its writable disk. The disk is copied while the VM is paused for the memory snapshot, so memory and disk describe the same instant (a restored guest's page cache matches the disk underneath it). Every snapshot is stored as three artifacts:
+A snapshot captures guest memory, the vmstate and the writable disk. The disk is copied while the VM is paused for the memory snapshot, so memory and disk describe the same instant. It is stored as three artifacts:
 
-- `snapshot`: Firecracker vmstate.
-- `mem`: guest memory (as large as the VM's RAM).
-- `rootfs`: the captured disk.
+| Artifact | Contents |
+| --- | --- |
+| `snapshot` | Firecracker vmstate |
+| `mem` | Guest memory, as large as the VM's RAM |
+| `rootfs` | The captured disk |
 
-Restore and fork stage from the captured disk. Resume, idle wake and each fork copy the snapshot's `rootfs` to a per-VM writable path (or into the jail), so files written before the snapshot are still there and writes after it stay private to that VM. A legacy snapshot taken before disks were captured has no `rootfs`; it restores onto the base image, which does not match its memory, so re-snapshot long-lived VMs.
+Resume, idle wake and each fork copy the snapshot's `rootfs` to a per-VM writable path (or into the jail). Files written before the snapshot are still there, and writes after it stay private to that VM. A legacy snapshot taken before disks were captured has no `rootfs`; it restores onto the base image, which does not match its memory, so re-snapshot long-lived VMs.
+
+Snapshots belong to the tenant that created them. Restoring another tenant's snapshot returns `NOT_FOUND` (ADR 0025). A restored VM re-identifies with a fresh identity instead of reusing the source VM's.
 
 ### Where snapshots are stored
 
-The runtime-manager's snapshot store keeps the canonical copy on local disk and optionally mirrors it to S3/MinIO. All reads go through the local tier and fall back to S3 when the local copy is gone.
+The runtime manager keeps the canonical copy on local disk and optionally mirrors it to S3 or MinIO. Reads go to the local tier first and fall back to S3.
 
-| Env var (runtime-manager) | Default | Purpose |
+| Env var (runtime manager) | Default | Purpose |
 | --- | --- | --- |
 | `SNAPSHOT_DIR` | `/var/lib/pal/snapshots` | Local tier root, laid out `<agent_version_id>/<vm_id>/<snapshot_id>/` |
-| `S3_ENDPOINT` + `S3_BUCKET` | unset (S3 tier off) | Enable the S3/MinIO mirror under `snapshots/<agent_version_id>/<vm_id>/<snapshot_id>/` |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | unset | S3 credentials (same variables the control-plane uses) |
+| `S3_ENDPOINT` + `S3_BUCKET` | unset (S3 tier off) | Enable the mirror under `snapshots/<agent_version_id>/<vm_id>/<snapshot_id>/` |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | unset | S3 credentials |
 
-An S3 upload failure is logged and does not fail the snapshot; the local copy is already safe. Retention is applied after every write: the newest 3 snapshots per VM are kept and anything older than 7 days is deleted.
+An S3 upload failure is logged and does not fail the snapshot; the local copy is already safe. Retention runs after every write: the newest 3 snapshots per VM are kept and anything older than 7 days is deleted.
 
-### Cost
+### Cost and latency
 
-Each snapshot stores `mem` (up to the VM's RAM) plus a full copy of the disk, and every restore or fork copies the disk again. Disk capture happens while the VM is paused, so it adds to pause time (the copy reflinks on XFS/btrfs and byte-copies elsewhere). On the jailed path forks share the memory file via a hard link, so only the disk is copied per fork.
+Each snapshot stores `mem` plus a full copy of the disk, and every restore or fork copies the disk again. The copy reflinks on XFS or btrfs and byte-copies elsewhere (see [Operations](/docs/operate/operations/#node-filesystem-for-snapshots-and-forks)). On the jailed path forks share the memory file through a hard link, so only the disk is copied per fork.
 
-Indicative numbers from [`docs/benchmarks/runtime-latency.md`](repo:/blob/master/docs/benchmarks/runtime-latency.md) (run 2026-10-27), measured in a Lima nested-virt guest on an Apple M4 Max (aarch64, 1 vCPU, 128 MiB VM, jailed). Dev laptop, nested virtualization: preliminary, not production numbers. (Firecracker's own ~125 ms bare-metal cold boot is a published figure, not our measurement.)
+These numbers come from [`docs/benchmarks/runtime-latency.md`](repo:/blob/master/docs/benchmarks/runtime-latency.md) (run 2026-10-29, 20 iterations): a Lima nested-virtualization guest on an Apple M4 Max, 1 vCPU, 128 MiB VM, jailed. Figures are p50. They are preliminary dev-laptop figures, not production numbers.
 
 | Step | Indicative |
 | --- | --- |
-| Memory snapshot (128 MiB, 134 MB written; measured before disk capture) | 634 ms |
-| Restore (Spawn RPC) | 138 ms |
-| Fork spawn (hard-linked memory plus per-VM rootfs copy) | 131 / 145 / 160 ms |
-| First exec after restore (p50 of 5 runs) | 2,857 ms |
-| Stop | about 200 ms |
+| Snapshot RPC (pause guest, write memory and disk, resume) | 702 ms |
+| Restore (Spawn RPC) | 131 ms |
+| Fork spawn (N=1) | 151 ms |
+| First exec after restore | 2,491 ms |
+| First exec after fork (N=1) | 2,722 ms |
+| Stop | 198 ms |
 
-The snapshot row predates disk capture, so add the `rootfs` copy (reflinked on XFS/btrfs, a full copy elsewhere) to snapshot time. The benchmark doc estimates the per-VM rootfs copy at about 5 to 50 ms for a 20 to 100 MiB image.
-
-After a restore the runtime-manager holds the first exec until the restored harness has re-identified and sent its first heartbeat (`PAL_HARNESS_READY_TIMEOUT_MS`, default 5 s), so a caller makes one call instead of retrying. On Lima that first exec lands in 2.6 to 3.1 s, almost all of it slow CPU-bound guest work under nested virtualization; bare-metal KVM has not been measured.
+After a restore the manager holds the first exec until the restored harness has re-identified and sent a heartbeat (`PAL_HARNESS_READY_TIMEOUT_MS`, default 5 s), so a caller makes one call instead of retrying. Bare-metal KVM has not been measured.
 
 ## REST
 
-```
-# Pause: snapshot + stop. Frees the quota slot.
+```text
 POST /v1/runtime/vms/{id}/pause
-→ { "vmId": "...", "snapshotId": "...", "state": "paused" }
+-> { "vmId": "...", "snapshotId": "...", "state": "paused" }
 
-# Resume: same vm id. 402 if quota is exhausted, 409 if the VM is not paused.
-POST /v1/runtime/vms/{id}/resume
-→ { "vmId": "...", "snapshotId": "...", "state": "running" }
+POST /v1/runtime/vms/{id}/resume          # 402 quota exhausted, 409 VM not paused
+-> { "vmId": "...", "snapshotId": "...", "state": "running" }
 
-# Fork: count 1..100 by default (PAL_MAX_FORK_COUNT, ceiling 1000); forks share the snapshot memory copy-on-write. Each fork gets its own vm_id, cert and agent identity.
 POST /v1/runtime/vms/{id}/fork
 { "count": 3 }
-→ { "sourceVmId": "...", "snapshotId": "...",
-    "forks": [ { "vmId": "...", "state": "running" },
-               { "vmId": "...", "state": "failed", "error": "..." } ] }
+-> { "sourceVmId": "...", "snapshotId": "...",
+     "forks": [ { "vmId": "...", "state": "running" },
+                { "vmId": "...", "state": "failed", "error": "..." } ] }
 ```
 
-`GET /v1/runtime/vms/{id}` additionally returns `snapshotId` and `parentVmId` (set on forks), and `state` may be `paused`. Restoring a snapshot onto a fresh TAP (resume, idle wake, fork; not broker mode) uses snapshot-load `network_overrides`, which needs Firecracker 1.12 or later with the jailer (tested on 1.15).
-
-Snapshots are owned by the tenant that created them; restoring another tenant's snapshot returns `NOT_FOUND` (ADR 0025). A restored VM re-identifies with a fresh identity rather than reusing the source VM's.
+`GET /v1/runtime/vms/{id}` also returns `snapshotId` and `parentVmId` (set on forks), and `state` may be `paused`. Restoring onto a fresh TAP device (resume, idle wake, fork; not broker mode) uses snapshot-load `network_overrides`, which needs Firecracker 1.12 or later with the jailer (tested on 1.15).
 
 ## Streaming exec
 
-`POST /v1/runtime/vms/{id}/exec` buffers output by default. Send `Accept: text/event-stream` to receive `stdout`, `stderr`, then `exit` events (or `error`) as they happen. Exec is execve-style: `command` is the executable, `argv` its arguments. Pass `/bin/sh` with `["-c", …]` for a shell line.
+`POST /v1/runtime/vms/{id}/exec` buffers output by default. Send `Accept: text/event-stream` to receive `stdout`, `stderr`, then `exit` events (or `error`) as they happen. Exec is execve-style: `command` is the executable and `argv` its arguments. Pass `/bin/sh` with `["-c", ...]` for a shell line.
 
 ## Files
 
-Read and write files under the VM's `/workspace`. These run through the in-guest harness tool runner, so paths are confined to `/workspace` (escapes return 400) and files are accessed as the workload user. Content is UTF-8 text, at most 1 MiB (writes above return 413; larger reads are cut and flagged with `X-Pal-Truncated: true`). Firecracker VMs only; other backends return 503.
+Read and write files under the VM's `/workspace`. These calls run through the in-guest tool runner, so paths are confined to `/workspace` (escapes return 400) and files are accessed as the workload user. Content is UTF-8 text, at most 1 MiB: writes above that return 413, and larger reads are cut and flagged with `X-Pal-Truncated: true`. Firecracker VMs only; other backends return 503.
 
-```
-GET /v1/runtime/vms/{id}/files?path=src            # → { path, entries: [{name, type, size}], truncated }
-GET /v1/runtime/vms/{id}/files/content?path=a.txt  # → raw text
-PUT /v1/runtime/vms/{id}/files/content?path=a.txt  # body = file bytes → { path, bytesWritten }
+```text
+GET /v1/runtime/vms/{id}/files?path=src            -> { path, entries: [{name, type, size}], truncated }
+GET /v1/runtime/vms/{id}/files/content?path=a.txt  -> raw text
+PUT /v1/runtime/vms/{id}/files/content?path=a.txt  # body = file bytes -> { path, bytesWritten }
 ```
 
-## SDKs
+## From code and the CLI
 
 The Go SDK exposes `PauseVM`, `ResumeVM`, `ForkVM`, `ListFiles`, `ReadFile` and `WriteFile`.
 
@@ -167,6 +167,4 @@ pal vm put <id> <local-file|-> <path>
 </TabItem>
 </Tabs>
 
-The dashboard VM detail page (`/runtime/{vm}`) has Pause, Resume and Fork actions.
-
-Related: [Isolation classes](/docs/runtime/isolation/), [Durable execution](/docs/runtime/durable-execution/), [CLI reference](/docs/reference/cli/).
+The dashboard VM detail page (`/runtime/{vm}`) has Pause, Resume and Fork actions. See also [Isolation](/docs/runtime/isolation/) and [CLI](/docs/reference/cli/).
