@@ -728,7 +728,9 @@ func TestOnboardingAgentRoutes_ScopeEnforcement(t *testing.T) {
 		}
 		return raw
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM api_keys WHERE name LIKE 'onb-agent-scope-%'`) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM api_keys WHERE name LIKE 'onb-agent-scope-%'`)
+	})
 	do := func(method, path, raw, body string) int {
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+raw)
